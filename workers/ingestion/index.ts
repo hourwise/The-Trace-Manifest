@@ -8,6 +8,7 @@ import { fetchArxivPapers } from "./fetchers/arxiv";
 import { fetchHackerNews } from "./fetchers/hackernews";
 import { checkSourceHealth } from "./health";
 import { deduplicateURL, hashURL } from "./dedup";
+import { runClassification } from "./classify";
 import type { Source, FeedItem } from "./types";
 
 // ============================================================
@@ -223,14 +224,15 @@ async function completeJob(env: Env, jobId: number, status: string, processed: n
 // Classification pipeline (morning run)
 // ============================================================
 async function runClassificationPipeline(env: Env) {
-  // Fetch unclassified items from the past 24 hours
-  const { results } = await env.DB.prepare(
-    "SELECT * FROM feed_items WHERE ingestion_status = 'raw' AND fetched_at >= datetime('now', '-1 day') ORDER BY fetched_at DESC LIMIT 500"
-  ).all<FeedItem>();
-
-  console.log(`Classification pipeline: ${results?.length || 0} items to process`);
-  // Classification logic will be implemented in Phase 3
-  // For Phase 2, items remain in 'raw' status
+  console.log("Classification pipeline: starting...");
+  const result = await runClassification(env.DB,
+    (processed, total) => {
+      if (processed % 25 === 0 || processed === total) {
+        console.log(`Classification progress: ${processed}/${total}`);
+      }
+    }
+  );
+  console.log(`Classification pipeline: done — ${result.classified} of ${result.processed} items classified`);
 }
 
 // ============================================================
@@ -263,6 +265,8 @@ async function handleAdminRoute(path: string, request: Request, env: Env, ctx: E
       return handleJobList(env);
     case "/admin/cron-runs":
       return handleCronRunList(env);
+    case "/admin/classify":
+      return handleManualClassify(env);
     default:
       return Response.json({ error: "Not found" }, { status: 404 });
   }
@@ -315,4 +319,9 @@ async function handleCronRunList(env: Env): Promise<Response> {
     "SELECT * FROM cron_runs ORDER BY started_at DESC LIMIT 50"
   ).all();
   return Response.json(results || []);
+}
+
+async function handleManualClassify(env: Env): Promise<Response> {
+  const result = await runClassification(env.DB);
+  return Response.json({ status: "ok", ...result });
 }

@@ -23,12 +23,14 @@ Integrate the first 50–100 sources, scheduled fetching, source-health checks, 
 
 **Infrastructure built:** Wrangler config with 5 cron schedules, D1 schema (16 tables), seed data (39 sources), ingestion Worker (RSS/GitHub/arXiv/HN fetchers, URL dedup via SHA-256, source health monitoring with auto-disable, cron audit tracking), admin UI (4 pages: dashboard, sources, jobs, review queue). **Deployed:** Worker live at `trace-manifest-ingestion.philgeran.workers.dev` (98 items ingested, 1 confirmed cron run), Pages site live at `thetracemanifest.com` with Git-connected auto-deploy. **Design system:** Dark-first OKLCH theme, new BaseLayout with sticky header/mobile drawer/theme toggle, typed ask results detail page at `/ask/[question]`, all pages restyled.
 
-**Pending:** ~~Remaining 25 source seeds,~~ live cron verification over 24–48h, Pages env var for API URL.
+**Pending:** live cron verification over 24–48h.
 
-## Phase 3 — Curation and Trust
-**Estimate:** 4–8 weeks
+## Phase 3 — Curation and Trust 🔧
+**Estimate:** 4–8 weeks | **Started:** 12 July 2026
 
 Add classification, semantic deduplication, clustering, entity and claim extraction, evidence labels, conflict detection, human review, corrections, and golden evaluation datasets.
+
+**Classification engine:** `classify.ts` deployed — rule-based topic taxonomy (16 topics), model/provider entity extraction, item type detection, confidence scoring. Integrated into cron pipeline (`0 9 * * *`) and available via `POST /admin/classify`. 138 raw items queued for classification.
 
 ## Phase 4 — Models, Providers, and Benchmarks
 **Estimate:** 4–8 weeks
