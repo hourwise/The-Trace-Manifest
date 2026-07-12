@@ -3,7 +3,7 @@
 
 name = "the-trace-manifest"
 compatibility_date = "2026-07-12"
-compatibility_flags = ["nodejs_compat"]
+pages_build_output_dir = "dist"
 
 # Astro Pages deployment
 [env.production]

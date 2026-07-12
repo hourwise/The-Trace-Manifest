@@ -1,4 +1,4 @@
----
+﻿---
 import BaseLayout from "../../layouts/BaseLayout.astro";
 
 const briefingDate = "12 July 2026";
@@ -15,7 +15,7 @@ const items = [
   title={`Daily Briefing — ${briefingDate}`}
   description={`Five things that matter in AI today. Model releases, pricing changes, research, security issues, and community discoveries.`}
 >
-  <div class="container" style="max-width:42rem;">
+  <div class="wrap" style="max-width:42rem;">
     <nav aria-label="Breadcrumb" class="meta" style="margin-bottom:1.5rem;">
       <a href="/briefing/daily">Daily Briefing</a> &rsaquo; {briefingDate}
     </nav>
@@ -23,7 +23,7 @@ const items = [
     <h1>Daily Briefing</h1>
     <p class="meta" style="margin-top:0.25rem;">{briefingDate} &middot; Five things that matter today</p>
 
-    <p style="margin-top:1.5rem;padding:0.75rem;background:var(--color-bg-alt);border-radius:var(--radius);font-size:0.9rem;">
+    <p style="margin-top:1.5rem;padding:0.75rem;background:var(--surface-2);border-radius:var(--radius);font-size:0.9rem;">
       <strong>Note:</strong> This is a static Phase 1 placeholder. Live daily briefings with automated generation begin in Phase 2–3.
     </p>
 
@@ -39,15 +39,15 @@ const items = [
       ))}
     </ol>
 
-    <div style="margin-top:2rem;padding:1rem;background:var(--color-bg-alt);border-radius:var(--radius);">
+    <div style="margin-top:2rem;padding:1rem;background:var(--surface-2);border-radius:var(--radius);">
       <p class="meta">
         <strong>Claims awaiting verification today:</strong> Frontier model coding benchmark claims (vendor-reported only). Check back for independent results.
       </p>
     </div>
 
     <div style="margin-top:2rem;display:flex;gap:1rem;flex-wrap:wrap;">
-      <a href="/rss/daily.xml" style="border:1px solid var(--color-accent);color:var(--color-accent);padding:0.5rem 1rem;border-radius:var(--radius);font-size:0.9rem;text-decoration:none;">Subscribe via RSS</a>
-      <a href="/briefing/weekly" style="border:1px solid var(--color-border);color:var(--color-text);padding:0.5rem 1rem;border-radius:var(--radius);font-size:0.9rem;text-decoration:none;">Weekly briefing &rarr;</a>
+      <a href="/rss/daily.xml" style="border:1px solid var(--accent);color:var(--accent);padding:0.5rem 1rem;border-radius:var(--radius);font-size:0.9rem;text-decoration:none;">Subscribe via RSS</a>
+      <a href="/briefing/weekly" style="border:1px solid var(--border);color:var(--fg);padding:0.5rem 1rem;border-radius:var(--radius);font-size:0.9rem;text-decoration:none;">Weekly briefing &rarr;</a>
     </div>
   </div>
 </BaseLayout>

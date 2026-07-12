@@ -1,4 +1,4 @@
----
+﻿---
 import BaseLayout from "../layouts/BaseLayout.astro";
 
 // Static placeholder feed items — replaced by data layer in Phase 2
@@ -67,7 +67,7 @@ const evidenceLabelClass = (status: string) => {
   title="Intelligence Feed"
   description="Chronological and relevance-ranked feed of AI model launches, research, benchmarks, security incidents, and provider updates with evidence ratings."
 >
-  <div class="container">
+  <div class="wrap">
     <h1>Intelligence Feed</h1>
     <p class="meta" style="margin-bottom:2rem;">
       Chronological feed of AI developments with source classification and evidence ratings.
@@ -78,7 +78,7 @@ const evidenceLabelClass = (status: string) => {
     <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:2rem;" role="group" aria-label="Filter by topic">
       {["All", "Frontier Models", "Open-weight Models", "Coding", "Security", "Regulation", "Research", "Benchmarks", "Provider Updates"].map(topic => (
         <a href={`/feed${topic === 'All' ? '' : `?topic=${topic.toLowerCase().replace(/\s+/g,'-')}`}`}
-           style="font-size:0.85rem;padding:0.25rem 0.75rem;border:1px solid var(--color-border);border-radius:var(--radius);text-decoration:none;"
+           style="font-size:0.85rem;padding:0.25rem 0.75rem;border:1px solid var(--border);border-radius:var(--radius);text-decoration:none;"
            class="meta">
           {topic}
         </a>

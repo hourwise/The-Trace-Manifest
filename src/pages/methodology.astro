@@ -1,4 +1,4 @@
----
+﻿---
 import BaseLayout from "../layouts/BaseLayout.astro";
 ---
 
@@ -6,7 +6,7 @@ import BaseLayout from "../layouts/BaseLayout.astro";
   title="Methodology"
   description="How The Trace Manifest classifies sources, evaluates evidence, assigns ratings, and handles corrections."
 >
-  <div class="container" style="max-width:42rem;">
+  <div class="wrap" style="max-width:42rem;">
     <h1>Methodology</h1>
 
     <section style="margin-top:2rem;">
@@ -44,13 +44,13 @@ import BaseLayout from "../layouts/BaseLayout.astro";
     <section style="margin-top:2rem;">
       <h2>Public Rating Labels</h2>
       <div style="display:flex;flex-direction:column;gap:0.5rem;margin-top:0.75rem;">
-        <div><span class="evidence-label evidence-label--confirmed">Confirmed</span> <span class="meta">— Supported by multiple independent primary sources</span></div>
-        <div><span class="evidence-label evidence-label--confirmed">Strongly supported</span> <span class="meta">— Strong primary-source support with some corroboration</span></div>
-        <div><span class="evidence-label evidence-label--vendor">Vendor-reported</span> <span class="meta">— Claimed by the vendor; independent verification pending or not available</span></div>
-        <div><span class="evidence-label evidence-label--unverified">Unverified</span> <span class="meta">— Claim has not yet been independently checked</span></div>
-        <div><span class="evidence-label evidence-label--disputed">Disputed</span> <span class="meta">— Credible contradictory evidence exists</span></div>
-        <div><span class="evidence-label evidence-label--corrected">Corrected</span> <span class="meta">— Previously published information has been updated</span></div>
-        <div><span class="evidence-label evidence-label--outdated">Outdated</span> <span class="meta">— Information is no longer current</span></div>
+        <div><span class="badge badge-confirmed">Confirmed</span> <span class="meta">— Supported by multiple independent primary sources</span></div>
+        <div><span class="badge badge-confirmed">Strongly supported</span> <span class="meta">— Strong primary-source support with some corroboration</span></div>
+        <div><span class="badge badge-vendor">Vendor-reported</span> <span class="meta">— Claimed by the vendor; independent verification pending or not available</span></div>
+        <div><span class="badge badge-provisional">Unverified</span> <span class="meta">— Claim has not yet been independently checked</span></div>
+        <div><span class="badge badge-disputed">Disputed</span> <span class="meta">— Credible contradictory evidence exists</span></div>
+        <div><span class="badge badge-corrected">Corrected</span> <span class="meta">— Previously published information has been updated</span></div>
+        <div><span class="badge badge-outdated">Outdated</span> <span class="meta">— Information is no longer current</span></div>
       </div>
     </section>
 

@@ -1,4 +1,4 @@
----
+﻿---
 import BaseLayout from "../../layouts/BaseLayout.astro";
 ---
 
@@ -6,13 +6,13 @@ import BaseLayout from "../../layouts/BaseLayout.astro";
   title="Admin — Review Queue"
   description="Manual review queue for high-impact claims, disputed stories, and corrections."
 >
-  <div class="container">
+  <div class="wrap">
     <h1>Admin: Review Queue</h1>
     <p class="meta" style="margin-bottom:2rem;">
       <a href="/admin/sources">← Sources</a> &middot; <a href="/admin">Admin home</a>
     </p>
 
-    <p style="padding:0.75rem;background:var(--color-bg-alt);border-radius:var(--radius);font-size:0.9rem;margin-bottom:2rem;">
+    <p style="padding:0.75rem;background:var(--surface-2);border-radius:var(--radius);font-size:0.9rem;margin-bottom:2rem;">
       Items flagged for human review per <a href="/docs/adr/0004-human-review-boundary.md">ADR-0004</a>.
       Review is required for: high-impact security claims, legal/regulatory claims, accusations of misconduct,
       major benchmark conclusions, best-model/provider rankings, and corrections affecting prominent stories.

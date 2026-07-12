@@ -1,4 +1,4 @@
----
+﻿---
 import BaseLayout from "../../layouts/BaseLayout.astro";
 
 // Phase 2: Admin — Source management page
@@ -9,14 +9,14 @@ import BaseLayout from "../../layouts/BaseLayout.astro";
   title="Admin — Sources"
   description="Manage ingestion sources, view health status, trigger manual fetches."
 >
-  <div class="container">
+  <div class="wrap">
     <h1>Admin: Sources</h1>
     <p class="meta" style="margin-bottom:2rem;">
       Source registry management, health monitoring, and manual ingestion controls.
       <a href="/admin">← Admin home</a>
     </p>
 
-    <p style="padding:0.75rem;background:var(--color-bg-alt);border-radius:var(--radius);font-size:0.9rem;margin-bottom:2rem;">
+    <p style="padding:0.75rem;background:var(--surface-2);border-radius:var(--radius);font-size:0.9rem;margin-bottom:2rem;">
       <strong>Phase 2:</strong> Source data is loaded from the Cloudflare D1 database via the ingestion Worker API.
       In local dev, sources display from the seed data in <code>db/seed.sql</code>.
     </p>
@@ -24,7 +24,7 @@ import BaseLayout from "../../layouts/BaseLayout.astro";
     <!-- Health summary -->
     <section style="margin-bottom:2rem;">
       <h2>Source Health</h2>
-      <div class="grid grid--3" style="margin-top:1rem;">
+      <div class="grid-3" style="margin-top:1rem;">
         <div class="card" style="text-align:center;">
           <p style="font-size:2rem;font-weight:700;color:#166534;">40</p>
           <p class="meta">Healthy</p>
@@ -47,7 +47,7 @@ import BaseLayout from "../../layouts/BaseLayout.astro";
       <div style="overflow-x:auto;">
         <table style="width:100%;border-collapse:collapse;font-size:0.9rem;">
           <thead>
-            <tr style="border-bottom:2px solid var(--color-border);text-align:left;">
+            <tr style="border-bottom:2px solid var(--border);text-align:left;">
               <th style="padding:0.5rem;">Source</th>
               <th style="padding:0.5rem;">Type</th>
               <th style="padding:0.5rem;">Cadence</th>
@@ -66,11 +66,11 @@ import BaseLayout from "../../layouts/BaseLayout.astro";
               ["GitHub — Ollama", "github_api", "3h", "healthy"],
               ["GitHub — MCP Spec", "github_api", "3h", "healthy"],
             ].map(([name, type, cadence, status]) => (
-              <tr style="border-bottom:1px solid var(--color-border);">
+              <tr style="border-bottom:1px solid var(--border);">
                 <td style="padding:0.5rem;">{name}</td>
                 <td style="padding:0.5rem;"><code style="font-size:0.8rem;">{type}</code></td>
                 <td style="padding:0.5rem;" class="meta">{cadence}</td>
-                <td style="padding:0.5rem;"><span class="evidence-label evidence-label--confirmed">{status}</span></td>
+                <td style="padding:0.5rem;"><span class="badge badge-confirmed">{status}</span></td>
               </tr>
             ))}
           </tbody>
@@ -84,7 +84,7 @@ import BaseLayout from "../../layouts/BaseLayout.astro";
       <div style="overflow-x:auto;">
         <table style="width:100%;border-collapse:collapse;font-size:0.9rem;">
           <thead>
-            <tr style="border-bottom:2px solid var(--color-border);text-align:left;">
+            <tr style="border-bottom:2px solid var(--border);text-align:left;">
               <th style="padding:0.5rem;">Source</th>
               <th style="padding:0.5rem;">Type</th>
               <th style="padding:0.5rem;">Cadence</th>
@@ -101,11 +101,11 @@ import BaseLayout from "../../layouts/BaseLayout.astro";
               ["LMSYS Chatbot Arena", "manual", "daily", "healthy"],
               ["SWE-bench", "manual", "daily", "healthy"],
             ].map(([name, type, cadence, status]) => (
-              <tr style="border-bottom:1px solid var(--color-border);">
+              <tr style="border-bottom:1px solid var(--border);">
                 <td style="padding:0.5rem;">{name}</td>
                 <td style="padding:0.5rem;"><code style="font-size:0.8rem;">{type}</code></td>
                 <td style="padding:0.5rem;" class="meta">{cadence}</td>
-                <td style="padding:0.5rem;"><span class="evidence-label evidence-label--confirmed">{status}</span></td>
+                <td style="padding:0.5rem;"><span class="badge badge-confirmed">{status}</span></td>
               </tr>
             ))}
           </tbody>
@@ -119,7 +119,7 @@ import BaseLayout from "../../layouts/BaseLayout.astro";
       <div style="overflow-x:auto;">
         <table style="width:100%;border-collapse:collapse;font-size:0.9rem;">
           <thead>
-            <tr style="border-bottom:2px solid var(--color-border);text-align:left;">
+            <tr style="border-bottom:2px solid var(--border);text-align:left;">
               <th style="padding:0.5rem;">Source</th>
               <th style="padding:0.5rem;">Type</th>
               <th style="padding:0.5rem;">Cadence</th>
@@ -132,11 +132,11 @@ import BaseLayout from "../../layouts/BaseLayout.astro";
               ["Specialist publications", "rss/manual", "daily", "healthy"],
               ["Reddit (manual)", "manual", "daily", "active"],
             ].map(([name, type, cadence, status]) => (
-              <tr style="border-bottom:1px solid var(--color-border);">
+              <tr style="border-bottom:1px solid var(--border);">
                 <td style="padding:0.5rem;">{name}</td>
                 <td style="padding:0.5rem;"><code style="font-size:0.8rem;">{type}</code></td>
                 <td style="padding:0.5rem;" class="meta">{cadence}</td>
-                <td style="padding:0.5rem;"><span class="evidence-label evidence-label--confirmed">{status}</span></td>
+                <td style="padding:0.5rem;"><span class="badge badge-confirmed">{status}</span></td>
               </tr>
             ))}
           </tbody>
@@ -145,16 +145,16 @@ import BaseLayout from "../../layouts/BaseLayout.astro";
     </section>
 
     <!-- Actions -->
-    <section style="margin-top:2rem;padding:1rem;background:var(--color-bg-alt);border-radius:var(--radius);">
+    <section style="margin-top:2rem;padding:1rem;background:var(--surface-2);border-radius:var(--radius);">
       <h2>Manual Actions</h2>
       <div style="display:flex;gap:1rem;flex-wrap:wrap;margin-top:0.75rem;">
-        <button style="padding:0.5rem 1rem;background:var(--color-accent);color:#fff;border:none;border-radius:var(--radius);cursor:pointer;font-weight:600;" disabled>
+        <button style="padding:0.5rem 1rem;background:var(--accent);color:#fff;border:none;border-radius:var(--radius);cursor:pointer;font-weight:600;" disabled>
           Trigger Full Ingestion
         </button>
-        <button style="padding:0.5rem 1rem;border:1px solid var(--color-border);border-radius:var(--radius);cursor:pointer;" disabled>
+        <button style="padding:0.5rem 1rem;border:1px solid var(--border);border-radius:var(--radius);cursor:pointer;" disabled>
           Check All Source Health
         </button>
-        <button style="padding:0.5rem 1rem;border:1px solid var(--color-border);border-radius:var(--radius);cursor:pointer;" disabled>
+        <button style="padding:0.5rem 1rem;border:1px solid var(--border);border-radius:var(--radius);cursor:pointer;" disabled>
           Run Classification Pipeline
         </button>
       </div>

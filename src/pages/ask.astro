@@ -1,4 +1,4 @@
----
+﻿---
 import BaseLayout from "../layouts/BaseLayout.astro";
 
 // Phase 1 static curated Q&A — validates demand before Phase 5 full RAG (ADR-0007)
@@ -220,13 +220,13 @@ const confidenceClass = (c: string) => {
   title="Ask — Citation-grounded answers"
   description="Ask practical questions about AI models, providers, benchmarks, tools, and best practices. Answers are grounded in dated, cited sources."
 >
-  <div class="container" style="max-width:42rem;">
+  <div class="wrap" style="max-width:42rem;">
     <h1>Ask</h1>
     <p class="meta" style="margin-bottom:2rem;">
       Curated answers to practical AI questions. Each answer includes supporting evidence, points of disagreement, confidence ratings, and freshness dates.
     </p>
 
-    <p style="padding:0.75rem;background:var(--color-bg-alt);border-radius:var(--radius);font-size:0.9rem;margin-bottom:2rem;">
+    <p style="padding:0.75rem;background:var(--surface-2);border-radius:var(--radius);font-size:0.9rem;margin-bottom:2rem;">
       <strong>Phase 1 prototype:</strong> These {curatedAnswers.length} questions and answers are manually curated to validate demand and establish answer formatting. A full retrieval-augmented ask box arrives in Phase 5.
       <a href="/docs/adr/0007-early-ask-validation.md">Read ADR-0007 &rarr;</a>
     </p>
@@ -238,7 +238,7 @@ const confidenceClass = (c: string) => {
         id="ask-input"
         type="search"
         placeholder="Ask a question about AI models, benchmarks, tools, or best practices..."
-        style="width:100%;padding:0.75rem 1rem;border:1px solid var(--color-border);border-radius:var(--radius);font-size:1rem;font-family:var(--font-sans);"
+        style="width:100%;padding:0.75rem 1rem;border:1px solid var(--border);border-radius:var(--radius);font-size:1rem;font-family:var(--font-sans);"
         disabled
       />
       <p class="meta" style="margin-top:0.25rem;">Full ask box with dynamic retrieval coming in Phase 5. Browse curated answers below.</p>
@@ -255,29 +255,29 @@ const confidenceClass = (c: string) => {
           </div>
 
           <div style="margin-top:1rem;">
-            <h3 style="font-size:0.9rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--color-text-muted);">Current answer</h3>
+            <h3 style="font-size:0.9rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);">Current answer</h3>
             <p style="margin-top:0.25rem;">{a.answer}</p>
           </div>
 
           <div style="margin-top:1rem;">
-            <h3 style="font-size:0.9rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--color-text-muted);">Why</h3>
+            <h3 style="font-size:0.9rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);">Why</h3>
             <p class="meta" style="margin-top:0.25rem;">{a.why}</p>
           </div>
 
           <div style="margin-top:1rem;">
-            <h3 style="font-size:0.9rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--color-text-muted);">Supporting evidence</h3>
+            <h3 style="font-size:0.9rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);">Supporting evidence</h3>
             <ul style="padding-left:1.25rem;margin-top:0.25rem;" class="meta">
               {a.sources.map(s => <li>{s}</li>)}
             </ul>
           </div>
 
           <div style="margin-top:1rem;">
-            <h3 style="font-size:0.9rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--color-text-muted);">Points of disagreement</h3>
+            <h3 style="font-size:0.9rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);">Points of disagreement</h3>
             <p class="meta" style="margin-top:0.25rem;">{a.disagreement}</p>
           </div>
 
-          <div style="margin-top:1rem;padding:0.75rem;background:var(--color-bg-alt);border-radius:var(--radius);">
-            <h3 style="font-size:0.9rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--color-text-muted);">Practical recommendation</h3>
+          <div style="margin-top:1rem;padding:0.75rem;background:var(--surface-2);border-radius:var(--radius);">
+            <h3 style="font-size:0.9rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);">Practical recommendation</h3>
             <p style="margin-top:0.25rem;font-weight:500;">{a.recommendation}</p>
           </div>
 
