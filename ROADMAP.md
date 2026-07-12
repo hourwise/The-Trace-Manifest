@@ -2,15 +2,19 @@
 
 **Planning basis:** Solo-founder-led, AI-assisted development alongside existing projects. Estimates are directional and phases may overlap.
 
-## Phase 0 — Foundation
-**Estimate:** 1–2 weeks
+## Phase 0 — Foundation ✅
+**Estimate:** 1–2 weeks | **Completed:** 12 July 2026
 
-Complete the repository foundation, documentation structure, product charter, MVP, trust framework, commercial-independence rules, source inventory, initial schema, moderation policy, SEO strategy, CI standards, continuity plan, and accepted ADRs.
+~~Complete the repository foundation, documentation structure, product charter, MVP, trust framework, commercial-independence rules, source inventory, initial schema, moderation policy, SEO strategy, CI standards, continuity plan, and accepted ADRs.~~
 
-## Phase 1 — Static Product Shell
-**Estimate:** 2–4 weeks
+Delivered: 20 docs across 7 directories, 7 accepted ADRs, GitHub repo with CI-ready structure.
 
-Build the Astro shell, core page templates, RSS, accessibility and SEO foundations, corrections page, methodology pages, first decision pages, and a static prototype containing 20–30 manually curated, cited answers.
+## Phase 1 — Static Product Shell ✅
+**Estimate:** 2–4 weeks | **Completed:** 12 July 2026
+
+~~Build the Astro shell, core page templates, RSS, accessibility and SEO foundations, corrections page, methodology pages, first decision pages, and a static prototype containing 20–30 manually curated, cited answers.~~
+
+Delivered: Astro 5 + TypeScript, 26 static pages (homepage, feed, stories, topics, models, benchmarks, daily/weekly briefings, ask box with 20 curated Q&As, corrections ledger, methodology), RSS feed, sitemap, evidence label system (6 states), responsive navigation with skip-to-content, OG meta tags.
 
 ## Phase 2 — Source Registry and Ingestion
 **Estimate:** 3–5 weeks

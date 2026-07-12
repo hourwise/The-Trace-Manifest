@@ -1820,18 +1820,18 @@ Recommended development principle:
 
 1. ~~Choose a working name~~ → **Done.** The Trace Manifest (ADR-0002)
 2. ~~Check domain, trademark, GitHub, and social availability~~ → Domains registered (`thetracemanifest.com`, `.uk`); trademark, GitHub org, and social handles in progress
-3. Create repository
-4. Add all Phase 0 documentation
-5. Record initial ADRs
-6. Finalise source list
-7. Define trust labels
-8. Define MVP data model
-9. Build static Astro shell
+3. ~~Create repository~~ → **Done.** `github.com/hourwise/The-Trace-Manifest`
+4. ~~Add all Phase 0 documentation~~ → **Done.** 20 docs across 7 directories
+5. ~~Record initial ADRs~~ → **Done.** 7 ADRs (0001–0007) all accepted
+6. ~~Finalise source list~~ → **Done.** 65 named sources across 6 sections in `docs/sources/source-registry.md`
+7. ~~Define trust labels~~ → **Done.** Evidence label system (6 states) implemented in Phase 1 shell
+8. ~~Define MVP data model~~ → **Done.** Entity list and provenance rules in `docs/architecture/initial-data-model.md`
+9. ~~Build static Astro shell~~ → **Done.** 26 pages, RSS, sitemap, responsive nav, accessibility baseline
 10. Add RSS and GitHub ingestion
 11. Add manual editorial workflow
-12. Add model and benchmark records
-13. Add daily briefing generation
-14. Add citation-grounded ask prototype
+12. ~~Add model and benchmark records~~ → **Done.** Static templates built with placeholder data; full structured data in Phase 4
+13. ~~Add daily briefing generation~~ → **Done.** Daily and weekly briefing templates built
+14. ~~Add citation-grounded ask prototype~~ → **Done.** 20 curated Q&As on `/ask` per ADR-0007
 15. Add supporter and newsletter foundations
 
 ---

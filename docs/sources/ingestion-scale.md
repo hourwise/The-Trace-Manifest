@@ -1,5 +1,7 @@
 # Initial Ingestion Scale
 
+> The named source registry is maintained in [source-registry.md](source-registry.md). ~65 sources across three operational tiers (A: auto-ingest, B: classify before publish, C: discovery only).
+
 ## MVP assumptions
 
 - 50–100 active sources
