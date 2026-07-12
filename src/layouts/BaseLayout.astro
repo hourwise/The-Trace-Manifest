@@ -1,4 +1,6 @@
 ﻿---
+import "../styles/global.css";
+
 // The Trace Manifest — Base Layout (Design System v2)
 export interface Props {
   title: string;
@@ -80,5 +82,47 @@ const navItems = [
         <div class="footer-bottom"><span>&copy; {new Date().getFullYear()} The Trace Manifest</span><span>Corrections remain public</span></div>
       </div>
     </footer>
+    <script>
+      // Theme toggle
+      (function() {
+        const stored = localStorage.getItem('theme');
+        if (stored === 'light') {
+          document.documentElement.setAttribute('data-theme', 'light');
+        }
+      })();
+      const themeToggle = document.getElementById('theme-toggle');
+      if (themeToggle) {
+        themeToggle.addEventListener('click', () => {
+          const current = document.documentElement.getAttribute('data-theme');
+          const next = current === 'light' ? 'dark' : 'light';
+          document.documentElement.setAttribute('data-theme', next);
+          localStorage.setItem('theme', next);
+          themeToggle.setAttribute('aria-label', next === 'light' ? 'Switch to dark mode' : 'Switch to light mode');
+          themeToggle.setAttribute('aria-pressed', next === 'light' ? 'true' : 'false');
+        });
+        // Sync initial state
+        const initial = document.documentElement.getAttribute('data-theme');
+        themeToggle.setAttribute('aria-label', initial === 'light' ? 'Switch to dark mode' : 'Switch to light mode');
+        themeToggle.setAttribute('aria-pressed', initial === 'light' ? 'true' : 'false');
+      }
+
+      // Mobile drawer
+      const drawerToggle = document.getElementById('mobile-nav-toggle');
+      const drawer = document.getElementById('mobile-drawer');
+      if (drawerToggle && drawer) {
+        drawerToggle.addEventListener('click', () => {
+          const expanded = drawerToggle.getAttribute('aria-expanded') === 'true';
+          drawerToggle.setAttribute('aria-expanded', String(!expanded));
+          drawer.classList.toggle('open', !expanded);
+        });
+        // Close drawer when a link inside is clicked
+        drawer.querySelectorAll('a').forEach(link => {
+          link.addEventListener('click', () => {
+            drawerToggle.setAttribute('aria-expanded', 'false');
+            drawer.classList.remove('open');
+          });
+        });
+      }
+    </script>
   </body>
 </html>
