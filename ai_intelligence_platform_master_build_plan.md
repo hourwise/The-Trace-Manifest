@@ -1185,6 +1185,189 @@ Build:
 
 ---
 
+## Phase 3B — Evidence-Linked Knowledge Base
+
+**Status:** Proposed  
+**Dependency:** Phase 3 (Curation and Trust) must be substantially complete before this phase begins. The knowledge base consumes classified items, clustered stories, extracted entities, claims, and evidence relationships from the pipeline.
+
+### Purpose
+
+The knowledge base is a **living technical reference** in which material claims are connected to evidence, dated, scoped, reviewable, and versioned. It complements the intelligence feed: the feed answers "what changed" while the knowledge base answers "what is this technology, how does it work, and what should you consider before adopting it."
+
+It is not a conventional open-edit wiki or a loosely sourced blog collection. Every material factual statement should be attributable to claim records with provenance, not merely to a bibliography at the bottom of a page.
+
+### Initial subject coverage
+
+Focused on the project owner's active technical domains:
+
+- Model Context Protocol (MCP)
+- AI agents
+- Agentic workflows
+- Automation
+- Tool and function calling
+- Agent orchestration
+- Agent memory and provenance
+- Context engineering
+- AI gateways
+- Local and open-weight models
+- Coding agents and agentic IDEs
+- Evaluation, tracing, and observability
+- AI security
+- Human approval and execution governance
+- Auditability, enforceability, and policy controls
+
+### Information architecture
+
+Public route: `/knowledge`
+
+First-level hubs:
+
+| Hub | Path |
+|-----|------|
+| MCP | `/knowledge/mcp` |
+| Agents | `/knowledge/agents` |
+| Automation | `/knowledge/automation` |
+| Memory | `/knowledge/memory` |
+| Orchestration | `/knowledge/orchestration` |
+| Tool use | `/knowledge/tool-use` |
+| Security | `/knowledge/security` |
+| Governance | `/knowledge/governance` |
+| Local models | `/knowledge/local-models` |
+| Coding agents | `/knowledge/coding-agents` |
+| Evaluation | `/knowledge/evaluation` |
+| Observability | `/knowledge/observability` |
+
+### Page types
+
+#### Core concept pages
+Example: "What is the Model Context Protocol?", "What is an AI agent?", "What is agent memory?", "What is tool calling?"
+
+#### Comparison pages
+Example: "MCP vs function calling", "Agents vs workflows vs automation", "Agent memory vs ordinary application state", "Local agents vs hosted agents"
+
+#### Architecture and implementation pages
+Example: "Anatomy of an MCP host, client, and server", "Building a governed tool-execution path", "Designing memory with source provenance", "Separating orchestration from execution authority"
+
+#### Risk and security pages
+Example: "MCP security risks", "Tool poisoning", "Indirect prompt injection", "Credential exposure", "Confused-deputy failures", "Untrusted memory influencing execution"
+
+#### Timeline and change pages
+Example: "MCP specification timeline", "Major coding-agent releases", "Agent framework evolution"
+
+#### Practical reference pages
+Example: "MCP implementation checklist", "Agent evaluation checklist", "Tool-risk classification guide", "Local-model hardware guide", "Questions to ask an AI-agent vendor"
+
+### Initial cornerstone page set (launch with 14–16 pages)
+
+1. What is MCP?
+2. MCP architecture: hosts, clients, servers, tools, resources, prompts, and transports
+3. MCP security and the execution-governance gap
+4. MCP vs function calling
+5. What is an AI agent?
+6. Agents vs workflows vs automation
+7. Tool calling, function calling, and MCP
+8. Agent memory: types, provenance, conflict, and decay
+9. Human approval in agent systems
+10. Agent orchestration and gateway architecture
+11. Prompt injection, tool poisoning, and confused-deputy risks
+12. Auditability vs enforceability
+13. Local-agent architectures
+14. How to evaluate an agent system
+15. Coding agents and agentic IDEs
+16. Context engineering and retrieval boundaries
+
+### Standard knowledge page contract
+
+Every canonical knowledge page must support:
+
+```
+Title
+Canonical summary
+Why the subject matters
+Current status
+Core concepts
+Architecture or mechanism
+What it does
+What it does not do
+Known limitations
+Security and governance considerations
+Implementation options
+Comparisons
+Timeline or significant changes
+Claims and evidence
+Open questions or disputed areas
+Related intelligence events
+Related knowledge pages
+Last reviewed date
+Review status
+Page version
+Public revision history
+```
+
+Optional: compatibility matrix, code examples, glossary, diagrams, vendor-specific behaviour, local deployment notes, legal or licensing notes, practical checklist.
+
+### Claim-level evidence model
+
+The system must support a direct relationship between a material claim and the evidence that supports, challenges, qualifies, or supersedes it. A bibliography alone is insufficient.
+
+**Evidence relationship types:** supports, partially supports, qualifies, contradicts, reports, reproduces, fails to reproduce, supersedes, corrects, contextualises.
+
+**Claim classes:** specification-defined, official vendor claim, observed implementation behaviour, independent research finding, benchmark result, community report, legal or regulatory statement, editorial synthesis, Trace Manifest inference.
+
+**Inference labelling:** Inferences must never be presented as directly sourced facts. The distinction between evidence-supported claim and editorial inference must be visible to the reader.
+
+### Schema additions (new tables)
+
+```
+knowledge_pages
+  id, slug, title, hub, page_type, status, version,
+  last_reviewed_at, reviewed_by, created_at, updated_at
+
+knowledge_page_versions
+  id, page_id, version_number, content_json, change_summary,
+  created_by, created_at
+
+knowledge_page_claims
+  page_id, claim_id, relationship (supports/qualifies/challenges),
+  section_id, order
+
+knowledge_page_events
+  page_id, feed_item_id, cluster_id, relationship
+  (update_suggested/context_added/supersedes)
+```
+
+### Deliverables
+
+- Astro route structure under `/knowledge/`
+- Knowledge page template with standard contract sections
+- Claim-to-evidence rendering component
+- Page version history UI
+- Review status badges
+- Admin: knowledge page editor with claim linking
+- Integration: feed items can propose updates to knowledge pages
+- Integration: knowledge pages surface related intelligence events
+- 14–16 initial cornerstone pages with real content
+- SEO: structured data, breadcrumbs, sitemap entries
+- Tests: claim extraction accuracy, page rendering, version integrity
+
+### Architectural constraints
+
+- Not a wiki: no open public editing; edits flow through review
+- Not fully automated: AI may assist drafting but automated output must not become canonical without validation
+- Not disconnected: the knowledge base shares entities, claims, and evidence with the feed pipeline
+- Evidence-first: every material claim must have at least one evidence record before publication
+- Versioned: every change produces a version record with a change summary
+- Correction-friendly: errors are corrected publicly with dated revision entries, not silently overwritten
+
+### Rejected approaches
+
+- **Conventional blog-only publishing:** articles become stale, duplicate explanations, and do not expose claim-level provenance.
+- **Open community wiki:** uncontrolled edits, inconsistent sourcing, and moderation requirements conflict with the trust model.
+- **Fully automated RAG-generated reference pages:** generated prose can merge sources incorrectly, conceal uncertainty, and silently change meaning.
+- **Independent knowledge base disconnected from the feed:** would duplicate evidence storage and prevent new events from identifying which pages may need revision.
+
+---
+
 ## Phase 4 — Model, Provider, and Benchmark Data
 
 Build:
