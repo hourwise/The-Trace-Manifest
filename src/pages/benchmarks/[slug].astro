@@ -1,0 +1,104 @@
+---
+import BaseLayout from "../../layouts/BaseLayout.astro";
+
+export function getStaticPaths() {
+  return [
+    { params: { slug: "swe-bench" } },
+    { params: { slug: "humaneval" } },
+    { params: { slug: "mmlu" } },
+    { params: { slug: "agentbench" } },
+  ];
+}
+
+const { slug } = Astro.params;
+
+const benchmarksMap: Record<string, any> = {
+  "swe-bench": {
+    name: "SWE-bench",
+    version: "2025",
+    owner: "Princeton NLP",
+    purpose: "Evaluate models on real-world software engineering tasks from GitHub issues",
+    domain: "Software engineering",
+    health: "Healthy",
+    reproducibility: "Reproducible",
+    contaminationConcern: "Low",
+    saturation: "Not yet saturated",
+    codeAvailable: true,
+    dataAvailable: true,
+    lastReviewed: "2026-07-01",
+  },
+  "humaneval": {
+    name: "HumanEval",
+    version: "2024",
+    owner: "OpenAI",
+    purpose: "Measure functional correctness of code generation from docstrings",
+    domain: "Code generation",
+    health: "Saturating",
+    reproducibility: "Reproducible",
+    contaminationConcern: "High",
+    saturation: "Saturated for frontier models",
+    codeAvailable: true,
+    dataAvailable: true,
+    lastReviewed: "2026-06-15",
+  },
+  "mmlu": {
+    name: "MMLU",
+    version: "2024",
+    owner: "UC Berkeley",
+    purpose: "Multi-task language understanding across 57 subjects",
+    domain: "General knowledge",
+    health: "Saturating",
+    reproducibility: "Reproducible",
+    contaminationConcern: "Medium",
+    saturation: "Near-ceiling for frontier models",
+    codeAvailable: true,
+    dataAvailable: true,
+    lastReviewed: "2026-06-20",
+  },
+  "agentbench": {
+    name: "AgentBench",
+    version: "2025",
+    owner: "Tsinghua University",
+    purpose: "Multi-environment agent capability evaluation",
+    domain: "Agent capability",
+    health: "Healthy",
+    reproducibility: "Reproducible",
+    contaminationConcern: "Low",
+    saturation: "Not yet saturated",
+    codeAvailable: true,
+    dataAvailable: true,
+    lastReviewed: "2026-07-01",
+  },
+};
+
+const benchmark = benchmarksMap[slug] ?? benchmarksMap["swe-bench"];
+---
+
+<BaseLayout title={`${benchmark.name} — Benchmark Detail`} description={`${benchmark.name} v${benchmark.version}: methodology, health, and results.`}>
+  <div class="container" style="max-width:42rem;">
+    <nav aria-label="Breadcrumb" class="meta" style="margin-bottom:1.5rem;">
+      <a href="/benchmarks">Benchmarks</a> &rsaquo; {benchmark.name}
+    </nav>
+
+    <h1>{benchmark.name}</h1>
+    <p class="meta" style="margin-top:0.25rem;">{benchmark.owner} &middot; v{benchmark.version}</p>
+
+    <div style="margin-top:2rem;">
+      <h2>Details</h2>
+      <dl style="margin-top:0.75rem;">
+        <div style="display:flex;justify-content:space-between;padding:0.25rem 0;border-bottom:1px solid var(--color-border);"><dt class="meta">Purpose</dt><dd>{benchmark.purpose}</dd></div>
+        <div style="display:flex;justify-content:space-between;padding:0.25rem 0;border-bottom:1px solid var(--color-border);"><dt class="meta">Domain</dt><dd>{benchmark.domain}</dd></div>
+        <div style="display:flex;justify-content:space-between;padding:0.25rem 0;border-bottom:1px solid var(--color-border);"><dt class="meta">Health</dt><dd><span class="evidence-label evidence-label--confirmed">{benchmark.health}</span></dd></div>
+        <div style="display:flex;justify-content:space-between;padding:0.25rem 0;border-bottom:1px solid var(--color-border);"><dt class="meta">Reproducibility</dt><dd>{benchmark.reproducibility}</dd></div>
+        <div style="display:flex;justify-content:space-between;padding:0.25rem 0;border-bottom:1px solid var(--color-border);"><dt class="meta">Contamination concern</dt><dd>{benchmark.contaminationConcern}</dd></div>
+        <div style="display:flex;justify-content:space-between;padding:0.25rem 0;border-bottom:1px solid var(--color-border);"><dt class="meta">Saturation</dt><dd>{benchmark.saturation}</dd></div>
+        <div style="display:flex;justify-content:space-between;padding:0.25rem 0;border-bottom:1px solid var(--color-border);"><dt class="meta">Code available</dt><dd>{benchmark.codeAvailable ? "Yes" : "No"}</dd></div>
+        <div style="display:flex;justify-content:space-between;padding:0.25rem 0;"><dt class="meta">Last reviewed</dt><dd>{benchmark.lastReviewed}</dd></div>
+      </dl>
+    </div>
+
+    <p class="meta" style="margin-top:2rem;">
+      Benchmark run records and model comparisons will be added in Phase 4.
+    </p>
+  </div>
+</BaseLayout>

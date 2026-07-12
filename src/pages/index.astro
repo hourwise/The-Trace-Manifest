@@ -1,0 +1,96 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+---
+
+<BaseLayout
+  title="Evidence-linked AI intelligence"
+  description="The Trace Manifest is a current, evidence-linked intelligence platform tracking AI models, benchmarks, research, providers, and open-source activity. Follow the evidence. Understand the change."
+>
+  <!-- Hero -->
+  <section class="container" style="text-align:center;padding:3rem 0;">
+    <h1 style="font-size:2.5rem;margin-bottom:1rem;">
+      Follow the evidence.<br />Understand the change.
+    </h1>
+    <p style="font-size:1.2rem;color:var(--color-text-muted);max-width:36rem;margin:0 auto 2rem;">
+      A current, evidence-linked intelligence platform showing what changed in AI, what is credible, what is disputed, and what people should actually use.
+    </p>
+    <div style="display:flex;gap:1rem;justify-content:center;flex-wrap:wrap;">
+      <a href="/feed" style="background:var(--color-accent);color:#fff;padding:0.75rem 1.5rem;border-radius:var(--radius);font-weight:600;text-decoration:none;">View the feed</a>
+      <a href="/ask" style="border:1px solid var(--color-accent);color:var(--color-accent);padding:0.75rem 1.5rem;border-radius:var(--radius);font-weight:600;text-decoration:none;">Ask a question</a>
+    </div>
+  </section>
+
+  <!-- Stats placeholder -->
+  <section class="container" style="padding:2rem 0;border-top:1px solid var(--color-border);">
+    <div class="grid grid--3" style="text-align:center;">
+      <div>
+        <p style="font-size:2rem;font-weight:700;color:var(--color-accent);">50+</p>
+        <p class="meta">Sources tracked</p>
+      </div>
+      <div>
+        <p style="font-size:2rem;font-weight:700;color:var(--color-accent);">Daily</p>
+        <p class="meta">Briefing published</p>
+      </div>
+      <div>
+        <p style="font-size:2rem;font-weight:700;color:var(--color-accent);">Public</p>
+        <p class="meta">Corrections ledger</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- What we track -->
+  <section class="container" style="padding:3rem 0;">
+    <h2 style="text-align:center;margin-bottom:2rem;">What we track</h2>
+    <div class="grid grid--3">
+      <div class="card">
+        <h3>Models &amp; Providers</h3>
+        <p class="meta">Frontier, open-weight, and local models. Pricing, capabilities, hardware requirements, and independent benchmarks.</p>
+        <p style="margin-top:0.75rem;"><a href="/models">Browse models &rarr;</a></p>
+      </div>
+      <div class="card">
+        <h3>Benchmarks</h3>
+        <p class="meta">Methodology-aware comparison. Vendor claims vs independent results. Saturation, contamination, and reproducibility flags.</p>
+        <p style="margin-top:0.75rem;"><a href="/benchmarks">Browse benchmarks &rarr;</a></p>
+      </div>
+      <div class="card">
+        <h3>Research &amp; Open Source</h3>
+        <p class="meta">Papers, repositories, releases, and community discoveries with evidence grading and practical-impact assessment.</p>
+        <p style="margin-top:0.75rem;"><a href="/feed">Browse research &rarr;</a></p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Evidence labels explainer -->
+  <section class="container" style="padding:2rem 0;border-top:1px solid var(--color-border);">
+    <h2 style="text-align:center;margin-bottom:1.5rem;">How we rate evidence</h2>
+    <div style="display:flex;flex-wrap:wrap;gap:0.5rem;justify-content:center;margin-bottom:1.5rem;">
+      <span class="evidence-label evidence-label--confirmed">Confirmed</span>
+      <span class="evidence-label evidence-label--disputed">Disputed</span>
+      <span class="evidence-label evidence-label--unverified">Unverified</span>
+      <span class="evidence-label evidence-label--vendor">Vendor-reported</span>
+      <span class="evidence-label evidence-label--corrected">Corrected</span>
+      <span class="evidence-label evidence-label--outdated">Outdated</span>
+    </div>
+    <p class="meta" style="text-align:center;">
+      Every rating is decomposable into source class, evidence quality, corroboration, timeliness, and independence.
+      <a href="/methodology">Read our full methodology &rarr;</a>
+    </p>
+  </section>
+
+  <!-- Recent briefings -->
+  <section class="container" style="padding:2rem 0;border-top:1px solid var(--color-border);">
+    <h2 style="text-align:center;margin-bottom:1.5rem;">Stay current</h2>
+    <div class="grid grid--2">
+      <div class="card">
+        <h3>Daily Briefing</h3>
+        <p class="meta">Five things that matter today. Model releases, pricing changes, important research, security issues, and community discoveries.</p>
+        <p style="margin-top:0.75rem;"><a href="/briefing/daily">Read today's briefing &rarr;</a></p>
+      </div>
+      <div class="card">
+        <h3>Newsletter &amp; RSS</h3>
+        <p class="meta">Get the daily briefing by email or follow via RSS. Briefings are also published as downloadable Markdown.</p>
+        <p style="margin-top:0.75rem;"><a href="/rss/daily.xml">Subscribe via RSS &rarr;</a></p>
+      </div>
+    </div>
+  </section>
+</BaseLayout>

@@ -1,0 +1,80 @@
+---
+import BaseLayout from "../../layouts/BaseLayout.astro";
+
+const models = [
+  {
+    name: "GPT-5",
+    provider: "OpenAI",
+    version: "2026-07",
+    released: "2026-07-10",
+    status: "Released",
+    openness: "Closed",
+    contextWindow: "256K",
+    modalities: ["Text", "Code", "Image"],
+    inputPrice: "$15.00 / 1M tokens",
+    outputPrice: "$60.00 / 1M tokens",
+    slug: "gpt-5",
+  },
+  {
+    name: "Claude 4",
+    provider: "Anthropic",
+    version: "2026-06",
+    released: "2026-06-15",
+    status: "Released",
+    openness: "Closed",
+    contextWindow: "200K",
+    modalities: ["Text", "Code", "Image"],
+    inputPrice: "$15.00 / 1M tokens",
+    outputPrice: "$75.00 / 1M tokens",
+    slug: "claude-4",
+  },
+  {
+    name: "Llama 4",
+    provider: "Meta",
+    version: "2026-05",
+    released: "2026-05-20",
+    status: "Released",
+    openness: "Open-weight",
+    contextWindow: "128K",
+    modalities: ["Text", "Code"],
+    inputPrice: "Self-hosted",
+    outputPrice: "Self-hosted",
+    slug: "llama-4",
+  },
+];
+---
+
+<BaseLayout
+  title="Model Directory"
+  description="Searchable directory of AI models with provider, pricing, capability, hardware, and benchmark information."
+>
+  <div class="container">
+    <h1>Model Directory</h1>
+    <p class="meta" style="margin-bottom:2rem;">
+      Tracked models with provider, pricing, capabilities, hardware requirements, and independent benchmarks.
+    </p>
+
+    <div class="grid grid--3">
+      {models.map(m => (
+        <article class="card">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+            <div>
+              <h2 style="font-size:1.15rem;"><a href={`/models/${m.slug}`}>{m.name}</a></h2>
+              <p class="meta">{m.provider}</p>
+            </div>
+            <span style="font-size:0.75rem;padding:0.125rem 0.5rem;background:var(--color-bg-alt);border-radius:var(--radius);">{m.openness}</span>
+          </div>
+          <div class="meta" style="margin-top:0.75rem;font-size:0.8rem;">
+            <p>Context: {m.contextWindow}</p>
+            <p>Input: {m.inputPrice} &middot; Output: {m.outputPrice}</p>
+            <p>Released: {m.released}</p>
+          </div>
+        </article>
+      ))}
+    </div>
+
+    <p class="meta" style="text-align:center;margin-top:2rem;">
+      Static Phase 1 placeholder. Full model directory with comparisons, benchmark results, and hardware guidance in Phase 4.
+    </p>
+  </div>
+</BaseLayout>

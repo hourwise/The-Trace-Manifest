@@ -1,0 +1,53 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+
+const corrections = [
+  {
+    date: "2026-07-10",
+    previous: "Model X was reported as open-weight under Apache 2.0 licence.",
+    updated: "Model X is released under a custom restricted licence, not Apache 2.0.",
+    reason: "Community report identified licence discrepancy. Verified against official model card.",
+    impact: "Licence classification changed from 'Open-weight permissive' to 'Open-weight restricted'.",
+  },
+  {
+    date: "2026-07-05",
+    previous: "Provider Y API pricing listed at $10.00/1M input tokens.",
+    updated: "Provider Y API pricing is $15.00/1M input tokens for the specified model tier.",
+    reason: "Pricing page update. Original figure was for a different tier.",
+    impact: "Cost-comparison ranking adjusted. Provider Y moved from position 2 to position 4.",
+  },
+];
+---
+
+<BaseLayout
+  title="Corrections Ledger"
+  description="Public record of factual corrections, changed ratings, updated benchmarks, and superseded recommendations."
+>
+  <div class="container" style="max-width:42rem;">
+    <h1>Corrections Ledger</h1>
+    <p class="meta" style="margin-bottom:2rem;">
+      The Trace Manifest maintains a permanent public record of corrections. We do not silently rewrite history.
+      <a href="/methodology">Read our corrections policy &rarr;</a>
+    </p>
+
+    <div style="display:flex;flex-direction:column;gap:1.5rem;">
+      {corrections.map(c => (
+        <article class="card" style="border-left:4px solid var(--color-corrected);">
+          <p class="meta" style="font-weight:600;">Corrected {c.date}</p>
+          <div style="margin-top:0.75rem;">
+            <p style="font-size:0.85rem;text-decoration:line-through;color:var(--color-disputed);">Previously: {c.previous}</p>
+            <p style="margin-top:0.25rem;color:var(--color-confirmed);">Updated: {c.updated}</p>
+          </div>
+          <div class="meta" style="margin-top:0.75rem;font-size:0.8rem;">
+            <p><strong>Reason:</strong> {c.reason}</p>
+            <p style="margin-top:0.25rem;"><strong>Impact:</strong> {c.impact}</p>
+          </div>
+        </article>
+      ))}
+    </div>
+
+    <p class="meta" style="text-align:center;margin-top:2rem;">
+      This corrections ledger will grow as the platform ingests and evaluates live data in Phase 2+.
+    </p>
+  </div>
+</BaseLayout>

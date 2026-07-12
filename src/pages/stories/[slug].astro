@@ -1,0 +1,167 @@
+---
+import BaseLayout from "../../layouts/BaseLayout.astro";
+
+export function getStaticPaths() {
+  return [
+    { params: { slug: "new-frontier-model-july-2026" } },
+    { params: { slug: "open-weight-model-16gb-july-2026" } },
+    { params: { slug: "prompt-injection-advisory-july-2026" } },
+    { params: { slug: "eu-ai-act-guidance-july-2026" } },
+    { params: { slug: "provider-pricing-drop-july-2026" } },
+  ];
+}
+
+const { slug } = Astro.params;
+
+const storiesMap: Record<string, any> = {
+  "new-frontier-model-july-2026": {
+    headline: "New frontier model release — vendor claims state-of-the-art coding benchmarks",
+    summary: "A major provider has announced a new model with claimed improvements across coding, reasoning, and agentic tasks. Independent verification is pending.",
+    topic: "Frontier Models",
+    published: "2026-07-12",
+    lastChecked: "2026-07-12",
+    sourceClass: "Vendor announcement",
+    evidenceStatus: "Vendor-reported",
+    sources: [
+      { label: "Official announcement", url: "#" },
+      { label: "Model card", url: "#" },
+    ],
+    relatedEntities: ["GPT-5", "Claude 4", "Gemini 3"],
+    corrections: [],
+  },
+  "open-weight-model-16gb-july-2026": {
+    headline: "Open-weight model surpasses previous best for local inference under 16 GB RAM",
+    summary: "Community benchmarks show a new open-weight model achieving competitive performance on consumer hardware. Multiple independent tests confirm the results.",
+    topic: "Open-weight Models",
+    published: "2026-07-11",
+    lastChecked: "2026-07-11",
+    sourceClass: "Independent benchmark",
+    evidenceStatus: "Confirmed",
+    sources: [
+      { label: "Community benchmark results", url: "#" },
+      { label: "Model repository", url: "#" },
+    ],
+    relatedEntities: ["Llama 4", "DeepSeek Coder V3", "Ollama"],
+    corrections: [],
+  },
+  "prompt-injection-advisory-july-2026": {
+    headline: "Security advisory: prompt injection vulnerability in popular agent framework",
+    summary: "Researchers have identified a prompt injection vector affecting several widely used agent frameworks. Patches are available. Users should update immediately.",
+    topic: "Security",
+    published: "2026-07-11",
+    lastChecked: "2026-07-11",
+    sourceClass: "Security advisory",
+    evidenceStatus: "Confirmed",
+    sources: [
+      { label: "CVE advisory", url: "#" },
+      { label: "Framework security patch notes", url: "#" },
+    ],
+    relatedEntities: ["LangChain", "CrewAI", "AutoGen"],
+    corrections: [],
+  },
+  "eu-ai-act-guidance-july-2026": {
+    headline: "EU AI Act implementation guidance published — what developers need to know",
+    summary: "New regulatory guidance clarifies compliance requirements for AI systems deployed in the EU. Classification thresholds and documentation requirements are detailed.",
+    topic: "Regulation",
+    published: "2026-07-10",
+    lastChecked: "2026-07-10",
+    sourceClass: "Official primary source",
+    evidenceStatus: "Confirmed",
+    sources: [
+      { label: "EU Commission guidance document", url: "#" },
+      { label: "AI Act text", url: "#" },
+    ],
+    relatedEntities: ["EU AI Act", "GDPR", "AI Liability Directive"],
+    corrections: [],
+  },
+  "provider-pricing-drop-july-2026": {
+    headline: "Provider pricing war intensifies — API costs drop 40% for mid-tier models",
+    summary: "Multiple providers have cut prices on mid-tier models, with some now offering free tiers with generous limits. Comparison tables have been updated.",
+    topic: "Provider Updates",
+    published: "2026-07-10",
+    lastChecked: "2026-07-10",
+    sourceClass: "Provider pricing page",
+    evidenceStatus: "Confirmed",
+    sources: [
+      { label: "Provider pricing pages", url: "#" },
+      { label: "API changelogs", url: "#" },
+    ],
+    relatedEntities: ["OpenAI", "Anthropic", "Groq", "Together AI"],
+    corrections: [],
+  },
+};
+
+const story = storiesMap[slug] ?? storiesMap["new-frontier-model-july-2026"];
+
+const evidenceLabelClass = (status: string) => {
+  const map: Record<string,string> = {
+    "Confirmed": "evidence-label--confirmed",
+    "Vendor-reported": "evidence-label--vendor",
+    "Disputed": "evidence-label--disputed",
+    "Unverified": "evidence-label--unverified",
+    "Corrected": "evidence-label--corrected",
+    "Outdated": "evidence-label--outdated",
+  };
+  return map[status] ?? "evidence-label--unverified";
+};
+---
+
+<BaseLayout title={story.headline} description={story.summary}>
+  <div class="container" style="max-width:42rem;">
+    <nav aria-label="Breadcrumb" class="meta" style="margin-bottom:1.5rem;">
+      <a href="/feed">Feed</a> &rsaquo; <a href={`/topics/${story.topic.toLowerCase().replace(/\s+/g,'-')}`}>{story.topic}</a>
+    </nav>
+
+    <span class={`evidence-label ${evidenceLabelClass(story.evidenceStatus)}`}>{story.evidenceStatus}</span>
+
+    <h1 style="margin-top:0.75rem;">{story.headline}</h1>
+
+    <div class="meta" style="margin-top:0.75rem;display:flex;gap:1rem;flex-wrap:wrap;">
+      <span>Published: {story.published}</span>
+      <span>Last checked: {story.lastChecked}</span>
+      <span>Source: {story.sourceClass}</span>
+    </div>
+
+    <div style="margin-top:2rem;">
+      <h2>Summary</h2>
+      <p>{story.summary}</p>
+    </div>
+
+    <div style="margin-top:2rem;">
+      <h2>Why this rating?</h2>
+      <p class="meta">
+        This item is rated <strong>{story.evidenceStatus}</strong> because the primary source is a vendor announcement.
+        No independent benchmark results or third-party verification were available at the time of publication.
+        The rating will be updated when independent evidence becomes available.
+      </p>
+      <p class="meta" style="margin-top:0.5rem;">
+        <a href="/methodology">Read about our evidence-rating methodology &rarr;</a>
+      </p>
+    </div>
+
+    <div style="margin-top:2rem;">
+      <h2>Sources</h2>
+      <ul style="padding-left:1.25rem;">
+        {story.sources.map((s: any) => (
+          <li><a href={s.url}>{s.label}</a></li>
+        ))}
+      </ul>
+    </div>
+
+    <div style="margin-top:2rem;">
+      <h2>Related</h2>
+      <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+        {story.relatedEntities.map((e: string) => (
+          <span style="font-size:0.85rem;padding:0.25rem 0.5rem;background:var(--color-bg-alt);border-radius:var(--radius);">{e}</span>
+        ))}
+      </div>
+    </div>
+
+    <div style="margin-top:2rem;padding:1rem;background:var(--color-bg-alt);border-radius:var(--radius);">
+      <p class="meta">
+        <strong>Corrections:</strong> No corrections have been recorded for this item.
+        <a href="/corrections">View all corrections &rarr;</a>
+      </p>
+    </div>
+  </div>
+</BaseLayout>

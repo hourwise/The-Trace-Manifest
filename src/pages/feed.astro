@@ -1,0 +1,111 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+
+// Static placeholder feed items — replaced by data layer in Phase 2
+const feedItems = [
+  {
+    headline: "New frontier model release — vendor claims state-of-the-art coding benchmarks",
+    summary: "A major provider has announced a new model with claimed improvements across coding, reasoning, and agentic tasks. Independent verification is pending.",
+    topic: "Frontier Models",
+    date: "2026-07-12",
+    sourceClass: "Vendor announcement",
+    evidenceStatus: "Vendor-reported",
+    slug: "new-frontier-model-july-2026",
+  },
+  {
+    headline: "Open-weight model surpasses previous best for local inference under 16 GB RAM",
+    summary: "Community benchmarks show a new open-weight model achieving competitive performance on consumer hardware. Multiple independent tests confirm the results.",
+    topic: "Open-weight Models",
+    date: "2026-07-11",
+    sourceClass: "Independent benchmark",
+    evidenceStatus: "Confirmed",
+    slug: "open-weight-model-16gb-july-2026",
+  },
+  {
+    headline: "Security advisory: prompt injection vulnerability in popular agent framework",
+    summary: "Researchers have identified a prompt injection vector affecting several widely used agent frameworks. Patches are available. Users should update immediately.",
+    topic: "Security",
+    date: "2026-07-11",
+    sourceClass: "Security advisory",
+    evidenceStatus: "Confirmed",
+    slug: "prompt-injection-advisory-july-2026",
+  },
+  {
+    headline: "EU AI Act implementation guidance published — what developers need to know",
+    summary: "New regulatory guidance clarifies compliance requirements for AI systems deployed in the EU. Classification thresholds and documentation requirements are detailed.",
+    topic: "Regulation",
+    date: "2026-07-10",
+    sourceClass: "Official primary source",
+    evidenceStatus: "Confirmed",
+    slug: "eu-ai-act-guidance-july-2026",
+  },
+  {
+    headline: "Provider pricing war intensifies — API costs drop 40% for mid-tier models",
+    summary: "Multiple providers have cut prices on mid-tier models, with some now offering free tiers with generous limits. Comparison tables have been updated.",
+    topic: "Provider Updates",
+    date: "2026-07-10",
+    sourceClass: "Provider pricing page",
+    evidenceStatus: "Confirmed",
+    slug: "provider-pricing-drop-july-2026",
+  },
+];
+
+const evidenceLabelClass = (status: string) => {
+  const map: Record<string,string> = {
+    "Confirmed": "evidence-label--confirmed",
+    "Vendor-reported": "evidence-label--vendor",
+    "Disputed": "evidence-label--disputed",
+    "Unverified": "evidence-label--unverified",
+    "Corrected": "evidence-label--corrected",
+    "Outdated": "evidence-label--outdated",
+  };
+  return map[status] ?? "evidence-label--unverified";
+};
+---
+
+<BaseLayout
+  title="Intelligence Feed"
+  description="Chronological and relevance-ranked feed of AI model launches, research, benchmarks, security incidents, and provider updates with evidence ratings."
+>
+  <div class="container">
+    <h1>Intelligence Feed</h1>
+    <p class="meta" style="margin-bottom:2rem;">
+      Chronological feed of AI developments with source classification and evidence ratings.
+      <a href="/methodology">How ratings work &rarr;</a>
+    </p>
+
+    <!-- Filter bar placeholder -->
+    <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:2rem;" role="group" aria-label="Filter by topic">
+      {["All", "Frontier Models", "Open-weight Models", "Coding", "Security", "Regulation", "Research", "Benchmarks", "Provider Updates"].map(topic => (
+        <a href={`/feed${topic === 'All' ? '' : `?topic=${topic.toLowerCase().replace(/\s+/g,'-')}`}`}
+           style="font-size:0.85rem;padding:0.25rem 0.75rem;border:1px solid var(--color-border);border-radius:var(--radius);text-decoration:none;"
+           class="meta">
+          {topic}
+        </a>
+      ))}
+    </div>
+
+    <!-- Feed items -->
+    <div style="display:flex;flex-direction:column;gap:1rem;">
+      {feedItems.map(item => (
+        <article class="card">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:0.5rem;">
+            <span class="meta">{item.topic}</span>
+            <span class={`evidence-label ${evidenceLabelClass(item.evidenceStatus)}`}>{item.evidenceStatus}</span>
+          </div>
+          <h2 style="font-size:1.15rem;margin-top:0.5rem;">
+            <a href={`/stories/${item.slug}`}>{item.headline}</a>
+          </h2>
+          <p class="meta" style="margin-top:0.25rem;">{item.summary}</p>
+          <p class="meta" style="margin-top:0.5rem;font-size:0.8rem;">
+            Source: {item.sourceClass} &middot; {item.date}
+          </p>
+        </article>
+      ))}
+    </div>
+
+    <p class="meta" style="text-align:center;margin-top:2rem;">
+      This is a static Phase 1 placeholder. Live ingestion begins in Phase 2.
+    </p>
+  </div>
+</BaseLayout>

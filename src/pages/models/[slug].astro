@@ -1,0 +1,140 @@
+---
+import BaseLayout from "../../layouts/BaseLayout.astro";
+
+export function getStaticPaths() {
+  return [
+    { params: { slug: "gpt-5" } },
+    { params: { slug: "claude-4" } },
+    { params: { slug: "llama-4" } },
+  ];
+}
+
+const { slug } = Astro.params;
+
+const modelsMap: Record<string, any> = {
+  "gpt-5": {
+    name: "GPT-5",
+    provider: "OpenAI",
+    version: "2026-07",
+    released: "2026-07-10",
+    status: "Released",
+    openness: "Closed",
+    licence: "Proprietary",
+    parameters: "Undisclosed",
+    contextWindow: "256K tokens",
+    modalities: ["Text", "Code", "Image"],
+    toolUse: true,
+    structuredOutput: true,
+    apiAvailable: true,
+    localAvailable: false,
+    providers: ["OpenAI", "Azure OpenAI"],
+    inputPrice: "$15.00 / 1M tokens",
+    outputPrice: "$60.00 / 1M tokens",
+    cachedInputPrice: "$7.50 / 1M tokens",
+    bestUseCases: ["Coding", "Reasoning", "Agent workflows", "Long-form generation"],
+    weaknesses: ["Cost at scale", "Latency for real-time use", "No local deployment"],
+    lastVerified: "2026-07-12",
+  },
+  "claude-4": {
+    name: "Claude 4",
+    provider: "Anthropic",
+    version: "2026-06",
+    released: "2026-06-15",
+    status: "Released",
+    openness: "Closed",
+    licence: "Proprietary",
+    parameters: "Undisclosed",
+    contextWindow: "200K tokens",
+    modalities: ["Text", "Code", "Image"],
+    toolUse: true,
+    structuredOutput: true,
+    apiAvailable: true,
+    localAvailable: false,
+    providers: ["Anthropic", "Amazon Bedrock", "Google Cloud Vertex AI"],
+    inputPrice: "$15.00 / 1M tokens",
+    outputPrice: "$75.00 / 1M tokens",
+    cachedInputPrice: "$3.75 / 1M tokens",
+    bestUseCases: ["Long-context analysis", "Coding", "Safety-critical applications"],
+    weaknesses: ["Higher output cost", "No local deployment", "Rate limits on free tier"],
+    lastVerified: "2026-07-12",
+  },
+  "llama-4": {
+    name: "Llama 4",
+    provider: "Meta",
+    version: "2026-05",
+    released: "2026-05-20",
+    status: "Released",
+    openness: "Open-weight",
+    licence: "Llama 4 Community Licence",
+    parameters: "8B / 70B / 405B",
+    contextWindow: "128K tokens",
+    modalities: ["Text", "Code"],
+    toolUse: true,
+    structuredOutput: true,
+    apiAvailable: true,
+    localAvailable: true,
+    providers: ["Self-hosted", "Together AI", "Fireworks AI", "Groq"],
+    inputPrice: "Self-hosted or $0.20–$1.00 / 1M tokens",
+    outputPrice: "Self-hosted or $0.60–$3.00 / 1M tokens",
+    cachedInputPrice: "Varies by provider",
+    bestUseCases: ["Local deployment", "Fine-tuning", "Cost-sensitive production", "Privacy-critical applications"],
+    weaknesses: ["Weaker than frontier closed models on complex reasoning", "Licence restrictions on commercial scale"],
+    lastVerified: "2026-07-11",
+  },
+};
+
+const model = modelsMap[slug] ?? modelsMap["gpt-5"];
+---
+
+<BaseLayout title={`${model.name} — Model Detail`} description={`${model.name} by ${model.provider}: pricing, capabilities, benchmarks, and evidence.`}>
+  <div class="container" style="max-width:42rem;">
+    <nav aria-label="Breadcrumb" class="meta" style="margin-bottom:1.5rem;">
+      <a href="/models">Models</a> &rsaquo; {model.name}
+    </nav>
+
+    <h1>{model.name}</h1>
+    <p class="meta" style="margin-top:0.25rem;">{model.provider} &middot; v{model.version} &middot; {model.openness}</p>
+
+    <div class="grid grid--2" style="margin-top:2rem;">
+      <div>
+        <h2>Capabilities</h2>
+        <dl style="margin-top:0.75rem;">
+          <div style="display:flex;justify-content:space-between;padding:0.25rem 0;border-bottom:1px solid var(--color-border);"><dt class="meta">Context window</dt><dd>{model.contextWindow}</dd></div>
+          <div style="display:flex;justify-content:space-between;padding:0.25rem 0;border-bottom:1px solid var(--color-border);"><dt class="meta">Modalities</dt><dd>{model.modalities.join(", ")}</dd></div>
+          <div style="display:flex;justify-content:space-between;padding:0.25rem 0;border-bottom:1px solid var(--color-border);"><dt class="meta">Tool use</dt><dd>{model.toolUse ? "Yes" : "No"}</dd></div>
+          <div style="display:flex;justify-content:space-between;padding:0.25rem 0;border-bottom:1px solid var(--color-border);"><dt class="meta">Structured output</dt><dd>{model.structuredOutput ? "Yes" : "No"}</dd></div>
+          <div style="display:flex;justify-content:space-between;padding:0.25rem 0;border-bottom:1px solid var(--color-border);"><dt class="meta">API available</dt><dd>{model.apiAvailable ? "Yes" : "No"}</dd></div>
+          <div style="display:flex;justify-content:space-between;padding:0.25rem 0;border-bottom:1px solid var(--color-border);"><dt class="meta">Local available</dt><dd>{model.localAvailable ? "Yes" : "No"}</dd></div>
+        </dl>
+      </div>
+      <div>
+        <h2>Pricing</h2>
+        <dl style="margin-top:0.75rem;">
+          <div style="display:flex;justify-content:space-between;padding:0.25rem 0;border-bottom:1px solid var(--color-border);"><dt class="meta">Input</dt><dd>{model.inputPrice}</dd></div>
+          <div style="display:flex;justify-content:space-between;padding:0.25rem 0;border-bottom:1px solid var(--color-border);"><dt class="meta">Output</dt><dd>{model.outputPrice}</dd></div>
+          <div style="display:flex;justify-content:space-between;padding:0.25rem 0;border-bottom:1px solid var(--color-border);"><dt class="meta">Cached input</dt><dd>{model.cachedInputPrice}</dd></div>
+        </dl>
+        <h2 style="margin-top:1.5rem;">Providers</h2>
+        <ul style="padding-left:1.25rem;margin-top:0.5rem;">
+          {model.providers.map((p: string) => <li>{p}</li>)}
+        </ul>
+      </div>
+    </div>
+
+    <div style="margin-top:2rem;">
+      <h2>Best use cases</h2>
+      <ul style="padding-left:1.25rem;margin-top:0.5rem;">
+        {model.bestUseCases.map((u: string) => <li>{u}</li>)}
+      </ul>
+    </div>
+
+    <div style="margin-top:2rem;">
+      <h2>Known weaknesses</h2>
+      <ul style="padding-left:1.25rem;margin-top:0.5rem;">
+        {model.weaknesses.map((w: string) => <li>{w}</li>)}
+      </ul>
+    </div>
+
+    <p class="meta" style="margin-top:2rem;">Last verified: {model.lastVerified} &middot; <a href="/corrections">See corrections &rarr;</a></p>
+  </div>
+</BaseLayout>

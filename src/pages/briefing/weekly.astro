@@ -1,0 +1,50 @@
+---
+import BaseLayout from "../../layouts/BaseLayout.astro";
+---
+
+<BaseLayout
+  title="Weekly Briefing"
+  description="Weekly summary of consequential AI developments, benchmark movement, provider changes, and disputed claims."
+>
+  <div class="container" style="max-width:42rem;">
+    <nav aria-label="Breadcrumb" class="meta" style="margin-bottom:1.5rem;">
+      <a href="/briefing/daily">Briefings</a> &rsaquo; Weekly
+    </nav>
+
+    <h1>Weekly Briefing</h1>
+    <p class="meta" style="margin-top:0.25rem;">Week ending 12 July 2026</p>
+
+    <p style="margin-top:1.5rem;padding:0.75rem;background:var(--color-bg-alt);border-radius:var(--radius);font-size:0.9rem;">
+      <strong>Phase 1 placeholder.</strong> Automated weekly briefings with benchmark movement and provider comparison changes begin in Phase 3.
+    </p>
+
+    <section style="margin-top:2rem;">
+      <h2>Most consequential developments</h2>
+      <ul style="padding-left:1.25rem;display:flex;flex-direction:column;gap:0.5rem;">
+        <li>New frontier model launch — independent benchmarks pending</li>
+        <li>Provider API pricing dropped 40% industry-wide on mid-tier models</li>
+        <li>Major prompt injection vulnerability patched across agent frameworks</li>
+        <li>EU AI Act enforcement guidance published</li>
+        <li>Open-weight model surpasses proprietary models on 16 GB consumer hardware</li>
+      </ul>
+    </section>
+
+    <section style="margin-top:2rem;">
+      <h2>Most disputed claims this week</h2>
+      <ul style="padding-left:1.25rem;display:flex;flex-direction:column;gap:0.5rem;">
+        <li>Vendor coding benchmark claims — no independent verification yet available</li>
+      </ul>
+    </section>
+
+    <section style="margin-top:2rem;">
+      <h2>What changed since last week</h2>
+      <p class="meta">
+        A new frontier model released. API prices dropped across providers. Agent framework security patches issued. Regulatory guidance published for EU deployments.
+      </p>
+    </section>
+
+    <div style="margin-top:2rem;">
+      <a href="/rss/daily.xml" style="border:1px solid var(--color-accent);color:var(--color-accent);padding:0.5rem 1rem;border-radius:var(--radius);font-size:0.9rem;text-decoration:none;">Subscribe via RSS</a>
+    </div>
+  </div>
+</BaseLayout>

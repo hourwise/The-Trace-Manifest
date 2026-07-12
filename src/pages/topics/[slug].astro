@@ -1,0 +1,77 @@
+---
+import BaseLayout from "../../layouts/BaseLayout.astro";
+
+export function getStaticPaths() {
+  return [
+    { params: { slug: "frontier-models" } },
+    { params: { slug: "open-weight-models" } },
+    { params: { slug: "security" } },
+    { params: { slug: "regulation" } },
+    { params: { slug: "provider-updates" } },
+  ];
+}
+
+const { slug } = Astro.params;
+
+const topicsMap: Record<string, any> = {
+  "frontier-models": {
+    name: "Frontier Models",
+    description: "Large-scale, state-of-the-art models from major providers. Includes both closed and open-weight frontier releases.",
+    stories: [
+      { headline: "New frontier model release — vendor claims state-of-the-art coding benchmarks", date: "2026-07-12", evidenceStatus: "Vendor-reported", slug: "new-frontier-model-july-2026" },
+      { headline: "Frontier model reasoning benchmark saturates — new evaluation needed", date: "2026-07-08", evidenceStatus: "Confirmed", slug: "reasoning-benchmark-saturation" },
+    ],
+  },
+  "open-weight-models": {
+    name: "Open-weight Models",
+    description: "Models with publicly downloadable weights, including Llama, Mistral, Qwen, DeepSeek, and community fine-tunes.",
+    stories: [
+      { headline: "Open-weight model surpasses previous best for local inference under 16 GB RAM", date: "2026-07-11", evidenceStatus: "Confirmed", slug: "open-weight-model-16gb-july-2026" },
+    ],
+  },
+  "security": {
+    name: "Security",
+    description: "Vulnerabilities, advisories, patches, and best practices for AI system security.",
+    stories: [
+      { headline: "Security advisory: prompt injection vulnerability in popular agent framework", date: "2026-07-11", evidenceStatus: "Confirmed", slug: "prompt-injection-advisory-july-2026" },
+    ],
+  },
+  "regulation": {
+    name: "Regulation",
+    description: "AI legislation, regulatory guidance, compliance requirements, and policy developments worldwide.",
+    stories: [
+      { headline: "EU AI Act implementation guidance published — what developers need to know", date: "2026-07-10", evidenceStatus: "Confirmed", slug: "eu-ai-act-guidance-july-2026" },
+    ],
+  },
+  "provider-updates": {
+    name: "Provider Updates",
+    description: "API changes, pricing updates, new features, deprecations, and provider reliability information.",
+    stories: [
+      { headline: "Provider pricing war intensifies — API costs drop 40% for mid-tier models", date: "2026-07-10", evidenceStatus: "Confirmed", slug: "provider-pricing-drop-july-2026" },
+    ],
+  },
+};
+
+const topic = topicsMap[slug] ?? topicsMap["frontier-models"];
+---
+
+<BaseLayout title={topic.name} description={topic.description}>
+  <div class="container" style="max-width:42rem;">
+    <nav aria-label="Breadcrumb" class="meta" style="margin-bottom:1.5rem;">
+      <a href="/feed">Feed</a> &rsaquo; {topic.name}
+    </nav>
+
+    <h1>{topic.name}</h1>
+    <p class="meta" style="margin-top:0.5rem;">{topic.description}</p>
+
+    <div style="margin-top:2rem;display:flex;flex-direction:column;gap:1rem;">
+      {topic.stories.map((s: any) => (
+        <article class="card">
+          <span class={`evidence-label ${s.evidenceStatus === 'Confirmed' ? 'evidence-label--confirmed' : 'evidence-label--vendor'}`}>{s.evidenceStatus}</span>
+          <h2 style="font-size:1.1rem;margin-top:0.5rem;"><a href={`/stories/${s.slug}`}>{s.headline}</a></h2>
+          <p class="meta">{s.date}</p>
+        </article>
+      ))}
+    </div>
+  </div>
+</BaseLayout>

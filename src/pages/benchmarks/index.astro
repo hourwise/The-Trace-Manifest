@@ -1,0 +1,46 @@
+---
+import BaseLayout from "../../layouts/BaseLayout.astro";
+
+const benchmarks = [
+  { name: "HumanEval", version: "2024", domain: "Code generation", health: "Saturating", description: "Popular but increasingly saturated code generation benchmark." },
+  { name: "MMLU", version: "2024", domain: "General knowledge", health: "Saturating", description: "Multi-task language understanding across 57 subjects. Widely used but near-ceiling for frontier models." },
+  { name: "SWE-bench", version: "2025", domain: "Software engineering", health: "Healthy", description: "Real-world software engineering tasks. Currently the most informative coding benchmark." },
+  { name: "AgentBench", version: "2025", domain: "Agent capability", health: "Healthy", description: "Multi-environment agent evaluation. Growing in relevance for agentic workflows." },
+];
+
+const healthClass = (h: string) => {
+  const map: Record<string,string> = { "Healthy": "evidence-label--confirmed", "Saturating": "evidence-label--outdated", "Contamination concern": "evidence-label--disputed" };
+  return map[h] ?? "evidence-label--unverified";
+};
+---
+
+<BaseLayout
+  title="Benchmark Registry"
+  description="Methodology-aware benchmark tracking with health status, reproducibility flags, and independent verification markers."
+>
+  <div class="container">
+    <h1>Benchmark Registry</h1>
+    <p class="meta" style="margin-bottom:2rem;">
+      Benchmarks are not universally comparable. Each entry tracks methodology, health, reproducibility, and contamination concerns.
+    </p>
+
+    <div style="display:flex;flex-direction:column;gap:1rem;">
+      {benchmarks.map(b => (
+        <article class="card">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:0.5rem;">
+            <div>
+              <h2 style="font-size:1.15rem;"><a href={`/benchmarks/${b.name.toLowerCase().replace(/\s+/g,'-')}`}>{b.name}</a></h2>
+              <p class="meta">{b.domain} &middot; v{b.version}</p>
+            </div>
+            <span class={`evidence-label ${healthClass(b.health)}`}>{b.health}</span>
+          </div>
+          <p class="meta" style="margin-top:0.5rem;">{b.description}</p>
+        </article>
+      ))}
+    </div>
+
+    <p class="meta" style="text-align:center;margin-top:2rem;">
+      Static Phase 1 placeholder. Full benchmark registry with run records and independent results in Phase 4.
+    </p>
+  </div>
+</BaseLayout>

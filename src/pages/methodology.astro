@@ -1,0 +1,79 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+---
+
+<BaseLayout
+  title="Methodology"
+  description="How The Trace Manifest classifies sources, evaluates evidence, assigns ratings, and handles corrections."
+>
+  <div class="container" style="max-width:42rem;">
+    <h1>Methodology</h1>
+
+    <section style="margin-top:2rem;">
+      <h2>Source Classification</h2>
+      <p class="meta">Sources are classified by type, not by a single trust score:</p>
+      <ol style="padding-left:1.5rem;margin-top:0.75rem;">
+        <li>Official primary source (documentation, model cards, security advisories, pricing pages)</li>
+        <li>Peer-reviewed or formal research</li>
+        <li>Independent benchmark or test</li>
+        <li>Reputable technical journalism</li>
+        <li>Specialist analysis</li>
+        <li>Community report</li>
+        <li>Anonymous or unverifiable claim</li>
+      </ol>
+    </section>
+
+    <section style="margin-top:2rem;">
+      <h2>Evidence Dimensions</h2>
+      <p class="meta">Each claim is evaluated across multiple dimensions, never reduced to a single score:</p>
+      <ul style="padding-left:1.5rem;margin-top:0.75rem;display:flex;flex-direction:column;gap:0.35rem;">
+        <li>Primary-source support</li>
+        <li>Methodology quality</li>
+        <li>Reproducibility</li>
+        <li>Independent corroboration</li>
+        <li>Source independence</li>
+        <li>Conflict of interest</li>
+        <li>Timeliness</li>
+        <li>Version specificity</li>
+        <li>Claim severity (extraordinary claims require extraordinary evidence)</li>
+        <li>Contradictory evidence</li>
+        <li>Correction history</li>
+      </ul>
+    </section>
+
+    <section style="margin-top:2rem;">
+      <h2>Public Rating Labels</h2>
+      <div style="display:flex;flex-direction:column;gap:0.5rem;margin-top:0.75rem;">
+        <div><span class="evidence-label evidence-label--confirmed">Confirmed</span> <span class="meta">— Supported by multiple independent primary sources</span></div>
+        <div><span class="evidence-label evidence-label--confirmed">Strongly supported</span> <span class="meta">— Strong primary-source support with some corroboration</span></div>
+        <div><span class="evidence-label evidence-label--vendor">Vendor-reported</span> <span class="meta">— Claimed by the vendor; independent verification pending or not available</span></div>
+        <div><span class="evidence-label evidence-label--unverified">Unverified</span> <span class="meta">— Claim has not yet been independently checked</span></div>
+        <div><span class="evidence-label evidence-label--disputed">Disputed</span> <span class="meta">— Credible contradictory evidence exists</span></div>
+        <div><span class="evidence-label evidence-label--corrected">Corrected</span> <span class="meta">— Previously published information has been updated</span></div>
+        <div><span class="evidence-label evidence-label--outdated">Outdated</span> <span class="meta">— Information is no longer current</span></div>
+      </div>
+    </section>
+
+    <section style="margin-top:2rem;">
+      <h2>Corrections Policy</h2>
+      <p class="meta">
+        Corrections are public and permanent. When we correct a claim, rating, or recommendation, the original statement remains visible alongside the correction, the date, the reason, and the evidence that prompted the change. We do not silently rewrite history.
+      </p>
+      <p class="meta" style="margin-top:0.75rem;">
+        <a href="/corrections">View the corrections ledger &rarr;</a>
+      </p>
+    </section>
+
+    <section style="margin-top:2rem;">
+      <h2>Monetisation and Independence</h2>
+      <p class="meta">
+        Advertisers, sponsors, and affiliates cannot purchase higher ratings, better rankings, or suppressed negative findings. Rankings and evidence ratings are structurally separated from commercial relationships.
+        <a href="/docs/trust/editorial-independence.md">Read the full editorial independence policy &rarr;</a>
+      </p>
+    </section>
+
+    <p class="meta" style="margin-top:3rem;">
+      This methodology will be expanded as the platform develops. Last reviewed: 12 July 2026.
+    </p>
+  </div>
+</BaseLayout>

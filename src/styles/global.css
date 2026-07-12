@@ -1,0 +1,137 @@
+/* The Trace Manifest — Global Styles
+   Phase 1: Accessible, responsive, content-first design */
+
+:root {
+  --color-bg: #ffffff;
+  --color-bg-alt: #f8f9fa;
+  --color-text: #1a1a2e;
+  --color-text-muted: #5a5a6e;
+  --color-border: #e2e2ea;
+  --color-accent: #2563eb;
+  --color-accent-hover: #1d4ed8;
+  --color-confirmed: #166534;
+  --color-disputed: #991b1b;
+  --color-unverified: #92400e;
+  --color-corrected: #6b21a8;
+  --color-vendor: #1e40af;
+  --color-outdated: #6b7280;
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", "Fira Code", monospace;
+  --max-width: 72rem;
+  --radius: 6px;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.6;
+  color: var(--color-text);
+  background: var(--color-bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+a {
+  color: var(--color-accent);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+img {
+  max-width: 100%;
+  height: auto;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  line-height: 1.25;
+  font-weight: 600;
+}
+
+h1 { font-size: 2rem; }
+h2 { font-size: 1.5rem; }
+h3 { font-size: 1.25rem; }
+
+code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+
+/* Layout */
+.container {
+  max-width: var(--max-width);
+  margin: 0 auto;
+  padding: 0 1rem;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  border: 0;
+}
+
+/* Evidence labels */
+.evidence-label {
+  display: inline-block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.125rem 0.5rem;
+  border-radius: var(--radius);
+  text-transform: uppercase;
+  letter-spacing: 0.025em;
+}
+
+.evidence-label--confirmed { background: #dcfce7; color: var(--color-confirmed); }
+.evidence-label--disputed { background: #fce4ec; color: var(--color-disputed); }
+.evidence-label--unverified { background: #fef3c7; color: var(--color-unverified); }
+.evidence-label--corrected { background: #f3e8ff; color: var(--color-corrected); }
+.evidence-label--vendor { background: #dbeafe; color: var(--color-vendor); }
+.evidence-label--outdated { background: #f3f4f6; color: var(--color-outdated); }
+
+/* Cards */
+.card {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 1.25rem;
+  background: var(--color-bg);
+}
+
+.card:hover {
+  border-color: var(--color-accent);
+}
+
+/* Utility */
+.meta {
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+}
+
+.grid {
+  display: grid;
+  gap: 1.5rem;
+}
+
+@media (min-width: 640px) {
+  .grid--2 { grid-template-columns: repeat(2, 1fr); }
+  .grid--3 { grid-template-columns: repeat(3, 1fr); }
+}
