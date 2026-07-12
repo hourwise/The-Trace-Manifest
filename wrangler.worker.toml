@@ -8,7 +8,7 @@ compatibility_flags = ["nodejs_compat"]
 [[d1_databases]]
 binding = "DB"
 database_name = "trace-manifest-db"
-database_id = "REPLACE_WITH_REAL_D1_UUID"
+database_id = "1625036a-ffe2-4103-bf9d-086bae150561"
 
 [[r2_buckets]]
 binding = "RAW_STORE"

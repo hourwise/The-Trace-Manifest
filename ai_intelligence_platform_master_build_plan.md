@@ -1828,10 +1828,10 @@ Recommended development principle:
 8. ~~Define MVP data model~~ → **Done.** Entity list and provenance rules in `docs/architecture/initial-data-model.md`
 9. ~~Build static Astro shell~~ → **Done.** 26 pages, RSS, sitemap, responsive nav, accessibility baseline
 10. ~~Add RSS and GitHub ingestion~~ → **Done.** Worker built with RSS, GitHub Releases, arXiv, and Hacker News fetchers; cron schedules configured; pending Cloudflare deploy
-11. Add manual editorial workflow
+11. ~~Add manual editorial workflow~~ → **Done.** Admin UI built (sources, jobs, review queue pages); review queue per ADR-0004
 12. ~~Add model and benchmark records~~ → **Done.** Static templates built with placeholder data; full structured data in Phase 4
 13. ~~Add daily briefing generation~~ → **Done.** Daily and weekly briefing templates built
-14. ~~Add citation-grounded ask prototype~~ → **Done.** 20 curated Q&As on `/ask` per ADR-0007
+14. ~~Add citation-grounded ask prototype~~ → **Done.** 20 curated Q&As on `/ask` + typed ask results detail page at `/ask/[question]` with evidence breakdown, source provenance, and posture sidebar
 15. Add supporter and newsletter foundations
 
 ---

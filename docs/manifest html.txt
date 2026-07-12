@@ -1,0 +1,1835 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ask results — The Trace Manifest</title>
+  <meta name="description" content="Evidence-linked answer with facts, interpretation, uncertainty, and sources kept separate." />
+  <style data-od-inline-asset="css/tokens.css">
+/* The Trace Manifest — design tokens */
+:root,
+[data-theme="dark"] {
+  --bg: oklch(14% 0.008 250);
+  --surface: oklch(18% 0.01 250);
+  --surface-2: oklch(22% 0.01 250);
+  --fg: oklch(94% 0.012 90);
+  --muted: oklch(62% 0.015 250);
+  --border: oklch(28% 0.012 250);
+  --accent: oklch(72% 0.12 70);
+  --accent-fg: oklch(18% 0.02 70);
+  --ev-confirmed: oklch(68% 0.09 165);
+  --ev-strong: oklch(70% 0.08 175);
+  --ev-provisional: oklch(72% 0.12 75);
+  --ev-vendor: oklch(70% 0.1 55);
+  --ev-community: oklch(65% 0.06 220);
+  --ev-disputed: oklch(58% 0.18 25);
+  --ev-corrected: oklch(62% 0.14 35);
+  --ev-superseded: oklch(55% 0.02 250);
+  --ev-outdated: oklch(52% 0.02 250);
+  --ticker-bg: oklch(12% 0.008 250);
+  --focus: oklch(72% 0.12 70);
+  --shell-shadow: 0 1px 0 color-mix(in oklch, var(--border) 80%, transparent);
+  --radius: 6px;
+  --radius-lg: 10px;
+  --font-display: "Iowan Old Style", "Charter", "Source Serif 4", Georgia, "Times New Roman", serif;
+  --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+  --space-8: 4rem;
+  --max: 1200px;
+  --max-wide: 1360px;
+  color-scheme: dark;
+}
+
+[data-theme="light"] {
+  --bg: oklch(98% 0.004 95);
+  --surface: oklch(100% 0 0);
+  --surface-2: oklch(96% 0.004 95);
+  --fg: oklch(18% 0.02 70);
+  --muted: oklch(48% 0.015 250);
+  --border: oklch(90% 0.006 95);
+  --accent: oklch(52% 0.12 55);
+  --accent-fg: oklch(99% 0.01 95);
+  --ev-confirmed: oklch(48% 0.1 165);
+  --ev-strong: oklch(46% 0.09 175);
+  --ev-provisional: oklch(52% 0.12 70);
+  --ev-vendor: oklch(50% 0.1 55);
+  --ev-community: oklch(48% 0.08 230);
+  --ev-disputed: oklch(48% 0.18 25);
+  --ev-corrected: oklch(50% 0.14 35);
+  --ev-superseded: oklch(50% 0.02 250);
+  --ev-outdated: oklch(48% 0.02 250);
+  --ticker-bg: oklch(96% 0.004 95);
+  --focus: oklch(52% 0.12 55);
+  color-scheme: light;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+</style>
+  <style data-od-inline-asset="css/components.css">
+/* The Trace Manifest — shared components */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  font-family: var(--font-body);
+  font-size: 15px;
+  line-height: 1.55;
+  color: var(--fg);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+}
+
+img, svg { display: block; max-width: 100%; }
+a { color: inherit; text-decoration: none; }
+a:hover { color: var(--accent); }
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; border: none; background: none; }
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0;
+}
+
+.wrap {
+  width: min(100% - 2rem, var(--max));
+  margin-inline: auto;
+}
+.wrap-wide {
+  width: min(100% - 2rem, var(--max-wide));
+  margin-inline: auto;
+}
+
+/* —— Type —— */
+.display {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.12;
+  text-wrap: pretty;
+}
+.h1 { font-size: clamp(1.75rem, 3.5vw, 2.75rem); }
+.h2 { font-size: clamp(1.35rem, 2.2vw, 1.85rem); letter-spacing: -0.015em; }
+.h3 { font-size: 1.125rem; letter-spacing: -0.01em; font-weight: 600; }
+.lead { font-size: 1.05rem; color: var(--muted); max-width: 58ch; line-height: 1.6; }
+.meta {
+  font-size: 0.75rem;
+  color: var(--muted);
+  letter-spacing: 0.02em;
+}
+.mono {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  font-variant-numeric: tabular-nums;
+}
+.kicker {
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* —— Evidence badges —— */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35em;
+  padding: 0.2em 0.55em;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border: 1px solid transparent;
+  white-space: nowrap;
+  line-height: 1.3;
+}
+.badge::before {
+  content: "";
+  width: 0.45em;
+  height: 0.45em;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+.badge-confirmed { color: var(--ev-confirmed); background: color-mix(in oklch, var(--ev-confirmed) 12%, transparent); border-color: color-mix(in oklch, var(--ev-confirmed) 28%, transparent); }
+.badge-strong { color: var(--ev-strong); background: color-mix(in oklch, var(--ev-strong) 12%, transparent); border-color: color-mix(in oklch, var(--ev-strong) 28%, transparent); }
+.badge-provisional { color: var(--ev-provisional); background: color-mix(in oklch, var(--ev-provisional) 12%, transparent); border-color: color-mix(in oklch, var(--ev-provisional) 28%, transparent); }
+.badge-vendor { color: var(--ev-vendor); background: color-mix(in oklch, var(--ev-vendor) 12%, transparent); border-color: color-mix(in oklch, var(--ev-vendor) 28%, transparent); }
+.badge-community { color: var(--ev-community); background: color-mix(in oklch, var(--ev-community) 12%, transparent); border-color: color-mix(in oklch, var(--ev-community) 28%, transparent); }
+.badge-disputed { color: var(--ev-disputed); background: color-mix(in oklch, var(--ev-disputed) 12%, transparent); border-color: color-mix(in oklch, var(--ev-disputed) 28%, transparent); }
+.badge-corrected { color: var(--ev-corrected); background: color-mix(in oklch, var(--ev-corrected) 12%, transparent); border-color: color-mix(in oklch, var(--ev-corrected) 28%, transparent); }
+.badge-superseded,
+.badge-outdated { color: var(--ev-outdated); background: color-mix(in oklch, var(--ev-outdated) 14%, transparent); border-color: color-mix(in oklch, var(--ev-outdated) 30%, transparent); }
+.badge-healthy { color: var(--ev-confirmed); background: color-mix(in oklch, var(--ev-confirmed) 12%, transparent); border-color: color-mix(in oklch, var(--ev-confirmed) 28%, transparent); }
+.badge-limited { color: var(--ev-provisional); background: color-mix(in oklch, var(--ev-provisional) 12%, transparent); border-color: color-mix(in oklch, var(--ev-provisional) 28%, transparent); }
+.badge-saturating { color: var(--ev-vendor); background: color-mix(in oklch, var(--ev-vendor) 12%, transparent); border-color: color-mix(in oklch, var(--ev-vendor) 28%, transparent); }
+.badge-contamination,
+.badge-poor { color: var(--ev-disputed); background: color-mix(in oklch, var(--ev-disputed) 12%, transparent); border-color: color-mix(in oklch, var(--ev-disputed) 28%, transparent); }
+.badge-deprecated { color: var(--ev-outdated); background: color-mix(in oklch, var(--ev-outdated) 14%, transparent); border-color: color-mix(in oklch, var(--ev-outdated) 30%, transparent); }
+.badge-sponsored {
+  color: var(--muted);
+  background: var(--surface-2);
+  border-color: var(--border);
+  letter-spacing: 0.06em;
+}
+.badge-sponsored::before { display: none; }
+
+/* —— Buttons —— */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: 44px;
+  padding: 0.55rem 1.1rem;
+  border-radius: var(--radius);
+  font-size: 0.875rem;
+  font-weight: 550;
+  letter-spacing: 0.01em;
+  border: 1px solid transparent;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.btn-primary {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+.btn-primary:hover { filter: brightness(1.06); color: var(--accent-fg); }
+.btn-secondary {
+  background: transparent;
+  border-color: var(--border);
+  color: var(--fg);
+}
+.btn-secondary:hover { background: var(--surface-2); color: var(--fg); }
+.btn-ghost {
+  background: transparent;
+  color: var(--muted);
+  min-height: 36px;
+  padding: 0.35rem 0.65rem;
+}
+.btn-ghost:hover { color: var(--fg); background: var(--surface-2); }
+.btn-sm { min-height: 36px; padding: 0.35rem 0.75rem; font-size: 0.8rem; }
+.btn-icon {
+  width: 40px; height: 40px; min-height: 40px; padding: 0;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+.btn-icon:hover { color: var(--fg); background: var(--surface-2); }
+
+/* —— Forms —— */
+.field {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.35rem 0.75rem;
+  min-height: 48px;
+}
+.field:focus-within { border-color: color-mix(in oklch, var(--accent) 55%, var(--border)); }
+.field input, .field textarea {
+  flex: 1;
+  background: transparent;
+  border: 0;
+  outline: none;
+  min-width: 0;
+  color: var(--fg);
+}
+.field input::placeholder, .field textarea::placeholder { color: var(--muted); }
+.field-icon { color: var(--muted); flex-shrink: 0; }
+
+/* —— Site chrome —— */
+.site-header {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  background: color-mix(in oklch, var(--bg) 88%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border);
+}
+.header-inner {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  min-height: 56px;
+  padding-block: 0.5rem;
+}
+.wordmark {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  flex-shrink: 0;
+  font-weight: 600;
+  font-size: 0.95rem;
+  letter-spacing: -0.01em;
+}
+.wordmark:hover { color: var(--fg); }
+.wordmark-mark {
+  width: 22px; height: 22px;
+  border: 1.5px solid var(--accent);
+  border-radius: 3px;
+  position: relative;
+  flex-shrink: 0;
+}
+.wordmark-mark::after {
+  content: "";
+  position: absolute;
+  inset: 4px;
+  border-left: 1.5px solid var(--accent);
+  border-bottom: 1.5px solid var(--accent);
+}
+.nav-desktop {
+  display: none;
+  align-items: center;
+  gap: 0.15rem;
+  flex: 1;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.nav-desktop::-webkit-scrollbar { display: none; }
+.nav-desktop a {
+  padding: 0.4rem 0.55rem;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--muted);
+  border-radius: 4px;
+  white-space: nowrap;
+}
+.nav-desktop a:hover,
+.nav-desktop a[aria-current="page"] { color: var(--fg); background: var(--surface-2); }
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.mobile-nav-toggle { display: inline-flex; }
+.mobile-drawer {
+  display: none;
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+  padding: 0.75rem 1rem 1.25rem;
+}
+.mobile-drawer.open { display: block; }
+.mobile-drawer a {
+  display: block;
+  padding: 0.75rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.95rem;
+  min-height: 44px;
+}
+.mobile-drawer a:last-child { border-bottom: 0; }
+.mobile-drawer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+@media (min-width: 1100px) {
+  .nav-desktop { display: flex; }
+  .mobile-nav-toggle { display: none; }
+  .mobile-drawer { display: none !important; }
+}
+
+/* —— Ticker —— */
+.ticker {
+  background: var(--ticker-bg);
+  border-bottom: 1px solid var(--border);
+  overflow: hidden;
+  height: 36px;
+}
+.ticker-track {
+  display: flex;
+  align-items: center;
+  gap: 2rem;
+  height: 100%;
+  width: max-content;
+  animation: ticker-scroll 55s linear infinite;
+  padding-inline: 1rem;
+}
+.ticker:hover .ticker-track { animation-play-state: paused; }
+@keyframes ticker-scroll {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+.ticker-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  font-size: 0.75rem;
+  white-space: nowrap;
+  color: var(--muted);
+}
+.ticker-item strong { color: var(--fg); font-weight: 500; }
+.ticker-cat {
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+/* —— Cards —— */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 1.15rem 1.25rem;
+}
+.card-hover:hover {
+  border-color: color-mix(in oklch, var(--fg) 18%, var(--border));
+  background: color-mix(in oklch, var(--surface) 70%, var(--surface-2));
+}
+.section {
+  padding-block: var(--space-7);
+  border-top: 1px solid var(--border);
+}
+.section-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem 1.5rem;
+  margin-bottom: 1.35rem;
+}
+.section-head .h2 { font-family: var(--font-display); }
+
+/* —— Filters / chips —— */
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+.chip {
+  min-height: 36px;
+  padding: 0.35rem 0.75rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 500;
+}
+.chip:hover { color: var(--fg); border-color: color-mix(in oklch, var(--fg) 25%, var(--border)); }
+.chip[aria-pressed="true"],
+.chip.active {
+  color: var(--fg);
+  background: var(--surface-2);
+  border-color: color-mix(in oklch, var(--accent) 45%, var(--border));
+}
+
+/* —— Tables —— */
+.table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  -webkit-overflow-scrolling: touch;
+}
+table.data {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.84rem;
+  min-width: 720px;
+}
+table.data th,
+table.data td {
+  padding: 0.7rem 0.85rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+table.data th {
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  background: var(--surface-2);
+  white-space: nowrap;
+}
+table.data tr:last-child td { border-bottom: 0; }
+table.data tbody tr:hover td { background: color-mix(in oklch, var(--surface-2) 55%, transparent); }
+table.data .num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.8rem;
+}
+.move-up { color: var(--ev-confirmed); }
+.move-down { color: var(--ev-disputed); }
+.move-flat { color: var(--muted); }
+
+/* —— Tags —— */
+.tag {
+  display: inline-flex;
+  padding: 0.15em 0.5em;
+  border-radius: 4px;
+  font-size: 0.72rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+.tag-row { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+
+/* —— Confidence bar —— */
+.conf {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+.conf-bar {
+  width: 56px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+  overflow: hidden;
+}
+.conf-fill {
+  height: 100%;
+  background: var(--ev-confirmed);
+  border-radius: 2px;
+}
+.conf-fill.warn { background: var(--ev-provisional); }
+.conf-fill.low { background: var(--ev-disputed); }
+
+/* —— Story feed card —— */
+.feed-card {
+  display: grid;
+  gap: 0.55rem;
+  padding: 1rem 0;
+  border-bottom: 1px solid var(--border);
+}
+.feed-card:last-child { border-bottom: 0; }
+.feed-card-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem 0.75rem;
+}
+.feed-card h3 {
+  font-size: 1.05rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+  text-wrap: pretty;
+}
+.feed-card h3 a:hover { color: var(--accent); }
+.feed-card p { color: var(--muted); font-size: 0.9rem; max-width: 72ch; }
+.feed-card-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+}
+.feed-actions { display: flex; gap: 0.25rem; margin-left: auto; }
+
+/* —— Lead story —— */
+.lead-story {
+  display: grid;
+  gap: 1.25rem;
+}
+@media (min-width: 900px) {
+  .lead-story { grid-template-columns: 1.4fr 1fr; align-items: start; }
+}
+.lead-main {
+  padding: 1.5rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+.lead-main .display { margin: 0.5rem 0 0.75rem; font-size: clamp(1.5rem, 2.5vw, 2rem); }
+.lead-side { display: grid; gap: 0.75rem; }
+.support-item {
+  padding: 0.9rem 1rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.support-item h4 {
+  font-size: 0.92rem;
+  font-weight: 600;
+  line-height: 1.35;
+  margin: 0.35rem 0;
+  text-wrap: pretty;
+}
+
+/* —— Tabs —— */
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin-bottom: 1rem;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.5rem;
+}
+.tab {
+  min-height: 40px;
+  padding: 0.4rem 0.85rem;
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--muted);
+  border-radius: var(--radius);
+}
+.tab:hover { color: var(--fg); }
+.tab[aria-selected="true"] {
+  color: var(--fg);
+  background: var(--surface-2);
+}
+
+/* —— Evidence panel —— */
+.ev-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 1.15rem;
+  position: sticky;
+  top: 72px;
+}
+.ev-panel h3 {
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 1rem;
+}
+.ev-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.55rem 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.85rem;
+}
+.ev-row:last-of-type { border-bottom: 0; }
+.ev-row dt { color: var(--muted); }
+.ev-row dd { text-align: right; font-weight: 500; }
+.ev-explain {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.85rem;
+  color: var(--muted);
+  line-height: 1.55;
+}
+.ev-explain-title {
+  display: block;
+  margin-bottom: 0.35rem;
+  color: var(--fg);
+  font-weight: 600;
+}
+.ask-rail-actions {
+  display: grid;
+  gap: 0.4rem;
+  margin-top: 1rem;
+}
+.ask-rail-actions .btn { width: 100%; }
+
+/* —— Compare claim —— */
+.compare-grid {
+  display: grid;
+  gap: 0.75rem;
+}
+@media (min-width: 768px) {
+  .compare-grid { grid-template-columns: 1fr 1fr; }
+}
+.compare-cell {
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.compare-cell h4 {
+  font-size: 0.7rem;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 0.5rem;
+}
+.compare-cell.claim { border-color: color-mix(in oklch, var(--ev-vendor) 40%, var(--border)); }
+.compare-cell.support { border-color: color-mix(in oklch, var(--ev-confirmed) 35%, var(--border)); }
+.compare-cell.contra { border-color: color-mix(in oklch, var(--ev-disputed) 35%, var(--border)); }
+.compare-assess {
+  grid-column: 1 / -1;
+  padding: 1.15rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+/* —— Footer —— */
+.site-footer {
+  border-top: 1px solid var(--border);
+  padding: 3rem 0 2rem;
+  margin-top: 2rem;
+  background: color-mix(in oklch, var(--bg) 70%, var(--surface));
+}
+.footer-grid {
+  display: grid;
+  gap: 2rem;
+}
+@media (min-width: 768px) {
+  .footer-grid { grid-template-columns: 1.4fr 1fr 1fr 1fr; }
+}
+.site-footer h4 {
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 0.85rem;
+}
+.site-footer a {
+  display: block;
+  color: var(--muted);
+  font-size: 0.88rem;
+  padding: 0.25rem 0;
+  min-height: 32px;
+}
+.site-footer a:hover { color: var(--fg); }
+.footer-bottom {
+  margin-top: 2rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.5rem;
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+/* —— Layout helpers —— */
+.stack-sm > * + * { margin-top: 0.5rem; }
+.stack > * + * { margin-top: 0.85rem; }
+.stack-lg > * + * { margin-top: 1.25rem; }
+.row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.grid-2 { display: grid; gap: 1rem; }
+.grid-3 { display: grid; gap: 1rem; }
+.grid-4 { display: grid; gap: 1rem; }
+@media (min-width: 640px) {
+  .grid-2 { grid-template-columns: 1fr 1fr; }
+}
+@media (min-width: 900px) {
+  .grid-3 { grid-template-columns: repeat(3, 1fr); }
+  .grid-4 { grid-template-columns: repeat(4, 1fr); }
+}
+.page-grid {
+  display: grid;
+  gap: 1.75rem;
+}
+@media (min-width: 1024px) {
+  .page-grid.with-aside {
+    grid-template-columns: minmax(0, 1fr) 300px;
+    align-items: start;
+  }
+}
+.prose h2 {
+  font-family: var(--font-display);
+  font-size: 1.35rem;
+  margin: 1.75rem 0 0.65rem;
+  letter-spacing: -0.015em;
+}
+.prose h3 {
+  font-size: 1.05rem;
+  margin: 1.35rem 0 0.5rem;
+}
+.prose p { margin-bottom: 0.85rem; max-width: 68ch; color: color-mix(in oklch, var(--fg) 92%, var(--muted)); }
+.prose ul, .prose ol { margin: 0 0 1rem 1.2rem; max-width: 68ch; color: color-mix(in oklch, var(--fg) 90%, var(--muted)); }
+.prose li { margin-bottom: 0.35rem; }
+.breadcrumb {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-bottom: 1rem;
+}
+.breadcrumb a:hover { color: var(--accent); }
+.breadcrumb span[aria-hidden] { opacity: 0.5; }
+
+/* —— Mobile cards from tables —— */
+.mobile-cards { display: none; }
+@media (max-width: 767px) {
+  .hide-mobile-table .table-wrap { display: none; }
+  .hide-mobile-table .mobile-cards { display: grid; gap: 0.75rem; }
+  .mobile-card {
+    padding: 1rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+  }
+  .mobile-card dl {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.35rem 0.75rem;
+    margin-top: 0.65rem;
+    font-size: 0.82rem;
+  }
+  .mobile-card dt { color: var(--muted); }
+  .mobile-card dd { text-align: right; font-family: var(--font-mono); font-size: 0.8rem; }
+}
+
+/* —— Hero —— */
+.hero {
+  padding: 2.5rem 0 2rem;
+}
+.hero .display {
+  font-size: clamp(2rem, 5vw, 3.25rem);
+  max-width: 16ch;
+  margin-bottom: 1rem;
+}
+.hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  margin-top: 1.25rem;
+}
+.hero-ask {
+  margin-top: 1.5rem;
+  max-width: 640px;
+}
+.trust-line {
+  margin-top: 1rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.25rem;
+  align-items: center;
+}
+.fresh-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--ev-confirmed);
+  display: inline-block;
+}
+
+/* —— Chart bar (simple) —— */
+.bar-chart {
+  display: grid;
+  gap: 0.65rem;
+}
+.bar-row {
+  display: grid;
+  grid-template-columns: 100px 1fr 48px;
+  gap: 0.65rem;
+  align-items: center;
+  font-size: 0.8rem;
+}
+.bar-track {
+  height: 8px;
+  background: var(--surface-2);
+  border-radius: 4px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+.bar-fill {
+  height: 100%;
+  background: color-mix(in oklch, var(--accent) 70%, var(--ev-confirmed));
+  border-radius: 3px;
+}
+.bar-label { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bar-val { font-family: var(--font-mono); text-align: right; font-size: 0.75rem; }
+
+/* —— Answer page layout —— */
+.page-detail {
+  border-top: 0;
+  padding-top: 1.5rem;
+  padding-bottom: var(--space-7);
+}
+.wrap-reading {
+  width: min(100% - 2rem, 820px);
+  margin-inline: auto;
+}
+.ask-layout {
+  display: grid;
+  gap: 1.5rem;
+}
+@media (min-width: 1024px) {
+  .ask-layout {
+    grid-template-columns: minmax(0, 1fr) 280px;
+    gap: 2rem;
+    align-items: start;
+  }
+  .ask-layout > .ask-main { min-width: 0; }
+  .ask-layout > .ask-rail { position: sticky; top: 72px; }
+}
+.ask-header {
+  display: grid;
+  gap: 0.85rem;
+  margin-bottom: 0.25rem;
+}
+.ask-status-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.55rem 1rem;
+}
+.ask-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+.ask-toc {
+  display: none;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  padding: 0.65rem 0;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 0.5rem;
+}
+@media (max-width: 1023px) {
+  .ask-toc { display: flex; }
+}
+.ask-toc a {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--muted);
+  padding: 0.35rem 0.65rem;
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+}
+.ask-toc a:hover { color: var(--fg); border-color: color-mix(in oklch, var(--fg) 20%, var(--border)); }
+
+.answer-hero {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 1.25rem 1.35rem 1.35rem;
+  display: grid;
+  gap: 0.85rem;
+}
+.answer-hero .answer-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.answer-hero .answer-body {
+  font-size: 1.05rem;
+  line-height: 1.55;
+  max-width: 62ch;
+  text-wrap: pretty;
+  color: color-mix(in oklch, var(--fg) 96%, var(--muted));
+}
+.answer-hero .answer-why {
+  font-size: 0.9rem;
+  color: var(--muted);
+  max-width: 60ch;
+  line-height: 1.55;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+.answer-hero .answer-why strong {
+  display: block;
+  font-size: 0.7rem;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 600;
+  margin-bottom: 0.35rem;
+}
+
+.rec-callout {
+  background: color-mix(in oklch, var(--accent) 8%, var(--surface));
+  border: 1px solid color-mix(in oklch, var(--accent) 32%, var(--border));
+  border-radius: var(--radius-lg);
+  padding: 1.15rem 1.25rem;
+  display: grid;
+  gap: 0.55rem;
+}
+.rec-callout h2 {
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.rec-callout p {
+  font-size: 0.98rem;
+  line-height: 1.55;
+  max-width: 60ch;
+  color: color-mix(in oklch, var(--fg) 94%, var(--muted));
+  text-wrap: pretty;
+}
+
+.evidence-summary {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 1.1rem 1.2rem;
+}
+.evidence-summary h2 {
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 0.85rem;
+}
+.evidence-grid {
+  display: grid;
+  gap: 0.65rem;
+}
+@media (min-width: 640px) {
+  .evidence-grid { grid-template-columns: 1fr 1fr; }
+}
+.evidence-chip {
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  min-height: 72px;
+}
+.evidence-chip .ec-label {
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.evidence-chip .ec-value {
+  font-size: 0.88rem;
+  line-height: 1.4;
+  color: var(--fg);
+}
+.evidence-chip .ec-meta {
+  font-size: 0.72rem;
+  font-family: var(--font-mono);
+  color: var(--muted);
+}
+.evidence-chip.is-support { border-color: color-mix(in oklch, var(--ev-confirmed) 35%, var(--border)); }
+.evidence-chip.is-conflict { border-color: color-mix(in oklch, var(--ev-disputed) 35%, var(--border)); }
+.evidence-chip.is-vendor { border-color: color-mix(in oklch, var(--ev-vendor) 35%, var(--border)); }
+.evidence-chip.is-gap { border-color: color-mix(in oklch, var(--ev-provisional) 35%, var(--border)); }
+
+.answer-section {
+  display: grid;
+  gap: 0.65rem;
+  padding-top: 0.25rem;
+}
+.answer-section > h2 {
+  font-family: var(--font-display);
+  font-size: 1.15rem;
+  letter-spacing: -0.015em;
+  font-weight: 600;
+}
+.answer-section .section-note {
+  font-size: 0.85rem;
+  color: var(--muted);
+  max-width: 62ch;
+}
+
+/* —— Answer blocks —— */
+.answer-stack {
+  display: grid;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  overflow: hidden;
+}
+.answer-block {
+  border-left: 3px solid var(--border);
+  padding: 0.95rem 1.1rem 1rem 1rem;
+  margin: 0;
+  border-bottom: 1px solid var(--border);
+}
+.answer-block:last-child { border-bottom: 0; }
+.answer-block.facts { border-left-color: var(--ev-confirmed); }
+.answer-block.interp { border-left-color: var(--ev-community); }
+.answer-block.vendor { border-left-color: var(--ev-vendor); }
+.answer-block.uncertain { border-left-color: var(--ev-provisional); }
+.answer-block.conflict { border-left-color: var(--ev-disputed); }
+.answer-block.community { border-left-color: var(--ev-community); }
+.answer-block h3 {
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 0.4rem;
+  font-weight: 600;
+}
+.answer-block p,
+.answer-block li {
+  font-size: 0.92rem;
+  line-height: 1.55;
+  color: color-mix(in oklch, var(--fg) 92%, var(--muted));
+  max-width: 62ch;
+}
+.answer-block ul {
+  margin: 0.15rem 0 0 1.1rem;
+}
+.answer-block li + li { margin-top: 0.35rem; }
+
+.change-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.55rem;
+}
+.change-list li {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.65rem;
+  align-items: start;
+  padding: 0.75rem 0.9rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 0.9rem;
+  color: color-mix(in oklch, var(--fg) 92%, var(--muted));
+  line-height: 1.45;
+}
+.change-list .cl-mark {
+  width: 6px;
+  height: 6px;
+  margin-top: 0.45rem;
+  border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
+}
+
+/* —— Citation —— */
+.cite-list {
+  display: grid;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  overflow: hidden;
+}
+.cite {
+  font-size: 0.84rem;
+  padding: 0.85rem 1rem;
+  border-bottom: 1px solid var(--border);
+  display: grid;
+  gap: 0.3rem;
+}
+.cite:last-child { border-bottom: 0; }
+.cite a {
+  color: var(--fg);
+  font-weight: 550;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in oklch, var(--accent) 55%, transparent);
+  text-underline-offset: 2px;
+}
+.cite a:hover { color: var(--accent); }
+.cite .src-id {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--muted);
+  letter-spacing: 0.02em;
+}
+.cite-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.65rem;
+  align-items: center;
+}
+.cite-type {
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 0.12em 0.45em;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface-2);
+}
+.cite-type.is-primary { color: var(--ev-confirmed); border-color: color-mix(in oklch, var(--ev-confirmed) 30%, var(--border)); }
+.cite-type.is-vendor { color: var(--ev-vendor); border-color: color-mix(in oklch, var(--ev-vendor) 30%, var(--border)); }
+.cite-type.is-method { color: var(--ev-community); border-color: color-mix(in oklch, var(--ev-community) 30%, var(--border)); }
+
+.related-list {
+  display: grid;
+  gap: 0.45rem;
+}
+.related-list a {
+  display: block;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  font-size: 0.9rem;
+  line-height: 1.4;
+  min-height: 44px;
+  color: var(--fg);
+}
+.related-list a:hover {
+  border-color: color-mix(in oklch, var(--accent) 35%, var(--border));
+  color: var(--accent);
+}
+
+.ask-again {
+  display: grid;
+  gap: 0.65rem;
+  padding: 1.1rem 1.15rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+.ask-again h2 {
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.page-foot {
+  border-top: 1px solid var(--border);
+  margin-top: 0;
+  padding: 1.25rem 0 2rem;
+  background: transparent;
+}
+.page-foot .footer-bottom {
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.conf-fill.w-64 { width: 64%; }
+.conf-fill.w-78 { width: 78%; }
+.conf-fill.w-55 { width: 55%; }
+.conf-fill.w-62 { width: 62%; }
+.conf-fill.w-68 { width: 68%; }
+.conf-fill.w-84 { width: 84%; }
+.conf-fill.w-91 { width: 91%; }
+
+.btn[aria-pressed="true"] {
+  background: var(--surface-2);
+  border-color: color-mix(in oklch, var(--accent) 40%, var(--border));
+  color: var(--fg);
+}
+.btn:disabled,
+.btn[aria-disabled="true"] {
+  opacity: 0.45;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* Intermediate/mobile nav completeness */
+.mobile-drawer nav {
+  display: grid;
+}
+.mobile-drawer .nav-group-label {
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 0.85rem 0.5rem 0.25rem;
+}
+.mobile-drawer-actions {
+  padding-top: 0.25rem;
+}
+
+/* Empty / loading states for answer surface */
+.state-panel {
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-lg);
+  padding: 1.5rem 1.25rem;
+  text-align: left;
+  background: var(--surface);
+  display: grid;
+  gap: 0.5rem;
+}
+.state-panel h2 {
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+.state-panel p {
+  color: var(--muted);
+  font-size: 0.9rem;
+  max-width: 48ch;
+}
+.state-panel[hidden] { display: none !important; }
+
+/* —— Filters collapsible mobile —— */
+.filters-panel {
+  margin-bottom: 1rem;
+}
+.filters-toggle {
+  display: none;
+  width: 100%;
+  justify-content: space-between;
+  min-height: 44px;
+  padding: 0.5rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  margin-bottom: 0.65rem;
+  font-weight: 500;
+}
+@media (max-width: 767px) {
+  .filters-toggle { display: flex; }
+  .filters-panel .chip-row {
+    display: none;
+  }
+  .filters-panel.open .chip-row {
+    display: flex;
+  }
+}
+
+/* —— Sponsored placement —— */
+.sponsor-slot {
+  padding: 0.85rem 1rem;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.sponsor-slot .badge-sponsored { margin-bottom: 0.45rem; }
+
+/* —— Timeline —— */
+.timeline { border-left: 1px solid var(--border); margin-left: 0.4rem; padding-left: 1.1rem; }
+.timeline-item { position: relative; padding-bottom: 1.15rem; }
+.timeline-item::before {
+  content: "";
+  position: absolute;
+  left: -1.3rem;
+  top: 0.35rem;
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--bg);
+}
+.timeline-item time {
+  font-size: 0.72rem;
+  font-family: var(--font-mono);
+  color: var(--muted);
+}
+
+</style>
+</head>
+<body>
+  <a class="sr-only" href="#main">Skip to content</a>
+
+  <header class="site-header" data-od-id="site-header">
+    <div class="wrap-wide header-inner">
+      <a class="wordmark" href="index.html" data-od-id="wordmark">
+        <span class="wordmark-mark" aria-hidden="true"></span>
+        The Trace Manifest
+      </a>
+      <nav class="nav-desktop" aria-label="Primary">
+        <a href="index.html">Latest</a>
+        <a href="index.html#todays-manifest">Briefings</a>
+        <a href="model.html">Models</a>
+        <a href="benchmark.html">Benchmarks</a>
+        <a href="index.html#research">Research</a>
+        <a href="index.html#open-source">Open Source</a>
+        <a href="index.html#models">Providers</a>
+        <a href="index.html#feed">Security</a>
+        <a href="index.html#feed">Regulation</a>
+        <a href="ask.html" aria-current="page">Ask</a>
+      </nav>
+      <div class="header-actions">
+        <button type="button" class="btn-icon" data-theme-toggle aria-pressed="false" aria-label="Switch to light mode" title="Theme">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+        </button>
+        <a class="btn btn-ghost btn-sm" href="index.html#search">Search</a>
+        <a class="btn btn-ghost btn-sm" href="#">Sign in</a>
+        <a class="btn btn-primary btn-sm" href="index.html#newsletter">Subscribe</a>
+        <button type="button" class="btn-icon mobile-nav-toggle" data-nav-toggle aria-controls="mobile-drawer" aria-expanded="false" aria-label="Open menu">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+        </button>
+      </div>
+    </div>
+    <div class="mobile-drawer" id="mobile-drawer" data-od-id="mobile-nav">
+      <nav aria-label="Mobile">
+        <p class="nav-group-label">Browse</p>
+        <a href="index.html">Latest</a>
+        <a href="index.html#todays-manifest">Briefings</a>
+        <a href="model.html">Models</a>
+        <a href="benchmark.html">Benchmarks</a>
+        <a href="index.html#research">Research</a>
+        <a href="index.html#open-source">Open Source</a>
+        <a href="index.html#models">Providers</a>
+        <a href="index.html#feed">Security</a>
+        <a href="index.html#feed">Regulation</a>
+        <a href="ask.html" aria-current="page">Ask</a>
+        <p class="nav-group-label">Account</p>
+        <a href="index.html#search">Search</a>
+        <a href="#">Sign in</a>
+      </nav>
+      <div class="mobile-drawer-actions">
+        <a class="btn btn-secondary" href="#">Sign in</a>
+        <a class="btn btn-primary" href="index.html#newsletter">Subscribe</a>
+      </div>
+    </div>
+  </header>
+
+  <main id="main" class="section page-detail" data-od-id="ask-main">
+    <div class="wrap-wide ask-layout">
+      <div class="ask-main">
+        <header class="ask-header" data-od-id="ask-header">
+          <nav class="breadcrumb" aria-label="Breadcrumb">
+            <a href="index.html">Latest</a>
+            <span aria-hidden="true">/</span>
+            <a href="index.html#ask">Ask</a>
+            <span aria-hidden="true">/</span>
+            <span>Result</span>
+          </nav>
+
+          <p class="kicker">Evidence-linked answer</p>
+          <h1 class="display h1" data-od-id="ask-question" data-ask-question>Which AI provider offers the best value for agent workloads?</h1>
+
+          <div class="ask-status-row" data-od-id="ask-status">
+            <span class="badge badge-provisional">Provisionally supported</span>
+            <div class="conf" title="Confidence 64 percent">
+              <span>Confidence</span>
+              <span class="conf-bar" aria-hidden="true"><span class="conf-fill warn w-64"></span></span>
+              <span class="mono">64%</span>
+            </div>
+            <span class="meta">Freshness: <time datetime="2026-07-12T08:06:00Z" class="mono">8 min ago</time></span>
+            <span class="meta mono">5 sources</span>
+          </div>
+
+          <div class="ask-actions" data-od-id="ask-actions">
+            <button type="button" class="btn btn-secondary btn-sm" data-save aria-pressed="false">Save</button>
+            <button type="button" class="btn btn-ghost btn-sm" data-share>Share</button>
+            <button type="button" class="btn btn-ghost btn-sm" data-export>Export</button>
+          </div>
+        </header>
+
+        <nav class="ask-toc" aria-label="On this page">
+          <a href="#answer">Answer</a>
+          <a href="#recommendation">Recommendation</a>
+          <a href="#evidence-summary">Evidence</a>
+          <a href="#breakdown">Breakdown</a>
+          <a href="#sources">Sources</a>
+          <a href="#ask-again">Ask again</a>
+        </nav>
+
+        <!-- Empty / error shells (hidden when answer present) -->
+        <div class="state-panel" id="ask-empty" hidden data-od-id="ask-empty">
+          <h2>No answer yet</h2>
+          <p>Ask a concrete question about models, pricing, benchmarks, or claims. We keep facts, interpretation, and uncertainty separate.</p>
+          <a class="btn btn-primary btn-sm" href="#ask-again">Ask a question</a>
+        </div>
+        <div class="state-panel" id="ask-error" hidden data-od-id="ask-error">
+          <h2>Could not refresh evidence</h2>
+          <p>The last successful answer is shown below when available. Retry or narrow the question.</p>
+          <button type="button" class="btn btn-secondary btn-sm">Retry</button>
+        </div>
+
+        <div class="stack-lg" id="ask-result" data-od-id="ask-result">
+          <section class="answer-hero" id="answer" data-od-id="direct-answer" aria-labelledby="answer-label">
+            <p class="answer-label" id="answer-label">Direct current answer</p>
+            <p class="answer-body">For tool-heavy agents, mid-tier closed models with recent list-price cuts often beat flagship reasoning models on cost per successful task. Open-weight APIs remain competitive when latency SLAs are flexible and you control the scaffold. There is no universal winner — value is workload-specific.</p>
+            <div class="answer-why">
+              <strong>Why (brief)</strong>
+              Agent bills are dominated by output tokens and retries. Small quality gaps rarely justify multi-fold price differences unless failure cost is extreme. Scaffold efficiency can outweigh provider brand.
+            </div>
+          </section>
+
+          <section class="rec-callout" id="recommendation" data-od-id="recommendation" aria-labelledby="rec-heading">
+            <h2 id="rec-heading">Practical recommendation</h2>
+            <p>Start with the current mid-tier closed model that has transparent tool docs and a recent price cut; parallel-test one open-weight API. Lock only after measuring success rate × cost on your scaffold. Revisit when list prices or model versions change.</p>
+          </section>
+
+          <section class="evidence-summary" id="evidence-summary" data-od-id="evidence-summary" aria-labelledby="ev-sum-heading">
+            <h2 id="ev-sum-heading">Evidence summary</h2>
+            <div class="evidence-grid">
+              <div class="evidence-chip is-support">
+                <span class="ec-label">Supporting</span>
+                <span class="ec-value">Public list prices + independent agent cost notes agree that mid-tier often wins unit economics.</span>
+                <span class="ec-meta">3 sources · high agreement</span>
+              </div>
+              <div class="evidence-chip is-conflict">
+                <span class="ec-label">Conflicting</span>
+                <span class="ec-value">Enterprise discounts, caching, and batch APIs can invert public rankings.</span>
+                <span class="ec-meta">2 notes · open variables</span>
+              </div>
+              <div class="evidence-chip is-vendor">
+                <span class="ec-label">Vendor claims</span>
+                <span class="ec-value">“Best model = best value” framing is common; treat as marketing until matched-task studies exist.</span>
+                <span class="ec-meta">vendor · not primary</span>
+              </div>
+              <div class="evidence-chip is-gap">
+                <span class="ec-label">Evidence gaps</span>
+                <span class="ec-value">Your traffic mix, tool error rates, and caching strategy are unknown — confidence capped.</span>
+                <span class="ec-meta">uncertainty · 64%</span>
+              </div>
+            </div>
+          </section>
+
+          <section class="answer-section" id="breakdown" data-od-id="breakdown" aria-labelledby="breakdown-heading">
+            <h2 id="breakdown-heading">Separated breakdown</h2>
+            <p class="section-note">Each block is a different epistemic type. Colour is secondary; labels carry the meaning.</p>
+            <div class="answer-stack">
+              <article class="answer-block facts" data-od-id="facts">
+                <h3>Facts</h3>
+                <ul>
+                  <li>Public list prices for major providers are documented; at least one frontier API adjusted rates recently.</li>
+                  <li>Independent agent runs show scaffold choice moves scores more than some model swaps.</li>
+                  <li>Open-weight hosted APIs publish lower token rates with different latency profiles.</li>
+                </ul>
+              </article>
+              <article class="answer-block facts" data-od-id="supporting">
+                <h3>Supporting evidence</h3>
+                <p>Pricing tables; independent SWE-style cost write-ups; desk “Best value” methodology on the model index.</p>
+              </article>
+              <article class="answer-block conflict" data-od-id="conflicting">
+                <h3>Conflicting evidence</h3>
+                <p>Enterprise discounts, prompt caching, and batch APIs can invert public list-price rankings. Some vendors claim superior reliability that is not yet independently cost-normalised.</p>
+              </article>
+              <article class="answer-block vendor" data-od-id="vendor-claims">
+                <h3>Vendor claims</h3>
+                <p>Marketing often equates “best model” with “best value.” Treat as claims until matched-task cost studies exist for your scaffold.</p>
+              </article>
+              <article class="answer-block community" data-od-id="community">
+                <h3>Community opinion</h3>
+                <p>Practitioners frequently report overpaying for flagship models on routine agent loops; others report flagship savings via fewer retries. Both can be true for different harnesses.</p>
+              </article>
+              <article class="answer-block uncertain" data-od-id="uncertainty">
+                <h3>Uncertainty</h3>
+                <p>Your traffic mix, tool error rates, and caching strategy are unknown here. Confidence is capped until those are measured on a fixed internal harness.</p>
+              </article>
+              <article class="answer-block interp" data-od-id="interpretation">
+                <h3>Interpretation</h3>
+                <p>Prefer a short internal bake-off (50–100 tasks) across two mid-tier and one open-weight option before committing. Track cost per successful task, not tokens alone.</p>
+              </article>
+            </div>
+          </section>
+
+          <section class="answer-section" id="what-could-change" data-od-id="what-could-change" aria-labelledby="change-heading">
+            <h2 id="change-heading">What could change the conclusion</h2>
+            <ul class="change-list">
+              <li><span class="cl-mark" aria-hidden="true"></span><span>Large enterprise discounts or committed-use pricing</span></li>
+              <li><span class="cl-mark" aria-hidden="true"></span><span>New independent cost-normalised agent studies</span></li>
+              <li><span class="cl-mark" aria-hidden="true"></span><span>Material quality jump on a cheaper open-weight release</span></li>
+              <li><span class="cl-mark" aria-hidden="true"></span><span>Security constraints that force a single provider</span></li>
+            </ul>
+          </section>
+
+          <section class="answer-section" id="sources" data-od-id="sources" aria-labelledby="sources-heading">
+            <h2 id="sources-heading">Sources &amp; provenance</h2>
+            <p class="section-note">IDs are stable desk references. Type labels show how each source may be used in the answer.</p>
+            <div class="cite-list">
+              <article class="cite" data-od-id="cite-1">
+                <span class="src-id">SRC-PRICE-TABLES · checked 12 Jul 2026</span>
+                <a href="#">Provider public pricing pages (Anthropic, OpenAI, Google, DeepSeek list rates)</a>
+                <div class="cite-meta-row">
+                  <span class="cite-type is-primary">Primary · facts</span>
+                  <span class="meta">Independent of vendor narrative · list rates only</span>
+                </div>
+              </article>
+              <article class="cite" data-od-id="cite-2">
+                <span class="src-id">SRC-2026-0712-01 · published 12 Jul 2026</span>
+                <a href="story.html">Independent agent trajectory package — cost notes under matched tools</a>
+                <div class="cite-meta-row">
+                  <span class="cite-type is-primary">Primary · supporting</span>
+                  <span class="meta">Public artifacts · scaffold documented</span>
+                </div>
+              </article>
+              <article class="cite" data-od-id="cite-3">
+                <span class="src-id">SRC-VALUE-METHOD · desk note</span>
+                <a href="index.html#models">The Trace Manifest best-value methodology (model movement tab)</a>
+                <div class="cite-meta-row">
+                  <span class="cite-type is-method">Method · interpretation</span>
+                  <span class="meta">How this desk ranks quality per dollar</span>
+                </div>
+              </article>
+              <article class="cite" data-od-id="cite-4">
+                <span class="src-id">SRC-VENDOR-BLOGS · secondary</span>
+                <a href="#">Vendor performance / value blog posts (composite)</a>
+                <div class="cite-meta-row">
+                  <span class="cite-type is-vendor">Vendor · claim only</span>
+                  <span class="meta">Not used as sole support for rankings</span>
+                </div>
+              </article>
+              <article class="cite" data-od-id="cite-5">
+                <span class="src-id">SRC-COMMUNITY-2026-H1</span>
+                <a href="#">Community cost reports (forums / GitHub discussions, curated sample)</a>
+                <div class="cite-meta-row">
+                  <span class="cite-type">Community · opinion</span>
+                  <span class="meta">Anecdotal · harnesses not standardised</span>
+                </div>
+              </article>
+            </div>
+          </section>
+
+          <section class="answer-section" id="related" data-od-id="related-questions" aria-labelledby="related-heading">
+            <h2 id="related-heading">Related questions</h2>
+            <div class="related-list">
+              <a href="ask.html">What is currently the best local coding model for 16 GB RAM?</a>
+              <a href="ask.html">Has claude-sonnet-4 been independently benchmarked on SWE-bench Verified?</a>
+              <a href="ask.html">What is the current thinking on persistent agent memory?</a>
+            </div>
+          </section>
+
+          <section class="ask-again" id="ask-again" data-od-id="ask-again" aria-labelledby="ask-again-heading">
+            <h2 id="ask-again-heading">Ask another</h2>
+            <form class="field" data-ask-form action="ask.html">
+              <label class="sr-only" for="again">Question</label>
+              <input id="again" name="q" type="search" placeholder="Has this model been independently benchmarked?" autocomplete="off" />
+              <button type="submit" class="btn btn-primary">Ask</button>
+            </form>
+            <p class="meta">Answers separate facts, interpretation, vendor claims, community opinion, and uncertainty.</p>
+          </section>
+        </div>
+      </div>
+
+      <aside class="ask-rail ev-panel" data-od-id="ask-rail" aria-label="Answer posture">
+        <h3>Answer posture</h3>
+        <dl>
+          <div class="ev-row"><dt>Status</dt><dd><span class="badge badge-provisional">Provisional</span></dd></div>
+          <div class="ev-row"><dt>Confidence</dt><dd class="mono">64%</dd></div>
+          <div class="ev-row"><dt>Sources</dt><dd class="mono">5</dd></div>
+          <div class="ev-row"><dt>Primary</dt><dd class="mono">2</dd></div>
+          <div class="ev-row"><dt>Vendor weight</dt><dd>Secondary only</dd></div>
+          <div class="ev-row"><dt>Last checked</dt><dd class="mono">08:06 UTC</dd></div>
+        </dl>
+        <div class="ev-explain">
+          <strong class="ev-explain-title">Why provisional?</strong>
+          List prices and independent cost notes support the direction, but enterprise terms and your scaffold can reverse the ranking. Colour is never the only signal.
+        </div>
+        <div class="ask-rail-actions">
+          <a class="btn btn-secondary btn-sm" href="index.html#models">Open model movement</a>
+          <a class="btn btn-ghost btn-sm" href="story.html">Related story</a>
+        </div>
+      </aside>
+    </div>
+  </main>
+
+  <footer class="site-footer page-foot" data-od-id="page-foot">
+    <div class="wrap-wide footer-bottom">
+      <a href="index.html">← Latest</a>
+      <span class="meta">Facts · interpretation · uncertainty kept separate</span>
+    </div>
+  </footer>
+
+  <script>
+(function () {
+  "use strict";
+
+  var root = document.documentElement;
+  var THEME_KEY = "ttm:theme";
+
+  function getPreferredTheme() {
+    try {
+      var saved = localStorage.getItem(THEME_KEY);
+      if (saved === "light" || saved === "dark") return saved;
+    } catch (_) {}
+    return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+  }
+
+  function applyTheme(theme) {
+    root.setAttribute("data-theme", theme);
+    document.querySelectorAll("[data-theme-toggle]").forEach(function (btn) {
+      btn.setAttribute("aria-pressed", theme === "light" ? "true" : "false");
+      btn.setAttribute("aria-label", theme === "light" ? "Switch to dark mode" : "Switch to light mode");
+      var label = btn.querySelector("[data-theme-label]");
+      if (label) label.textContent = theme === "light" ? "Light" : "Dark";
+    });
+  }
+
+  function toggleTheme() {
+    var next = root.getAttribute("data-theme") === "light" ? "dark" : "light";
+    applyTheme(next);
+    try { localStorage.setItem(THEME_KEY, next); } catch (_) {}
+  }
+
+  applyTheme(getPreferredTheme());
+
+  document.addEventListener("click", function (e) {
+    var t = e.target.closest("[data-theme-toggle]");
+    if (t) {
+      e.preventDefault();
+      toggleTheme();
+    }
+  });
+
+  /* Mobile nav */
+  document.querySelectorAll("[data-nav-toggle]").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var id = btn.getAttribute("aria-controls") || "mobile-drawer";
+      var drawer = document.getElementById(id);
+      if (!drawer) return;
+      var open = drawer.classList.toggle("open");
+      btn.setAttribute("aria-expanded", open ? "true" : "false");
+    });
+  });
+
+  /* Filters */
+  document.querySelectorAll("[data-filter-group]").forEach(function (group) {
+    group.addEventListener("click", function (e) {
+      var chip = e.target.closest("[data-filter]");
+      if (!chip) return;
+      group.querySelectorAll("[data-filter]").forEach(function (c) {
+        c.classList.remove("active");
+        c.setAttribute("aria-pressed", "false");
+      });
+      chip.classList.add("active");
+      chip.setAttribute("aria-pressed", "true");
+      var key = chip.getAttribute("data-filter");
+      var target = group.getAttribute("data-filter-group");
+      document.querySelectorAll("[data-filter-item]").forEach(function (item) {
+        if (item.getAttribute("data-filter-scope") !== target) return;
+        var tags = (item.getAttribute("data-filter-item") || "").split(/\s+/);
+        var show = key === "all" || tags.indexOf(key) !== -1;
+        item.hidden = !show;
+      });
+    });
+  });
+
+  document.querySelectorAll("[data-filters-toggle]").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var panel = btn.closest(".filters-panel");
+      if (!panel) return;
+      var open = panel.classList.toggle("open");
+      btn.setAttribute("aria-expanded", open ? "true" : "false");
+    });
+  });
+
+  /* Tabs */
+  document.querySelectorAll("[data-tabs]").forEach(function (tabs) {
+    var name = tabs.getAttribute("data-tabs");
+    tabs.addEventListener("click", function (e) {
+      var tab = e.target.closest("[data-tab]");
+      if (!tab || !tabs.contains(tab)) return;
+      tabs.querySelectorAll("[data-tab]").forEach(function (t) {
+        t.setAttribute("aria-selected", "false");
+      });
+      tab.setAttribute("aria-selected", "true");
+      var id = tab.getAttribute("data-tab");
+      document.querySelectorAll('[data-tab-panel="' + name + '"]').forEach(function (panel) {
+        panel.hidden = panel.getAttribute("data-panel-id") !== id;
+      });
+    });
+  });
+
+  /* Save toggle */
+  document.querySelectorAll("[data-save]").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var on = btn.getAttribute("aria-pressed") === "true";
+      btn.setAttribute("aria-pressed", on ? "false" : "true");
+      btn.textContent = on ? "Save" : "Saved";
+    });
+  });
+
+  /* Why rating disclosure */
+  document.querySelectorAll("[data-why]").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var id = btn.getAttribute("aria-controls");
+      var panel = id ? document.getElementById(id) : null;
+      if (!panel) return;
+      var open = panel.hasAttribute("hidden");
+      if (open) panel.removeAttribute("hidden");
+      else panel.setAttribute("hidden", "");
+      btn.setAttribute("aria-expanded", open ? "true" : "false");
+    });
+  });
+
+  /* Ask form sample navigation */
+  document.querySelectorAll("[data-ask-form]").forEach(function (form) {
+    form.addEventListener("submit", function (e) {
+      e.preventDefault();
+      var input = form.querySelector("input[name='q'], input[type='search'], input[type='text']");
+      var q = input && input.value ? input.value.trim() : "";
+      if (q) {
+        try { sessionStorage.setItem("ttm:ask", q); } catch (_) {}
+      }
+      window.location.href = form.getAttribute("action") || "ask.html";
+    });
+  });
+
+  /* Prefill ask from session */
+  var askDisplay = document.querySelector("[data-ask-question]");
+  if (askDisplay) {
+    try {
+      var stored = sessionStorage.getItem("ttm:ask");
+      if (stored) askDisplay.textContent = stored;
+    } catch (_) {}
+  }
+
+  /* Share / export actions */
+  document.querySelectorAll("[data-share]").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var url = location.href;
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(url).then(function () {
+          var prev = btn.textContent;
+          btn.textContent = "Copied";
+          setTimeout(function () { btn.textContent = prev; }, 1600);
+        }).catch(function () {
+          window.prompt("Copy link", url);
+        });
+      } else {
+        window.prompt("Copy link", url);
+      }
+    });
+  });
+
+  document.querySelectorAll("[data-export]").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var q = document.querySelector("[data-ask-question]");
+      var title = q ? q.textContent.trim() : "Trace Manifest answer";
+      var body = [];
+      body.push("# " + title);
+      body.push("");
+      var hero = document.querySelector(".answer-hero .answer-body");
+      if (hero) {
+        body.push("## Direct answer");
+        body.push(hero.textContent.trim());
+        body.push("");
+      }
+      var rec = document.querySelector(".rec-callout p");
+      if (rec) {
+        body.push("## Recommendation");
+        body.push(rec.textContent.trim());
+        body.push("");
+      }
+      body.push("_Exported from The Trace Manifest — sources remain on the page._");
+      var blob = new Blob([body.join("\n")], { type: "text/markdown;charset=utf-8" });
+      var a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "trace-manifest-answer.md";
+      a.click();
+      URL.revokeObjectURL(a.href);
+    });
+  });
+})();
+
+</script>
+</body>
+</html>
