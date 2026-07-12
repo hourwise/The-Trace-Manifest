@@ -1,0 +1,24 @@
+# The Trace Manifest — Ingestion Worker config
+# Deployed separately from the Astro Pages site
+name = "trace-manifest-ingestion"
+main = "workers/ingestion/index.ts"
+compatibility_date = "2026-07-12"
+compatibility_flags = ["nodejs_compat"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "trace-manifest-db"
+database_id = "REPLACE_WITH_REAL_D1_UUID"
+
+[[r2_buckets]]
+binding = "RAW_STORE"
+bucket_name = "trace-manifest-raw"
+
+[triggers]
+crons = [
+  "*/30 * * * *",
+  "0 */3 * * *",
+  "0 6 * * *",
+  "0 9 * * *",
+  "0 18 * * *"
+]

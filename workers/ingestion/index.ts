@@ -10,63 +10,116 @@ import { checkSourceHealth } from "./health";
 import { deduplicateURL, hashURL } from "./dedup";
 import type { Source, FeedItem } from "./types";
 
+// ============================================================
+// CORS and authentication
+// ============================================================
+const ALLOWED_ORIGINS = new Set([
+  "https://thetracemanifest.com",
+  "https://www.thetracemanifest.com",
+  "http://localhost:4321",
+]);
+
+function corsHeaders(request: Request): HeadersInit {
+  const origin = request.headers.get("Origin") ?? "";
+  return {
+    "Access-Control-Allow-Origin": ALLOWED_ORIGINS.has(origin) ? origin : "",
+    "Access-Control-Allow-Headers": "Authorization, Content-Type",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Vary": "Origin",
+  };
+}
+
+function isAuthorised(request: Request, env: Env): boolean {
+  const supplied = request.headers.get("Authorization");
+  const expected = `Bearer ${env.ADMIN_API_TOKEN}`;
+  return supplied === expected;
+}
+
 export interface Env {
   DB: D1Database;
   RAW_STORE: R2Bucket;
-  INGESTION_STATE: DurableObjectNamespace;
+  ADMIN_API_TOKEN: string;
+  ALLOWED_ADMIN_ORIGIN: string;
 }
 
 export default {
   // Cron trigger handler — scheduled fetching
   async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
     const cron = event.cron;
+    const cronRunId = await cronRunStart(env, cron);
 
-    switch (cron) {
-      case "*/30 * * * *":
-        // Tier A sources — poll every 30 min
-        await ingestTier(env, ctx, "A", "fetch");
-        break;
-      case "0 */3 * * *":
-        // Tier A extended — less urgent Tier A sources
-        await ingestTier(env, ctx, "A", "fetch");
-        break;
-      case "0 6 * * *":
-        // Daily research and benchmark ingestion
-        await ingestTier(env, ctx, "B", "fetch");
-        break;
-      case "0 9 * * *":
-        // Morning briefing prep — classify and cluster overnight items
-        await runClassificationPipeline(env);
-        break;
-      case "0 18 * * *":
-        // Evening source health check
-        await checkAllSourcesHealth(env);
-        break;
-      default:
-        console.log(`Unknown cron pattern: ${cron}`);
+    try {
+      switch (cron) {
+        case "*/30 * * * *":
+          await ingestTier(env, ctx, "A", "fetch");
+          break;
+        case "0 */3 * * *":
+          await ingestTier(env, ctx, "A", "fetch");
+          break;
+        case "0 6 * * *":
+          await ingestTier(env, ctx, "B", "fetch");
+          break;
+        case "0 9 * * *":
+          await runClassificationPipeline(env);
+          break;
+        case "0 18 * * *":
+          await checkAllSourcesHealth(env);
+          break;
+        default:
+          console.log(`Unknown cron pattern: ${cron}`);
+      }
+      await cronRunComplete(env, cronRunId, "completed");
+    } catch (error: any) {
+      await cronRunComplete(env, cronRunId, "failed", error.message);
+      throw error;
     }
   },
 
-  // HTTP handler — manual triggers and admin API
+  // HTTP handler — CORS + admin API with auth
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    if (request.method === "OPTIONS") {
+      return new Response(null, { status: 204, headers: corsHeaders(request) });
+    }
+
     const url = new URL(request.url);
     const path = url.pathname;
 
-    // Admin API routes
-    switch (path) {
-      case "/admin/ingest":
-        return handleManualIngest(request, env, ctx);
-      case "/admin/sources":
-        return handleSourceList(env);
-      case "/admin/sources/health":
-        return handleHealthReport(env);
-      case "/admin/jobs":
-        return handleJobList(env);
-      default:
-        return new Response("The Trace Manifest — Ingestion Worker", { status: 200 });
+    if (path.startsWith("/admin/")) {
+      if (!isAuthorised(request, env)) {
+        return Response.json(
+          { error: "Unauthorized" },
+          { status: 401, headers: corsHeaders(request) }
+        );
+      }
+      const response = await handleAdminRoute(path, request, env, ctx);
+      for (const [key, value] of Object.entries(corsHeaders(request))) {
+        if (value) response.headers.set(key, value);
+      }
+      return response;
     }
+
+    return new Response("The Trace Manifest — Ingestion Worker", {
+      status: 200,
+      headers: corsHeaders(request),
+    });
   },
 };
+
+// ============================================================
+// Cron audit
+// ============================================================
+async function cronRunStart(env: Env, cron: string): Promise<number> {
+  const { meta } = await env.DB.prepare(
+    "INSERT INTO cron_runs (cron_expression, status) VALUES (?, 'running')"
+  ).bind(cron).run();
+  return meta.last_row_id;
+}
+
+async function cronRunComplete(env: Env, runId: number, status: string, error?: string) {
+  await env.DB.prepare(
+    "UPDATE cron_runs SET completed_at = datetime('now'), status = ?, error_message = ? WHERE id = ?"
+  ).bind(status, error || null, runId).run();
+}
 
 // ============================================================
 // Tier-based ingestion
@@ -196,6 +249,26 @@ async function checkAllSourcesHealth(env: Env) {
 }
 
 // ============================================================
+// Admin route dispatcher
+// ============================================================
+async function handleAdminRoute(path: string, request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  switch (path) {
+    case "/admin/ingest":
+      return handleManualIngest(request, env, ctx);
+    case "/admin/sources":
+      return handleSourceList(env);
+    case "/admin/sources/health":
+      return handleHealthReport(env);
+    case "/admin/jobs":
+      return handleJobList(env);
+    case "/admin/cron-runs":
+      return handleCronRunList(env);
+    default:
+      return Response.json({ error: "Not found" }, { status: 404 });
+  }
+}
+
+// ============================================================
 // Admin API handlers
 // ============================================================
 async function handleManualIngest(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -233,6 +306,13 @@ async function handleHealthReport(env: Env): Promise<Response> {
 async function handleJobList(env: Env): Promise<Response> {
   const { results } = await env.DB.prepare(
     "SELECT j.*, s.name as source_name FROM ingestion_jobs j LEFT JOIN sources s ON j.source_id = s.id ORDER BY j.created_at DESC LIMIT 100"
+  ).all();
+  return Response.json(results || []);
+}
+
+async function handleCronRunList(env: Env): Promise<Response> {
+  const { results } = await env.DB.prepare(
+    "SELECT * FROM cron_runs ORDER BY started_at DESC LIMIT 50"
   ).all();
   return Response.json(results || []);
 }

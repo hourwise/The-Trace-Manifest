@@ -7,7 +7,10 @@
     "start": "astro dev",
     "build": "astro check && astro build",
     "preview": "astro preview",
-    "astro": "astro"
+    "astro": "astro",
+    "deploy:site": "npm run build",
+    "deploy:worker": "wrangler deploy --config wrangler.worker.toml",
+    "worker:dev": "wrangler dev --config wrangler.worker.toml --test-scheduled"
   },
   "dependencies": {
     "@astrojs/check": "^0.9.9",

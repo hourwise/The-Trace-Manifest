@@ -11,6 +11,9 @@ dist/
 .env
 .env.*
 
+# Wrangler (local state — config files are tracked)
+.wrangler/
+
 # OS
 .DS_Store
 Thumbs.db

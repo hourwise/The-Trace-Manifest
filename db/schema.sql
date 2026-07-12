@@ -217,3 +217,18 @@ CREATE TABLE IF NOT EXISTS briefings (
   published_at TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- ============================================================
+-- Cron audit log
+-- ============================================================
+CREATE TABLE IF NOT EXISTS cron_runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  cron_expression TEXT NOT NULL,
+  started_at TEXT NOT NULL DEFAULT (datetime('now')),
+  completed_at TEXT,
+  status TEXT NOT NULL DEFAULT 'running' CHECK(status IN ('running','completed','failed')),
+  items_processed INTEGER NOT NULL DEFAULT 0,
+  error_message TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_cron_runs_started ON cron_runs(started_at);
