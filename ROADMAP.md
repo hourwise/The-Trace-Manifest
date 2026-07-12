@@ -32,6 +32,8 @@ Add classification, semantic deduplication, clustering, entity and claim extract
 
 **Classification engine:** `classify.ts` deployed — rule-based topic taxonomy (16 topics), model/provider entity extraction, item type detection, confidence scoring. Integrated into cron pipeline (`0 9 * * *`) and available via `POST /admin/classify`. 138 raw items queued for classification.
 
+**Semantic dedup:** `semantic-dedup.ts` deployed — title Jaccard similarity with stop-word filtering, content excerpt overlap, combined scoring (70% title / 30% content), threshold at 45% combined. Runs after classification in the `0 9 * * *` cron slot. Manual trigger via `POST /admin/dedup`.
+
 ## Phase 4 — Models, Providers, and Benchmarks
 **Estimate:** 4–8 weeks
 

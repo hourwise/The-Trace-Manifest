@@ -9,6 +9,7 @@ import { fetchHackerNews } from "./fetchers/hackernews";
 import { checkSourceHealth } from "./health";
 import { deduplicateURL, hashURL } from "./dedup";
 import { runClassification } from "./classify";
+import { runSemanticDedup } from "./semantic-dedup";
 import type { Source, FeedItem } from "./types";
 
 // ============================================================
@@ -62,6 +63,7 @@ export default {
           break;
         case "0 9 * * *":
           await runClassificationPipeline(env);
+          await runSemanticDedupPipeline(env);
           break;
         case "0 18 * * *":
           await checkAllSourcesHealth(env);
@@ -236,6 +238,15 @@ async function runClassificationPipeline(env: Env) {
 }
 
 // ============================================================
+// Semantic dedup pipeline (runs after classification)
+// ============================================================
+async function runSemanticDedupPipeline(env: Env) {
+  console.log("Semantic dedup: starting...");
+  const result = await runSemanticDedup(env.DB);
+  console.log(`Semantic dedup: done — ${result.duplicates} duplicates found in ${result.processed} items`);
+}
+
+// ============================================================
 // Source health check
 // ============================================================
 async function checkAllSourcesHealth(env: Env) {
@@ -267,6 +278,8 @@ async function handleAdminRoute(path: string, request: Request, env: Env, ctx: E
       return handleCronRunList(env);
     case "/admin/classify":
       return handleManualClassify(env);
+    case "/admin/dedup":
+      return handleManualDedup(env);
     default:
       return Response.json({ error: "Not found" }, { status: 404 });
   }
@@ -323,5 +336,10 @@ async function handleCronRunList(env: Env): Promise<Response> {
 
 async function handleManualClassify(env: Env): Promise<Response> {
   const result = await runClassification(env.DB);
+  return Response.json({ status: "ok", ...result });
+}
+
+async function handleManualDedup(env: Env): Promise<Response> {
+  const result = await runSemanticDedup(env.DB);
   return Response.json({ status: "ok", ...result });
 }
