@@ -1,5 +1,5 @@
 -- The Trace Manifest — Source Seed Data
--- Insert the 65-source launch registry into D1
+-- Insert the 64-source launch registry into D1
 
 -- Section A: Official Model Providers (Tier A)
 INSERT OR IGNORE INTO sources (name, url, feed_url, section, tier, treatment, cadence_minutes, ingestion_type)
@@ -55,3 +55,52 @@ VALUES
 INSERT OR IGNORE INTO sources (name, url, section, tier, treatment, cadence_minutes, ingestion_type)
 VALUES
   ('Hacker News', 'https://news.ycombinator.com/', 'F', 'C', 'discovery', 120, 'hackernews_api');
+
+-- ============================================================
+-- Phase 2 batch 2: Remaining 25 sources to reach ~64 total
+-- ============================================================
+
+-- Section A additions: Tier A — missing vendor/technical sources
+INSERT OR IGNORE INTO sources (name, url, feed_url, section, tier, treatment, cadence_minutes, ingestion_type)
+VALUES
+  ('Gemini API Release Notes', 'https://ai.google.dev/gemini-api/docs/changelog', NULL, 'A', 'A', 'primary-technical', 180, 'manual'),
+  ('Azure AI Foundry Updates', 'https://azure.microsoft.com/en-us/blog/topics/ai-machine-learning/', NULL, 'A', 'A', 'primary-technical', 180, 'rss'),
+  ('GitHub Blog — AI & Copilot', 'https://github.blog/category/ai/', NULL, 'A', 'A', 'primary-vendor', 180, 'rss'),
+  ('NVIDIA AI Blog', 'https://blogs.nvidia.com/blog/category/ai/', NULL, 'A', 'A', 'vendor-reported', 180, 'rss'),
+  ('AWS AI/ML What''s New', 'https://aws.amazon.com/new/?whats-new-content-all.sort-by=item.additionalFields.postDateTime&whats-new-content-all.sort-order=desc&awsf.whats-new-ml=*all', NULL, 'A', 'A', 'primary-technical', 180, 'manual'),
+  ('Hugging Face Trending Models', 'https://huggingface.co/models?sort=trending', NULL, 'A', 'A', 'discovery', 120, 'manual'),
+  ('xAI Blog', 'https://x.ai/blog', NULL, 'A', 'A', 'vendor-reported', 180, 'rss'),
+  ('Together AI Blog', 'https://www.together.ai/blog', NULL, 'A', 'A', 'vendor-reported', 180, 'rss'),
+  ('Groq Blog', 'https://groq.com/blog/', NULL, 'A', 'A', 'vendor-reported', 180, 'rss');
+
+-- Section B: Chinese and open-weight ecosystems (Tier A/B)
+INSERT OR IGNORE INTO sources (name, url, section, tier, treatment, cadence_minutes, ingestion_type)
+VALUES
+  ('GitHub — DeepSeek', 'https://github.com/deepseek-ai', 'B', 'A', 'primary-technical', 180, 'github_api'),
+  ('GitHub — QwenLM (Qwen)', 'https://github.com/QwenLM', 'B', 'A', 'primary-technical', 180, 'github_api'),
+  ('AI21 Labs Blog', 'https://www.ai21.com/blog', 'B', 'B', 'vendor-reported', 360, 'rss');
+
+-- Section C additions: Research and benchmark sources (Tier B)
+INSERT OR IGNORE INTO sources (name, url, section, tier, treatment, cadence_minutes, ingestion_type)
+VALUES
+  ('MLCommons', 'https://mlcommons.org/', 'C', 'B', 'primary-research', 1440, 'manual'),
+  ('Epoch AI', 'https://epochai.org/', 'C', 'B', 'primary-research', 1440, 'manual'),
+  ('LMSYS Chatbot Arena', 'https://chat.lmsys.org/', 'C', 'B', 'primary-research', 1440, 'manual'),
+  ('Stanford HELM', 'https://crfm.stanford.edu/helm/', 'C', 'B', 'primary-research', 1440, 'manual'),
+  ('SWE-bench', 'https://www.swebench.com/', 'C', 'B', 'primary-research', 1440, 'manual'),
+  ('LiveBench', 'https://livebench.ai/', 'C', 'B', 'primary-research', 1440, 'manual'),
+  ('Artificial Analysis', 'https://artificialanalysis.ai/', 'C', 'B', 'primary-research', 1440, 'manual');
+
+-- Section D additions: More GitHub repositories (Tier A)
+INSERT OR IGNORE INTO sources (name, url, section, tier, treatment, cadence_minutes, ingestion_type)
+VALUES
+  ('GitHub — Transformers (HF)', 'https://github.com/huggingface/transformers', 'D', 'A', 'primary-technical', 360, 'github_api'),
+  ('GitHub — PyTorch', 'https://github.com/pytorch/pytorch', 'D', 'A', 'primary-technical', 360, 'github_api'),
+  ('GitHub — Cline', 'https://github.com/cline/cline', 'D', 'A', 'primary-technical', 180, 'github_api'),
+  ('GitHub — Aider', 'https://github.com/Aider-AI/aider', 'D', 'A', 'primary-technical', 180, 'github_api');
+
+-- Section F additions: Community signals (Tier C — discovery only)
+INSERT OR IGNORE INTO sources (name, url, section, tier, treatment, cadence_minutes, ingestion_type)
+VALUES
+  ('Reddit — r/LocalLLaMA', 'https://www.reddit.com/r/LocalLLaMA/', 'F', 'C', 'discovery', 360, 'manual'),
+  ('Reddit — r/MachineLearning', 'https://www.reddit.com/r/MachineLearning/', 'F', 'C', 'discovery', 360, 'manual');

@@ -23,7 +23,7 @@ Integrate the first 50–100 sources, scheduled fetching, source-health checks, 
 
 **Infrastructure built:** Wrangler config with 5 cron schedules, D1 schema (16 tables), seed data (39 sources), ingestion Worker (RSS/GitHub/arXiv/HN fetchers, URL dedup via SHA-256, source health monitoring with auto-disable, cron audit tracking), admin UI (4 pages: dashboard, sources, jobs, review queue). **Deployed:** Worker live at `trace-manifest-ingestion.philgeran.workers.dev` (98 items ingested, 1 confirmed cron run), Pages site live at `thetracemanifest.com` with Git-connected auto-deploy. **Design system:** Dark-first OKLCH theme, new BaseLayout with sticky header/mobile drawer/theme toggle, typed ask results detail page at `/ask/[question]`, all pages restyled.
 
-**Pending:** Remaining 25 source seeds, live cron verification over 24–48h, Pages env var for API URL.
+**Pending:** ~~Remaining 25 source seeds,~~ live cron verification over 24–48h, Pages env var for API URL.
 
 ## Phase 3 — Curation and Trust
 **Estimate:** 4–8 weeks

@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS sources (
 CREATE INDEX IF NOT EXISTS idx_sources_active ON sources(active);
 CREATE INDEX IF NOT EXISTS idx_sources_tier ON sources(tier);
 CREATE INDEX IF NOT EXISTS idx_sources_health ON sources(health_status);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_sources_name ON sources(name);
 
 -- ============================================================
 -- Source policies (one-to-one with sources, or defaults)
