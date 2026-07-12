@@ -9,7 +9,7 @@ import { fetchHackerNews } from "./fetchers/hackernews";
 import { checkSourceHealth } from "./health";
 import { deduplicateURL, hashURL } from "./dedup";
 import { runClassification } from "./classify";
-import { runSemanticDedup } from "./semantic-dedup";
+import { runCrossSourceMatching } from "./cross-source-match";
 import { runClustering } from "./cluster";
 import type { Source, FeedItem } from "./types";
 
@@ -64,7 +64,7 @@ export default {
           break;
         case "0 9 * * *":
           await runClassificationPipeline(env);
-          await runSemanticDedupPipeline(env);
+          await runCrossSourceMatchingPipeline(env);
           await runClusteringPipeline(env);
           break;
         case "0 18 * * *":
@@ -240,12 +240,12 @@ async function runClassificationPipeline(env: Env) {
 }
 
 // ============================================================
-// Semantic dedup pipeline (runs after classification)
+// Cross-source matching pipeline (runs after classification)
 // ============================================================
-async function runSemanticDedupPipeline(env: Env) {
-  console.log("Semantic dedup: starting...");
-  const result = await runSemanticDedup(env.DB);
-  console.log(`Semantic dedup: done — ${result.duplicates} duplicates found in ${result.processed} items`);
+async function runCrossSourceMatchingPipeline(env: Env) {
+  console.log("Cross-source matching: starting...");
+  const result = await runCrossSourceMatching(env.DB);
+  console.log(`Cross-source matching: done — ${result.matched} candidate matches from ${result.processed} items`);
 }
 
 // ============================================================
@@ -290,7 +290,7 @@ async function handleAdminRoute(path: string, request: Request, env: Env, ctx: E
     case "/admin/classify":
       return handleManualClassify(env);
     case "/admin/dedup":
-      return handleManualDedup(env);
+      return handleCrossSourceMatch(env);
     case "/admin/cluster":
       return handleManualCluster(env);
     default:
@@ -352,8 +352,8 @@ async function handleManualClassify(env: Env): Promise<Response> {
   return Response.json({ status: "ok", ...result });
 }
 
-async function handleManualDedup(env: Env): Promise<Response> {
-  const result = await runSemanticDedup(env.DB);
+async function handleCrossSourceMatch(env: Env): Promise<Response> {
+  const result = await runCrossSourceMatching(env.DB);
   return Response.json({ status: "ok", ...result });
 }
 

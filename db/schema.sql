@@ -233,3 +233,22 @@ CREATE TABLE IF NOT EXISTS cron_runs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_cron_runs_started ON cron_runs(started_at);
+
+-- ============================================================
+-- Pipeline stage tracking (avoids re-processing unchanged items)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS pipeline_stages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  feed_item_id INTEGER NOT NULL REFERENCES feed_items(id),
+  stage TEXT NOT NULL CHECK(stage IN ('classified','cross_source_matched','clustered','claim_extracted','evidence_labelled','reviewed','published')),
+  algorithm_version TEXT NOT NULL,
+  started_at TEXT NOT NULL DEFAULT (datetime('now')),
+  completed_at TEXT,
+  status TEXT NOT NULL DEFAULT 'running' CHECK(status IN ('running','completed','failed','skipped')),
+  result_summary TEXT,
+  error_message TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_pipeline_stages_item ON pipeline_stages(feed_item_id);
+CREATE INDEX IF NOT EXISTS idx_pipeline_stages_stage ON pipeline_stages(stage);

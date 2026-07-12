@@ -31,11 +31,11 @@ import BaseLayout from "../../layouts/BaseLayout.astro";
     </div>
 
     <section style="margin-top:3rem;padding:1rem;background:var(--color-bg-alt);border-radius:var(--radius);">
-      <h2>Phase 2 Status</h2>
+      <h2>Phase 3 Status</h2>
       <div style="margin-top:0.75rem;">
-        <p class="meta"><strong>Infrastructure:</strong> Wrangler config, D1 schema (16 tables), 64 sources seeded, ingestion Worker with RSS/GitHub/arXiv/HN fetchers — deployed.</p>
-        <p class="meta"><strong>Deployment:</strong> Worker live at <code>trace-manifest-ingestion.philgeran.workers.dev</code>. Pages site at <code>thetracemanifest.com</code> with Git-connected auto-deploy. 5 cron triggers active.</p>
-        <p class="meta"><strong>Next:</strong> Verify cron reliability over 24–48h, connect admin UI to live Worker API, begin Phase 3 (curation and trust).</p>
+        <p class="meta"><strong>Pipeline:</strong> 64 sources → ingestion (every 30 min) → classification (16 topics, lexical) → cross-source matching (Jaccard) → story clustering → human review → publication.</p>
+        <p class="meta"><strong>Worker:</strong> <code>trace-manifest-ingestion.philgeran.workers.dev</code> with 5 cron triggers. D1 database (16 tables + pipeline_stages). 138 items ingested, awaiting 09:00 UTC classification run.</p>
+        <p class="meta"><strong>Next:</strong> Claim extraction, evidence labelling, conflict detection. Golden evaluation dataset under construction (45 tests passing).</p>
       </div>
     </section>
   </div>

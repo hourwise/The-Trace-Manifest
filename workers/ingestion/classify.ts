@@ -107,6 +107,8 @@ const TOPIC_RULES: { topic: string; patterns: RegExp[]; weight: number }[] = [
       /\brevenue\b/i, /\bpartnership\b/i, /\benterprise\b/i,
       /\bstartup\b/i, /\binvestment\b/i, /\bventure\b/i,
       /\bcommercial\b/i, /\bmonetis(?:ation|ed)\b/i,
+      /\b(pric(?:e|ing)|cost|reduc(?:es?|ing?)|lower|cheaper)\b/i,
+      /\bAPI\s*(pric|cost|rate)\b/i,
     ],
     weight: 5,
   },
@@ -183,8 +185,8 @@ const MODEL_PATTERNS: { name: string; provider: string; patterns: RegExp[] }[] =
 const PROVIDER_PATTERNS: { name: string; patterns: RegExp[] }[] = [
   { name: "OpenAI", patterns: [/\bOpenAI\b/i] },
   { name: "Anthropic", patterns: [/\bAnthropic\b/i] },
-  { name: "Google", patterns: [/\b(Google\s*(DeepMind|AI)|Gemini\s*API)\b/i] },
-  { name: "Meta", patterns: [/\bMeta\s*AI\b/i] },
+  { name: "Google", patterns: [/\b(Google|Gemini)\b/i] },
+  { name: "Meta", patterns: [/\bMeta\b/i] },
   { name: "Microsoft", patterns: [/\bMicrosoft\s*(AI|Copilot|Azure)\b/i] },
   { name: "Mistral AI", patterns: [/\bMistral\s*AI\b/i] },
   { name: "xAI", patterns: [/\bxAI\b/i] },
@@ -201,13 +203,13 @@ const PROVIDER_PATTERNS: { name: string; patterns: RegExp[] }[] = [
 // Item type classification
 // ============================================================
 const ITEM_TYPE_RULES: { type: string; patterns: RegExp[] }[] = [
-  { type: "model_release", patterns: [/\b(new|release|launch|announce).*\bmodel\b/i, /\bmodel\b.*\b(new|release|launch|announce)\b/i, /\bintroducing\b.*\bmodel\b/i] },
+  { type: "model_release", patterns: [/\b(new|release|launch|announce).*\b(model|GPT|Claude|Gemini|Llama|Mistral)\b/i, /\b(model|GPT|Claude|Gemini|Llama|Mistral)\b.*\b(new|release|launch|announce)\b/i, /\bintroducing\b.*\b(model|GPT|Claude|Gemini)\b/i, /\blaunch(?:es|ing)\b/i] },
   { type: "model_update", patterns: [/\b(update|upgrade|version|checkpoint).*\bmodel\b/i, /\bmodel\b.*\b(update|upgrade)\b/i] },
   { type: "pricing_change", patterns: [/\b(pric(?:e|ing)).*\b(change|cut|drop|reduc|lower|increase|raise)\b/i, /\bnow\s*(free|cheaper|more\s*expensive)\b/i] },
-  { type: "research_paper", patterns: [/\b(paper|preprint|study|research)\b.*\b(publish|release|propose|present)\b/i, /\barXiv\b/i] },
-  { type: "benchmark_result", patterns: [/\b(benchmark|leaderboard|evaluation|score)\b.*\b(result|ranking|top)\b/i] },
-  { type: "security_advisory", patterns: [/\b(security|vulnerability|CVE|exploit|advisory)\b/i] },
-  { type: "regulation_update", patterns: [/\b(regulation|legislation|act|compliance|law)\b.*\b(update|change|pass|enact|effective)\b/i] },
+  { type: "research_paper", patterns: [/\b(paper|preprint|study|research)\b/i, /\barXiv\b/i, /\btransformer\b.*\b(mechanism|architecture)\b/i, /\b(propose|novel|new)\s+(method|approach|architecture|mechanism|attention)\b/i] },
+  { type: "benchmark_result", patterns: [/\b(benchmark|leaderboard|evaluation|score)\b.*\b(result|ranking|top)\b/i, /\bMMLU\b.*\b(score|result)\b/i] },
+  { type: "security_advisory", patterns: [/\b(security|vulnerability|CVE|exploit|advisory)\b/i, /\bprompt\s*injection\b/i] },
+  { type: "regulation_update", patterns: [/\b(regulation|legislation|act|compliance|law|EU\s*AI)\b/i] },
   { type: "funding_announcement", patterns: [/\b(funding|raised|investment|series\s*[A-C]|valuation|acquired)\b/i] },
   { type: "product_launch", patterns: [/\b(launch|announce|unveil|introduce)\b.*\b(product|feature|platform|tool)\b/i] },
   { type: "deprecation", patterns: [/\b(deprecat|shut\s*down|discontinu|retir|sunset)\b/i] },
@@ -222,9 +224,10 @@ export interface ClassificationResult {
   topics: string[];
   models: string[];
   providers: string[];
-  itemType: string | null;
-  confidence: number; // 0–100
+  itemTypes: { type: string; score: number }[];  // scored facets, not first-match
+  classificationConfidence: number;               // signal-density only — NOT truth confidence
   classifiedAt: string;
+  algorithmVersion: string;
 }
 
 // ============================================================
@@ -266,26 +269,31 @@ export function classifyFeedItem(item: FeedItem): ClassificationResult {
     .filter(p => p.patterns.some(pat => pat.test(text)))
     .map(p => p.name);
 
-  // Item type
-  let itemType: string | null = null;
-  for (const rule of ITEM_TYPE_RULES) {
-    if (rule.patterns.some(p => p.test(text))) {
-      itemType = rule.type;
-      break; // First match wins
-    }
-  }
+  // Item types — score ALL matching rules, not just first
+  const itemTypes = ITEM_TYPE_RULES
+    .map(rule => {
+      let matchCount = 0;
+      for (const pattern of rule.patterns) {
+        matchCount += (text.match(new RegExp(pattern.source, pattern.flags)) || []).length;
+      }
+      return { type: rule.type, score: matchCount };
+    })
+    .filter(it => it.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 3);
 
-  // Confidence: based on how many signals matched
-  const signalCount = sortedTopics.length + models.length + providers.length + (itemType ? 1 : 0);
-  const confidence = Math.min(100, signalCount * 12 + 20);
+  // Classification confidence: signal density only — explicitly NOT truth/evidence confidence
+  const signalCount = sortedTopics.length + models.length + providers.length + itemTypes.length;
+  const classificationConfidence = Math.min(100, signalCount * 12 + 20);
 
   return {
     topics: sortedTopics,
-    models: [...new Set(models)],       // deduplicate
-    providers: [...new Set(providers)], // deduplicate
-    itemType,
-    confidence: Math.round(confidence),
+    models: [...new Set(models)],
+    providers: [...new Set(providers)],
+    itemTypes,
+    classificationConfidence: Math.round(classificationConfidence),
     classifiedAt: new Date().toISOString(),
+    algorithmVersion: "lexical-topic-v1",
   };
 }
 
@@ -310,22 +318,18 @@ export async function runClassification(
     const item = results[i];
     const classification = classifyFeedItem(item);
 
+    // Merge classification into existing metadata using json_patch
+    // Preserves any fetcher-specific metadata already stored
     await db.prepare(
       `UPDATE feed_items
        SET ingestion_status = 'classified',
-           raw_metadata = ?
+           raw_metadata = json_patch(
+             COALESCE(raw_metadata, '{}'),
+             json_object('classification', json(?))
+           )
        WHERE id = ?`
     ).bind(
-      JSON.stringify({
-        classification: {
-          topics: classification.topics,
-          models: classification.models,
-          providers: classification.providers,
-          itemType: classification.itemType,
-          confidence: classification.confidence,
-          classifiedAt: classification.classifiedAt,
-        },
-      }),
+      JSON.stringify(classification),
       item.id
     ).run();
 

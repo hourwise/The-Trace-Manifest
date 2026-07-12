@@ -12,9 +12,10 @@ interface ClassifiedItem extends FeedItem {
     topics: string[];
     models: string[];
     providers: string[];
-    itemType: string | null;
-    confidence: number;
+    itemTypes: { type: string; score: number }[];
+    classificationConfidence: number;
     classifiedAt: string;
+    algorithmVersion: string;
   };
   source_tier?: string;
   source_treatment?: string;
@@ -190,13 +191,12 @@ export async function runClustering(
             }
           }
 
-          // Check 3: Same item type + high title overlap
+          // Check 3: Overlapping item types + high title overlap
           if (!shouldJoin) {
-            const sameType =
-              seed.classification?.itemType &&
-              candidate.classification?.itemType &&
-              seed.classification.itemType === candidate.classification.itemType;
-            if (sameType && titleKeywordOverlap(seed.title, candidate.title) >= 0.3) {
+            const seedTypes = new Set((seed.classification?.itemTypes ?? []).map(t => t.type));
+            const candTypes = new Set((candidate.classification?.itemTypes ?? []).map(t => t.type));
+            const typeOverlap = [...seedTypes].some(t => candTypes.has(t));
+            if (typeOverlap && titleKeywordOverlap(seed.title, candidate.title) >= 0.3) {
               shouldJoin = true;
             }
           }
@@ -293,6 +293,6 @@ function calculateClusterConfidence(group: ItemGroup): number {
   );
   const primaryBonus = hasPrimary ? 25 : 0;
   const multiSourceBonus = group.items.length >= 3 ? 15 : 0;
-  const baseConfidence = group.items[0]?.classification?.confidence ?? 50;
+  const baseConfidence = group.items[0]?.classification?.classificationConfidence ?? 50;
   return Math.min(100, Math.round(baseConfidence * 0.4 + sourceBonus + primaryBonus + multiSourceBonus));
 }
