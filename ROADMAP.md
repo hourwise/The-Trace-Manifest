@@ -34,6 +34,8 @@ Add classification, semantic deduplication, clustering, entity and claim extract
 
 **Semantic dedup:** `semantic-dedup.ts` deployed — title Jaccard similarity with stop-word filtering, content excerpt overlap, combined scoring (70% title / 30% content), threshold at 45% combined. Runs after classification in the `0 9 * * *` cron slot. Manual trigger via `POST /admin/dedup`.
 
+**Story clustering:** `cluster.ts` deployed — three-stage pipeline: (1) group by primary topic from classification metadata, (2) within-topic clustering by entity overlap (models/providers) + title keyword similarity ≥35%, (3) write story_clusters + story_cluster_members + update items to `clustered`. Clusters auto-assigned evidence_status and confidence_score based on source tiers and count. Runs after sematic dedup in `0 9 * * *`. Manual trigger via `POST /admin/cluster`.
+
 ## Phase 4 — Models, Providers, and Benchmarks
 **Estimate:** 4–8 weeks
 

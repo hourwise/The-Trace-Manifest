@@ -10,6 +10,7 @@ import { checkSourceHealth } from "./health";
 import { deduplicateURL, hashURL } from "./dedup";
 import { runClassification } from "./classify";
 import { runSemanticDedup } from "./semantic-dedup";
+import { runClustering } from "./cluster";
 import type { Source, FeedItem } from "./types";
 
 // ============================================================
@@ -64,6 +65,7 @@ export default {
         case "0 9 * * *":
           await runClassificationPipeline(env);
           await runSemanticDedupPipeline(env);
+          await runClusteringPipeline(env);
           break;
         case "0 18 * * *":
           await checkAllSourcesHealth(env);
@@ -247,6 +249,15 @@ async function runSemanticDedupPipeline(env: Env) {
 }
 
 // ============================================================
+// Clustering pipeline (runs after semantic dedup)
+// ============================================================
+async function runClusteringPipeline(env: Env) {
+  console.log("Clustering: starting...");
+  const result = await runClustering(env.DB);
+  console.log(`Clustering: done — ${result.clusters} clusters from ${result.processed} items`);
+}
+
+// ============================================================
 // Source health check
 // ============================================================
 async function checkAllSourcesHealth(env: Env) {
@@ -280,6 +291,8 @@ async function handleAdminRoute(path: string, request: Request, env: Env, ctx: E
       return handleManualClassify(env);
     case "/admin/dedup":
       return handleManualDedup(env);
+    case "/admin/cluster":
+      return handleManualCluster(env);
     default:
       return Response.json({ error: "Not found" }, { status: 404 });
   }
@@ -341,5 +354,10 @@ async function handleManualClassify(env: Env): Promise<Response> {
 
 async function handleManualDedup(env: Env): Promise<Response> {
   const result = await runSemanticDedup(env.DB);
+  return Response.json({ status: "ok", ...result });
+}
+
+async function handleManualCluster(env: Env): Promise<Response> {
+  const result = await runClustering(env.DB);
   return Response.json({ status: "ok", ...result });
 }
