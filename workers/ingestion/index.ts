@@ -1,0 +1,238 @@
+// The Trace Manifest — Ingestion Worker
+// Cloudflare Worker for scheduled source fetching, dedup, and metadata storage
+// Phase 2: Source Registry and Ingestion
+
+import { fetchRSS } from "./fetchers/rss";
+import { fetchGitHubReleases } from "./fetchers/github";
+import { fetchArxivPapers } from "./fetchers/arxiv";
+import { fetchHackerNews } from "./fetchers/hackernews";
+import { checkSourceHealth } from "./health";
+import { deduplicateURL, hashURL } from "./dedup";
+import type { Source, FeedItem } from "./types";
+
+export interface Env {
+  DB: D1Database;
+  RAW_STORE: R2Bucket;
+  INGESTION_STATE: DurableObjectNamespace;
+}
+
+export default {
+  // Cron trigger handler — scheduled fetching
+  async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
+    const cron = event.cron;
+
+    switch (cron) {
+      case "*/30 * * * *":
+        // Tier A sources — poll every 30 min
+        await ingestTier(env, ctx, "A", "fetch");
+        break;
+      case "0 */3 * * *":
+        // Tier A extended — less urgent Tier A sources
+        await ingestTier(env, ctx, "A", "fetch");
+        break;
+      case "0 6 * * *":
+        // Daily research and benchmark ingestion
+        await ingestTier(env, ctx, "B", "fetch");
+        break;
+      case "0 9 * * *":
+        // Morning briefing prep — classify and cluster overnight items
+        await runClassificationPipeline(env);
+        break;
+      case "0 18 * * *":
+        // Evening source health check
+        await checkAllSourcesHealth(env);
+        break;
+      default:
+        console.log(`Unknown cron pattern: ${cron}`);
+    }
+  },
+
+  // HTTP handler — manual triggers and admin API
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    const url = new URL(request.url);
+    const path = url.pathname;
+
+    // Admin API routes
+    switch (path) {
+      case "/admin/ingest":
+        return handleManualIngest(request, env, ctx);
+      case "/admin/sources":
+        return handleSourceList(env);
+      case "/admin/sources/health":
+        return handleHealthReport(env);
+      case "/admin/jobs":
+        return handleJobList(env);
+      default:
+        return new Response("The Trace Manifest — Ingestion Worker", { status: 200 });
+    }
+  },
+};
+
+// ============================================================
+// Tier-based ingestion
+// ============================================================
+async function ingestTier(env: Env, ctx: ExecutionContext, tier: string, jobType: string) {
+  const { results: sources } = await env.DB.prepare(
+    "SELECT * FROM sources WHERE tier = ? AND active = 1 AND (last_fetched_at IS NULL OR datetime(last_fetched_at, '+' || cadence_minutes || ' minutes') <= datetime('now'))"
+  ).bind(tier).all<Source>();
+
+  if (!sources || sources.length === 0) {
+    console.log(`No sources to fetch for tier ${tier}`);
+    return;
+  }
+
+  console.log(`Ingesting ${sources.length} sources for tier ${tier}`);
+
+  for (const source of sources) {
+    ctx.waitUntil(processSource(env, source, jobType));
+  }
+}
+
+async function processSource(env: Env, source: Source, jobType: string) {
+  const jobId = await createJob(env, source.id, jobType);
+
+  try {
+    let items: Omit<FeedItem, "id" | "created_at">[] = [];
+
+    switch (source.ingestion_type) {
+      case "rss":
+        items = await fetchRSS(source);
+        break;
+      case "github_api":
+        items = await fetchGitHubReleases(source);
+        break;
+      case "arxiv_api":
+        items = await fetchArxivPapers(source);
+        break;
+      case "hackernews_api":
+        items = await fetchHackerNews(source);
+        break;
+      default:
+        console.log(`Skipping source ${source.name}: ingestion_type=${source.ingestion_type} not yet implemented`);
+        await completeJob(env, jobId, "completed", 0, 0);
+        return;
+    }
+
+    // Deduplicate against existing items
+    let created = 0;
+    for (const item of items) {
+      const urlHash = await hashURL(item.url);
+      const isDup = await deduplicateURL(env.DB, urlHash);
+
+      if (!isDup) {
+        await env.DB.prepare(
+          `INSERT INTO feed_items (source_id, external_id, url, url_hash, title, summary, content_excerpt, author, published_at, fetched_at, raw_metadata, ingestion_status)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, 'raw')`
+        ).bind(
+          source.id, item.external_id, item.url, urlHash, item.title,
+          item.summary, item.content_excerpt, item.author,
+          item.published_at, JSON.stringify(item.raw_metadata || {})
+        ).run();
+        created++;
+      }
+    }
+
+    // Update source health
+    await env.DB.prepare(
+      "UPDATE sources SET last_fetched_at = datetime('now'), last_success_at = datetime('now'), consecutive_failures = 0, health_status = 'healthy' WHERE id = ?"
+    ).bind(source.id).run();
+
+    await completeJob(env, jobId, "completed", items.length, created);
+    console.log(`Source ${source.name}: ${created}/${items.length} new items`);
+  } catch (error: any) {
+    console.error(`Error processing source ${source.name}: ${error.message}`);
+
+    await env.DB.prepare(
+      "UPDATE sources SET last_fetched_at = datetime('now'), last_error_at = datetime('now'), last_error_message = ?, consecutive_failures = consecutive_failures + 1, health_status = CASE WHEN consecutive_failures >= 3 THEN 'failing' WHEN consecutive_failures >= 1 THEN 'degraded' ELSE health_status END WHERE id = ?"
+    ).bind(error.message, source.id).run();
+
+    await completeJob(env, jobId, "failed", 0, 0, error.message);
+  }
+}
+
+// ============================================================
+// Job tracking
+// ============================================================
+async function createJob(env: Env, sourceId: number, jobType: string): Promise<number> {
+  const { meta } = await env.DB.prepare(
+    "INSERT INTO ingestion_jobs (source_id, job_type, status, started_at) VALUES (?, ?, 'running', datetime('now'))"
+  ).bind(sourceId, jobType).run();
+  return meta.last_row_id;
+}
+
+async function completeJob(env: Env, jobId: number, status: string, processed: number, created: number, error?: string) {
+  await env.DB.prepare(
+    "UPDATE ingestion_jobs SET status = ?, items_processed = ?, items_created = ?, error_message = ?, completed_at = datetime('now') WHERE id = ?"
+  ).bind(status, processed, created, error || null, jobId).run();
+}
+
+// ============================================================
+// Classification pipeline (morning run)
+// ============================================================
+async function runClassificationPipeline(env: Env) {
+  // Fetch unclassified items from the past 24 hours
+  const { results } = await env.DB.prepare(
+    "SELECT * FROM feed_items WHERE ingestion_status = 'raw' AND fetched_at >= datetime('now', '-1 day') ORDER BY fetched_at DESC LIMIT 500"
+  ).all<FeedItem>();
+
+  console.log(`Classification pipeline: ${results?.length || 0} items to process`);
+  // Classification logic will be implemented in Phase 3
+  // For Phase 2, items remain in 'raw' status
+}
+
+// ============================================================
+// Source health check
+// ============================================================
+async function checkAllSourcesHealth(env: Env) {
+  const { results } = await env.DB.prepare(
+    "SELECT * FROM sources WHERE active = 1"
+  ).all<Source>();
+
+  if (!results) return;
+
+  for (const source of results) {
+    await checkSourceHealth(env, source);
+  }
+}
+
+// ============================================================
+// Admin API handlers
+// ============================================================
+async function handleManualIngest(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  const { sourceId } = await request.json() as { sourceId?: number };
+
+  if (sourceId) {
+    const source = await env.DB.prepare("SELECT * FROM sources WHERE id = ?").bind(sourceId).first<Source>();
+    if (source) {
+      ctx.waitUntil(processSource(env, source, "fetch"));
+      return Response.json({ status: "ok", source: source.name });
+    }
+    return Response.json({ error: "Source not found" }, { status: 404 });
+  }
+
+  // Ingest all due sources across all tiers
+  await ingestTier(env, ctx, "A", "fetch");
+  await ingestTier(env, ctx, "B", "fetch");
+  return Response.json({ status: "ok", message: "Full ingestion triggered" });
+}
+
+async function handleSourceList(env: Env): Promise<Response> {
+  const { results } = await env.DB.prepare(
+    "SELECT id, name, url, tier, treatment, ingestion_type, health_status, last_fetched_at, last_success_at, consecutive_failures FROM sources WHERE active = 1 ORDER BY tier, name"
+  ).all();
+  return Response.json(results || []);
+}
+
+async function handleHealthReport(env: Env): Promise<Response> {
+  const { results } = await env.DB.prepare(
+    "SELECT health_status, COUNT(*) as count FROM sources WHERE active = 1 GROUP BY health_status"
+  ).all();
+  return Response.json(results || []);
+}
+
+async function handleJobList(env: Env): Promise<Response> {
+  const { results } = await env.DB.prepare(
+    "SELECT j.*, s.name as source_name FROM ingestion_jobs j LEFT JOIN sources s ON j.source_id = s.id ORDER BY j.created_at DESC LIMIT 100"
+  ).all();
+  return Response.json(results || []);
+}

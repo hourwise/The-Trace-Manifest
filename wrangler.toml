@@ -1,0 +1,35 @@
+# The Trace Manifest — Wrangler config
+# Cloudflare Pages + Workers + D1 + Cron Triggers
+
+name = "the-trace-manifest"
+compatibility_date = "2026-07-12"
+compatibility_flags = ["nodejs_compat"]
+
+# Astro Pages deployment
+[env.production]
+name = "the-trace-manifest"
+
+# D1 Database for metadata storage
+[[d1_databases]]
+binding = "DB"
+database_name = "trace-manifest-db"
+database_id = "trace-manifest-db"
+
+# Cron triggers for scheduled ingestion
+[triggers]
+crons = [
+  "*/30 * * * *",  # Tier A sources: every 30 min
+  "0 */3 * * *",   # Tier A extended: every 3 hours
+  "0 6 * * *",     # Daily research/benchmark ingestion
+  "0 9 * * *",     # Morning briefing prep
+  "0 18 * * *",    # Evening source health check
+]
+
+# Worker configuration
+[[durable_objects.bindings]]
+name = "INGESTION_STATE"
+class_name = "IngestionState"
+
+[[r2_buckets]]
+binding = "RAW_STORE"
+bucket_name = "trace-manifest-raw"

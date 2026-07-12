@@ -1,0 +1,42 @@
+---
+import BaseLayout from "../../layouts/BaseLayout.astro";
+---
+
+<BaseLayout
+  title="Admin"
+  description="The Trace Manifest administration dashboard."
+>
+  <div class="container">
+    <h1>Admin</h1>
+    <p class="meta" style="margin-bottom:2rem;">
+      Administration dashboard for source management, ingestion monitoring, and editorial review.
+    </p>
+
+    <div class="grid grid--3">
+      <a href="/admin/sources" class="card" style="text-decoration:none;color:inherit;">
+        <h2 style="font-size:1.15rem;">Sources</h2>
+        <p class="meta" style="margin-top:0.5rem;">Manage 65 sources across 3 tiers. View health status, trigger manual fetches, pause or remove sources.</p>
+        <p style="margin-top:0.75rem;color:var(--color-accent);">Manage sources →</p>
+      </a>
+      <a href="/admin/jobs" class="card" style="text-decoration:none;color:inherit;">
+        <h2 style="font-size:1.15rem;">Ingestion Jobs</h2>
+        <p class="meta" style="margin-top:0.5rem;">Monitor scheduled and manual ingestion jobs. View success rates, item counts, and error logs.</p>
+        <p style="margin-top:0.75rem;color:var(--color-accent);">View jobs →</p>
+      </a>
+      <a href="/admin/review" class="card" style="text-decoration:none;color:inherit;">
+        <h2 style="font-size:1.15rem;">Review Queue</h2>
+        <p class="meta" style="margin-top:0.5rem;">Items flagged for human review per ADR-0004. Approve, edit, or reject before publication.</p>
+        <p style="margin-top:0.75rem;color:var(--color-accent);">Open queue →</p>
+      </a>
+    </div>
+
+    <section style="margin-top:3rem;padding:1rem;background:var(--color-bg-alt);border-radius:var(--radius);">
+      <h2>Phase 2 Status</h2>
+      <div style="margin-top:0.75rem;">
+        <p class="meta"><strong>Infrastructure:</strong> Wrangler config, D1 schema, seed data, ingestion worker with RSS/GitHub/arXiv/HN fetchers — built.</p>
+        <p class="meta"><strong>Deployment:</strong> Pending Cloudflare account setup and `wrangler deploy`.</p>
+        <p class="meta"><strong>Next:</strong> Deploy worker, run seed, verify cron triggers, connect admin UI to live API.</p>
+      </div>
+    </section>
+  </div>
+</BaseLayout>

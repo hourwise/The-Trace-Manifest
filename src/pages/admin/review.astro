@@ -1,0 +1,54 @@
+---
+import BaseLayout from "../../layouts/BaseLayout.astro";
+---
+
+<BaseLayout
+  title="Admin — Review Queue"
+  description="Manual review queue for high-impact claims, disputed stories, and corrections."
+>
+  <div class="container">
+    <h1>Admin: Review Queue</h1>
+    <p class="meta" style="margin-bottom:2rem;">
+      <a href="/admin/sources">← Sources</a> &middot; <a href="/admin">Admin home</a>
+    </p>
+
+    <p style="padding:0.75rem;background:var(--color-bg-alt);border-radius:var(--radius);font-size:0.9rem;margin-bottom:2rem;">
+      Items flagged for human review per <a href="/docs/adr/0004-human-review-boundary.md">ADR-0004</a>.
+      Review is required for: high-impact security claims, legal/regulatory claims, accusations of misconduct,
+      major benchmark conclusions, best-model/provider rankings, and corrections affecting prominent stories.
+    </p>
+
+    <section style="margin-bottom:2rem;">
+      <h2>Pending Review</h2>
+      <div class="card" style="text-align:center;padding:2rem;">
+        <p class="meta">No items currently pending review.</p>
+        <p class="meta" style="margin-top:0.5rem;">
+          Items appear here when stories are flagged during the classification pipeline (Phase 3).
+        </p>
+      </div>
+    </section>
+
+    <section style="margin-bottom:2rem;">
+      <h2>Review Criteria</h2>
+      <p class="meta">The following require human review before publication (per ADR-0004):</p>
+      <ul style="padding-left:1.5rem;margin-top:0.75rem;display:flex;flex-direction:column;gap:0.35rem;" class="meta">
+        <li>High-impact security claims</li>
+        <li>Legal or regulatory claims</li>
+        <li>Claims accusing organisations or individuals of misconduct</li>
+        <li>Major benchmark conclusions</li>
+        <li>"Best model" or "best provider" rankings</li>
+        <li>Corrections affecting prominent stories</li>
+        <li>Sponsored comparisons</li>
+        <li>Claims based mainly on community reports</li>
+        <li>Stories with strong contradictory evidence</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Review History</h2>
+      <div class="card" style="text-align:center;padding:2rem;">
+        <p class="meta">No reviews have been completed yet.</p>
+      </div>
+    </section>
+  </div>
+</BaseLayout>

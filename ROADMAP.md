@@ -16,10 +16,12 @@ Delivered: 20 docs across 7 directories, 7 accepted ADRs, GitHub repo with CI-re
 
 Delivered: Astro 5 + TypeScript, 26 static pages (homepage, feed, stories, topics, models, benchmarks, daily/weekly briefings, ask box with 20 curated Q&As, corrections ledger, methodology), RSS feed, sitemap, evidence label system (6 states), responsive navigation with skip-to-content, OG meta tags.
 
-## Phase 2 — Source Registry and Ingestion
-**Estimate:** 3–5 weeks
+## Phase 2 — Source Registry and Ingestion 🔧
+**Estimate:** 3–5 weeks | **Started:** 12 July 2026
 
 Integrate the first 50–100 sources, scheduled fetching, source-health checks, metadata storage, deduplication, licence tracking, and admin controls.
+
+**Infrastructure built:** Wrangler config with 5 cron schedules, D1 schema (15 tables), seed data (40 sources), ingestion Worker (RSS/GitHub/arXiv/HN fetchers, URL dedup via SHA-256, source health monitoring with auto-disable), admin UI (4 pages: dashboard, sources, jobs, review queue). Pending: Cloudflare deployment, remaining 25 source seeds, live cron verification.
 
 ## Phase 3 — Curation and Trust
 **Estimate:** 4–8 weeks
