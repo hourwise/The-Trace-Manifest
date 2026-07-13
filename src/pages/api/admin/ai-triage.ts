@@ -5,18 +5,30 @@
 // Requires ADMIN_API_TOKEN in Authorization header.
 
 import type { APIRoute } from "astro";
-import { ensureInitialised } from "../../../ai/config";
-import { generateEditorial } from "../../../ai/trace-model-gateway";
 
-ensureInitialised();
+// Lazy-load the gateway — avoids startup failures in Cloudflare runtime
+let gatewayReady = false;
+async function initGateway(): Promise<boolean> {
+  if (gatewayReady) return true;
+  try {
+    const { ensureInitialised } = await import("../../../ai/config");
+    ensureInitialised();
+    gatewayReady = true;
+    return true;
+  } catch (e: any) {
+    console.error("AI gateway init failed:", e.message);
+    return false;
+  }
+}
 
 // ============================================================
-// Auth — same token as ingestion worker
+// Auth — reads ADMIN_API_TOKEN from Cloudflare Pages secrets
 // ============================================================
 
 function getAdminToken(): string {
-  // Cloudflare Pages Functions: env vars via process.env (dev) or runtime context
+  // Cloudflare Pages Functions: secrets available via import.meta.env (Astro) or runtime context
   try {
+    // @ts-ignore — Astro + Cloudflare adapter injects env
     return (import.meta as any).env?.ADMIN_API_TOKEN ?? "";
   } catch {
     return "";
@@ -80,6 +92,20 @@ IMPORTANT:
 - Do not use hype language like "revolutionary", "game-changing", or "breakthrough".
 - If sources are thin or unclear, say so rather than guessing.
 `.trim();
+
+  // Init gateway lazily
+  const ok = await initGateway();
+  if (!ok) {
+    return new Response(JSON.stringify({
+      error: "AI gateway unavailable. DEEPSEEK_API_KEY may not be set on Cloudflare Pages.",
+    }), {
+      status: 503,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  // Dynamic import to avoid top-level failures
+  const { generateEditorial } = await import("../../../ai/trace-model-gateway");
 
   // Call the AI gateway
   const result = await generateEditorial(instruction, sourceMaterial);
