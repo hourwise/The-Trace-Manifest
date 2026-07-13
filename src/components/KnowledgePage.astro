@@ -109,7 +109,7 @@ const statusBadgeMap: Record<string, string> = {
     <section class="knowledge-section">
       <h2>Core concepts</h2>
       <dl class="concept-list">
-        {page.coreConcepts.map(c => (
+        {page.coreConcepts.map((c: { term: string; definition: string }) => (
           <div class="concept-item">
             <dt class="concept-term">{c.term}</dt>
             <dd class="concept-def">{c.definition}</dd>
@@ -150,7 +150,7 @@ const statusBadgeMap: Record<string, string> = {
     <section class="knowledge-section">
       <h2>Known limitations</h2>
       <ul class="limitation-list">
-        {page.knownLimitations.map(l => <li>{l}</li>)}
+        {page.knownLimitations.map((l: string) => <li>{l}</li>)}
       </ul>
     </section>
   )}
@@ -168,7 +168,7 @@ const statusBadgeMap: Record<string, string> = {
     <section class="knowledge-section">
       <h2>Implementation options</h2>
       <div class="impl-grid">
-        {page.implementationOptions.map(opt => (
+        {page.implementationOptions.map((opt: { label: string; description: string; url?: string }) => (
           <div class="card impl-card">
             <h3>{opt.label}</h3>
             <p class="meta">{opt.description}</p>
@@ -193,7 +193,7 @@ const statusBadgeMap: Record<string, string> = {
             </tr>
           </thead>
           <tbody>
-            {page.comparisons.map(row => (
+            {page.comparisons.map((row: { aspect: string; optionA: string; optionB: string }) => (
               <tr>
                 <td style="font-weight:550;">{row.aspect}</td>
                 <td>{row.optionA}</td>
@@ -211,7 +211,7 @@ const statusBadgeMap: Record<string, string> = {
     <section class="knowledge-section">
       <h2>Timeline / Significant changes</h2>
       <div class="timeline-list">
-        {page.timeline.map(entry => (
+        {page.timeline.map((entry: { date: string; event: string; url?: string }) => (
           <div class="timeline-item">
             <span class="timeline-date meta">{entry.date}</span>
             <span class="timeline-event">
@@ -233,7 +233,7 @@ const statusBadgeMap: Record<string, string> = {
     <section class="knowledge-section">
       <h2>Open questions / Disputed areas</h2>
       <ul class="open-questions-list">
-        {page.openQuestions.map(q => (
+        {page.openQuestions.map((q: string) => (
           <li class="open-question-item">
             <span class="open-question-icon" aria-hidden="true">?</span>
             <span>{q}</span>
@@ -248,7 +248,7 @@ const statusBadgeMap: Record<string, string> = {
     <section class="knowledge-section">
       <h2>Practical checklist</h2>
       <ul class="checklist">
-        {page.checklist.map(item => (
+        {page.checklist.map((item: string) => (
           <li class="checklist-item">
             <span class="checklist-check" aria-hidden="true">☐</span>
             <span>{item}</span>
@@ -262,7 +262,7 @@ const statusBadgeMap: Record<string, string> = {
   {page.codeExamples && page.codeExamples.length > 0 && (
     <section class="knowledge-section">
       <h2>Code examples</h2>
-      {page.codeExamples.map(ex => (
+      {page.codeExamples.map((ex: { language: string; code: string; caption?: string }) => (
         <div style="margin-bottom:1rem;">
           {ex.caption && <p class="meta" style="margin-bottom:0.35rem;">{ex.caption}</p>}
           <pre class="code-block mono"><code>{ex.code}</code></pre>
@@ -300,7 +300,7 @@ const statusBadgeMap: Record<string, string> = {
     <section class="knowledge-section">
       <h2>Related knowledge pages</h2>
       <div class="related-grid">
-        {page.relatedPages.map(rp => (
+        {page.relatedPages.map((rp: { title: string; slug: string }) => (
           <a href={`/knowledge/${rp.slug}`} class="card card-hover related-card">
             <span>{rp.title}</span>
             <span aria-hidden="true">&rarr;</span>
@@ -315,7 +315,7 @@ const statusBadgeMap: Record<string, string> = {
     <section class="knowledge-section">
       <h2>Related intelligence events</h2>
       <div style="display:flex;flex-direction:column;gap:0.5rem;">
-        {page.relatedEvents.map(ev => (
+        {page.relatedEvents.map((ev: { headline: string; date: string; slug: string }) => (
           <div class="card" style="padding:0.6rem 1rem;">
             <a href={`/stories/${ev.slug}`} style="font-size:0.88rem;">{ev.headline}</a>
             <span class="meta" style="margin-left:0.75rem;">{ev.date}</span>
@@ -331,7 +331,7 @@ const statusBadgeMap: Record<string, string> = {
       <details>
         <summary class="version-history-toggle">Version history ({page.versionHistory.length} revision{page.versionHistory.length > 1 ? 's' : ''})</summary>
         <div class="version-list" style="margin-top:0.75rem;">
-          {page.versionHistory.map(v => (
+          {page.versionHistory.map((v: { version: number; date: string; summary: string }) => (
             <div class="version-item">
               <span class="meta version-num">v{v.version}</span>
               <span class="meta version-date">{v.date}</span>

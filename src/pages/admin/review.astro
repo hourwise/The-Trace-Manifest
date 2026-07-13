@@ -112,7 +112,7 @@ const evidenceStates = [
 Authorization: Bearer &lt;ADMIN_API_TOKEN&gt;
 Content-Type: application/json
 
-{
+{'{'}
   "clusterId": 1,              // optional: target cluster
   "claimId": null,             // optional: target claim (use clusterId OR claimId)
   "correctionType": "factual_error | rating_change | licence_correction |
@@ -126,7 +126,7 @@ Content-Type: application/json
   "evidenceUrl": "https://...",                   // optional
   "impact": "What changed as a result",           // optional
   "correctedBy": "reviewer-name"
-}</code></pre>
+{'}'}</code></pre>
       </div>
 
       <div class="card" style="margin-top:1rem;background:var(--surface-2);">

@@ -243,6 +243,17 @@ const statusDescriptions: Record<string, string> = {
 const normalisedStatus = (status ?? "unverified").toLowerCase().replace(/[\s_-]+/g, "_");
 const statusDescription = statusDescriptions[normalisedStatus] ?? "Evidence status has not been assessed.";
 
+// Compute badge style class
+const badgeClassMap: Record<string, string> = {
+  strongly_supported: "strong",
+  provisionally_supported: "provisional",
+  vendor_reported: "vendor",
+  community_reported: "community",
+  superseded: "outdated",
+  outdated: "outdated",
+};
+const badgeClass = `badge badge-${badgeClassMap[normalisedStatus] ?? normalisedStatus} badge-sm`;
+
 // Assessment icon map
 const assessmentIcons: Record<string, string> = {
   positive: "✓",
@@ -255,7 +266,7 @@ const assessmentIcons: Record<string, string> = {
 <div class="rating-explanation">
   <!-- Summary -->
   <div class="rating-summary">
-    <span class={`badge badge-${normalisedStatus === "strongly_supported" ? "strong" : normalisedStatus === "provisionally_supported" ? "provisional" : normalisedStatus === "vendor_reported" ? "vendor" : normalisedStatus === "community_reported" ? "community" : normalisedStatus in ["superseded", "outdated"] ? "outdated" : normalisedStatus}`} badge-sm`>
+    <span class={badgeClass}>
       {status}
     </span>
     <p class="rating-summary-text">{statusDescription}</p>
