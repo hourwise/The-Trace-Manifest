@@ -98,6 +98,222 @@ const evidenceStates = [
       </div>
     </section>
 
+    <!-- Publish a story -->
+    <section style="margin-top:2.5rem;">
+      <h2>Publish a Story</h2>
+      <p class="meta" style="margin-bottom:1rem;">
+        Select a draft cluster, write the editorial summary, and publish. Published stories appear on the public <a href="/feed">feed</a> and <a href="/">homepage</a>.
+      </p>
+
+      <!-- Admin token -->
+      <div class="card" style="margin-bottom:1.5rem;background:var(--surface-2);">
+        <label for="admin-token" style="font-size:0.85rem;font-weight:600;display:block;margin-bottom:0.35rem;">Admin API Token</label>
+        <div style="display:flex;gap:0.5rem;">
+          <input type="password" id="admin-token" placeholder="Paste your ADMIN_API_TOKEN…" style="flex:1;font-family:var(--font-mono);font-size:0.8rem;" />
+          <button type="button" id="save-token-btn" class="btn btn-secondary" style="white-space:nowrap;font-size:0.8rem;">Save</button>
+        </div>
+        <p class="meta" style="margin-top:0.35rem;font-size:0.75rem;">Stored in session storage only — cleared when you close the tab. Never sent to the Pages server.</p>
+      </div>
+
+      <!-- Cluster selector -->
+      <div class="card" style="margin-bottom:1.5rem;background:var(--surface-2);">
+        <div style="display:flex;gap:0.5rem;align-items:flex-end;flex-wrap:wrap;">
+          <div style="flex:1;min-width:200px;">
+            <label for="cluster-select" style="font-size:0.85rem;font-weight:600;display:block;margin-bottom:0.35rem;">Story Cluster</label>
+            <select id="cluster-select" style="width:100%;" disabled>
+              <option value="">— Enter token and click Load —</option>
+            </select>
+          </div>
+          <button type="button" id="load-clusters-btn" class="btn btn-secondary" style="font-size:0.8rem;">Load Clusters</button>
+        </div>
+        <p class="meta" style="margin-top:0.35rem;font-size:0.75rem;" id="cluster-count"></p>
+      </div>
+
+      <!-- Editorial fields -->
+      <div class="card" style="margin-bottom:1.5rem;background:var(--surface-2);">
+        <div style="display:flex;flex-direction:column;gap:1rem;">
+          <div>
+            <label for="pub-headline" style="font-size:0.85rem;font-weight:600;display:block;margin-bottom:0.25rem;">Headline <span class="meta" style="font-weight:400;">(optional — uses cluster title if blank)</span></label>
+            <input type="text" id="pub-headline" placeholder="Override the auto-generated headline…" style="width:100%;" />
+          </div>
+          <div>
+            <label for="pub-summary" style="font-size:0.85rem;font-weight:600;display:block;margin-bottom:0.25rem;">Summary <span style="color:var(--ev-disputed);">*required</span></label>
+            <textarea id="pub-summary" rows="3" placeholder="A concise neutral summary of what happened. Min 20 characters." style="width:100%;resize:vertical;"></textarea>
+          </div>
+          <div>
+            <label for="pub-analysis" style="font-size:0.85rem;font-weight:600;display:block;margin-bottom:0.25rem;">TRACE Editorial Analysis <span class="meta" style="font-weight:400;">(optional)</span></label>
+            <textarea id="pub-analysis" rows="3" placeholder="Why this matters, what may be overstated, how it relates to earlier events." style="width:100%;resize:vertical;"></textarea>
+          </div>
+          <div>
+            <label for="pub-why" style="font-size:0.85rem;font-weight:600;display:block;margin-bottom:0.25rem;">Why This Matters <span class="meta" style="font-weight:400;">(optional)</span></label>
+            <input type="text" id="pub-why" placeholder="A one-line explanation of significance…" style="width:100%;" />
+          </div>
+          <div>
+            <label for="pub-image" style="font-size:0.85rem;font-weight:600;display:block;margin-bottom:0.25rem;">Headline Image URL <span class="meta" style="font-weight:400;">(optional — auto-detected from feed if blank)</span></label>
+            <input type="url" id="pub-image" placeholder="https://…" style="width:100%;" />
+          </div>
+          <div>
+            <label for="pub-reviewer" style="font-size:0.85rem;font-weight:600;display:block;margin-bottom:0.25rem;">Reviewed By</label>
+            <input type="text" id="pub-reviewer" placeholder="Your name or initials" value="admin" style="width:100%;max-width:200px;" />
+          </div>
+        </div>
+        <div style="margin-top:1rem;display:flex;gap:0.75rem;align-items:center;flex-wrap:wrap;">
+          <button type="button" id="publish-btn" class="btn btn-primary" disabled>Publish Story</button>
+          <span id="publish-status" class="meta"></span>
+        </div>
+      </div>
+
+      <!-- Recent publishes -->
+      <div class="card" style="background:var(--surface-2);">
+        <h3 style="font-size:0.95rem;margin-bottom:0.5rem;">Recently Published</h3>
+        <div id="recent-publishes" class="meta" style="font-size:0.8rem;">—</div>
+      </div>
+    </section>
+
+    <script>
+      const WORKER_URL = "https://trace-manifest-ingestion.philgeran.workers.dev";
+
+      function getToken(): string { return sessionStorage.getItem("admin_token") || ""; }
+      function setToken(t: string): void { sessionStorage.setItem("admin_token", t); }
+
+      function authHeaders(): Record<string, string> {
+        return {
+          "Authorization": "Bearer " + getToken(),
+          "Content-Type": "application/json",
+        };
+      }
+
+      function status(msg: string, isError: boolean): void {
+        const el = document.getElementById("publish-status");
+        if (el) { el.textContent = msg; el.style.color = isError ? "var(--ev-disputed)" : "var(--ev-confirmed)"; }
+      }
+
+      // Helper: typed getElementById
+      function $<T extends HTMLElement>(id: string): T | null {
+        return document.getElementById(id) as T | null;
+      }
+
+      // Save token
+      $<HTMLButtonElement>("save-token-btn")?.addEventListener("click", () => {
+        const input = $<HTMLInputElement>("admin-token");
+        const t = input?.value?.trim();
+        if (t) { setToken(t); status("Token saved for this session.", false); }
+        else { status("Enter a token first.", true); }
+      });
+
+      // Load clusters
+      $<HTMLButtonElement>("load-clusters-btn")?.addEventListener("click", async () => {
+        const select = $<HTMLSelectElement>("cluster-select");
+        const count = document.getElementById("cluster-count");
+        if (!select || !count) return;
+
+        if (!getToken()) { status("Save your admin token first.", true); return; }
+
+        select.disabled = true;
+        select.innerHTML = '<option value="">Loading…</option>';
+        status("Loading clusters…", false);
+
+        try {
+          const res = await fetch(`${WORKER_URL}/admin/clusters?limit=50`, { headers: authHeaders() });
+          if (!res.ok) { throw new Error(`HTTP ${res.status}`); }
+          const clusters: Array<{ id: number; title: string; publication_status: string; source_count: number }> = await res.json();
+
+          select.innerHTML = '<option value="">— Select a cluster —</option>';
+          if (clusters.length > 0) {
+            clusters.forEach((c) => {
+              const opt = document.createElement("option");
+              opt.value = String(c.id);
+              opt.textContent = `#${c.id}: ${c.title.slice(0, 80)} [${c.publication_status}] (${c.source_count || 0} sources)`;
+              select.appendChild(opt);
+            });
+            count.textContent = `${clusters.length} clusters loaded. ${clusters.filter((c) => c.publication_status === 'draft').length} drafts.`;
+          } else {
+            count.textContent = "No clusters found. The ingestion pipeline may not have run yet.";
+          }
+
+          select.disabled = false;
+          status("Select a cluster from the dropdown.", false);
+        } catch (e) {
+          select.innerHTML = '<option value="">— Error loading —</option>';
+          select.disabled = false;
+          count.textContent = "";
+          status("Failed to load. Check your token and network.", true);
+          console.error(e);
+        }
+      });
+
+      // Enable publish button when cluster selected and summary has content
+      function checkPublishReady(): void {
+        const btn = $<HTMLButtonElement>("publish-btn");
+        const select = $<HTMLSelectElement>("cluster-select");
+        const summary = $<HTMLTextAreaElement>("pub-summary");
+        if (btn && select && summary) {
+          btn.disabled = !select.value || !summary.value || summary.value.trim().length < 20;
+        }
+      }
+      $<HTMLSelectElement>("cluster-select")?.addEventListener("change", checkPublishReady);
+      $<HTMLTextAreaElement>("pub-summary")?.addEventListener("input", checkPublishReady);
+
+      // Publish button
+      $<HTMLButtonElement>("publish-btn")?.addEventListener("click", async () => {
+        if (!getToken()) { status("Save your admin token first.", true); return; }
+
+        const select = $<HTMLSelectElement>("cluster-select");
+        const clusterId = parseInt(select?.value || "");
+        if (!clusterId || isNaN(clusterId)) { status("Select a cluster first.", true); return; }
+
+        const summary = $<HTMLTextAreaElement>("pub-summary")?.value?.trim();
+        if (!summary || summary.length < 20) { status("Summary must be at least 20 characters.", true); return; }
+
+        const body = {
+          clusterId,
+          summary,
+          headline: $<HTMLInputElement>("pub-headline")?.value?.trim() || undefined,
+          editorialAnalysis: $<HTMLTextAreaElement>("pub-analysis")?.value?.trim() || undefined,
+          whyItMatters: $<HTMLInputElement>("pub-why")?.value?.trim() || undefined,
+          headlineImageUrl: $<HTMLInputElement>("pub-image")?.value?.trim() || undefined,
+          reviewedBy: $<HTMLInputElement>("pub-reviewer")?.value?.trim() || "admin",
+        };
+
+        const btn = $<HTMLButtonElement>("publish-btn");
+        if (btn) { btn.disabled = true; btn.textContent = "Publishing…"; }
+        status("Publishing…", false);
+
+        try {
+          const res = await fetch(`${WORKER_URL}/admin/publish-story`, {
+            method: "POST",
+            headers: authHeaders(),
+            body: JSON.stringify(body),
+          });
+          const data: { error?: string; story?: { slug: string; headline: string } } = await res.json();
+
+          if (!res.ok) {
+            status(data.error || `HTTP ${res.status}`, true);
+          } else if (data.story) {
+            status(`Published! Slug: ${data.story.slug}`, false);
+            const recent = document.getElementById("recent-publishes");
+            if (recent) {
+              recent.innerHTML = `<a href="/stories/${data.story.slug}" style="font-weight:550;">${data.story.headline}</a> <span class="meta">— ${new Date().toLocaleTimeString()}</span>` + (recent.innerHTML !== "—" ? "<br>" + recent.innerHTML : "");
+            }
+          }
+        } catch (e) {
+          status("Network error — check console.", true);
+          console.error(e);
+        } finally {
+          if (btn) { btn.disabled = false; btn.textContent = "Publish Story"; }
+        }
+      });
+
+      // Restore saved token on load
+      (function() {
+        const saved = getToken();
+        if (saved) {
+          const input = $<HTMLInputElement>("admin-token");
+          if (input) input.value = saved;
+        }
+      })();
+    </script>
+
     <!-- Record a correction -->
     <section style="margin-top:2.5rem;">
       <h2>Record a Correction</h2>

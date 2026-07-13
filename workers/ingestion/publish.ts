@@ -471,3 +471,38 @@ export async function getRelatedStories(
     .all<{ slug: string; headline: string; topic: string }>();
   return result.results;
 }
+
+// ============================================================
+// Admin query — list all clusters (not just published)
+// ============================================================
+
+export async function getAllClusters(
+  env: Env,
+  options: { limit?: number; status?: string } = {},
+): Promise<{ id: number; title: string; topic: string | null; evidence_status: string; publication_status: string; source_count: number; created_at: string }[]> {
+  const limit = Math.min(options.limit ?? 50, 100);
+
+  let query = `
+    SELECT sc.id, sc.title, sc.topic, sc.evidence_status, sc.publication_status,
+           sc.created_at,
+           (SELECT COUNT(*) FROM story_cluster_members WHERE cluster_id = sc.id) as source_count
+    FROM story_clusters sc
+  `;
+
+  const params: any[] = [];
+
+  if (options.status) {
+    query += ` WHERE sc.publication_status = ?`;
+    params.push(options.status);
+  }
+
+  query += ` ORDER BY sc.id DESC LIMIT ?`;
+  params.push(limit);
+
+  const result = await env.DB.prepare(query).bind(...params).all<{
+    id: number; title: string; topic: string | null;
+    evidence_status: string; publication_status: string;
+    source_count: number; created_at: string;
+  }>();
+  return result.results;
+}
