@@ -1,0 +1,252 @@
+---
+// The Trace Manifest — Ask TRACE Page
+// Phase 5: Source-grounded Q&A interface. Browser calls /api/trace/ask — never DeepSeek directly.
+import BaseLayout from "../layouts/BaseLayout.astro";
+import EvidenceBadge from "../components/EvidenceBadge.astro";
+
+const suggestedQuestions = [
+  "What changed in MCP security this week?",
+  "Which coding model is best for local use?",
+  "Has GPT-5 been independently verified?",
+  "What is the current thinking on agent memory?",
+  "Which provider offers the best price-to-speed ratio?",
+  "Are there any new prompt injection advisories?",
+];
+---
+
+<BaseLayout
+  title="Ask TRACE"
+  description="Ask TRACE — source-grounded answers from indexed evidence with citations, confidence labels, and explicit uncertainty. Search the evidence, follow the source trail."
+>
+  <div class="wrap" style="max-width:42rem;">
+    <h1 class="display h1">Ask TRACE</h1>
+    <p class="lead" style="margin-top:0.5rem;margin-bottom:2rem;">
+      Search the evidence, follow the source trail and understand what changed.
+      TRACE answers from its indexed evidence base — not from an unrestricted language model.
+      <a href="/methodology">How TRACE works &rarr;</a>
+    </p>
+
+    <!-- Search box -->
+    <form id="ask-form" class="ask-form" autocomplete="off">
+      <div class="field" style="min-height:56px;padding:0.5rem 1rem;border-radius:var(--radius-lg);">
+        <input
+          type="text"
+          id="question-input"
+          name="question"
+          placeholder="Ask a question about AI models, tools, security, benchmarks..."
+          maxlength="1000"
+          autocomplete="off"
+          aria-label="Ask TRACE a question"
+          style="font-size:1rem;"
+        />
+        <button type="submit" class="btn btn-primary" id="ask-submit" aria-label="Submit question">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+          <span>Ask</span>
+        </button>
+      </div>
+      <p class="meta" style="margin-top:0.5rem;text-align:right;" id="char-count">0 / 1,000</p>
+    </form>
+
+    <!-- Status area -->
+    <div id="ask-status" class="ask-status" role="status" aria-live="polite" style="display:none;"></div>
+
+    <!-- Answer area -->
+    <div id="ask-result" style="display:none;margin-top:2rem;">
+      <div class="card" id="answer-card">
+        <div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;margin-bottom:1rem;">
+          <span id="confidence-badge"></span>
+          <span class="meta" id="request-id-display"></span>
+        </div>
+        <div id="answer-text" class="prose"></div>
+        <div id="key-points" style="margin-top:1rem;"></div>
+        <div id="caveats-section" style="margin-top:1rem;padding:0.75rem;background:var(--surface-2);border-radius:var(--radius);display:none;">
+          <p class="meta" style="font-weight:600;margin-bottom:0.35rem;">Caveats</p>
+          <ul id="caveats-list" class="meta" style="padding-left:1.25rem;"></ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- Error area -->
+    <div id="ask-error" style="display:none;margin-top:1.5rem;" class="card" role="alert"></div>
+
+    <!-- Suggested questions -->
+    <section style="margin-top:3rem;">
+      <h2 style="font-size:1.1rem;margin-bottom:1rem;">Suggested questions</h2>
+      <div class="chip-row">
+        {suggestedQuestions.map(q => (
+          <button type="button" class="chip suggested-q" data-question={q}>{q}</button>
+        ))}
+      </div>
+    </section>
+
+    <!-- Info footer -->
+    <section style="margin-top:3rem;padding:1.25rem;background:var(--surface-2);border-radius:var(--radius);">
+      <h3 style="font-size:0.95rem;margin-bottom:0.5rem;">About Ask TRACE</h3>
+      <div class="meta" style="display:flex;flex-direction:column;gap:0.35rem;">
+        <p><strong>Evidence-bounded:</strong> TRACE answers using only evidence admitted to its governed corpus. It does not browse the open web.</p>
+        <p><strong>Uncertainty is visible:</strong> When evidence is insufficient, TRACE says so. Confidence is calculated deterministically — not by the model.</p>
+        <p><strong>Source-grounded:</strong> Every factual statement is linked to a source in the TRACE corpus. Citations are verified before answers are served.</p>
+        <p><strong>Rate limited:</strong> {3} questions per visitor per day to ensure fair access and cost control.</p>
+        <p><strong>Privacy:</strong> Questions are processed server-side. Raw questions are not retained longer than needed for abuse prevention.</p>
+      </div>
+    </section>
+  </div>
+</BaseLayout>
+
+<script>
+  const form = document.getElementById("ask-form") as HTMLFormElement;
+  const input = document.getElementById("question-input") as HTMLInputElement;
+  const submitBtn = document.getElementById("ask-submit") as HTMLButtonElement;
+  const charCount = document.getElementById("char-count") as HTMLElement;
+  const statusEl = document.getElementById("ask-status") as HTMLElement;
+  const resultEl = document.getElementById("ask-result") as HTMLElement;
+  const errorEl = document.getElementById("ask-error") as HTMLElement;
+  const confidenceBadge = document.getElementById("confidence-badge") as HTMLElement;
+  const requestIdDisplay = document.getElementById("request-id-display") as HTMLElement;
+  const answerText = document.getElementById("answer-text") as HTMLElement;
+  const keyPoints = document.getElementById("key-points") as HTMLElement;
+  const caveatsSection = document.getElementById("caveats-section") as HTMLElement;
+  const caveatsList = document.getElementById("caveats-list") as HTMLElement;
+
+  let isSubmitting = false;
+
+  // Character count
+  input?.addEventListener("input", () => {
+    if (charCount) charCount.textContent = `${input.value.length} / 1,000`;
+  });
+
+  // Suggested questions
+  document.querySelectorAll(".suggested-q").forEach(btn => {
+    btn.addEventListener("click", () => {
+      if (input) {
+        input.value = (btn as HTMLElement).dataset.question ?? "";
+        input.dispatchEvent(new Event("input"));
+        input.focus();
+      }
+    });
+  });
+
+  // Form submit
+  form?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+
+    if (isSubmitting) return;
+    const question = input?.value.trim();
+    if (!question) return;
+
+    // UI: loading state
+    isSubmitting = true;
+    submitBtn.disabled = true;
+    resultEl.style.display = "none";
+    errorEl.style.display = "none";
+    statusEl.style.display = "block";
+    statusEl.innerHTML = `<p class="meta">Searching the evidence corpus...</p>`;
+
+    try {
+      const response = await fetch("/api/trace/ask", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question }),
+      });
+
+      const data = await response.json();
+      statusEl.style.display = "none";
+
+      if (!response.ok) {
+        // Handle error responses safely — never expose internal details
+        errorEl.style.display = "block";
+        errorEl.innerHTML = `<p style="color:var(--ev-disputed);">${escapeHtml(data.message ?? data.error ?? "An unexpected error occurred.")}</p>`;
+        if (data.retryAfter) {
+          errorEl.innerHTML += `<p class="meta" style="margin-top:0.35rem;">Retry after: ${escapeHtml(data.retryAfter)}</p>`;
+        }
+        return;
+      }
+
+      // Render answer
+      resultEl.style.display = "block";
+
+      // Confidence badge
+      const confidence = data.confidence ?? "medium";
+      const badgeMap: Record<string, string> = {
+        high: '<span class="badge badge-confirmed">High confidence</span>',
+        medium: '<span class="badge badge-provisional">Medium confidence</span>',
+        low: '<span class="badge badge-disputed">Low confidence</span>',
+        insufficient_evidence: '<span class="badge badge-unverified">Insufficient evidence</span>',
+      };
+      confidenceBadge.innerHTML = badgeMap[confidence] ?? badgeMap.insufficient_evidence;
+
+      // Request ID
+      if (data.requestId) {
+        requestIdDisplay.textContent = `ID: ${data.requestId}`;
+      }
+
+      // Answer text
+      if (data.answer) {
+        answerText.innerHTML = `<p>${escapeHtml(data.answer)}</p>`;
+      } else {
+        answerText.innerHTML = `<p class="meta">No answer could be produced from the available evidence.</p>`;
+      }
+
+      // Key points
+      if (data.keyPoints && data.keyPoints.length > 0) {
+        keyPoints.innerHTML = `<h3 style="font-size:0.95rem;margin-bottom:0.5rem;">Key points</h3><ul style="padding-left:1.25rem;">${data.keyPoints.map((kp: string) => `<li style="margin-bottom:0.25rem;">${escapeHtml(kp)}</li>`).join("")}</ul>`;
+      } else {
+        keyPoints.innerHTML = "";
+      }
+
+      // Caveats
+      if (data.caveats && data.caveats.length > 0) {
+        caveatsSection.style.display = "block";
+        caveatsList.innerHTML = data.caveats.map((c: string) => `<li style="margin-bottom:0.2rem;">${escapeHtml(c)}</li>`).join("");
+      } else {
+        caveatsSection.style.display = "none";
+      }
+
+    } catch (err: any) {
+      statusEl.style.display = "none";
+      errorEl.style.display = "block";
+      errorEl.innerHTML = `<p style="color:var(--ev-disputed);">Unable to reach Ask TRACE. Please check your connection and try again.</p>`;
+    } finally {
+      isSubmitting = false;
+      submitBtn.disabled = false;
+    }
+  });
+
+  function escapeHtml(text: string): string {
+    const div = document.createElement("div");
+    div.textContent = text;
+    return div.innerHTML;
+  }
+</script>
+
+<style>
+.ask-form {
+  margin-bottom: 1rem;
+}
+
+.ask-form .field {
+  transition: border-color 0.2s;
+}
+
+.ask-form .field:focus-within {
+  border-color: var(--accent);
+}
+
+.ask-status {
+  text-align: center;
+  padding: 1rem;
+}
+
+#key-points ul {
+  color: color-mix(in oklch, var(--fg) 88%, var(--muted));
+}
+
+.suggested-q {
+  cursor: pointer;
+}
+
+.suggested-q:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+</style>

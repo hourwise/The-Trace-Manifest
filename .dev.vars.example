@@ -1,0 +1,22 @@
+# The Trace Manifest — Local Development Secrets
+# Copy this file to .dev.vars and fill in your actual values.
+# .dev.vars is gitignored — never commit real secrets.
+#
+# For production, set these as encrypted secrets:
+#   npx wrangler secret put DEEPSEEK_API_KEY
+#
+# All TRACE_* variables have sensible defaults (see src/ai/config.ts).
+# Only DEEPSEEK_API_KEY is required for the AI gateway to function.
+
+# Required — your DeepSeek API key (starts with sk-)
+DEEPSEEK_API_KEY=sk-your-key-here
+
+# Optional — override defaults
+# TRACE_PUBLIC_MODEL=deepseek-v4-flash
+# TRACE_EDITORIAL_MODEL=deepseek-v4-pro
+# TRACE_PUBLIC_ASK_ENABLED=true
+# TRACE_DAILY_BUDGET=1.00
+# TRACE_MONTHLY_BUDGET=10.00
+# TRACE_MAX_COST_PER_REQUEST=0.02
+# TRACE_MAX_OUTPUT_TOKENS=1500
+# TRACE_DAILY_QUESTIONS=3

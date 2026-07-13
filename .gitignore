@@ -10,6 +10,7 @@ dist/
 # Environment
 .env
 .env.*
+.dev.vars
 
 # Wrangler (local state — config files are tracked)
 .wrangler/
