@@ -1,0 +1,598 @@
+---
+// The Trace Manifest — Knowledge Page Standard Contract
+// Renders a knowledge page following the canonical contract from the build plan.
+// Every page must support: title, summary, why-it-matters, current status,
+// core concepts, architecture, capabilities, limitations, security, implementation,
+// comparisons, timeline, claims+evidence, open questions, related pages/events,
+// review status, version, and revision history.
+// Use in: /knowledge/[slug].astro
+
+import EvidenceBadge from "./EvidenceBadge.astro";
+import ClaimEvidenceLink from "./ClaimEvidenceLink.astro";
+import type { ClaimLink } from "./ClaimEvidenceLink.astro";
+
+export interface KnowledgePageData {
+  slug: string;
+  title: string;
+  hub: string;
+  pageType: "core_concept" | "comparison" | "architecture" | "risk_security" | "timeline" | "practical_reference" | "glossary";
+  status: "draft" | "review" | "published" | "archived" | "corrected";
+  version: number;
+  canonicalSummary: string;
+  lastReviewed: string;
+  reviewedBy?: string;
+
+  // Standard contract sections
+  whyItMatters?: string;
+  currentStatus?: string;
+  coreConcepts?: { term: string; definition: string }[];
+  architecture?: string;
+  whatItDoes?: string;
+  whatItDoesNotDo?: string;
+  knownLimitations?: string[];
+  securityGovernance?: string;
+  implementationOptions?: { label: string; description: string; url?: string }[];
+  comparisons?: { aspect: string; optionA: string; optionB: string }[];
+  timeline?: { date: string; event: string; url?: string }[];
+  claims?: ClaimLink[];
+  openQuestions?: string[];
+  relatedPages?: { title: string; slug: string }[];
+  relatedEvents?: { headline: string; date: string; slug: string }[];
+  versionHistory?: { version: number; date: string; summary: string }[];
+
+  // Optional sections
+  compatibilityMatrix?: { label: string; columns: string[]; rows: string[][] };
+  codeExamples?: { language: string; code: string; caption?: string }[];
+  glossaryTerms?: { term: string; definition: string }[];
+  vendorNotes?: string;
+  localDeploymentNotes?: string;
+  legalNotes?: string;
+  checklist?: string[];
+}
+
+const page = Astro.props;
+
+const pageTypeLabels: Record<string, string> = {
+  core_concept: "Core concept",
+  comparison: "Comparison",
+  architecture: "Architecture",
+  risk_security: "Risk & security",
+  timeline: "Timeline",
+  practical_reference: "Practical reference",
+  glossary: "Glossary",
+};
+
+const statusBadgeMap: Record<string, string> = {
+  draft: "unverified",
+  review: "provisionally_supported",
+  published: "confirmed",
+  archived: "outdated",
+  corrected: "corrected",
+};
+---
+
+<article class="knowledge-page">
+  <!-- Header -->
+  <header class="knowledge-header">
+    <div class="knowledge-meta-top">
+      <span class="badge badge-sm">{pageTypeLabels[page.pageType] ?? page.pageType}</span>
+      <EvidenceBadge status={statusBadgeMap[page.status] ?? "unverified"} size="sm" />
+    </div>
+    <h1 class="display h1" style="margin-top:0.5rem;">{page.title}</h1>
+    <p class="lead" style="margin-top:0.5rem;">{page.canonicalSummary}</p>
+    <div class="meta" style="margin-top:0.75rem;display:flex;flex-wrap:wrap;gap:1rem;">
+      <span>Hub: <a href={`/knowledge#${page.hub}`}>{page.hub}</a></span>
+      <span>Version {page.version}</span>
+      <span>Reviewed: {page.lastReviewed}</span>
+      {page.reviewedBy && <span>By: {page.reviewedBy}</span>}
+    </div>
+  </header>
+
+  <!-- Why it matters -->
+  {page.whyItMatters && (
+    <section class="knowledge-section">
+      <h2>Why this subject matters</h2>
+      <p>{page.whyItMatters}</p>
+    </section>
+  )}
+
+  <!-- Current status -->
+  {page.currentStatus && (
+    <section class="knowledge-section">
+      <h2>Current status</h2>
+      <p>{page.currentStatus}</p>
+    </section>
+  )}
+
+  <!-- Core concepts -->
+  {page.coreConcepts && page.coreConcepts.length > 0 && (
+    <section class="knowledge-section">
+      <h2>Core concepts</h2>
+      <dl class="concept-list">
+        {page.coreConcepts.map(c => (
+          <div class="concept-item">
+            <dt class="concept-term">{c.term}</dt>
+            <dd class="concept-def">{c.definition}</dd>
+          </div>
+        ))}
+      </dl>
+    </section>
+  )}
+
+  <!-- Architecture or mechanism -->
+  {page.architecture && (
+    <section class="knowledge-section">
+      <h2>Architecture / Mechanism</h2>
+      <div class="prose" set:html={page.architecture} />
+    </section>
+  )}
+
+  <!-- What it does / does not do -->
+  {(page.whatItDoes || page.whatItDoesNotDo) && (
+    <section class="knowledge-section">
+      {page.whatItDoes && (
+        <>
+          <h2>What it does</h2>
+          <div class="prose" set:html={page.whatItDoes} />
+        </>
+      )}
+      {page.whatItDoesNotDo && (
+        <div style="margin-top:1.5rem;">
+          <h2>What it does not do</h2>
+          <div class="prose" set:html={page.whatItDoesNotDo} />
+        </div>
+      )}
+    </section>
+  )}
+
+  <!-- Known limitations -->
+  {page.knownLimitations && page.knownLimitations.length > 0 && (
+    <section class="knowledge-section">
+      <h2>Known limitations</h2>
+      <ul class="limitation-list">
+        {page.knownLimitations.map(l => <li>{l}</li>)}
+      </ul>
+    </section>
+  )}
+
+  <!-- Security and governance -->
+  {page.securityGovernance && (
+    <section class="knowledge-section">
+      <h2>Security and governance considerations</h2>
+      <div class="prose" set:html={page.securityGovernance} />
+    </section>
+  )}
+
+  <!-- Implementation options -->
+  {page.implementationOptions && page.implementationOptions.length > 0 && (
+    <section class="knowledge-section">
+      <h2>Implementation options</h2>
+      <div class="impl-grid">
+        {page.implementationOptions.map(opt => (
+          <div class="card impl-card">
+            <h3>{opt.label}</h3>
+            <p class="meta">{opt.description}</p>
+            {opt.url && <a href={opt.url} class="meta" style="display:inline-block;margin-top:0.5rem;">Learn more &rarr;</a>}
+          </div>
+        ))}
+      </div>
+    </section>
+  )}
+
+  <!-- Comparisons -->
+  {page.comparisons && page.comparisons.length > 0 && (
+    <section class="knowledge-section">
+      <h2>Comparisons</h2>
+      <div class="table-wrap">
+        <table class="data">
+          <thead>
+            <tr>
+              <th>Aspect</th>
+              <th>Option A</th>
+              <th>Option B</th>
+            </tr>
+          </thead>
+          <tbody>
+            {page.comparisons.map(row => (
+              <tr>
+                <td style="font-weight:550;">{row.aspect}</td>
+                <td>{row.optionA}</td>
+                <td>{row.optionB}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  )}
+
+  <!-- Timeline -->
+  {page.timeline && page.timeline.length > 0 && (
+    <section class="knowledge-section">
+      <h2>Timeline / Significant changes</h2>
+      <div class="timeline-list">
+        {page.timeline.map(entry => (
+          <div class="timeline-item">
+            <span class="timeline-date meta">{entry.date}</span>
+            <span class="timeline-event">
+              {entry.url ? <a href={entry.url}>{entry.event}</a> : entry.event}
+            </span>
+          </div>
+        ))}
+      </div>
+    </section>
+  )}
+
+  <!-- Claims and evidence -->
+  {page.claims && page.claims.length > 0 && (
+    <ClaimEvidenceLink claims={page.claims} />
+  )}
+
+  <!-- Open questions -->
+  {page.openQuestions && page.openQuestions.length > 0 && (
+    <section class="knowledge-section">
+      <h2>Open questions / Disputed areas</h2>
+      <ul class="open-questions-list">
+        {page.openQuestions.map(q => (
+          <li class="open-question-item">
+            <span class="open-question-icon" aria-hidden="true">?</span>
+            <span>{q}</span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  )}
+
+  <!-- Optional: Checklist -->
+  {page.checklist && page.checklist.length > 0 && (
+    <section class="knowledge-section">
+      <h2>Practical checklist</h2>
+      <ul class="checklist">
+        {page.checklist.map(item => (
+          <li class="checklist-item">
+            <span class="checklist-check" aria-hidden="true">☐</span>
+            <span>{item}</span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  )}
+
+  <!-- Optional: Code examples -->
+  {page.codeExamples && page.codeExamples.length > 0 && (
+    <section class="knowledge-section">
+      <h2>Code examples</h2>
+      {page.codeExamples.map(ex => (
+        <div style="margin-bottom:1rem;">
+          {ex.caption && <p class="meta" style="margin-bottom:0.35rem;">{ex.caption}</p>}
+          <pre class="code-block mono"><code>{ex.code}</code></pre>
+        </div>
+      ))}
+    </section>
+  )}
+
+  <!-- Optional: Vendor notes -->
+  {page.vendorNotes && (
+    <section class="knowledge-section">
+      <h2>Vendor-specific behaviour</h2>
+      <div class="prose" set:html={page.vendorNotes} />
+    </section>
+  )}
+
+  <!-- Optional: Local deployment -->
+  {page.localDeploymentNotes && (
+    <section class="knowledge-section">
+      <h2>Local deployment notes</h2>
+      <div class="prose" set:html={page.localDeploymentNotes} />
+    </section>
+  )}
+
+  <!-- Optional: Legal notes -->
+  {page.legalNotes && (
+    <section class="knowledge-section">
+      <h2>Legal and licensing notes</h2>
+      <div class="prose" set:html={page.legalNotes} />
+    </section>
+  )}
+
+  <!-- Related pages -->
+  {page.relatedPages && page.relatedPages.length > 0 && (
+    <section class="knowledge-section">
+      <h2>Related knowledge pages</h2>
+      <div class="related-grid">
+        {page.relatedPages.map(rp => (
+          <a href={`/knowledge/${rp.slug}`} class="card card-hover related-card">
+            <span>{rp.title}</span>
+            <span aria-hidden="true">&rarr;</span>
+          </a>
+        ))}
+      </div>
+    </section>
+  )}
+
+  <!-- Related intelligence events -->
+  {page.relatedEvents && page.relatedEvents.length > 0 && (
+    <section class="knowledge-section">
+      <h2>Related intelligence events</h2>
+      <div style="display:flex;flex-direction:column;gap:0.5rem;">
+        {page.relatedEvents.map(ev => (
+          <div class="card" style="padding:0.6rem 1rem;">
+            <a href={`/stories/${ev.slug}`} style="font-size:0.88rem;">{ev.headline}</a>
+            <span class="meta" style="margin-left:0.75rem;">{ev.date}</span>
+          </div>
+        ))}
+      </div>
+    </section>
+  )}
+
+  <!-- Version history -->
+  {page.versionHistory && page.versionHistory.length > 0 && (
+    <section class="knowledge-section">
+      <details>
+        <summary class="version-history-toggle">Version history ({page.versionHistory.length} revision{page.versionHistory.length > 1 ? 's' : ''})</summary>
+        <div class="version-list" style="margin-top:0.75rem;">
+          {page.versionHistory.map(v => (
+            <div class="version-item">
+              <span class="meta version-num">v{v.version}</span>
+              <span class="meta version-date">{v.date}</span>
+              <span class="version-summary">{v.summary}</span>
+            </div>
+          ))}
+        </div>
+      </details>
+    </section>
+  )}
+
+  <!-- Footer metadata -->
+  <footer class="knowledge-footer">
+    <p class="meta">
+      Page status: {page.status}. Last reviewed: {page.lastReviewed}.
+      <a href="/methodology"> Methodology &rarr;</a>
+      &middot; <a href="/corrections">Report an error &rarr;</a>
+    </p>
+  </footer>
+</article>
+
+<style>
+.knowledge-page {
+  max-width: 46rem;
+  margin: 0 auto;
+}
+
+.knowledge-header {
+  margin-bottom: 2rem;
+}
+
+.knowledge-meta-top {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.knowledge-section {
+  margin-top: 2.5rem;
+  padding-top: 2rem;
+  border-top: 1px solid var(--border);
+}
+
+.knowledge-section h2 {
+  font-family: var(--font-display);
+  font-size: 1.35rem;
+  margin-bottom: 0.75rem;
+  letter-spacing: -0.015em;
+}
+
+/* Core concepts */
+.concept-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.concept-item {
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.concept-item:last-child {
+  border-bottom: 0;
+}
+
+.concept-term {
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--fg);
+  margin-bottom: 0.15rem;
+}
+
+.concept-def {
+  font-size: 0.84rem;
+  color: var(--muted);
+  margin: 0;
+  line-height: 1.5;
+}
+
+/* Limitations */
+.limitation-list {
+  padding-left: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.limitation-list li {
+  font-size: 0.88rem;
+  color: color-mix(in oklch, var(--fg) 88%, var(--muted));
+  line-height: 1.5;
+}
+
+/* Implementation cards */
+.impl-grid {
+  display: grid;
+  gap: 0.75rem;
+}
+
+@media (min-width: 600px) {
+  .impl-grid { grid-template-columns: 1fr 1fr; }
+}
+
+.impl-card h3 {
+  font-size: 0.95rem;
+}
+
+/* Timeline */
+.timeline-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  border-left: 2px solid var(--border);
+  padding-left: 1rem;
+}
+
+.timeline-item {
+  display: flex;
+  gap: 0.75rem;
+  align-items: baseline;
+  padding: 0.2rem 0;
+}
+
+.timeline-date {
+  flex-shrink: 0;
+  min-width: 6.5rem;
+}
+
+.timeline-event {
+  font-size: 0.88rem;
+}
+
+/* Open questions */
+.open-questions-list {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.open-question-item {
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-start;
+  font-size: 0.88rem;
+  color: color-mix(in oklch, var(--fg) 88%, var(--muted));
+}
+
+.open-question-icon {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: color-mix(in oklch, var(--ev-provisional) 12%, transparent);
+  color: var(--ev-provisional);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.7rem;
+  font-weight: 700;
+  margin-top: 0.1rem;
+}
+
+/* Checklist */
+.checklist {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.checklist-item {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+  font-size: 0.88rem;
+}
+
+.checklist-check {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  flex-shrink: 0;
+}
+
+/* Code blocks */
+.code-block {
+  padding: 0.75rem 1rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 0.78rem;
+  line-height: 1.55;
+  overflow-x: auto;
+}
+
+/* Related pages */
+.related-grid {
+  display: grid;
+  gap: 0.5rem;
+}
+
+@media (min-width: 500px) {
+  .related-grid { grid-template-columns: 1fr 1fr; }
+}
+
+.related-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.88rem;
+  text-decoration: none;
+}
+
+/* Version history */
+.version-history-toggle {
+  cursor: pointer;
+  font-size: 0.84rem;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.version-history-toggle:hover {
+  color: var(--fg);
+}
+
+.version-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.version-item {
+  display: flex;
+  gap: 0.6rem;
+  align-items: baseline;
+  font-size: 0.82rem;
+  padding: 0.25rem 0;
+}
+
+.version-num {
+  font-family: var(--font-mono);
+  color: var(--accent);
+  min-width: 2rem;
+}
+
+.version-date {
+  min-width: 6rem;
+}
+
+.version-summary {
+  color: color-mix(in oklch, var(--fg) 82%, var(--muted));
+}
+
+/* Footer */
+.knowledge-footer {
+  margin-top: 3rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--border);
+}
+</style>

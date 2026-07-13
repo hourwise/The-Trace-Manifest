@@ -1,0 +1,237 @@
+---
+// The Trace Manifest — Claim Evidence Link Component
+// Renders a material claim with its evidence relationship, source, and provenance.
+// Distinguishes between evidence-supported claims and editorial inferences.
+// Use in: knowledge pages, story pages, admin review.
+
+export interface ClaimLink {
+  /** The claim text itself */
+  claimText: string;
+  /** Claim class — who/what kind of source made the claim */
+  claimClass: string;
+  /** Evidence relationship to the page content */
+  relationship: string;
+  /** Source label (e.g. "MCP Specification 2024-11-25") */
+  sourceLabel?: string;
+  /** Source URL if available */
+  sourceUrl?: string;
+  /** Whether this is an editorial inference (not directly sourced) */
+  isInference?: boolean;
+  /** Evidence quality */
+  evidenceQuality?: string;
+}
+
+export interface Props {
+  claims: ClaimLink[];
+  /** Section heading */
+  heading?: string;
+}
+
+const { claims, heading = "Claims and Evidence" } = Astro.props;
+
+// Relationship labels and styles
+const relationshipMeta: Record<string, { label: string; class: string; icon: string }> = {
+  supports: { label: "Supports", class: "claim-rel--supports", icon: "+" },
+  partially_supports: { label: "Partially supports", class: "claim-rel--partial", icon: "~" },
+  qualifies: { label: "Qualifies", class: "claim-rel--qualifies", icon: "±" },
+  challenges: { label: "Challenges", class: "claim-rel--challenges", icon: "!" },
+  contradicts: { label: "Contradicts", class: "claim-rel--contradicts", icon: "✗" },
+  reports: { label: "Reports", class: "claim-rel--reports", icon: "→" },
+  reproduces: { label: "Reproduces", class: "claim-rel--reproduces", icon: "✓" },
+  fails_to_reproduce: { label: "Fails to reproduce", class: "claim-rel--fails", icon: "✗" },
+  supersedes: { label: "Supersedes", class: "claim-rel--supersedes", icon: "↑" },
+  corrects: { label: "Corrects", class: "claim-rel--corrects", icon: "↻" },
+  contextualises: { label: "Contextualises", class: "claim-rel--context", icon: "⊙" },
+};
+
+// Claim class labels
+const claimClassLabels: Record<string, string> = {
+  specification_defined: "Specification",
+  official_vendor_claim: "Vendor claim",
+  observed_implementation_behaviour: "Observed behaviour",
+  independent_research_finding: "Research finding",
+  benchmark_result: "Benchmark",
+  community_report: "Community report",
+  legal_or_regulatory_statement: "Legal/regulatory",
+  editorial_synthesis: "Editorial synthesis",
+  trace_manifest_inference: "Trace Manifest inference",
+};
+
+function getRelMeta(rel: string) {
+  return relationshipMeta[rel] ?? { label: rel, class: "claim-rel--reports", icon: "·" };
+}
+---
+
+<div class="claims-evidence-section">
+  <h2 class="claims-heading">{heading}</h2>
+  <p class="meta" style="margin-bottom:1rem;">
+    Each material claim below is linked to its evidence source and relationship type.
+    {claims.some(c => c.isInference) && (
+      <span> Claims marked <strong>"Inference"</strong> are editorial synthesis and should not be read as directly sourced facts.</span>
+    )}
+  </p>
+
+  <div class="claims-list">
+    {claims.map((claim) => {
+      const rel = getRelMeta(claim.relationship);
+      return (
+        <div class="claim-item">
+          <div class={`claim-relationship ${rel.class}`} title={rel.label}>
+            <span class="claim-rel-icon" aria-hidden="true">{rel.icon}</span>
+            <span class="claim-rel-label">{rel.label}</span>
+          </div>
+          <div class="claim-body">
+            <p class="claim-text">{claim.claimText}</p>
+            <div class="claim-meta">
+              {claim.isInference && (
+                <span class="claim-inference-badge">Inference</span>
+              )}
+              <span class="claim-class-badge">{claimClassLabels[claim.claimClass] ?? claim.claimClass}</span>
+              {claim.sourceLabel && (
+                claim.sourceUrl ? (
+                  <a href={claim.sourceUrl} class="claim-source-link">{claim.sourceLabel}</a>
+                ) : (
+                  <span class="claim-source-text">{claim.sourceLabel}</span>
+                )
+              )}
+              {claim.evidenceQuality && (
+                <span class={`claim-quality claim-quality--${claim.evidenceQuality}`}>{claim.evidenceQuality}</span>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    })}
+  </div>
+</div>
+
+<style>
+.claims-evidence-section {
+  margin-top: 2.5rem;
+}
+
+.claims-heading {
+  font-family: var(--font-display);
+  font-size: 1.35rem;
+  margin-bottom: 0.35rem;
+  letter-spacing: -0.015em;
+}
+
+.claims-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.claim-item {
+  display: flex;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  align-items: flex-start;
+}
+
+.claim-relationship {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+  min-width: 56px;
+  padding: 0.2rem 0.3rem;
+  border-radius: 4px;
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  text-align: center;
+}
+
+.claim-rel-icon {
+  font-size: 0.85rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.claim-rel-label {
+  line-height: 1.2;
+}
+
+.claim-rel--supports { color: var(--ev-confirmed); background: color-mix(in oklch, var(--ev-confirmed) 10%, transparent); }
+.claim-rel--partial { color: var(--ev-strong); background: color-mix(in oklch, var(--ev-strong) 10%, transparent); }
+.claim-rel--qualifies { color: var(--ev-provisional); background: color-mix(in oklch, var(--ev-provisional) 10%, transparent); }
+.claim-rel--challenges { color: var(--ev-disputed); background: color-mix(in oklch, var(--ev-disputed) 10%, transparent); }
+.claim-rel--contradicts { color: var(--ev-disputed); background: color-mix(in oklch, var(--ev-disputed) 14%, transparent); }
+.claim-rel--reports { color: var(--muted); background: color-mix(in oklch, var(--muted) 8%, transparent); }
+.claim-rel--reproduces { color: var(--ev-confirmed); background: color-mix(in oklch, var(--ev-confirmed) 12%, transparent); }
+.claim-rel--fails { color: var(--ev-disputed); background: color-mix(in oklch, var(--ev-disputed) 10%, transparent); }
+.claim-rel--supersedes { color: var(--ev-outdated); background: color-mix(in oklch, var(--ev-outdated) 10%, transparent); }
+.claim-rel--corrects { color: var(--ev-corrected); background: color-mix(in oklch, var(--ev-corrected) 10%, transparent); }
+.claim-rel--context { color: var(--ev-community); background: color-mix(in oklch, var(--ev-community) 10%, transparent); }
+
+.claim-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.claim-text {
+  font-size: 0.88rem;
+  line-height: 1.5;
+  color: color-mix(in oklch, var(--fg) 92%, var(--muted));
+  margin: 0;
+}
+
+.claim-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.4rem;
+}
+
+.claim-inference-badge {
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 0.1em 0.45em;
+  border-radius: 999px;
+  color: var(--ev-provisional);
+  background: color-mix(in oklch, var(--ev-provisional) 12%, transparent);
+  border: 1px solid color-mix(in oklch, var(--ev-provisional) 25%, transparent);
+}
+
+.claim-class-badge {
+  font-size: 0.65rem;
+  color: var(--muted);
+  padding: 0.1em 0.4em;
+  border-radius: 4px;
+  background: var(--surface-2);
+}
+
+.claim-source-link,
+.claim-source-text {
+  font-size: 0.72rem;
+  color: var(--accent);
+}
+
+.claim-source-link:hover {
+  text-decoration: underline;
+}
+
+.claim-quality {
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0.1em 0.4em;
+  border-radius: 999px;
+}
+
+.claim-quality--strong,
+.claim-quality--very_strong { color: var(--ev-confirmed); background: color-mix(in oklch, var(--ev-confirmed) 10%, transparent); }
+.claim-quality--moderate { color: var(--ev-provisional); background: color-mix(in oklch, var(--ev-provisional) 10%, transparent); }
+.claim-quality--weak { color: var(--ev-disputed); background: color-mix(in oklch, var(--ev-disputed) 8%, transparent); }
+</style>

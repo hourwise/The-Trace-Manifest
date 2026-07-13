@@ -3,8 +3,9 @@
 **Status:** Concept / Pre-build  
 **Document purpose:** Define the product, architecture, MVP, roadmap, monetisation, governance, and required documentation from the beginning.  
 **Product name:** The Trace Manifest  
+**Editorial identity:** T.R.A.C.E. — Traceable Research, Analysis, Context and Evidence  
 **Primary domains:** thetracemanifest.com · thetracemanifest.uk  
-**Primary goal:** Build a public AI intelligence platform that aggregates current information, evaluates evidence quality, tracks models and benchmarks, and helps users answer practical questions using dated, cited sources.
+**Primary goal:** Build a public AI intelligence platform that aggregates current information, evaluates evidence quality, tracks models and benchmarks, helps users answer practical questions using dated, cited sources, and publishes accountable forecasts whose results remain visible.
 
 ---
 
@@ -41,6 +42,20 @@ The product should combine:
 The core value proposition is:
 
 > A current, evidence-linked map of what is happening in AI, what is credible, what is disputed, and what people should actually use.
+
+### 1.1 T.R.A.C.E. — Editorial Intelligence Layer
+
+**T.R.A.C.E.** (Traceable Research, Analysis, Context and Evidence) is the named editorial intelligence layer of The Trace Manifest. It is not a fictional all-knowing persona — it is the visible interface through which the platform presents researched summaries, analysis, answers, and forecasts.
+
+T.R.A.C.E. should be positioned as:
+
+> A source-grounded AI intelligence publication with traceable evidence, accountable analysis and scored predictions.
+
+**Brand voice:** calm, evidence-led, concise, sceptical without being dismissive, explicit about uncertainty, resistant to hype, willing to distinguish marketing claims from demonstrated facts.
+
+**T.R.A.C.E. must avoid:** exaggerated certainty, anthropomorphic claims of understanding, promotional language, clickbait, fake quotations, invented consensus, and vague predictions that cannot be evaluated.
+
+**Required navigation entries:** Ask TRACE, TRACE Analysis, TRACE Predicts, Newsletter.
 
 ---
 
@@ -114,6 +129,40 @@ Advertising, sponsorships, and affiliate relationships must never change:
 ### 2.7 Useful before clever
 
 The first release should prioritise dependable feeds, model pages, benchmark context, and clear answers over ambitious autonomous-agent behaviour.
+
+### 2.8 TRACE Editorial Laws
+
+These ten laws govern every T.R.A.C.E. output — summaries, analysis, answers, predictions, and newsletter content.
+
+**LAW-TRACE-001 — Evidence before assertion**
+T.R.A.C.E. must not present a factual claim without an attributable source or an explicit statement that the claim is unverified.
+
+**LAW-TRACE-002 — Summary and analysis must remain separate**
+Neutral summaries, reported claims, confirmed facts, editorial interpretation and predictions must be visibly distinguishable.
+
+**LAW-TRACE-003 — Inference must be labelled**
+Any conclusion not directly stated by a source must be marked as analysis, inference or prediction.
+
+**LAW-TRACE-004 — Source ownership must remain visible**
+Every article summary, analysis and answer must link prominently to the original reporting, repository, paper, announcement or primary source.
+
+**LAW-TRACE-005 — Model visibility is publication exposure**
+Any material supplied to T.R.A.C.E. for answer generation must be treated as potentially exposable. Sensitive, private or restricted material must not enter the public retrieval corpus.
+
+**LAW-TRACE-006 — Predictions must be falsifiable**
+Each published prediction must define: what is expected to happen, the forecast period, the assigned probability, the evidence supporting it, what would count as confirmation, and what would count as failure or invalidation.
+
+**LAW-TRACE-007 — Published predictions are immutable**
+Once published, the wording, probability and evaluation window of a prediction must not be silently changed. Corrections may be appended through a visible amendment record.
+
+**LAW-TRACE-008 — Failed predictions remain public**
+Incorrect, partially correct, unresolved and invalidated forecasts must remain visible in the prediction archive.
+
+**LAW-TRACE-009 — Automation may draft, but publication remains governed**
+Generated summaries, analysis, newsletter content and predictions must pass the configured review policy before public release.
+
+**LAW-TRACE-010 — Uncertainty is a valid outcome**
+T.R.A.C.E. must be permitted to answer: evidence is insufficient, sources conflict, the matter remains unresolved, or no reliable conclusion can yet be drawn.
 
 ---
 
@@ -1185,10 +1234,10 @@ Built and deployed:
 
 ---
 
-## Phase 3B — Evidence-Linked Knowledge Base
+## Phase 3B — Evidence-Linked Knowledge Base  ✅ COMPLETED 13 July 2026
 
-**Status:** Ready to begin — Phase 3 dependency satisfied  
-**Dependency:** Phase 3 (Curation and Trust) is complete. The knowledge base can now consume classified items, clustered stories, extracted entities, claims, and evidence relationships from the pipeline.
+**Status:** Complete — 16 pages published, 5 with full standard-contract content  
+**Dependency:** Phase 3 (Curation and Trust) is complete. The knowledge base consumes classified items, clustered stories, extracted entities, claims, and evidence relationships from the pipeline.
 
 ### Purpose
 
@@ -1368,6 +1417,55 @@ knowledge_page_events
 
 ---
 
+## 4.6 TRACE Editorial Content Model
+
+Every processed story should support distinct content layers, clearly separated per LAW-TRACE-002.
+
+### Required article structure
+
+Each TRACE-enhanced article must support:
+
+1. **What happened** — A concise neutral summary.
+2. **What is confirmed** — Facts independently supported by available sources.
+3. **What is claimed** — Statements made by companies, authors or commentators that have not been independently demonstrated.
+4. **TRACE Analysis** — Why the development matters, what may be overstated, and how it relates to earlier events.
+5. **Context** — Relevant previous releases, policies, projects or market movements.
+6. **Evidence and caveats** — Source list, uncertainty, missing information and conflicts.
+7. **Related traces** — Connected stories, projects, people, repositories, papers and previous predictions.
+
+### Editorial workflow
+
+```text
+Source ingestion
+→ canonicalisation
+→ deduplication
+→ source clustering
+→ claim extraction
+→ neutral summary draft
+→ evidence mapping
+→ TRACE analysis draft
+→ uncertainty review
+→ human approval
+→ publication
+→ correction monitoring
+```
+
+### Publication controls
+
+The system must support: reviewer identity, review timestamp, approval status, visible correction history, source count, primary-source indicator, and stale-story warning where material has materially changed.
+
+### Content type definitions
+
+**Source record** — Represents the original external material (canonical URL, title, publisher, author, publication date, source type, primary-source flag, content hash, trust notes).
+
+**Story record** — The platform's own structured treatment of a source or source cluster (slug, headline, dek, source IDs, topic IDs, status, summary, TRACE analysis, context, caveats, confidence level, publication/update dates).
+
+**Claim record** — Extractable and classifiable independently of article prose. Claim classes: reported, confirmed, claimed, inferred, analysis, unresolved, disputed. Each claim links to its story and source IDs with a confidence score.
+
+**Correction record** — Story ID, creation date, summary, previous text, corrected text, reason.
+
+---
+
 ## Phase 4 — Model, Provider, and Benchmark Data
 
 Build:
@@ -1384,20 +1482,170 @@ Build:
 
 ---
 
-## Phase 5 — Ask Box
+## Phase 5 — Ask TRACE
 
-Build:
+**Estimate:** 6–12 weeks
 
-- Retrieval layer
-- Citation assembly
-- Answer structure
-- Freshness checks
-- Confidence labels
-- Rate limiting
-- Caching
-- Abuse protection
+Build the source-grounded question-answering system. Ask TRACE answers from the indexed evidence base rather than behaving as an unrestricted general chatbot.
+
+### Core user experience
+
+A user asks a question. TRACE returns: a concise answer, the main developments, why they matter, conflicting or unresolved points, source citations, the date range considered, a confidence label, related stories, and a notice when evidence is incomplete.
+
+### Answer envelope
+
+Every answer must include: question, answer text, key points, source IDs, story IDs, confidence level (high/medium/low/insufficient-evidence), generation timestamp, evidence window (from/to), and caveats.
+
+### Retrieval rules
+
+Ask TRACE must: prefer primary sources where available, rank recent material for time-sensitive questions, include older context where required, avoid citing unrelated results, disclose source disagreement, avoid answering beyond the indexed evidence without clearly marking general background, refuse to invent missing information, and distinguish source fact from TRACE interpretation.
+
+### Initial limits
+
+Public questions only; no account required for a small daily allowance; rate limits per IP or session; maximum source set per answer; no private document upload; no unrestricted web browsing from the public question box; no high-stakes personalised advice.
+
+### Abuse protection
+
+Prompt-injection-resistant retrieval boundaries; source-content sanitisation; query length limits; rate limiting; output moderation; blocked attempts to expose hidden system prompts or internal metadata; logging without retaining unnecessary personal data.
+
+### Build list
+
+- Retrieval layer over indexed evidence
+- Citation assembly with primary-source preference
+- Answer structure with confidence labels
+- Freshness checks and evidence-window display
+- Rate limiting and caching
+- Abuse protection (prompt injection, sanitisation)
 - Query analytics
 - Public question history where appropriate
+- "Insufficient evidence" explicit non-answer handling
+
+---
+
+## Phase 5B — TRACE Predicts
+
+**Estimate:** 4–6 weeks  
+**Dependency:** Phase 5 (Ask TRACE) should be substantially complete so the evidence corpus is stable enough to produce evidence-based forecasts.
+
+TRACE Predicts is a weekly editorial forecast product — not an entertainment horoscope or vague trend section.
+
+### Publishing cadence
+
+- One edition per week.
+- Three to five predictions per edition.
+- Forecast window normally seven days.
+- Occasional longer-horizon predictions clearly marked.
+
+### Prediction record
+
+Each prediction must record: title, prediction text, probability (0–100), forecast start/end dates, evidence source IDs, related story IDs, reasoning summary, confirmation criteria, failure criteria, status (pending/correct/partially-correct/incorrect/unresolved/invalidated), publication date, evaluation date, evaluation notes, and amendment IDs.
+
+### Prediction quality requirements
+
+Reject any prediction that: cannot be confirmed or disproved, has no defined time window, merely predicts that a broad trend will continue, depends on private or unverifiable information, is framed to count almost any outcome as success, contains financial advice, is materially identical to another prediction, or lacks enough evidence to justify publication.
+
+### Workflow
+
+```text
+Weekly evidence set assembled
+→ candidate signals extracted
+→ candidate predictions generated
+→ duplicates and vague claims removed
+→ probability assigned
+→ confirmation and failure criteria written
+→ evidence checked
+→ human review
+→ prediction locked (immutable per LAW-TRACE-007)
+→ publication
+→ later evaluation
+→ public scorecard update
+```
+
+### Public archive
+
+The archive must show: prediction wording, original probability, publication date, forecast deadline, supporting evidence, result, evaluation notes, amendments, and related stories published after the forecast.
+
+### Build list
+
+- Prediction data model and storage
+- Candidate generation from evidence corpus
+- Review and locking workflow (immutable after publication)
+- Publication page with probability indicators and evidence links
+- Manual evaluation interface
+- Public archive with full history
+- Amendment record system (append-only, not silent edits)
+
+---
+
+## Phase 5C — The Trace Weekly Newsletter
+
+**Estimate:** 3–5 weeks  
+**Dependency:** Phase 5 (Ask TRACE) and Phase 5B (TRACE Predicts) provide the content that feeds the newsletter.
+
+### Purpose
+
+The newsletter is the recurring weekly digest and retention channel for the platform.
+
+### Title
+
+> **The Trace Weekly** — The week's biggest AI developments, what they mean, and what TRACE expects next.
+
+### Edition structure
+
+1. **The five biggest developments** — Concise summaries with links.
+2. **What actually matters** — TRACE's editorial view on signal versus noise.
+3. **What changed since last week** — Continuing stories and follow-up developments.
+4. **Open-source watch** — Significant repositories, releases, standards and technical projects.
+5. **Ask TRACE** — One selected reader question and source-grounded answer.
+6. **TRACE Predicts** — Three to five forecasts for the coming week.
+7. **Last week's prediction scorecard** — Outcomes and brief evaluation.
+8. **From PCGsoft / project updates** — Optional and restrained.
+
+### Subscription requirements
+
+Explicit consent; double opt-in where practical; visible privacy notice; unsubscribe link in every message; sender identity and contact details; suppression handling; consent timestamp; no pre-ticked marketing consent; no purchased email lists; no hidden cross-marketing consent.
+
+### Workflow
+
+```text
+Candidate stories selected
+→ TRACE summaries assembled
+→ editorial commentary drafted
+→ prediction section inserted
+→ previous predictions evaluated
+→ links and citations validated
+→ human review
+→ test email
+→ approval
+→ scheduled send
+→ delivery and unsubscribe metrics recorded
+```
+
+### Build list
+
+- Subscriber database with consent tracking
+- Signup, confirmation, and unsubscribe flows
+- Newsletter edition data model
+- Manual editorial assembly interface
+- Test-send and approval workflow
+- Delivery tracking and metrics
+- Archive of previous editions
+
+---
+
+## Phase 5D — TRACE Scorecard and Calibration
+
+**Estimate:** 2–3 weeks  
+**Dependency:** Sufficient prediction history exists for meaningful aggregation (minimum ~20 evaluated predictions).
+
+### Build list
+
+- Aggregate prediction metrics (total, correct, partially correct, incorrect, unresolved, invalidated)
+- Accuracy excluding unresolved predictions
+- Performance grouped by probability band
+- Formal calibration metric (e.g. Brier score) when enough data exists
+- Public methodology page explaining scoring and partial/invalidated outcomes
+- Independent verifiability: results must be checkable from the archive
 
 ---
 
@@ -1449,6 +1697,52 @@ Build:
 - Contradiction maps
 - Custom organisation dashboards
 - White-label feeds
+
+---
+
+## 9. Final Product Statement
+
+> **T.R.A.C.E. — Traceable Research, Analysis, Context and Evidence — is the source-grounded editorial intelligence layer of The Trace Manifest. It explains what happened, distinguishes evidence from claims, answers questions from the recorded source base, and publishes accountable forecasts whose results remain visible.**
+
+### Acceptance criteria for the TRACE add-on
+
+The TRACE add-on is complete when:
+
+1. The platform uses the identity **T.R.A.C.E. — Traceable Research, Analysis, Context and Evidence**.
+2. TRACE-enhanced articles distinguish summary, claims, analysis, context and caveats.
+3. Ask TRACE answers from approved indexed evidence with citations and uncertainty.
+4. Predictions are evidence-linked, probabilistic, time-bounded and falsifiable.
+5. Published predictions are locked and remain visible after evaluation (LAW-TRACE-007, 008).
+6. A public archive shows prediction outcomes.
+7. Newsletter subscription, confirmation and unsubscribe flows work.
+8. The Trace Weekly can include major stories, analysis, Ask TRACE, predictions and a scorecard.
+9. Generated content requires the configured review policy before publication (LAW-TRACE-009).
+10. Corrections and amendments are visible and auditable.
+11. Secrets, subscriber data and internal prompts are not exposed.
+12. Accessibility, SEO and responsive behaviour meet the existing project standard.
+
+---
+
+## 10. Deliverability and Constraints
+
+### Immediate constraints
+
+- Solo-founder-led, AI-assisted development alongside existing projects.
+- All automated content must pass human review before publication (LAW-TRACE-009).
+- No fully autonomous publishing.
+- No private enterprise knowledge bases in the first implementation.
+- No personalised investment, medical or legal predictions.
+- No unmoderated public comments or user-generated predictions.
+- No paid subscriptions until Phase 6+.
+
+### Route reservations
+
+The following routes are reserved for TRACE features:
+
+- `/ask-trace` — Ask TRACE question interface
+- `/analysis` — TRACE Analysis archive
+- `/predicts` — TRACE Predicts (current + archive)
+- `/newsletter` — Newsletter signup and archive
 
 ---
 

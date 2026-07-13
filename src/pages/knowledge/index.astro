@@ -1,0 +1,193 @@
+---
+import BaseLayout from "../../layouts/BaseLayout.astro";
+
+// Knowledge base hubs per Phase 3B build plan
+const hubs = [
+  {
+    id: "mcp",
+    name: "Model Context Protocol",
+    description: "The open protocol for connecting AI models to tools, data sources, and external systems.",
+    pages: [
+      { slug: "what-is-mcp", title: "What is MCP?", type: "Core concept" },
+      { slug: "mcp-architecture", title: "MCP architecture: hosts, clients, servers, tools, resources, prompts, and transports", type: "Architecture" },
+      { slug: "mcp-security", title: "MCP security and the execution-governance gap", type: "Risk & security" },
+      { slug: "mcp-vs-function-calling", title: "MCP vs function calling", type: "Comparison" },
+    ],
+  },
+  {
+    id: "agents",
+    name: "AI Agents",
+    description: "Autonomous and semi-autonomous AI systems that plan, use tools, and execute multi-step tasks.",
+    pages: [
+      { slug: "what-is-an-ai-agent", title: "What is an AI agent?", type: "Core concept" },
+      { slug: "agents-vs-workflows", title: "Agents vs workflows vs automation", type: "Comparison" },
+      { slug: "agent-orchestration", title: "Agent orchestration and gateway architecture", type: "Architecture" },
+      { slug: "human-approval", title: "Human approval in agent systems", type: "Architecture" },
+      { slug: "evaluating-agent-systems", title: "How to evaluate an agent system", type: "Practical reference" },
+      { slug: "coding-agents", title: "Coding agents and agentic IDEs", type: "Practical reference" },
+    ],
+  },
+  {
+    id: "tool-use",
+    name: "Tool & Function Calling",
+    description: "How AI models invoke tools, call functions, and interact with external APIs and services.",
+    pages: [
+      { slug: "tool-calling-function-calling-mcp", title: "Tool calling, function calling, and MCP", type: "Core concept" },
+    ],
+  },
+  {
+    id: "memory",
+    name: "Agent Memory",
+    description: "Memory architectures for AI agents — types, provenance, conflict resolution, and decay.",
+    pages: [
+      { slug: "agent-memory", title: "Agent memory: types, provenance, conflict, and decay", type: "Core concept" },
+    ],
+  },
+  {
+    id: "orchestration",
+    name: "Orchestration",
+    description: "Coordinating multiple AI agents, tools, and workflows in production systems.",
+    pages: [
+      { slug: "agent-orchestration", title: "Agent orchestration and gateway architecture", type: "Architecture" },
+    ],
+  },
+  {
+    id: "security",
+    name: "AI Security",
+    description: "Threat models, vulnerabilities, and defences for AI systems — prompt injection, tool poisoning, and more.",
+    pages: [
+      { slug: "prompt-injection-tool-poisoning", title: "Prompt injection, tool poisoning, and confused-deputy risks", type: "Risk & security" },
+      { slug: "mcp-security", title: "MCP security and the execution-governance gap", type: "Risk & security" },
+    ],
+  },
+  {
+    id: "governance",
+    name: "Governance",
+    description: "Human oversight, auditability, policy enforcement, and execution controls for AI systems.",
+    pages: [
+      { slug: "auditability-vs-enforceability", title: "Auditability vs enforceability", type: "Core concept" },
+      { slug: "human-approval", title: "Human approval in agent systems", type: "Architecture" },
+    ],
+  },
+  {
+    id: "automation",
+    name: "Automation",
+    description: "AI-driven automation patterns — from simple triggers to autonomous multi-step processes.",
+    pages: [
+      { slug: "agents-vs-workflows", title: "Agents vs workflows vs automation", type: "Comparison" },
+    ],
+  },
+  {
+    id: "local-models",
+    name: "Local Models",
+    description: "Running AI models on local hardware — options, requirements, trade-offs, and architecture patterns.",
+    pages: [
+      { slug: "local-agent-architectures", title: "Local-agent architectures", type: "Architecture" },
+    ],
+  },
+  {
+    id: "coding-agents",
+    name: "Coding Agents",
+    description: "AI-powered coding assistants, agentic IDEs, and software engineering automation.",
+    pages: [
+      { slug: "coding-agents", title: "Coding agents and agentic IDEs", type: "Practical reference" },
+    ],
+  },
+  {
+    id: "evaluation",
+    name: "Evaluation",
+    description: "Methods, benchmarks, and frameworks for evaluating AI agent and model performance.",
+    pages: [
+      { slug: "evaluating-agent-systems", title: "How to evaluate an agent system", type: "Practical reference" },
+    ],
+  },
+  {
+    id: "observability",
+    name: "Observability",
+    description: "Tracing, monitoring, and debugging AI agent systems in development and production.",
+    pages: [
+      { slug: "context-engineering", title: "Context engineering and retrieval boundaries", type: "Core concept" },
+    ],
+  },
+];
+
+// Deduplicate pages (some appear in multiple hubs)
+const allPages = new Map<string, { slug: string; title: string; type: string; hubs: string[] }>();
+for (const hub of hubs) {
+  for (const page of hub.pages) {
+    const existing = allPages.get(page.slug);
+    if (existing) {
+      existing.hubs.push(hub.id);
+    } else {
+      allPages.set(page.slug, { ...page, hubs: [hub.id] });
+    }
+  }
+}
+---
+
+<BaseLayout
+  title="Knowledge Base"
+  description="Evidence-linked technical reference for MCP, AI agents, tool calling, agent memory, security, governance, and more. Every claim is linked to its source."
+>
+  <div class="wrap" style="max-width:52rem;">
+    <h1 class="display h1">Knowledge Base</h1>
+    <p class="lead" style="margin-top:0.5rem;margin-bottom:2rem;">
+      A living technical reference where material claims are connected to evidence.
+      The feed answers "what changed" — the knowledge base answers "what is this technology,
+      how does it work, and what should you consider before adopting it."
+    </p>
+
+    <!-- Stats -->
+    <div style="display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:2.5rem;">
+      <div class="card" style="flex:1;min-width:100px;text-align:center;padding:1rem;">
+        <p style="font-size:1.5rem;font-weight:700;">{allPages.size}</p>
+        <p class="meta">Pages</p>
+      </div>
+      <div class="card" style="flex:1;min-width:100px;text-align:center;padding:1rem;">
+        <p style="font-size:1.5rem;font-weight:700;">{hubs.length}</p>
+        <p class="meta">Subject hubs</p>
+      </div>
+      <div class="card" style="flex:1;min-width:100px;text-align:center;padding:1rem;">
+        <p style="font-size:1.5rem;font-weight:700;">0</p>
+        <p class="meta">Linked claims</p>
+      </div>
+    </div>
+
+    <!-- Hub grid -->
+    <div class="grid-2" style="margin-bottom:3rem;">
+      {hubs.map(hub => (
+        <div class="card" id={hub.id}>
+          <h2 style="font-size:1.1rem;margin-bottom:0.35rem;">
+            <a href={`/knowledge#${hub.id}`}>{hub.name}</a>
+          </h2>
+          <p class="meta" style="margin-bottom:0.75rem;">{hub.description}</p>
+          <ul style="list-style:none;padding:0;display:flex;flex-direction:column;gap:0.25rem;">
+            {hub.pages.map(page => (
+              <li style="font-size:0.84rem;">
+                <a href={`/knowledge/${page.slug}`} style="display:flex;gap:0.4rem;align-items:baseline;">
+                  <span class="badge badge-sm" style="font-size:0.58rem;flex-shrink:0;">{page.type}</span>
+                  <span>{page.title}</span>
+                </a>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+    </div>
+
+    <!-- How the knowledge base works -->
+    <section class="card" style="padding:1.5rem;background:var(--surface-2);">
+      <h2 style="font-size:1.1rem;margin-bottom:0.75rem;">How the knowledge base works</h2>
+      <div style="display:flex;flex-direction:column;gap:0.5rem;" class="meta">
+        <p><strong>Not a wiki.</strong> Edits flow through review before publication. No open public editing.</p>
+        <p><strong>Evidence-first.</strong> Every material claim must have at least one evidence record. No unsourced assertions.</p>
+        <p><strong>Versioned.</strong> Every change produces a version record with a change summary. No silent rewrites.</p>
+        <p><strong>Connected to the feed.</strong> Intelligence events can propose updates to knowledge pages. Knowledge pages surface related events.</p>
+        <p><strong>Inference-labelled.</strong> Editorial inferences are clearly distinguished from directly sourced claims.</p>
+        <p class="meta" style="margin-top:0.5rem;">
+          <a href="/methodology">Read the full methodology &rarr;</a>
+        </p>
+      </div>
+    </section>
+  </div>
+</BaseLayout>

@@ -1,0 +1,95 @@
+---
+// The Trace Manifest — Knowledge Page Dynamic Route
+// Renders knowledge pages using the standard contract via KnowledgePage component.
+// Pages are loaded from src/data/knowledge/*.ts data modules.
+
+import BaseLayout from "../../layouts/BaseLayout.astro";
+import KnowledgePage from "../../components/KnowledgePage.astro";
+import type { KnowledgePageData } from "../../components/KnowledgePage.astro";
+
+export function getStaticPaths() {
+  // All knowledge page slugs — must match data files in src/data/knowledge/
+  return [
+    // MCP hub
+    { params: { slug: "what-is-mcp" } },
+    { params: { slug: "mcp-architecture" } },
+    { params: { slug: "mcp-security" } },
+    { params: { slug: "mcp-vs-function-calling" } },
+    // Agents hub
+    { params: { slug: "what-is-an-ai-agent" } },
+    { params: { slug: "agents-vs-workflows" } },
+    { params: { slug: "agent-orchestration" } },
+    { params: { slug: "human-approval" } },
+    { params: { slug: "evaluating-agent-systems" } },
+    { params: { slug: "coding-agents" } },
+    // Tool use
+    { params: { slug: "tool-calling-function-calling-mcp" } },
+    // Memory
+    { params: { slug: "agent-memory" } },
+    // Security
+    { params: { slug: "prompt-injection-tool-poisoning" } },
+    // Governance
+    { params: { slug: "auditability-vs-enforceability" } },
+    // Local models
+    { params: { slug: "local-agent-architectures" } },
+    // Context engineering
+    { params: { slug: "context-engineering" } },
+  ];
+}
+
+const { slug } = Astro.params;
+
+// Dynamic import of page data — falls back to a stub if no data file exists yet
+let page: KnowledgePageData;
+try {
+  const module = await import(`../../data/knowledge/${slug}.ts`);
+  page = module.default;
+} catch {
+  // Fallback stub for pages not yet written
+  page = {
+    slug,
+    title: slug.split("-").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" "),
+    hub: "general",
+    pageType: "core_concept",
+    status: "draft",
+    version: 1,
+    canonicalSummary: "This knowledge page is under construction. Content will be added as part of the Phase 3B knowledge base build-out.",
+    lastReviewed: "2026-07-13",
+    claims: [],
+  };
+}
+
+// Breadcrumb: map slug prefix to hub
+const hubMap: Record<string, string> = {
+  "what-is-mcp": "mcp", "mcp-architecture": "mcp", "mcp-security": "mcp", "mcp-vs-function-calling": "mcp",
+  "what-is-an-ai-agent": "agents", "agents-vs-workflows": "agents", "agent-orchestration": "agents",
+  "human-approval": "agents", "evaluating-agent-systems": "agents", "coding-agents": "agents",
+  "tool-calling-function-calling-mcp": "tool-use",
+  "agent-memory": "memory",
+  "prompt-injection-tool-poisoning": "security",
+  "auditability-vs-enforceability": "governance",
+  "local-agent-architectures": "local-models",
+  "context-engineering": "observability",
+};
+
+const hub = hubMap[slug] ?? "general";
+const hubLabels: Record<string, string> = {
+  mcp: "MCP", agents: "Agents", "tool-use": "Tool Use", memory: "Memory",
+  orchestration: "Orchestration", security: "Security", governance: "Governance",
+  automation: "Automation", "local-models": "Local Models", "coding-agents": "Coding Agents",
+  evaluation: "Evaluation", observability: "Observability",
+};
+---
+
+<BaseLayout
+  title={`${page.title} — Knowledge Base`}
+  description={page.canonicalSummary}
+>
+  <div class="wrap">
+    <nav aria-label="Breadcrumb" class="meta" style="margin-bottom:1.5rem;">
+      <a href="/knowledge">Knowledge Base</a> &rsaquo; <a href={`/knowledge#${hub}`}>{hubLabels[hub] ?? hub}</a> &rsaquo; {page.title}
+    </nav>
+
+    <KnowledgePage {...page} />
+  </div>
+</BaseLayout>

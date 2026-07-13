@@ -2,6 +2,8 @@
 
 **Planning basis:** Solo-founder-led, AI-assisted development alongside existing projects. Estimates are directional and phases may overlap.
 
+**Editorial identity:** T.R.A.C.E. — Traceable Research, Analysis, Context and Evidence (10 editorial laws govern all outputs).
+
 ## Phase 0 — Foundation ✅
 **Estimate:** 1–2 weeks | **Completed:** 12 July 2026
 
@@ -54,31 +56,57 @@ Delivered: Full curation and trust pipeline with 6 new worker modules, 2 Astro c
 
 **Frontend updated:** Story pages use EvidenceBadge + RatingExplanation components, feed + topic pages use EvidenceBadge, corrections page redesigned with before/after comparison panels + evidence badges, admin review queue shows 10-state reference table + correction API docs.
 
+## Phase 3B — Evidence-Linked Knowledge Base ✅
+**Estimate:** 2–3 weeks | **Completed:** 13 July 2026
+
+~~Build the living technical reference where material claims are connected to evidence. Create the `/knowledge/` route structure, standard-contract page template, claim-to-evidence rendering component, and 16 initial cornerstone pages.~~
+
+Delivered: 16 knowledge pages (5 complete with full standard-contract content, 11 stubs with proper metadata), 12 subject hubs, ClaimEvidenceLink component (11 relationship types with inference labelling), KnowledgePage component (full 20-section standard contract renderer), `/knowledge/` index + `[slug]` dynamic route, 4 new DB tables (knowledge_pages, knowledge_page_versions, knowledge_page_claims, knowledge_page_events).
+
+**Complete pages:** What is MCP?, MCP architecture, What is an AI agent?, Prompt injection/tool poisoning/confused-deputy risks, MCP vs function calling.
+
+**Stub pages:** MCP security, Agents vs workflows vs automation, Agent orchestration, Human approval in agent systems, Evaluating agent systems, Coding agents and agentic IDEs, Tool calling/function calling/MCP, Agent memory, Auditability vs enforceability, Local-agent architectures, Context engineering and retrieval boundaries.
+
 ## Phase 4 — Models, Providers, and Benchmarks
 **Estimate:** 4–8 weeks
 
 Build structured model, provider, pricing, benchmark, version, comparison, and benchmark-health features.
 
-## Phase 5 — Full Ask Box
+## Phase 5 — Ask TRACE
 **Estimate:** 6–12 weeks
 
-Implement retrieval, citation assembly, freshness checks, confidence labels, caching, rate limiting, abuse protection, analytics, and evaluation against the earlier curated-answer set.
+Build the source-grounded question-answering system. Ask TRACE answers from the indexed evidence base with citations, confidence labels, evidence windows, and explicit "insufficient evidence" handling. Includes retrieval layer, citation assembly, freshness checks, rate limiting, abuse protection (prompt-injection-resistant boundaries, source-content sanitisation), query analytics, and public question history.
+
+## Phase 5B — TRACE Predicts
+**Estimate:** 4–6 weeks | **Dependency:** Phase 5
+
+Build the weekly editorial forecast product. Three to five evidence-linked, probabilistic, time-bounded, falsifiable predictions per week. Immutable after publication (LAW-TRACE-007). Public archive with full prediction history. Manual evaluation interface with outcome tracking. Rejects vague, unfalsifiable, or unevidenced predictions.
+
+## Phase 5C — The Trace Weekly Newsletter
+**Estimate:** 3–5 weeks | **Dependency:** Phases 5 + 5B
+
+Build the recurring weekly digest and retention channel. Eight-section edition structure (biggest developments, editorial analysis, open-source watch, Ask TRACE selection, TRACE Predicts, last week's scorecard, project updates). Subscriber database with consent tracking, double opt-in, unsubscribe/suppression handling. Manual editorial assembly with test-send and approval workflow.
+
+## Phase 5D — TRACE Scorecard and Calibration
+**Estimate:** 2–3 weeks | **Dependency:** ~20+ evaluated predictions
+
+Build public prediction performance metrics: aggregate counts by outcome, accuracy excluding unresolved, probability-band analysis, formal calibration metric (Brier score) when sufficient data exists. Public methodology page. Independently verifiable from the archive.
 
 ## Phase 6 — Accounts and Personalisation
 **Estimate:** 4–8 weeks
 
-Add authentication, saved questions, watchlists, preferences, alerts, and initial paid plans.
+Add authentication, saved questions, watchlists, topic preferences, custom briefings, alerts, user history, newsletter preferences, saved predictions tracking, supporter plan, and professional plan.
 
 ## Phase 7 — Monetisation Expansion
 **Estimate:** 3–6 weeks, then ongoing
 
-Add sponsorship management, contextual advertising, affiliate management, premium research, exports, team plans, job listings, and API foundations.
+Add sponsorship management, contextual advertising, affiliate management, premium research, exports, team plans, job listings, sponsored newsletter slots, and API foundations.
 
 ## Phase 8 — Advanced Intelligence
 **Estimate:** Ongoing, 3–12+ months
 
-Add claim timelines, historical recommendation changes, licence and price monitoring, provider reliability, contradiction maps, organisation dashboards, and white-label feeds.
+Add claim timelines, historical recommendation changes, licence and price monitoring, provider reliability, contradiction maps, organisation dashboards, white-label feeds, and advanced prediction analytics.
 
 ## Overall range
 
-A credible public MVP is approximately **8–16 weeks of focused work**. A mature platform with the full ask box, accounts, personalisation, and commercial data products is more realistically a **9–18 month programme** for a solo founder working across multiple projects.
+A credible public MVP is approximately **8–16 weeks of focused work**. A mature platform with the full ask box, predictions, newsletter, accounts, personalisation, and commercial data products is more realistically a **12–24 month programme** for a solo founder working across multiple projects.

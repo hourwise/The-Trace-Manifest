@@ -311,3 +311,85 @@ CREATE TABLE IF NOT EXISTS pipeline_stages (
 
 CREATE INDEX IF NOT EXISTS idx_pipeline_stages_item ON pipeline_stages(feed_item_id);
 CREATE INDEX IF NOT EXISTS idx_pipeline_stages_stage ON pipeline_stages(stage);
+
+-- ============================================================
+-- Phase 3B: Evidence-Linked Knowledge Base
+-- ============================================================
+
+-- Knowledge pages — the canonical technical reference pages
+-- Not a wiki: edits flow through review (ADR-0004)
+CREATE TABLE IF NOT EXISTS knowledge_pages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  slug TEXT NOT NULL UNIQUE,
+  title TEXT NOT NULL,
+  hub TEXT NOT NULL,               -- mcp, agents, automation, memory, orchestration, etc.
+  page_type TEXT NOT NULL CHECK(page_type IN (
+    'core_concept','comparison','architecture','risk_security',
+    'timeline','practical_reference','glossary'
+  )),
+  status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN (
+    'draft','review','published','archived','corrected'
+  )),
+  version INTEGER NOT NULL DEFAULT 1,
+  canonical_summary TEXT NOT NULL,
+  content_json TEXT NOT NULL,       -- Full page content as structured JSON (standard contract)
+  claims_count INTEGER NOT NULL DEFAULT 0,
+  events_count INTEGER NOT NULL DEFAULT 0,
+  last_reviewed_at TEXT,
+  reviewed_by TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_kp_slug ON knowledge_pages(slug);
+CREATE INDEX IF NOT EXISTS idx_kp_hub ON knowledge_pages(hub);
+CREATE INDEX IF NOT EXISTS idx_kp_status ON knowledge_pages(status);
+CREATE INDEX IF NOT EXISTS idx_kp_type ON knowledge_pages(page_type);
+
+-- Version history — every change produces a version record
+CREATE TABLE IF NOT EXISTS knowledge_page_versions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  page_id INTEGER NOT NULL REFERENCES knowledge_pages(id),
+  version_number INTEGER NOT NULL,
+  content_json TEXT NOT NULL,
+  change_summary TEXT NOT NULL,
+  created_by TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_kpv_page ON knowledge_page_versions(page_id);
+
+-- Claim-to-page linking — connects extracted claims to knowledge pages
+-- Relationship: supports, qualifies, challenges (the claim's relationship TO the page content)
+CREATE TABLE IF NOT EXISTS knowledge_page_claims (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  page_id INTEGER NOT NULL REFERENCES knowledge_pages(id),
+  claim_id INTEGER NOT NULL REFERENCES claims(id),
+  relationship TEXT NOT NULL CHECK(relationship IN (
+    'supports','partially_supports','qualifies','challenges','contradicts',
+    'reports','reproduces','fails_to_reproduce','supersedes','corrects','contextualises'
+  )),
+  section_id TEXT,                 -- which section of the page this claim relates to
+  display_order INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_kpc_page ON knowledge_page_claims(page_id);
+CREATE INDEX IF NOT EXISTS idx_kpc_claim ON knowledge_page_claims(claim_id);
+
+-- Event-to-page linking — connects feed items/clusters that may update knowledge pages
+CREATE TABLE IF NOT EXISTS knowledge_page_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  page_id INTEGER NOT NULL REFERENCES knowledge_pages(id),
+  feed_item_id INTEGER REFERENCES feed_items(id),
+  cluster_id INTEGER REFERENCES story_clusters(id),
+  relationship TEXT NOT NULL CHECK(relationship IN (
+    'update_suggested','context_added','supersedes','deprecates','confirms','challenges'
+  )),
+  note TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_kpe_page ON knowledge_page_events(page_id);
+CREATE INDEX IF NOT EXISTS idx_kpe_item ON knowledge_page_events(feed_item_id);
+CREATE INDEX IF NOT EXISTS idx_kpe_cluster ON knowledge_page_events(cluster_id);
