@@ -13,6 +13,7 @@ import { runCrossSourceMatching } from "./cross-source-match";
 import { runClustering } from "./cluster";
 import { runClaimExtraction, detectClaimConflicts } from "./extract-claims";
 import { recordClusterCorrection, recordClaimCorrection, listPublishedCorrections, validateCorrectionInput } from "./corrections";
+import { runModelDataExtraction, seedModelData } from "./model-data";
 import type { Source, FeedItem } from "./types";
 
 // ============================================================
@@ -70,6 +71,7 @@ export default {
           await runClusteringPipeline(env);
           await runClaimExtractionPipeline(env);
           await runConflictDetectionPipeline(env);
+          await runModelDataPipeline(env);
           break;
         case "0 18 * * *":
           await checkAllSourcesHealth(env);
@@ -286,6 +288,21 @@ async function runConflictDetectionPipeline(env: Env) {
 }
 
 // ============================================================
+// Model data extraction pipeline (runs after conflict detection)
+// ============================================================
+async function runModelDataPipeline(env: Env) {
+  console.log("Model data extraction: starting...");
+  const result = await runModelDataExtraction(env.DB,
+    (processed, total) => {
+      if (processed % 50 === 0 || processed === total) {
+        console.log(`Model data progress: ${processed}/${total}`);
+      }
+    }
+  );
+  console.log(`Model data: done — ${result.modelsFound} models, ${result.providersFound} providers, ${result.benchmarksFound} benchmarks, ${result.pricesRecorded} prices`);
+}
+
+// ============================================================
 // Source health check
 // ============================================================
 async function checkAllSourcesHealth(env: Env) {
@@ -329,6 +346,10 @@ async function handleAdminRoute(path: string, request: Request, env: Env, ctx: E
       return handleCorrectionsList(env);
     case "/admin/correct":
       return handleRecordCorrection(request, env);
+    case "/admin/seed-models":
+      return handleSeedModelData(env);
+    case "/admin/extract-model-data":
+      return handleModelDataExtraction(env);
     default:
       return Response.json({ error: "Not found" }, { status: 404 });
   }
@@ -442,4 +463,14 @@ async function handleRecordCorrection(request: Request, env: Env): Promise<Respo
   } catch (err: any) {
     return Response.json({ error: err.message }, { status: 500 });
   }
+}
+
+async function handleSeedModelData(env: Env): Promise<Response> {
+  const result = await seedModelData(env.DB);
+  return Response.json({ status: "ok", ...result });
+}
+
+async function handleModelDataExtraction(env: Env): Promise<Response> {
+  const result = await runModelDataExtraction(env.DB);
+  return Response.json({ status: "ok", ...result });
 }

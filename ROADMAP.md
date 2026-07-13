@@ -4,12 +4,14 @@
 
 **Editorial identity:** T.R.A.C.E. — Traceable Research, Analysis, Context and Evidence (10 editorial laws govern all outputs).
 
+**Model governance:** ADR-0008 — DeepSeek via provider-neutral gateway, cost containment, automated-loop prevention. Model is a replaceable drafting component; TRACE's corpus and validation are authoritative.
+
 ## Phase 0 — Foundation ✅
 **Estimate:** 1–2 weeks | **Completed:** 12 July 2026
 
 ~~Complete the repository foundation, documentation structure, product charter, MVP, trust framework, commercial-independence rules, source inventory, initial schema, moderation policy, SEO strategy, CI standards, continuity plan, and accepted ADRs.~~
 
-Delivered: 20 docs across 7 directories, 7 accepted ADRs, GitHub repo with CI-ready structure.
+Delivered: 20 docs across 7 directories, 8 accepted ADRs (including ADR-0008 model governance), GitHub repo with CI-ready structure.
 
 ## Phase 1 — Static Product Shell ✅
 **Estimate:** 2–4 weeks | **Completed:** 12 July 2026
@@ -67,15 +69,25 @@ Delivered: 16 knowledge pages (5 complete with full standard-contract content, 1
 
 **Stub pages:** MCP security, Agents vs workflows vs automation, Agent orchestration, Human approval in agent systems, Evaluating agent systems, Coding agents and agentic IDEs, Tool calling/function calling/MCP, Agent memory, Auditability vs enforceability, Local-agent architectures, Context engineering and retrieval boundaries.
 
-## Phase 4 — Models, Providers, and Benchmarks
-**Estimate:** 4–8 weeks
+## Phase 4 — Models, Providers, and Benchmarks ✅
+**Estimate:** 4–8 weeks | **Completed:** 13 July 2026
 
-Build structured model, provider, pricing, benchmark, version, comparison, and benchmark-health features.
+~~Build structured model, provider, pricing, benchmark, version, comparison, and benchmark-health features.~~
+
+Delivered: 7 new DB tables, 4 Astro components, 4 new/updated pages, 1 worker module.
+
+**Schema:** `models` (16 fields including openness, context_window, modalities, tool_use, structured_output, api_available, local_available, superseded_by), `model_versions`, `providers`, `provider_models` (pricing junction), `pricing_history` (change tracking), `benchmarks` (7 health states), `benchmark_runs` (vendor-run vs independent flags). Pipeline stages and job types extended.
+
+**Components:** `ModelCard.astro` (full spec card with pricing + use cases), `BenchmarkHealthBadge.astro` (7-state health badge), `ComparisonTable.astro` (side-by-side with highlight columns), `PricingHistory.astro` (timeline with ↑↓ indicators).
+
+**Pages:** `/models` (6 models in closed/open-weight sections), `/models/[slug]` (full spec + pricing history + benchmark comparison + hardware requirements), `/benchmarks` (8 benchmarks with health summary), `/benchmarks/[slug]` (health breakdown + results with vendor/independent flags), `/providers` (10 providers with pricing comparison table).
+
+**Worker:** `model-data.ts` — rule-based extraction of 25 models, 17 providers, 12 benchmarks from feed items. Pricing detection via regex. `seedModelData()` bootstraps baseline records. Admin routes: `POST /admin/seed-models`, `POST /admin/extract-model-data`.
 
 ## Phase 5 — Ask TRACE
-**Estimate:** 6–12 weeks
+**Estimate:** 6–12 weeks | **Governed by:** ADR-0008 (DeepSeek via provider-neutral gateway, cost containment, automated-loop prevention)
 
-Build the source-grounded question-answering system. Ask TRACE answers from the indexed evidence base with citations, confidence labels, evidence windows, and explicit "insufficient evidence" handling. Includes retrieval layer, citation assembly, freshness checks, rate limiting, abuse protection (prompt-injection-resistant boundaries, source-content sanitisation), query analytics, and public question history.
+Build the source-grounded question-answering system. Ask TRACE answers from the indexed evidence base with citations, confidence labels, evidence windows, and explicit "insufficient evidence" handling. Per ADR-0008: provider-neutral model gateway (`src/ai/`), DeepSeek `deepseek-v4-flash` for routine public requests, `deepseek-v4-pro` restricted to reviewed editorial workflows. Includes: public endpoint `POST /api/trace/ask` (browser never calls DeepSeek directly), atomic budget reservation, internal usage ledger, 10 circuit breakers, idempotency with persistent request state, post-generation validation pipeline, deterministic confidence calculation, launch limits ($1/day, 3 questions/visitor/day, 1 model call/question). Model is a replaceable drafting component — TRACE's corpus and validation are authoritative.
 
 ## Phase 5B — TRACE Predicts
 **Estimate:** 4–6 weeks | **Dependency:** Phase 5

@@ -164,6 +164,36 @@ Generated summaries, analysis, newsletter content and predictions must pass the 
 **LAW-TRACE-010 — Uncertainty is a valid outcome**
 T.R.A.C.E. must be permitted to answer: evidence is insufficient, sources conflict, the matter remains unresolved, or no reliable conclusion can yet be drawn.
 
+### 2.9 Model Governance — ADR-0008
+
+These governance rules apply to all model-assisted features (Ask TRACE, TRACE Analysis, TRACE Predicts, newsletter generation, internal editorial workflows). Per ADR-0008, the model is a replaceable drafting and reasoning component — TRACE's governed corpus, source records, claim relationships, citation validation, corrections history, and deterministic confidence policy remain authoritative.
+
+**Primary provider and models:**
+- Initial provider: DeepSeek via a provider-neutral, server-side model gateway.
+- Routine public model: `deepseek-v4-flash` for Ask TRACE.
+- Reviewed editorial model: `deepseek-v4-pro`, restricted to approved, evaluated workflows.
+- No automatic model substitution — every model change requires configuration review, evaluation, and an auditable deployment decision.
+- The provider decision is reversible: all application code calls TRACE's internal model gateway, not provider-specific logic.
+
+**API key and secret protection:**
+- The DeepSeek API key must never be exposed to the browser, committed to Git, included in logs, or shared with other products and development tools.
+- Public clients call a protected TRACE-owned endpoint; only the server-side gateway communicates with DeepSeek.
+- Production secrets stored as encrypted Worker secrets; local development uses non-committed secret files.
+
+**Cost containment:**
+- Prepaid credit is the provider-level hard spending boundary — not the primary security control.
+- TRACE enforces: atomic budget reservations, daily/monthly spending ceilings, per-request token and cost limits, rate limiting, idempotency, bounded retries, balance thresholds, circuit breakers, and a global kill switch.
+- Suggested launch limits: $1.00/day public budget, $10.00/month, max $0.02/request estimated cost.
+
+**Automated-loop prevention:**
+- No model response may autonomously trigger another model request.
+- Public Ask TRACE: one provider generation per accepted request.
+- Prohibited: recursive review loops, unbounded tool loops, indefinite validation regeneration, automatic client resubmission, duplicate scheduled jobs, generic retry-on-error.
+
+**Trust boundary:**
+- The model may summarise, compare, draft analysis, identify uncertainty, and propose editorial wording.
+- The model may not: invent evidence, access unrestricted web search, alter source trust classifications, approve its own citations, calculate final confidence, publish autonomously, modify the corrections ledger, call arbitrary URLs, execute code, or write directly to production data.
+
 ---
 
 ## 3. Target Users
@@ -1466,59 +1496,108 @@ The system must support: reviewer identity, review timestamp, approval status, v
 
 ---
 
-## Phase 4 — Model, Provider, and Benchmark Data
+## Phase 4 — Model, Provider, and Benchmark Data  ✅ COMPLETED 13 July 2026
 
-Build:
-
-- Model directory
-- Provider directory
-- Pricing history
-- Benchmark registry
-- Benchmark-run records
-- Benchmark health
-- Comparison tables
-- “Best for” views
-- Versioning and supersession
+Built and deployed: model directory (6 models, ModelCard component), provider directory (10 providers, pricing comparison), pricing history (PricingHistory timeline), benchmark registry (8 benchmarks, 7-state health badges), benchmark-run records (vendor/independent flags), comparison tables (ComparisonTable component), best-for views, versioning and supersession.  7 new DB tables + 16 indexes. Worker: `model-data.ts`. Admin: `POST /admin/seed-models`, `POST /admin/extract-model-data`.
 
 ---
 
 ## Phase 5 — Ask TRACE
 
-**Estimate:** 6–12 weeks
+**Estimate:** 6–12 weeks  
+**Model governance:** ADR-0008 (DeepSeek via provider-neutral gateway, cost containment, automated-loop prevention)
 
-Build the source-grounded question-answering system. Ask TRACE answers from the indexed evidence base rather than behaving as an unrestricted general chatbot.
+Build the source-grounded question-answering system. Ask TRACE answers from the indexed evidence base rather than behaving as an unrestricted general chatbot. Per ADR-0008: the model is a replaceable drafting component — TRACE's governed corpus, citation validation, and deterministic confidence policy remain authoritative.
 
-### Core user experience
+### Architecture (ADR-0008)
 
-A user asks a question. TRACE returns: a concise answer, the main developments, why they matter, conflicting or unresolved points, source citations, the date range considered, a confidence label, related stories, and a notice when evidence is incomplete.
+```
+Browser → TRACE public API (/api/trace/ask)
+  → auth/abuse checks
+  → input validation
+  → retrieval from approved TRACE corpus
+  → evidence filtering + token budgeting
+  → internal model gateway (provider-neutral)
+  → DeepSeek API (server-side only, never exposed to browser)
+  → structured-output validation
+  → citation + claim validation
+  → deterministic confidence calculation
+  → response
+```
 
-### Answer envelope
+**Provider-neutral gateway:** `src/ai/` directory with `provider.ts`, `model-router.ts`, `trace-model-gateway.ts`, `schemas.ts`, `validation.ts`, `usage-ledger.ts`, `budget-policy.ts`, `circuit-breaker.ts`, and `providers/deepseek.ts`. All application code calls TRACE's internal model interface — provider-specific logic is isolated.
 
-Every answer must include: question, answer text, key points, source IDs, story IDs, confidence level (high/medium/low/insufficient-evidence), generation timestamp, evidence window (from/to), and caveats.
+**Initial models (ADR-0008):**
+- Routine public: `deepseek-v4-flash` for Ask TRACE.
+- Reviewed editorial: `deepseek-v4-pro`, restricted to approved admin/scheduled workflows with demonstrated quality benefit.
+- No automatic model substitution. Deprecated aliases (`deepseek-chat`, `deepseek-reasoner`) must not be used.
 
-### Retrieval rules
+### API key and secret protection (ADR-0008)
 
-Ask TRACE must: prefer primary sources where available, rank recent material for time-sensitive questions, include older context where required, avoid citing unrelated results, disclose source disagreement, avoid answering beyond the indexed evidence without clearly marking general background, refuse to invent missing information, and distinguish source fact from TRACE interpretation.
+The DeepSeek API key must exist only in trusted server-side execution environments. Never: in browser JS, committed to Git, in logs, in static bundles, in client-side storage, or shared with other products. Stored as encrypted Cloudflare Worker secret (`wrangler secret put DEEPSEEK_API_KEY`). Local dev uses non-committed `.dev.vars`. Separate keys for dev/staging/production. Rotation after suspected exposure, accidental logging, collaborator departure, or security incident.
 
-### Initial limits
+### Public endpoint design (ADR-0008)
 
-Public questions only; no account required for a small daily allowance; rate limits per IP or session; maximum source set per answer; no private document upload; no unrestricted web browsing from the public question box; no high-stakes personalised advice.
+`POST /api/trace/ask` — TRACE-owned endpoint, never calls DeepSeek directly from browser.
 
-### Abuse protection
+**Launch limits (conservative, configurable):**
+- Max question length: 1,000 characters
+- Max request body: 16 KB
+- Max evidence excerpts: 16
+- Max evidence input tokens: 12,000
+- Max generated output tokens: 1,500
+- Max model calls per question: 1
+- Public questions per visitor per day: 3 initially
+- Request timeout: bounded below platform max
 
-Prompt-injection-resistant retrieval boundaries; source-content sanitisation; query length limits; rate limiting; output moderation; blocked attempts to expose hidden system prompts or internal metadata; logging without retaining unnecessary personal data.
+**Abuse resistance:** Cloudflare rate limiting, Turnstile bot challenge, opaque session IDs, privacy-preserving IP hash with rotating salt, global daily request/spend ceilings, per-session concurrency limits, request deduplication, temporary blocking after repeated malformed requests, administrative kill switch.
+
+### Financial controls (ADR-0008)
+
+DeepSeek prepaid balance is the provider-level hard stop — not the primary security control. TRACE maintains an internal usage ledger and budget policy.
+
+**Launch budget (configurable):**
+- Daily public budget: $1.00
+- Monthly public budget: $10.00
+- Max estimated cost per request: $0.02
+- Warning balance: $2.00 → notify admin
+- Restrict balance: $0.50 → disable anonymous requests
+- Stop balance: $0.10 → reject all non-essential requests
+- Global kill switch: reject every model request until manually re-enabled
+
+**Atomic reservation:** Before calling the provider, TRACE atomically reserves the worst-case estimated cost. If reservation fails, the model request must not begin. After completion, actual usage is recorded and unused budget released. This prevents concurrent workers from overspending.
+
+### Automated-loop prevention (ADR-0008)
+
+No model response may autonomously trigger another model request. Public Ask TRACE: strictly one provider generation per accepted request. Hard step counters on every workflow (`maxProviderCallsPerRequest`, `maxRetries`, `maxElapsedTimeMs`). Explicit retry policy by HTTP status — no generic `catch { retry(); }`. Idempotency keys with persistent request state prevent duplicate processing. Streaming (if introduced later): reconnection attaches to existing request, never creates new generation.
+
+### Trust boundary (ADR-0008)
+
+**Model may:** summarise supplied evidence, compare supplied claims, draft labelled analysis, identify uncertainty, propose editorial wording, generate candidate predictions for review.
+
+**Model may not:** invent or select external evidence, access unrestricted web search, alter source trust classifications, approve its own citations, calculate final public confidence score, publish autonomously, modify the corrections ledger, call arbitrary URLs, execute code, write directly to production data, approve publication, or create additional model requests by itself.
+
+### Post-generation validation (ADR-0008)
+
+Before any answer is served, TRACE code must verify: every cited source ID was supplied, every cited claim ID exists, material factual statements are linked to evidence, cited evidence supports the statement, disagreements are not suppressed, analysis is labelled as analysis, dates are correct, no excluded or superseded source was used, output is complete and not truncated. Validation failure → safe non-answer or single bounded regeneration (if enabled and budgeted). Never unvalidated publication.
 
 ### Build list
 
-- Retrieval layer over indexed evidence
+- Provider-neutral model gateway (`src/ai/`) with DeepSeek adapter
+- Public endpoint `POST /api/trace/ask` with full security controls
+- Retrieval layer over approved TRACE corpus (evidence-bounded, not open RAG)
+- Atomic budget reservation + usage ledger (`usage-ledger.ts`, `budget-policy.ts`)
+- Circuit breaker system (10 breakers: global kill switch, per-provider, per-model, budget, balance, auth-error, failure-rate, latency)
+- Idempotency + request-state persistence (10+ state machine)
 - Citation assembly with primary-source preference
-- Answer structure with confidence labels
-- Freshness checks and evidence-window display
-- Rate limiting and caching
-- Abuse protection (prompt injection, sanitisation)
-- Query analytics
-- Public question history where appropriate
+- Post-generation validation pipeline (structured output, claim verification, confidence calculation)
+- Answer structure with confidence labels + evidence-window display
+- Rate limiting, abuse protection, query length limits
+- Prompt-injection-resistant retrieval boundaries + source-content sanitisation
+- `ai_runs` audit log (token usage, cost, latency, validation status — never secrets or PII)
+- Global kill switch + per-feature switches (Ask TRACE, scheduled jobs, per-model)
 - "Insufficient evidence" explicit non-answer handling
+- Incident response procedures for key leaks, request storms, unexpected spend
 
 ---
 
@@ -1735,11 +1814,24 @@ The TRACE add-on is complete when:
 - No unmoderated public comments or user-generated predictions.
 - No paid subscriptions until Phase 6+.
 
+### Model and API constraints (ADR-0008)
+
+- The DeepSeek API key must never be exposed to the browser, committed to Git, included in logs, or shared with other products.
+- Public clients call a protected TRACE-owned endpoint; only the server-side gateway may communicate with DeepSeek.
+- Prepaid credit is the provider-level hard boundary — not the primary security control.
+- No model response may autonomously trigger another model request.
+- Public Ask TRACE: one provider generation per accepted request.
+- No automatic model substitution without configuration review, evaluation, and auditable deployment.
+- Deprecated model aliases (`deepseek-chat`, `deepseek-reasoner`) must not be used.
+- Internal budget policy is authoritative: atomic reservations, daily/monthly ceilings, balance thresholds, circuit breakers, global kill switch.
+- `src/ai/` gateway structure enforces provider-neutral design — all application code calls TRACE's internal interface.
+
 ### Route reservations
 
 The following routes are reserved for TRACE features:
 
 - `/ask-trace` — Ask TRACE question interface
+- `/api/trace/ask` — Ask TRACE server-side endpoint (never exposes provider to browser)
 - `/analysis` — TRACE Analysis archive
 - `/predicts` — TRACE Predicts (current + archive)
 - `/newsletter` — Newsletter signup and archive

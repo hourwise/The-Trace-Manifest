@@ -1,0 +1,241 @@
+---
+// The Trace Manifest — Model Card Component
+// Displays a model's key specifications in a structured card.
+// Use in: /models/[slug], model index, comparison tables, best-for views.
+
+import EvidenceBadge from "./EvidenceBadge.astro";
+
+export interface ModelSpec {
+  name: string;
+  provider: string;
+  version?: string;
+  releaseDate?: string;
+  status: string;
+  openness: string;
+  licence?: string;
+  parameterCount?: string;
+  contextWindow?: string;
+  modalities?: string;
+  toolUse?: boolean;
+  structuredOutput?: boolean;
+  apiAvailable?: boolean;
+  localAvailable?: boolean;
+  description?: string;
+  bestUseCases?: string[];
+  weaknesses?: string[];
+  hardwareRequirements?: string;
+  quantisationOptions?: string;
+  inputPrice?: string;
+  outputPrice?: string;
+  cachedInputPrice?: string;
+  slug: string;
+}
+
+const { model } = Astro.props as { model: ModelSpec };
+
+const opennessLabel: Record<string, string> = {
+  closed: "Closed",
+  open_weight: "Open-weight",
+  open_source: "Open-source",
+  api_only: "API only",
+};
+---
+
+<article class="model-card">
+  <!-- Header -->
+  <div class="model-header">
+    <div class="model-header-top">
+      <h3 class="model-name">
+        <a href={`/models/${model.slug}`}>{model.name}</a>
+      </h3>
+      <span class="badge badge-sm">{opennessLabel[model.openness] ?? model.openness}</span>
+    </div>
+    <p class="meta">by {model.provider}{model.version ? ` · v${model.version}` : ""}{model.releaseDate ? ` · ${model.releaseDate}` : ""}</p>
+  </div>
+
+  <!-- Core specs -->
+  <div class="model-specs">
+    {model.parameterCount && (
+      <div class="model-spec">
+        <span class="model-spec-label">Parameters</span>
+        <span class="model-spec-value mono">{model.parameterCount}</span>
+      </div>
+    )}
+    {model.contextWindow && (
+      <div class="model-spec">
+        <span class="model-spec-label">Context</span>
+        <span class="model-spec-value mono">{model.contextWindow}</span>
+      </div>
+    )}
+    {model.modalities && (
+      <div class="model-spec">
+        <span class="model-spec-label">Modalities</span>
+        <span class="model-spec-value">{model.modalities}</span>
+      </div>
+    )}
+    <div class="model-spec">
+      <span class="model-spec-label">Tool use</span>
+      <span class="model-spec-value">{model.toolUse ? "✓" : "—"}</span>
+    </div>
+    <div class="model-spec">
+      <span class="model-spec-label">Structured output</span>
+      <span class="model-spec-value">{model.structuredOutput ? "✓" : "—"}</span>
+    </div>
+    <div class="model-spec">
+      <span class="model-spec-label">API</span>
+      <span class="model-spec-value">{model.apiAvailable ? "Available" : "—"}</span>
+    </div>
+    <div class="model-spec">
+      <span class="model-spec-label">Local</span>
+      <span class="model-spec-value">{model.localAvailable ? "Available" : "—"}</span>
+    </div>
+  </div>
+
+  <!-- Pricing (if available) -->
+  {(model.inputPrice || model.outputPrice) && (
+    <div class="model-pricing">
+      <h4 class="model-section-title">Pricing (per 1M tokens)</h4>
+      <div class="pricing-grid">
+        {model.inputPrice && (
+          <div class="pricing-item">
+            <span class="meta">Input</span>
+            <span class="mono" style="font-weight:600;">{model.inputPrice}</span>
+          </div>
+        )}
+        {model.outputPrice && (
+          <div class="pricing-item">
+            <span class="meta">Output</span>
+            <span class="mono" style="font-weight:600;">{model.outputPrice}</span>
+          </div>
+        )}
+        {model.cachedInputPrice && (
+          <div class="pricing-item">
+            <span class="meta">Cached input</span>
+            <span class="mono" style="font-weight:600;">{model.cachedInputPrice}</span>
+          </div>
+        )}
+      </div>
+    </div>
+  )}
+
+  <!-- Best use cases -->
+  {model.bestUseCases && model.bestUseCases.length > 0 && (
+    <div class="model-section">
+      <h4 class="model-section-title">Best for</h4>
+      <div class="chip-row">
+        {model.bestUseCases.map(uc => <span class="chip">{uc}</span>)}
+      </div>
+    </div>
+  )}
+
+  <!-- Weaknesses -->
+  {model.weaknesses && model.weaknesses.length > 0 && (
+    <div class="model-section">
+      <h4 class="model-section-title">Weaknesses</h4>
+      <ul class="weakness-list">
+        {model.weaknesses.map(w => <li class="meta">{w}</li>)}
+      </ul>
+    </div>
+  )}
+
+  <!-- Link -->
+  <a href={`/models/${model.slug}`} class="btn btn-ghost btn-sm" style="margin-top:0.5rem;">Full details &rarr;</a>
+</article>
+
+<style>
+.model-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 1.15rem 1.25rem;
+}
+
+.model-header {
+  margin-bottom: 1rem;
+}
+
+.model-header-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.model-name {
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+.model-name a { color: var(--fg); }
+.model-name a:hover { color: var(--accent); }
+
+.model-specs {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 0.5rem;
+  padding: 0.75rem;
+  background: var(--surface-2);
+  border-radius: var(--radius);
+  margin-bottom: 0.75rem;
+}
+
+.model-spec {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.model-spec-label {
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.model-spec-value {
+  font-size: 0.82rem;
+  color: var(--fg);
+}
+
+.model-section {
+  margin-top: 0.75rem;
+}
+
+.model-section-title {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 0.4rem;
+}
+
+.model-pricing {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+
+.pricing-grid {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.pricing-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.weakness-list {
+  padding-left: 1.2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.weakness-list li { font-size: 0.8rem; }
+</style>

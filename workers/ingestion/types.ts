@@ -43,7 +43,7 @@ export interface FeedItem {
 export interface IngestionJob {
   id: number;
   source_id: number | null;
-  job_type: "fetch" | "classify" | "dedup" | "cluster" | "health_check" | "briefing" | "extract_claims" | "conflict_detection";
+  job_type: "fetch" | "classify" | "dedup" | "cluster" | "health_check" | "briefing" | "extract_claims" | "conflict_detection" | "model_data" | "seed_models";
   status: "pending" | "running" | "completed" | "failed";
   items_processed: number;
   items_created: number;
@@ -159,4 +159,132 @@ export interface ClaimRecord {
   extraction_version: string;
   created_at: string;
   updated_at: string;
+}
+
+// ============================================================
+// Phase 4: Models, Providers, Benchmarks
+// ============================================================
+
+export interface ModelRecord {
+  id: number;
+  entity_id: number | null;
+  name: string;
+  slug: string;
+  provider: string;
+  provider_entity_id: number | null;
+  model_family: string | null;
+  version: string | null;
+  release_date: string | null;
+  status: "active" | "deprecated" | "superseded" | "archived" | "announced";
+  openness: "closed" | "open_weight" | "open_source" | "api_only";
+  licence: string | null;
+  parameter_count: string | null;
+  context_window: string | null;
+  modalities: string;
+  tool_use: boolean;
+  structured_output: boolean;
+  api_available: boolean;
+  local_available: boolean;
+  description: string | null;
+  best_use_cases: string | null;
+  weaknesses: string | null;
+  hardware_requirements: string | null;
+  quantisation_options: string | null;
+  superseded_by: number | null;
+  last_verified_at: string | null;
+  verified_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProviderRecord {
+  id: number;
+  entity_id: number | null;
+  name: string;
+  slug: string;
+  website: string | null;
+  api_docs_url: string | null;
+  status_page_url: string | null;
+  regions: string | null;
+  data_retention_policy: string | null;
+  privacy_terms_url: string | null;
+  enterprise_support: boolean;
+  api_compatibility: string | null;
+  moderation_policy: string | null;
+  commercial_restrictions: string | null;
+  last_verified_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProviderModelRecord {
+  id: number;
+  provider_id: number;
+  model_id: number;
+  input_price_per_1m_tokens: number | null;
+  output_price_per_1m_tokens: number | null;
+  cached_input_price_per_1m_tokens: number | null;
+  fine_tuning_price: number | null;
+  rate_limit_rpm: number | null;
+  rate_limit_tpm: number | null;
+  supports_batch: boolean;
+  supports_caching: boolean;
+  supports_fine_tuning: boolean;
+  supports_streaming: boolean;
+  is_available: boolean;
+  last_checked_at: string | null;
+}
+
+export interface BenchmarkRecord {
+  id: number;
+  entity_id: number | null;
+  name: string;
+  slug: string;
+  version: string | null;
+  owner: string | null;
+  purpose: string;
+  domain: string;
+  health_status: "healthy" | "limited" | "saturating" | "contamination_concern" | "poorly_reproducible" | "vendor_specific" | "deprecated";
+  reproducibility: "reproducible" | "partially_reproducible" | "not_reproducible" | "unknown" | null;
+  contamination_concern: "low" | "medium" | "high" | "unknown" | null;
+  saturation_level: string | null;
+  code_available: boolean;
+  data_available: boolean;
+  code_url: string | null;
+  data_url: string | null;
+  last_reviewed_at: string | null;
+}
+
+export interface BenchmarkRunRecord {
+  id: number;
+  benchmark_id: number;
+  model_id: number | null;
+  model_version_id: number | null;
+  score: number;
+  score_display: string | null;
+  prompting_method: string | null;
+  tool_access: boolean | null;
+  reasoning_settings: string | null;
+  sampling_settings: string | null;
+  hardware_or_provider: string | null;
+  is_vendor_run: boolean;
+  is_independent: boolean;
+  comparable_results: boolean;
+  test_date: string;
+  source_url: string | null;
+  notes: string | null;
+}
+
+export interface ExtractedModelData {
+  name: string;
+  provider: string;
+  openness?: string;
+  licence?: string;
+  parameterCount?: string;
+  contextWindow?: string;
+  modalities?: string;
+  toolUse?: boolean;
+  inputPrice?: number;
+  outputPrice?: number;
+  benchmarkScores?: { benchmark: string; score: number; display: string }[];
 }
