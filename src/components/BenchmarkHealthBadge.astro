@@ -1,0 +1,29 @@
+---
+export interface Props {
+  healthStatus: string;
+  size?: "sm" | "md";
+  showLabel?: boolean;
+}
+const { healthStatus = "healthy", size = "md", showLabel = true } = Astro.props;
+const healthMeta: Record<string, { label: string; class: string; desc: string }> = {
+  healthy: { label: "Healthy", class: "bm-health--healthy", desc: "Benchmark is actively maintained, not saturated, and results are comparable." },
+  limited: { label: "Limited", class: "bm-health--limited", desc: "Benchmark has known limitations." },
+  saturating: { label: "Saturating", class: "bm-health--saturating", desc: "Frontier models approaching ceiling performance." },
+  contamination_concern: { label: "Contamination concern", class: "bm-health--contamination", desc: "Training data may include benchmark content." },
+  poorly_reproducible: { label: "Poorly reproducible", class: "bm-health--poor-repro", desc: "Results difficult to reproduce." },
+  vendor_specific: { label: "Vendor-specific", class: "bm-health--vendor", desc: "Vendor-maintained, may favour their models." },
+  deprecated: { label: "Deprecated", class: "bm-health--deprecated", desc: "No longer recommended." },
+};
+const meta = healthMeta[healthStatus] ?? { label: healthStatus, class: "bm-health--healthy", desc: "" };
+const sizeClass = size === "sm" ? "badge-sm" : "";
+---
+<span class={`badge ${meta.class} ${sizeClass}`} role="status" title={meta.desc} aria-label={`Benchmark health: ${meta.label}`}>{showLabel ? meta.label : null}</span>
+<style>
+.bm-health--healthy { color: var(--ev-confirmed); background: color-mix(in oklch, var(--ev-confirmed) 12%, transparent); border-color: color-mix(in oklch, var(--ev-confirmed) 28%, transparent); }
+.bm-health--limited { color: var(--ev-provisional); background: color-mix(in oklch, var(--ev-provisional) 12%, transparent); border-color: color-mix(in oklch, var(--ev-provisional) 28%, transparent); }
+.bm-health--saturating { color: var(--ev-vendor); background: color-mix(in oklch, var(--ev-vendor) 12%, transparent); border-color: color-mix(in oklch, var(--ev-vendor) 28%, transparent); }
+.bm-health--contamination { color: var(--ev-disputed); background: color-mix(in oklch, var(--ev-disputed) 12%, transparent); border-color: color-mix(in oklch, var(--ev-disputed) 28%, transparent); }
+.bm-health--poor-repro { color: var(--ev-disputed); background: color-mix(in oklch, var(--ev-disputed) 10%, transparent); border-color: color-mix(in oklch, var(--ev-disputed) 24%, transparent); }
+.bm-health--vendor { color: var(--ev-vendor); background: color-mix(in oklch, var(--ev-vendor) 10%, transparent); border-color: color-mix(in oklch, var(--ev-vendor) 24%, transparent); }
+.bm-health--deprecated { color: var(--ev-outdated); background: color-mix(in oklch, var(--ev-outdated) 14%, transparent); border-color: color-mix(in oklch, var(--ev-outdated) 30%, transparent); }
+</style>

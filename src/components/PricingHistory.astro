@@ -1,0 +1,31 @@
+---
+export interface PricePoint { date: string; inputPrice?: number | null; outputPrice?: number | null; cachedInputPrice?: number | null; changeReason?: string; }
+export interface Props { priceHistory: PricePoint[]; modelName: string; providerName: string; }
+const { priceHistory, modelName, providerName } = Astro.props;
+function fmtPrice(p: number | null | undefined): string { if (p == null) return "-"; return `$${p.toFixed(2)}`; }
+function priceDir(curr: number | null | undefined, prev: number | null | undefined): string { if (curr == null) return "new"; if (prev == null) return "new"; if (curr < prev) return "down"; if (curr > prev) return "up"; return "same"; }
+if (!priceHistory || priceHistory.length === 0) return null;
+---
+<div class="pricing-history">
+  <h4 class="ph-title">Pricing history — {modelName} on {providerName}</h4>
+  <div class="ph-timeline">
+    {priceHistory.map((point, i) => { const prevIn = i > 0 ? priceHistory[i-1].inputPrice : null; const prevOut = i > 0 ? priceHistory[i-1].outputPrice : null; const inDir = priceDir(point.inputPrice, prevIn); const outDir = priceDir(point.outputPrice, prevOut); return (
+      <div class="ph-point"><span class="ph-date meta">{point.date}</span><div class="ph-prices">
+        {point.inputPrice != null && <span class={`ph-price ph-price--${inDir}`}>Input: {fmtPrice(point.inputPrice)} / 1M{inDir === "down" ? " ↓" : inDir === "up" ? " ↑" : ""}</span>}
+        {point.outputPrice != null && <span class={`ph-price ph-price--${outDir}`}>Output: {fmtPrice(point.outputPrice)} / 1M{outDir === "down" ? " ↓" : outDir === "up" ? " ↑" : ""}</span>}
+      </div>{point.changeReason && <p class="ph-reason meta">{point.changeReason}</p>}</div>
+    )})}
+  </div>
+</div>
+<style>
+.pricing-history { margin-top: 1.5rem; padding: 1rem; background: var(--surface-2); border-radius: var(--radius); }
+.ph-title { font-size: 0.78rem; font-weight: 600; color: var(--muted); margin-bottom: 0.75rem; }
+.ph-timeline { display: flex; flex-direction: column; gap: 0.5rem; border-left: 2px solid var(--border); padding-left: 1rem; }
+.ph-date { display: block; margin-bottom: 0.15rem; }
+.ph-prices { display: flex; gap: 0.75rem; flex-wrap: wrap; }
+.ph-price { font-family: var(--font-mono); font-size: 0.8rem; padding: 0.1em 0.4em; border-radius: 4px; }
+.ph-price--down { color: var(--ev-confirmed); background: color-mix(in oklch, var(--ev-confirmed) 8%, transparent); }
+.ph-price--up { color: var(--ev-disputed); background: color-mix(in oklch, var(--ev-disputed) 8%, transparent); }
+.ph-price--same { color: var(--muted); }
+.ph-reason { margin-top: 0.15rem; font-style: italic; }
+</style>

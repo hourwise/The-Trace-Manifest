@@ -1,0 +1,42 @@
+---
+import BaseLayout from "../../layouts/BaseLayout.astro";
+import ComparisonTable from "../../components/ComparisonTable.astro";
+
+const providers = [
+  { name: "OpenAI", models: ["GPT-5", "GPT-4o", "o3"], regions: "Global", apiCompat: "OpenAI" },
+  { name: "Anthropic", models: ["Claude 4", "Claude 3.5 Sonnet"], regions: "Global (US, EU)", apiCompat: "Anthropic" },
+  { name: "Google", models: ["Gemini 2.5 Pro", "Gemini 2.5 Flash"], regions: "Global", apiCompat: "Google AI / Vertex" },
+  { name: "Meta", models: ["Llama 4", "Llama 3.3"], regions: "Self-hosted", apiCompat: "N/A (open-weight)" },
+  { name: "Mistral AI", models: ["Mistral Large 3", "Mistral Small 3"], regions: "EU, US", apiCompat: "OpenAI-compatible" },
+  { name: "DeepSeek", models: ["DeepSeek V3", "DeepSeek R1"], regions: "Global", apiCompat: "OpenAI-compatible" },
+  { name: "Together AI", models: ["Llama 4", "DeepSeek V3", "Qwen 2.5"], regions: "US, EU", apiCompat: "OpenAI-compatible" },
+  { name: "Groq", models: ["Llama 4 (70B)", "Llama 3.3 (70B)"], regions: "US", apiCompat: "OpenAI-compatible" },
+  { name: "Fireworks AI", models: ["Llama 4", "Qwen 2.5", "DeepSeek V3"], regions: "US", apiCompat: "OpenAI-compatible" },
+  { name: "Amazon Bedrock", models: ["Claude 4", "Llama 4"], regions: "Global (AWS regions)", apiCompat: "AWS SDK" },
+];
+
+const pricingComparison = [
+  { aspect: "GPT-5 (input)", values: ["$15.00", "$15.00", "$3.50*", "N/A", "N/A", "$0.27", "$18.00", "N/A", "N/A", "$15.00+"] },
+  { aspect: "GPT-5 (output)", values: ["$60.00", "$75.00", "$10.50*", "N/A", "N/A", "$1.10", "$72.00", "N/A", "N/A", "$60.00+"] },
+  { aspect: "Mid-tier (input)", values: ["$3.00", "$3.00", "$1.25*", "N/A", "$2.00", "$0.27", "$1.00", "$0.20", "$0.90", "$3.00+"] },
+  { aspect: "Mid-tier (output)", values: ["$15.00", "$15.00", "$5.00*", "N/A", "$6.00", "$1.10", "$3.00", "$0.60", "$2.80", "$15.00+"] },
+  { aspect: "Free tier?", values: ["Limited", "Limited", "Yes", "Self-host", "Limited", "Limited", "Credits", "Yes", "Credits", "—"] },
+];
+---
+
+<BaseLayout title="Provider Directory" description="Compare AI model providers — pricing, supported models, regions, API compatibility.">
+  <div class="wrap" style="max-width:64rem;">
+    <h1 class="display h1">Provider Directory</h1>
+    <p class="lead" style="margin-bottom:2rem;">Compare AI model providers by pricing, supported models, regions, and API compatibility. <a href="/methodology">How we evaluate providers →</a></p>
+
+    <section style="margin-bottom:3rem;"><h2 style="font-size:1.3rem;margin-bottom:1rem;">Providers</h2><div class="grid-2">
+      {providers.map(p => (<div class="card"><h3 style="font-size:1rem;">{p.name}</h3><p class="meta">API: {p.apiCompat}</p><p class="meta">Regions: {p.regions}</p><div class="chip-row" style="margin-top:0.5rem;">{p.models.map((m: string) => <span class="chip" style="font-size:0.7rem;">{m}</span>)}</div></div>))}
+    </div></section>
+
+    <section style="margin-bottom:3rem;"><h2 style="font-size:1.3rem;margin-bottom:1rem;">Pricing comparison (per 1M tokens)</h2>
+      <ComparisonTable title="" headers={providers.map(p => p.name)} rows={pricingComparison} caption="Prices in USD. *Gemini pricing for ≤128K context tier. Check provider pricing pages for current rates." />
+    </section>
+
+    <p class="meta" style="text-align:center;margin-top:2rem;">Provider data updated regularly. Last comprehensive check: July 2026. <a href="/methodology">Full methodology →</a></p>
+  </div>
+</BaseLayout>

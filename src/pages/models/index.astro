@@ -1,80 +1,25 @@
 ---
 import BaseLayout from "../../layouts/BaseLayout.astro";
+import ModelCard from "../../components/ModelCard.astro";
+import type { ModelSpec } from "../../components/ModelCard.astro";
 
-const models = [
-  {
-    name: "GPT-5",
-    provider: "OpenAI",
-    version: "2026-07",
-    released: "2026-07-10",
-    status: "Released",
-    openness: "Closed",
-    contextWindow: "256K",
-    modalities: ["Text", "Code", "Image"],
-    inputPrice: "$15.00 / 1M tokens",
-    outputPrice: "$60.00 / 1M tokens",
-    slug: "gpt-5",
-  },
-  {
-    name: "Claude 4",
-    provider: "Anthropic",
-    version: "2026-06",
-    released: "2026-06-15",
-    status: "Released",
-    openness: "Closed",
-    contextWindow: "200K",
-    modalities: ["Text", "Code", "Image"],
-    inputPrice: "$15.00 / 1M tokens",
-    outputPrice: "$75.00 / 1M tokens",
-    slug: "claude-4",
-  },
-  {
-    name: "Llama 4",
-    provider: "Meta",
-    version: "2026-05",
-    released: "2026-05-20",
-    status: "Released",
-    openness: "Open-weight",
-    contextWindow: "128K",
-    modalities: ["Text", "Code"],
-    inputPrice: "Self-hosted",
-    outputPrice: "Self-hosted",
-    slug: "llama-4",
-  },
+const models: ModelSpec[] = [
+  { name: "GPT-5", provider: "OpenAI", version: "2026-07", releaseDate: "2026-07-10", status: "active", openness: "closed", licence: "Proprietary", parameterCount: "Undisclosed", contextWindow: "256K tokens", modalities: "Text, Code, Image", toolUse: true, structuredOutput: true, apiAvailable: true, localAvailable: false, bestUseCases: ["Coding", "Reasoning", "Agent workflows"], weaknesses: ["Cost at scale", "No local deployment"], inputPrice: "$15.00", outputPrice: "$60.00", cachedInputPrice: "$7.50", slug: "gpt-5" },
+  { name: "Claude 4", provider: "Anthropic", version: "2026-06", releaseDate: "2026-06-15", status: "active", openness: "closed", licence: "Proprietary", parameterCount: "Undisclosed", contextWindow: "200K tokens", modalities: "Text, Code, Image", toolUse: true, structuredOutput: true, apiAvailable: true, localAvailable: false, bestUseCases: ["Long-context analysis", "Coding", "Safety-critical applications"], weaknesses: ["Higher output cost", "No local deployment"], inputPrice: "$15.00", outputPrice: "$75.00", cachedInputPrice: "$3.75", slug: "claude-4" },
+  { name: "Llama 4", provider: "Meta", version: "2026-05", releaseDate: "2026-05-20", status: "active", openness: "open_weight", licence: "Llama 4 Community Licence", parameterCount: "8B / 70B / 405B", contextWindow: "128K tokens", modalities: "Text, Code", toolUse: true, structuredOutput: true, apiAvailable: true, localAvailable: true, bestUseCases: ["Local deployment", "Fine-tuning", "Cost-sensitive production"], weaknesses: ["Weaker than frontier closed models on complex reasoning"], inputPrice: "$0.20-$1.00", outputPrice: "$0.60-$3.00", slug: "llama-4" },
+  { name: "Gemini 2.5 Pro", provider: "Google", status: "active", openness: "closed", parameterCount: "Undisclosed", contextWindow: "1M tokens", modalities: "Text, Code, Image, Audio, Video", toolUse: true, structuredOutput: true, apiAvailable: true, localAvailable: false, bestUseCases: ["Multimodal tasks", "Long-document analysis"], weaknesses: ["Complex pricing tiers"], inputPrice: "$3.50", outputPrice: "$10.50", cachedInputPrice: "$0.88", slug: "gemini-2-5-pro" },
+  { name: "DeepSeek V3", provider: "DeepSeek", status: "active", openness: "open_weight", parameterCount: "671B (MoE)", contextWindow: "128K tokens", modalities: "Text, Code", toolUse: true, structuredOutput: true, apiAvailable: true, localAvailable: true, bestUseCases: ["Cost-sensitive API usage", "Coding"], weaknesses: ["Large model size for local deployment"], inputPrice: "$0.27", outputPrice: "$1.10", slug: "deepseek-v3" },
 ];
+
+const closedModels = models.filter(m => m.openness === "closed");
+const openModels = models.filter(m => m.openness === "open_weight" || m.openness === "open_source");
 ---
 
-<BaseLayout
-  title="Model Directory"
-  description="Searchable directory of AI models with provider, pricing, capability, hardware, and benchmark information."
->
-  <div class="container">
-    <h1>Model Directory</h1>
-    <p class="meta" style="margin-bottom:2rem;">
-      Tracked models with provider, pricing, capabilities, hardware requirements, and independent benchmarks.
-    </p>
-
-    <div class="grid grid--3">
-      {models.map(m => (
-        <article class="card">
-          <div style="display:flex;justify-content:space-between;align-items:flex-start;">
-            <div>
-              <h2 style="font-size:1.15rem;"><a href={`/models/${m.slug}`}>{m.name}</a></h2>
-              <p class="meta">{m.provider}</p>
-            </div>
-            <span style="font-size:0.75rem;padding:0.125rem 0.5rem;background:var(--color-bg-alt);border-radius:var(--radius);">{m.openness}</span>
-          </div>
-          <div class="meta" style="margin-top:0.75rem;font-size:0.8rem;">
-            <p>Context: {m.contextWindow}</p>
-            <p>Input: {m.inputPrice} &middot; Output: {m.outputPrice}</p>
-            <p>Released: {m.released}</p>
-          </div>
-        </article>
-      ))}
-    </div>
-
-    <p class="meta" style="text-align:center;margin-top:2rem;">
-      Static Phase 1 placeholder. Full model directory with comparisons, benchmark results, and hardware guidance in Phase 4.
-    </p>
+<BaseLayout title="Model Directory" description="Structured directory of AI models with specifications, pricing, and evidence ratings.">
+  <div class="wrap" style="max-width:60rem;">
+    <h1 class="display h1">Model Directory</h1>
+    <p class="lead" style="margin-bottom:2rem;">Structured specs, pricing, and evidence ratings for frontier and open-weight AI models. <a href="/methodology">How we evaluate models →</a></p>
+    <section style="margin-bottom:3rem;"><h2 style="font-size:1.3rem;margin-bottom:1rem;">Closed models</h2><div class="grid-2">{closedModels.map(m => <ModelCard model={m} />)}</div></section>
+    <section style="margin-bottom:3rem;"><h2 style="font-size:1.3rem;margin-bottom:1rem;">Open-weight models</h2><div class="grid-2">{openModels.map(m => <ModelCard model={m} />)}</div></section>
   </div>
 </BaseLayout>

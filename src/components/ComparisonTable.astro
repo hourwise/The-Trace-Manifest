@@ -1,0 +1,20 @@
+---
+export interface ComparisonRow { aspect: string; values: string[]; }
+export interface Props { title: string; headers: string[]; rows: ComparisonRow[]; highlightColumn?: number; caption?: string; }
+const { title, headers, rows, highlightColumn, caption } = Astro.props;
+---
+<div class="comparison-section">
+  {title && <h3 class="comp-title">{title}</h3>}
+  {caption && <p class="meta comp-caption">{caption}</p>}
+  <div class="table-wrap"><table class="data comp-table">
+    <thead><tr><th>Aspect</th>{headers.map((h, i) => <th class={highlightColumn === i ? "comp-highlight-col" : ""}>{h}</th>)}</tr></thead>
+    <tbody>{rows.map(row => <tr><td style="font-weight:550;color:var(--fg);">{row.aspect}</td>{row.values.map((v, i) => <td class={highlightColumn === i ? "comp-highlight-col" : ""}>{v}</td>)}</tr>)}</tbody>
+  </table></div>
+</div>
+<style>
+.comparison-section { margin-top: 2rem; }
+.comp-title { font-family: var(--font-display); font-size: 1.2rem; margin-bottom: 0.35rem; }
+.comp-caption { margin-bottom: 0.75rem; }
+.comp-table { min-width: 500px; }
+.comp-highlight-col { background: color-mix(in oklch, var(--accent) 6%, transparent); }
+</style>
