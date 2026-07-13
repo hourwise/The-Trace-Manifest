@@ -1,7 +1,31 @@
 ﻿---
 import BaseLayout from "../../layouts/BaseLayout.astro";
+import EvidenceBadge from "../../components/EvidenceBadge.astro";
+import { getLatestPublishedBriefing, getPublishedStories } from "../../lib/server/d1";
 
 export const prerender = false;
+
+let briefing: Awaited<ReturnType<typeof getLatestPublishedBriefing>> = null;
+let recentStories: Awaited<ReturnType<typeof getPublishedStories>> = [];
+
+try {
+  briefing = await getLatestPublishedBriefing("weekly");
+  if (!briefing) {
+    recentStories = await getPublishedStories({ limit: 10 });
+  }
+} catch (e: any) {
+  console.error("Weekly briefing query failed:", e.message);
+}
+
+let briefingItems: { headline: string; why: string; evidenceStatus: string; slug: string }[] = [];
+if (briefing?.contentJson) {
+  try {
+    const parsed = JSON.parse(briefing.contentJson);
+    if (Array.isArray(parsed)) {
+      briefingItems = parsed;
+    }
+  } catch { /* invalid JSON */ }
+}
 ---
 
 <BaseLayout
@@ -14,36 +38,60 @@ export const prerender = false;
     </nav>
 
     <h1>Weekly Briefing</h1>
-    <p class="meta" style="margin-top:0.25rem;">Week ending 12 July 2026</p>
 
-    <p style="margin-top:1.5rem;padding:0.75rem;background:var(--surface-2);border-radius:var(--radius);font-size:0.9rem;">
-      <strong>Phase 1 placeholder.</strong> Automated weekly briefings with benchmark movement and provider comparison changes begin in Phase 3.
-    </p>
+    {briefing ? (
+      <>
+        <p class="meta" style="margin-top:0.25rem;">
+          {new Date(briefing.briefingDate).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })} &middot; {briefing.summary}
+        </p>
 
-    <section style="margin-top:2rem;">
-      <h2>Most consequential developments</h2>
-      <ul style="padding-left:1.25rem;display:flex;flex-direction:column;gap:0.5rem;">
-        <li>New frontier model launch — independent benchmarks pending</li>
-        <li>Provider API pricing dropped 40% industry-wide on mid-tier models</li>
-        <li>Major prompt injection vulnerability patched across agent frameworks</li>
-        <li>EU AI Act enforcement guidance published</li>
-        <li>Open-weight model surpasses proprietary models on 16 GB consumer hardware</li>
-      </ul>
-    </section>
-
-    <section style="margin-top:2rem;">
-      <h2>Most disputed claims this week</h2>
-      <ul style="padding-left:1.25rem;display:flex;flex-direction:column;gap:0.5rem;">
-        <li>Vendor coding benchmark claims — no independent verification yet available</li>
-      </ul>
-    </section>
-
-    <section style="margin-top:2rem;">
-      <h2>What changed since last week</h2>
-      <p class="meta">
-        A new frontier model released. API prices dropped across providers. Agent framework security patches issued. Regulatory guidance published for EU deployments.
-      </p>
-    </section>
+        {briefingItems.length > 0 ? (
+          <section style="margin-top:2rem;">
+            <h2>This week's developments</h2>
+            <ol style="padding-left:1.25rem;display:flex;flex-direction:column;gap:1rem;">
+              {briefingItems.map((item) => (
+                <li>
+                  <article>
+                    <h3 style="font-size:1.05rem;"><a href={`/stories/${item.slug}`}>{item.headline}</a></h3>
+                    <EvidenceBadge status={item.evidenceStatus} size="sm" />
+                    <p class="meta" style="margin-top:0.25rem;">{item.why}</p>
+                  </article>
+                </li>
+              ))}
+            </ol>
+          </section>
+        ) : (
+          <div style="margin-top:2rem;">
+            <p>{briefing.summary}</p>
+          </div>
+        )}
+      </>
+    ) : recentStories.length > 0 ? (
+      <>
+        <p style="margin-top:1.5rem;padding:0.75rem;background:var(--surface-2);border-radius:var(--radius);font-size:0.9rem;">
+          <strong>No weekly briefing has been published yet.</strong> Below are the latest published stories from this week.
+        </p>
+        <div style="margin-top:1.5rem;display:flex;flex-direction:column;gap:1rem;">
+          {recentStories.map(s => (
+            <article class="card">
+              <EvidenceBadge status={s.evidenceStatus} size="sm" />
+              <h2 style="font-size:1.1rem;margin-top:0.5rem;"><a href={`/stories/${s.slug}`}>{s.headline}</a></h2>
+              <p class="meta" style="margin-top:0.25rem;">{s.summary || ""}</p>
+            </article>
+          ))}
+        </div>
+      </>
+    ) : (
+      <div class="card" style="margin-top:1.5rem;padding:2rem;text-align:center;background:var(--surface-2);">
+        <p style="font-size:1.1rem;margin-bottom:0.5rem;">No weekly briefing has been published yet</p>
+        <p class="meta">
+          Weekly briefings are editorially assembled after stories have been published and reviewed.
+        </p>
+        <p class="meta" style="margin-top:0.5rem;">
+          <a href="/feed">Browse published stories &rarr;</a>
+        </p>
+      </div>
+    )}
 
     <div style="margin-top:2rem;">
       <a href="/rss/daily.xml" style="border:1px solid var(--accent);color:var(--accent);padding:0.5rem 1rem;border-radius:var(--radius);font-size:0.9rem;text-decoration:none;">Subscribe via RSS</a>

@@ -1,51 +1,104 @@
 ﻿---
 import BaseLayout from "../../layouts/BaseLayout.astro";
+import EvidenceBadge from "../../components/EvidenceBadge.astro";
+import { getLatestPublishedBriefing, getPublishedStories } from "../../lib/server/d1";
 
 export const prerender = false;
 
-const briefingDate = "12 July 2026";
-const items = [
-  { headline: "New frontier model announced — vendor claims coding SOTA", why: "First major release in six weeks. Independent benchmarks not yet available. Approach with caution.", evidenceStatus: "Vendor-reported", slug: "new-frontier-model-july-2026" },
-  { headline: "Open-weight model beats proprietary models on local hardware under 16 GB", why: "Multiple independent tests confirm. Practical impact for local-model users is high.", evidenceStatus: "Confirmed", slug: "open-weight-model-16gb-july-2026" },
-  { headline: "Critical prompt injection vulnerability in popular agent framework — patch now", why: "Affects widely deployed agent systems. Exploit is straightforward. Patches available.", evidenceStatus: "Confirmed", slug: "prompt-injection-advisory-july-2026" },
-  { headline: "Provider API pricing drops 40% on mid-tier — comparison tables updated", why: "Significant cost reduction for developers. Multiple providers competing on price.", evidenceStatus: "Confirmed", slug: "provider-pricing-drop-july-2026" },
-  { headline: "EU AI Act implementation guidance published", why: "Regulatory clarity for EU deployments. Classification thresholds and compliance timelines detailed.", evidenceStatus: "Confirmed", slug: "eu-ai-act-guidance-july-2026" },
-];
+// Try to load today's published briefing, fall back to latest 5 published stories
+let briefing: Awaited<ReturnType<typeof getLatestPublishedBriefing>> = null;
+let recentStories: Awaited<ReturnType<typeof getPublishedStories>> = [];
+
+try {
+  briefing = await getLatestPublishedBriefing("daily");
+  if (!briefing) {
+    // No briefing published yet — show recent stories as fallback context
+    recentStories = await getPublishedStories({ limit: 5 });
+  }
+} catch (e: any) {
+  console.error("Daily briefing query failed:", e.message);
+}
+
+const today = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
+
+// Parse briefing content if available
+let briefingItems: { headline: string; why: string; evidenceStatus: string; slug: string }[] = [];
+if (briefing?.contentJson) {
+  try {
+    const parsed = JSON.parse(briefing.contentJson);
+    if (Array.isArray(parsed)) {
+      briefingItems = parsed;
+    }
+  } catch { /* invalid JSON — ignore */ }
+}
 ---
 
 <BaseLayout
-  title={`Daily Briefing — ${briefingDate}`}
-  description={`Five things that matter in AI today. Model releases, pricing changes, research, security issues, and community discoveries.`}
+  title={`Daily Briefing${briefing ? ` — ${new Date(briefing.briefingDate).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}` : ""}`}
+  description="Five things that matter in AI today. Model releases, pricing changes, research, security issues, and community discoveries."
 >
   <div class="wrap" style="max-width:42rem;">
     <nav aria-label="Breadcrumb" class="meta" style="margin-bottom:1.5rem;">
-      <a href="/briefing/daily">Daily Briefing</a> &rsaquo; {briefingDate}
+      <a href="/briefing/daily">Daily Briefing</a>
+      {briefing && <> &rsaquo; {new Date(briefing.briefingDate).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}</>}
     </nav>
 
     <h1>Daily Briefing</h1>
-    <p class="meta" style="margin-top:0.25rem;">{briefingDate} &middot; Five things that matter today</p>
 
-    <p style="margin-top:1.5rem;padding:0.75rem;background:var(--surface-2);border-radius:var(--radius);font-size:0.9rem;">
-      <strong>Note:</strong> This is a static Phase 1 placeholder. Live daily briefings with automated generation begin in Phase 2–3.
-    </p>
+    {briefing ? (
+      <>
+        <p class="meta" style="margin-top:0.25rem;">
+          {new Date(briefing.briefingDate).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })} &middot; {briefing.summary}
+        </p>
 
-    <ol style="margin-top:2rem;display:flex;flex-direction:column;gap:1.5rem;padding-left:1.5rem;">
-      {items.map((item) => (
-        <li>
-          <article>
-            <h2 style="font-size:1.15rem;"><a href={`/stories/${item.slug}`}>{item.headline}</a></h2>
-            <span class={`evidence-label ${item.evidenceStatus === 'Confirmed' ? 'evidence-label--confirmed' : 'evidence-label--vendor'}`} style="margin-top:0.25rem;">{item.evidenceStatus}</span>
-            <p class="meta" style="margin-top:0.25rem;"><strong>Why it matters:</strong> {item.why}</p>
-          </article>
-        </li>
-      ))}
-    </ol>
-
-    <div style="margin-top:2rem;padding:1rem;background:var(--surface-2);border-radius:var(--radius);">
-      <p class="meta">
-        <strong>Claims awaiting verification today:</strong> Frontier model coding benchmark claims (vendor-reported only). Check back for independent results.
-      </p>
-    </div>
+        {briefingItems.length > 0 ? (
+          <ol style="margin-top:2rem;display:flex;flex-direction:column;gap:1.5rem;padding-left:1.5rem;">
+            {briefingItems.map((item) => (
+              <li>
+                <article>
+                  <h2 style="font-size:1.15rem;"><a href={`/stories/${item.slug}`}>{item.headline}</a></h2>
+                  <EvidenceBadge status={item.evidenceStatus} size="sm" />
+                  <p class="meta" style="margin-top:0.25rem;"><strong>Why it matters:</strong> {item.why}</p>
+                </article>
+              </li>
+            ))}
+          </ol>
+        ) : (
+          <div style="margin-top:2rem;">
+            <p>{briefing.summary}</p>
+          </div>
+        )}
+      </>
+    ) : recentStories.length > 0 ? (
+      <>
+        <p class="meta" style="margin-top:0.25rem;">{today}</p>
+        <p style="margin-top:1.5rem;padding:0.75rem;background:var(--surface-2);border-radius:var(--radius);font-size:0.9rem;">
+          <strong>No daily briefing has been published yet.</strong> Below are the latest published stories. A formal editorial briefing will appear here once published.
+        </p>
+        <div style="margin-top:1.5rem;display:flex;flex-direction:column;gap:1rem;">
+          {recentStories.map(s => (
+            <article class="card">
+              <EvidenceBadge status={s.evidenceStatus} size="sm" />
+              <h2 style="font-size:1.1rem;margin-top:0.5rem;"><a href={`/stories/${s.slug}`}>{s.headline}</a></h2>
+              <p class="meta" style="margin-top:0.25rem;">{s.summary || "No summary available."}</p>
+            </article>
+          ))}
+        </div>
+      </>
+    ) : (
+      <>
+        <p class="meta" style="margin-top:0.25rem;">{today}</p>
+        <div class="card" style="margin-top:1.5rem;padding:2rem;text-align:center;background:var(--surface-2);">
+          <p style="font-size:1.1rem;margin-bottom:0.5rem;">No daily briefing has been published yet</p>
+          <p class="meta">
+            Daily briefings are editorially assembled and published after review. The ingestion pipeline is collecting and classifying source material. Once stories are published, a formal briefing can be assembled.
+          </p>
+          <p class="meta" style="margin-top:0.5rem;">
+            <a href="/feed">Browse published stories &rarr;</a>
+          </p>
+        </div>
+      </>
+    )}
 
     <div style="margin-top:2rem;display:flex;gap:1rem;flex-wrap:wrap;">
       <a href="/rss/daily.xml" style="border:1px solid var(--accent);color:var(--accent);padding:0.5rem 1rem;border-radius:var(--radius);font-size:0.9rem;text-decoration:none;">Subscribe via RSS</a>

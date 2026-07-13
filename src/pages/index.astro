@@ -1,7 +1,26 @@
 ---
 import BaseLayout from "../layouts/BaseLayout.astro";
+import EvidenceBadge from "../components/EvidenceBadge.astro";
+import { getPublishedStories, getLatestPublishedBriefing, getPublishedTopics } from "../lib/server/d1";
 
 export const prerender = false;
+
+// Fetch latest published content for homepage
+let latestStories: Awaited<ReturnType<typeof getPublishedStories>> = [];
+let latestBriefing: Awaited<ReturnType<typeof getLatestPublishedBriefing>> = null;
+let topicCount = 0;
+
+try {
+  [latestStories, latestBriefing, topicCount] = await Promise.all([
+    getPublishedStories({ limit: 4 }),
+    getLatestPublishedBriefing("daily"),
+    getPublishedTopics().then(t => t.length),
+  ]);
+} catch (e: any) {
+  console.error("Homepage query failed:", e.message);
+}
+
+const hasLiveData = latestStories.length > 0 || latestBriefing !== null;
 ---
 
 <BaseLayout
@@ -25,25 +44,57 @@ export const prerender = false;
     </div>
   </section>
 
-  <!-- Stats -->
+  <!-- Stats — live when data exists -->
   <section class="section" style="padding-block:2rem;">
     <div class="wrap">
       <div class="grid-3" style="text-align:center;">
-        <div><p class="display h1" style="color:var(--accent);margin-bottom:0;">64</p><p class="meta">Sources registered</p></div>
-        <div><p class="display h1" style="color:var(--accent);margin-bottom:0;">Daily</p><p class="meta">Briefing published</p></div>
-        <div><p class="display h1" style="color:var(--accent);margin-bottom:0;">Public</p><p class="meta">Corrections ledger</p></div>
+        <div><p class="display h1" style="color:var(--accent);margin-bottom:0;">{topicCount || "—"}</p><p class="meta">Topics tracked</p></div>
+        <div><p class="display h1" style="color:var(--accent);margin-bottom:0;">{latestBriefing ? "Today" : "—"}</p><p class="meta">Daily briefing</p></div>
+        <div><p class="display h1" style="color:var(--accent);margin-bottom:0;">{hasLiveData ? "Live" : "—"}</p><p class="meta">Evidence pipeline</p></div>
       </div>
     </div>
   </section>
+
+  <!-- Latest stories — only shown when live data exists -->
+  {latestStories.length > 0 && (
+    <section class="section" style="padding-block:2rem;">
+      <div class="wrap">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:0.5rem;margin-bottom:1.5rem;">
+          <h2 class="display h2">Latest published stories</h2>
+          <a href="/feed" class="meta">View all &rarr;</a>
+        </div>
+        <div class="grid-2">
+          {latestStories.map(s => (
+            <article class="card">
+              <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:0.5rem;">
+                <span class="meta">{s.topic || "Uncategorised"}</span>
+                <EvidenceBadge status={s.evidenceStatus} size="sm" />
+              </div>
+              <h3 style="font-size:1.05rem;margin-top:0.5rem;">
+                <a href={`/stories/${s.slug}`}>{s.headline}</a>
+              </h3>
+              <p class="meta" style="margin-top:0.25rem;">
+                {s.summary?.slice(0, 120)}{(s.summary?.length ?? 0) > 120 ? "…" : ""}
+              </p>
+              <p class="meta" style="margin-top:0.5rem;font-size:0.8rem;">
+                {s.sourceCount} source{s.sourceCount !== 1 ? "s" : ""}
+                {s.publishedAt && <> &middot; {new Date(s.publishedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</>}
+              </p>
+            </article>
+          ))}
+        </div>
+      </div>
+    </section>
+  )}
 
   <!-- What we track -->
   <section class="section" style="padding-block:3rem;">
     <div class="wrap">
       <h2 class="display h2" style="text-align:center;margin-bottom:2rem;">What we track</h2>
       <div class="grid-3">
-        <div class="card card-hover"><h3 class="h3">Models &amp; Providers</h3><p class="meta" style="margin-top:0.5rem;">Frontier, open-weight, and local models. Pricing, capabilities, hardware requirements, and independent benchmarks.</p><p style="margin-top:0.75rem;"><a href="/models">Browse models →</a></p></div>
-        <div class="card card-hover"><h3 class="h3">Benchmarks</h3><p class="meta" style="margin-top:0.5rem;">Methodology-aware comparison. Vendor claims vs independent results. Saturation, contamination, and reproducibility flags.</p><p style="margin-top:0.75rem;"><a href="/benchmarks">Browse benchmarks →</a></p></div>
-        <div class="card card-hover"><h3 class="h3">Research &amp; Open Source</h3><p class="meta" style="margin-top:0.5rem;">Papers, repositories, releases, and community discoveries with evidence grading.</p><p style="margin-top:0.75rem;"><a href="/feed">Browse research →</a></p></div>
+        <div class="card card-hover"><h3 class="h3">Models &amp; Providers</h3><p class="meta" style="margin-top:0.5rem;">Frontier, open-weight, and local models. Pricing, capabilities, hardware requirements, and independent benchmarks.</p><p style="margin-top:0.75rem;"><a href="/models">Browse models &rarr;</a></p></div>
+        <div class="card card-hover"><h3 class="h3">Benchmarks</h3><p class="meta" style="margin-top:0.5rem;">Methodology-aware comparison. Vendor claims vs independent results. Saturation, contamination, and reproducibility flags.</p><p style="margin-top:0.75rem;"><a href="/benchmarks">Browse benchmarks &rarr;</a></p></div>
+        <div class="card card-hover"><h3 class="h3">Research &amp; Open Source</h3><p class="meta" style="margin-top:0.5rem;">Papers, repositories, releases, and community discoveries with evidence grading.</p><p style="margin-top:0.75rem;"><a href="/feed">Browse research &rarr;</a></p></div>
       </div>
     </div>
   </section>
@@ -60,7 +111,7 @@ export const prerender = false;
         <span class="badge badge-corrected">Corrected</span>
         <span class="badge badge-outdated">Outdated</span>
       </div>
-      <p class="meta" style="text-align:center;">Every rating is decomposable into source class, evidence quality, corroboration, timeliness, and independence. <a href="/methodology">Read our full methodology →</a></p>
+      <p class="meta" style="text-align:center;">Every rating is decomposable into source class, evidence quality, corroboration, timeliness, and independence. <a href="/methodology">Read our full methodology &rarr;</a></p>
     </div>
   </section>
 
@@ -69,8 +120,8 @@ export const prerender = false;
     <div class="wrap">
       <h2 class="display h2" style="text-align:center;margin-bottom:1.5rem;">Stay current</h2>
       <div class="grid-2">
-        <div class="card card-hover"><h3 class="h3">Daily Briefing</h3><p class="meta" style="margin-top:0.5rem;">Five things that matter today. Model releases, pricing changes, important research, security issues.</p><p style="margin-top:0.75rem;"><a href="/briefing/daily">Read today's briefing →</a></p></div>
-        <div class="card card-hover"><h3 class="h3">Newsletter &amp; RSS</h3><p class="meta" style="margin-top:0.5rem;">Get the daily briefing by email or follow via RSS. Briefings published as downloadable Markdown.</p><p style="margin-top:0.75rem;"><a href="/rss/daily.xml">Subscribe via RSS →</a></p></div>
+        <div class="card card-hover"><h3 class="h3">Daily Briefing</h3><p class="meta" style="margin-top:0.5rem;">Five things that matter today. Model releases, pricing changes, important research, security issues.</p><p style="margin-top:0.75rem;"><a href="/briefing/daily">Read today's briefing &rarr;</a></p></div>
+        <div class="card card-hover"><h3 class="h3">Newsletter &amp; RSS</h3><p class="meta" style="margin-top:0.5rem;">Get the daily briefing by email or follow via RSS. Briefings published as downloadable Markdown.</p><p style="margin-top:0.75rem;"><a href="/rss/daily.xml">Subscribe via RSS &rarr;</a></p></div>
       </div>
     </div>
   </section>

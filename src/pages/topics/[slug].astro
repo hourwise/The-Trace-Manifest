@@ -1,80 +1,83 @@
 ---
 import BaseLayout from "../../layouts/BaseLayout.astro";
 import EvidenceBadge from "../../components/EvidenceBadge.astro";
+import { getPublishedStoriesByTopic, getPublishedTopics } from "../../lib/server/d1";
 
 export const prerender = false;
 
-export function getStaticPaths() {
-  return [
-    { params: { slug: "frontier-models" } },
-    { params: { slug: "open-weight-models" } },
-    { params: { slug: "security" } },
-    { params: { slug: "regulation" } },
-    { params: { slug: "provider-updates" } },
-  ];
-}
-
 const { slug } = Astro.params;
 
-const topicsMap: Record<string, any> = {
-  "frontier-models": {
-    name: "Frontier Models",
-    description: "Large-scale, state-of-the-art models from major providers. Includes both closed and open-weight frontier releases.",
-    stories: [
-      { headline: "New frontier model release — vendor claims state-of-the-art coding benchmarks", date: "2026-07-12", evidenceStatus: "vendor_reported", slug: "new-frontier-model-july-2026" },
-      { headline: "Frontier model reasoning benchmark saturates — new evaluation needed", date: "2026-07-08", evidenceStatus: "confirmed", slug: "reasoning-benchmark-saturation" },
-    ],
-  },
-  "open-weight-models": {
-    name: "Open-weight Models",
-    description: "Models with publicly downloadable weights, including Llama, Mistral, Qwen, DeepSeek, and community fine-tunes.",
-    stories: [
-      { headline: "Open-weight model surpasses previous best for local inference under 16 GB RAM", date: "2026-07-11", evidenceStatus: "confirmed", slug: "open-weight-model-16gb-july-2026" },
-    ],
-  },
-  "security": {
-    name: "Security",
-    description: "Vulnerabilities, advisories, patches, and best practices for AI system security.",
-    stories: [
-      { headline: "Security advisory: prompt injection vulnerability in popular agent framework", date: "2026-07-11", evidenceStatus: "confirmed", slug: "prompt-injection-advisory-july-2026" },
-    ],
-  },
-  "regulation": {
-    name: "Regulation",
-    description: "AI legislation, regulatory guidance, compliance requirements, and policy developments worldwide.",
-    stories: [
-      { headline: "EU AI Act implementation guidance published — what developers need to know", date: "2026-07-10", evidenceStatus: "confirmed", slug: "eu-ai-act-guidance-july-2026" },
-    ],
-  },
-  "provider-updates": {
-    name: "Provider Updates",
-    description: "API changes, pricing updates, new features, deprecations, and provider reliability information.",
-    stories: [
-      { headline: "Provider pricing war intensifies — API costs drop 40% for mid-tier models", date: "2026-07-10", evidenceStatus: "confirmed", slug: "provider-pricing-drop-july-2026" },
-    ],
-  },
-};
+if (!slug) {
+  return new Response("Not found", { status: 404 });
+}
 
-const topic = topicsMap[slug] ?? topicsMap["frontier-models"];
+// Convert URL slug to topic name (e.g. "frontier-models" → "Frontier Models")
+const topicName = slug
+  .split("-")
+  .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+  .join(" ");
+
+// Fetch published stories for this topic
+let stories: Awaited<ReturnType<typeof getPublishedStoriesByTopic>> = [];
+let allTopics: string[] = [];
+let topicDescription = "";
+
+try {
+  stories = await getPublishedStoriesByTopic(topicName, { limit: 30 });
+  allTopics = await getPublishedTopics();
+} catch (e: any) {
+  console.error(`Topic query failed for "${slug}":`, e.message);
+}
+
+// If no stories found for this topic, check if the topic even exists in published data
+if (stories.length === 0) {
+  // Check if this is a known topic (case-insensitive)
+  const knownTopic = allTopics.find(t => t.toLowerCase() === topicName.toLowerCase());
+  if (knownTopic) {
+    topicDescription = `Published stories about ${knownTopic}.`;
+  }
+}
 ---
 
-<BaseLayout title={topic.name} description={topic.description}>
+<BaseLayout title={topicName} description={topicDescription || `Published stories about ${topicName} — The Trace Manifest`}>
   <div class="container" style="max-width:42rem;">
     <nav aria-label="Breadcrumb" class="meta" style="margin-bottom:1.5rem;">
-      <a href="/feed">Feed</a> &rsaquo; {topic.name}
+      <a href="/feed">Feed</a> &rsaquo; {topicName}
     </nav>
 
-    <h1>{topic.name}</h1>
-    <p class="meta" style="margin-top:0.5rem;">{topic.description}</p>
+    <h1>{topicName}</h1>
+    {topicDescription && <p class="meta" style="margin-top:0.5rem;">{topicDescription}</p>}
 
-    <div style="margin-top:2rem;display:flex;flex-direction:column;gap:1rem;">
-      {topic.stories.map((s: any) => (
-        <article class="card">
-          <EvidenceBadge status={s.evidenceStatus} size="sm" />
-          <h2 style="font-size:1.1rem;margin-top:0.5rem;"><a href={`/stories/${s.slug}`}>{s.headline}</a></h2>
-          <p class="meta">{s.date}</p>
-        </article>
-      ))}
-    </div>
+    {stories.length === 0 ? (
+      <div class="card" style="margin-top:2rem;padding:2rem;text-align:center;background:var(--surface-2);">
+        <p style="font-size:1.1rem;margin-bottom:0.5rem;">No published stories in this topic yet</p>
+        <p class="meta">
+          Stories are published after editorial review. The ingestion pipeline may have material classified under this topic that hasn't yet been reviewed.
+        </p>
+        <p class="meta" style="margin-top:0.5rem;">
+          <a href="/feed">Browse all published stories &rarr;</a>
+        </p>
+      </div>
+    ) : (
+      <div style="margin-top:2rem;display:flex;flex-direction:column;gap:1rem;">
+        {stories.map(s => (
+          <article class="card">
+            <EvidenceBadge status={s.evidenceStatus} size="sm" />
+            <h2 style="font-size:1.1rem;margin-top:0.5rem;"><a href={`/stories/${s.slug}`}>{s.headline}</a></h2>
+            <p class="meta" style="margin-top:0.25rem;">
+              {s.summary || "No summary available."}
+            </p>
+            <p class="meta" style="margin-top:0.5rem;font-size:0.8rem;">
+              {s.publishedAt && <>{new Date(s.publishedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })} &middot; </>}
+              {s.sourceCount} source{s.sourceCount !== 1 ? "s" : ""}
+            </p>
+          </article>
+        ))}
+      </div>
+    )}
+
+    <p class="meta" style="text-align:center;margin-top:2rem;">
+      <a href="/feed">All topics &rarr;</a>
+    </p>
   </div>
 </BaseLayout>
