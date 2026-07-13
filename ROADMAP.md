@@ -25,16 +25,34 @@ Integrate the first 50–100 sources, scheduled fetching, source-health checks, 
 
 **Pending:** live cron verification over 24–48h.
 
-## Phase 3 — Curation and Trust 🔧
-**Estimate:** 4–8 weeks | **Started:** 12 July 2026
+## Phase 3 — Curation and Trust ✅
+**Estimate:** 4–8 weeks | **Completed:** 13 July 2026
 
-Add classification, semantic deduplication, clustering, entity and claim extraction, evidence labels, conflict detection, human review, corrections, and golden evaluation datasets.
+~~Add classification, semantic deduplication, clustering, entity and claim extraction, evidence labels, conflict detection, human review, corrections, and golden evaluation datasets.~~
 
-**Classification engine:** `classify.ts` deployed — rule-based topic taxonomy (16 topics), model/provider entity extraction, item type detection, confidence scoring. Integrated into cron pipeline (`0 9 * * *`) and available via `POST /admin/classify`. 138 raw items queued for classification.
+Delivered: Full curation and trust pipeline with 6 new worker modules, 2 Astro components, 10-state evidence system, decomposable rating explanation panel, correction workflow, and admin review queue.
 
-**Semantic dedup:** `semantic-dedup.ts` deployed — title Jaccard similarity with stop-word filtering, content excerpt overlap, combined scoring (70% title / 30% content), threshold at 45% combined. Runs after classification in the `0 9 * * *` cron slot. Manual trigger via `POST /admin/dedup`.
+**Pipeline (runs daily at 09:00 UTC):** classification → cross-source matching → semantic dedup → story clustering → claim extraction → conflict detection.
 
-**Story clustering:** `cluster.ts` deployed — three-stage pipeline: (1) group by primary topic from classification metadata, (2) within-topic clustering by entity overlap (models/providers) + title keyword similarity ≥35%, (3) write story_clusters + story_cluster_members + update items to `clustered`. Clusters auto-assigned evidence_status and confidence_score based on source tiers and count. Runs after sematic dedup in `0 9 * * *`. Manual trigger via `POST /admin/cluster`.
+| Module | File | Description |
+|--------|------|-------------|
+| Classification | `classify.ts` | 16-topic rule-based taxonomy, model/provider entity extraction, item type detection, confidence scoring |
+| Cross-source matching | `cross-source-match.ts` | Lexical Jaccard v2 candidate matching, evidence-preserving (never discards items) |
+| Semantic dedup | `semantic-dedup.ts` | Title Jaccard + content excerpt overlap, 45% combined threshold, same-source exclusion |
+| Story clustering | `cluster.ts` | 3-stage: topic grouping → entity overlap → title keyword similarity ≥35%, auto-assigns evidence_status |
+| Claim extraction | `extract-claims.ts` | 14 rule sets, 40+ regex patterns, 9 claim classes, 12 claim domains, evidence quality scoring, dedup |
+| Conflict detection | (in extract-claims.ts) | 4 conflict types, severity assessment, auto-flags disputed claims |
+| Correction workflow | `corrections.ts` | 9 correction types, cluster + claim targeting, evidence status cascade, soft-delete support |
+
+**Evidence system:** 10-state labels (confirmed → outdated), decomposable rating explanation panel (10 factors: source class, tier, corroboration, independent verification, conflict of interest, timeliness, reproducibility, disagreement level, correction status, supersession), colour-coded OKLCH design tokens for all states in dark + light themes.
+
+**Components:** `EvidenceBadge.astro` (reusable badge), `RatingExplanation.astro` (expandable factor breakdown per product principle 2.3).
+
+**Admin API routes added:** `POST /admin/extract-claims`, `POST /admin/detect-conflicts`, `POST /admin/correct`, `GET /admin/corrections`.
+
+**Schema additions:** Claims table rewritten (9 claim classes + 12 domains, evidence quality scoring), claim_evidence (10 relationship types), claim_conflicts (6 conflict types), corrections table enhanced (9 correction types + evidence status tracking + published flag), pipeline_stages extended with `corrected` stage.
+
+**Frontend updated:** Story pages use EvidenceBadge + RatingExplanation components, feed + topic pages use EvidenceBadge, corrections page redesigned with before/after comparison panels + evidence badges, admin review queue shows 10-state reference table + correction API docs.
 
 ## Phase 4 — Models, Providers, and Benchmarks
 **Estimate:** 4–8 weeks

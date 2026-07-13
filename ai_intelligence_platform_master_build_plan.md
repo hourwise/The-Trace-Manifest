@@ -1167,28 +1167,28 @@ Build:
 
 ---
 
-## Phase 3 — Curation and Trust Layer
+## Phase 3 — Curation and Trust Layer  ✅ COMPLETED 13 July 2026
 
-Build:
+Built and deployed:
 
-- Topic classification
-- Source classification
-- Semantic deduplication
-- Story clustering
-- Entity extraction
-- Claim extraction
-- Evidence labels
-- Conflict detection
-- Manual review queue
-- Correction workflow
-- Rating explanation panel
+- Topic classification ✅ — `classify.ts`, 16-topic rule-based taxonomy
+- Source classification ✅ — Tier A/B/C + treatment labels
+- Semantic deduplication ✅ — `semantic-dedup.ts`, Jaccard similarity
+- Story clustering ✅ — `cluster.ts`, 3-stage entity+title pipeline
+- Entity extraction ✅ — model/provider extraction in classify.ts
+- Claim extraction ✅ — `extract-claims.ts`, 9 claim classes, 40+ patterns
+- Evidence labels ✅ — 10-state system with OKLCH design tokens
+- Conflict detection ✅ — 4 conflict types with severity assessment
+- Manual review queue ✅ — Admin review page with 10-state reference
+- Correction workflow ✅ — `corrections.ts`, 9 correction types
+- Rating explanation panel ✅ — `RatingExplanation.astro`, 10-factor decomposable panel
 
 ---
 
 ## Phase 3B — Evidence-Linked Knowledge Base
 
-**Status:** Proposed  
-**Dependency:** Phase 3 (Curation and Trust) must be substantially complete before this phase begins. The knowledge base consumes classified items, clustered stories, extracted entities, claims, and evidence relationships from the pipeline.
+**Status:** Ready to begin — Phase 3 dependency satisfied  
+**Dependency:** Phase 3 (Curation and Trust) is complete. The knowledge base can now consume classified items, clustered stories, extracted entities, claims, and evidence relationships from the pipeline.
 
 ### Purpose
 
