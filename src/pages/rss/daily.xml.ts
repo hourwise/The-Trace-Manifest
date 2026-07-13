@@ -1,6 +1,8 @@
 import rss from "@astrojs/rss";
 import type { APIContext } from "astro";
 
+export const prerender = false;
+
 const briefingItems = [
   {
     title: "New frontier model announced — vendor claims coding SOTA",

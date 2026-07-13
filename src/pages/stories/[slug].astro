@@ -3,6 +3,8 @@ import BaseLayout from "../../layouts/BaseLayout.astro";
 import EvidenceBadge from "../../components/EvidenceBadge.astro";
 import RatingExplanation from "../../components/RatingExplanation.astro";
 
+export const prerender = false;
+
 export function getStaticPaths() {
   return [
     { params: { slug: "new-frontier-model-july-2026" } },

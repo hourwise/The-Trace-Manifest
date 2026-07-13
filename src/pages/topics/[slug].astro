@@ -2,6 +2,8 @@
 import BaseLayout from "../../layouts/BaseLayout.astro";
 import EvidenceBadge from "../../components/EvidenceBadge.astro";
 
+export const prerender = false;
+
 export function getStaticPaths() {
   return [
     { params: { slug: "frontier-models" } },
