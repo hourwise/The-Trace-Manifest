@@ -92,7 +92,7 @@ const CLAIM_RULES: ClaimRule[] = [
     domain: "pricing",
     claimClass: "official_vendor_claim",
     patterns: [
-      /\b((?:price|cost|rate|fee)[^.]*(?:\$[\d.]+|free|[\d.]+\s*\$)[^.]*(?:per|/|\s)(?:token|million|1M|1K|request|call|month|user)[^.]*\.)/gi,
+      /\b((?:price|cost|rate|fee)[^.]*(?:\$[\d.]+|free|[\d.]+[\s]*\$)[^.]*(?:per|\/|[\s])(?:token|million|1M|1K|request|call|month|user)[^.]*\.)/gi,
       /\b((?:reduc|cut|lower|drop|slash|discount)[^.]*(?:price|cost|rate)[^.]*(?:by|to|from)[^.]*(?:\d+%?|\$[\d.]+)[^.]*\.)/gi,
       /\b((?:now|newly|become)[^.]*(?:free|cheaper|more\s*affordable|lower\s*cost)[^.]*\.)/gi,
     ],
