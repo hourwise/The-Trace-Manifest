@@ -25,6 +25,7 @@ export function recordUsage(params: {
   inputTokens: number;
   outputTokens: number;
   cachedTokens: number;
+  estimatedCost: number;
   actualCost: number;
   attemptNumber: number;
   latencyMs: number;
@@ -34,7 +35,7 @@ export function recordUsage(params: {
   budgetReservation: number;
 }): UsageRecord {
   const record: UsageRecord = {
-    id: `usage_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    id: `usage_${crypto.randomUUID()}`,
     requestId: params.requestId,
     idempotencyKeyHash: params.idempotencyKeyHash,
     taskType: params.taskType,
@@ -43,7 +44,7 @@ export function recordUsage(params: {
     inputTokens: params.inputTokens,
     outputTokens: params.outputTokens,
     cachedTokens: params.cachedTokens,
-    estimatedCost: 0, // Set by caller
+    estimatedCost: params.estimatedCost,
     actualCost: params.actualCost,
     attemptNumber: params.attemptNumber,
     latencyMs: params.latencyMs,

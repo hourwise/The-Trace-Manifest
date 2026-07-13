@@ -41,6 +41,10 @@ function isBoolean(v: unknown): v is boolean {
   return typeof v === "boolean";
 }
 
+function isStringArray(v: unknown, maxLen?: number): v is string[] {
+  return isArray(v, 0, maxLen) && v.every(item => typeof item === "string");
+}
+
 // ============================================================
 // Evidence excerpt validator
 // ============================================================
@@ -138,13 +142,13 @@ export function validateAnswerDraft(output: unknown): ValidationResult {
 
   const errors: string[] = [];
   if (!isString(o.answer)) errors.push("answer is required and must be a non-empty string");
-  if (!isArray(o.keyPoints)) errors.push("keyPoints must be an array");
-  if (!isArray(o.citedSourceIds)) errors.push("citedSourceIds must be an array");
-  if (!isArray(o.citedClaimIds)) errors.push("citedClaimIds must be an array");
-  if (!isArray(o.confirmedFacts)) errors.push("confirmedFacts must be an array");
-  if (!isArray(o.reportedClaims)) errors.push("reportedClaims must be an array");
-  if (!isArray(o.disagreements)) errors.push("disagreements must be an array");
-  if (!isArray(o.caveats)) errors.push("caveats must be an array");
+  if (!isStringArray(o.keyPoints)) errors.push("keyPoints must be a string array");
+  if (!isStringArray(o.citedSourceIds)) errors.push("citedSourceIds must be a string array");
+  if (!isStringArray(o.citedClaimIds)) errors.push("citedClaimIds must be a string array");
+  if (!isStringArray(o.confirmedFacts)) errors.push("confirmedFacts must be a string array");
+  if (!isStringArray(o.reportedClaims)) errors.push("reportedClaims must be a string array");
+  if (!isStringArray(o.disagreements)) errors.push("disagreements must be a string array");
+  if (!isStringArray(o.caveats)) errors.push("caveats must be a string array");
 
   const validConfidences = ["high", "medium", "low", "insufficient_evidence"];
   if (!isString(o.proposedConfidence) || !validConfidences.includes(o.proposedConfidence as string)) {
@@ -159,11 +163,14 @@ export function validateEditorialDraft(output: unknown): ValidationResult {
   if (!o || typeof o !== "object") return fail("Output must be an object");
 
   const errors: string[] = [];
+  if (o.headline !== undefined && !isString(o.headline, 150)) errors.push("headline must be a non-empty string of at most 150 characters");
   if (!isString(o.summary)) errors.push("summary is required");
   if (!isString(o.analysis)) errors.push("analysis is required");
-  if (!isArray(o.keyPoints)) errors.push("keyPoints must be an array");
-  if (!isArray(o.citedSourceIds)) errors.push("citedSourceIds must be an array");
-  if (!isArray(o.caveats)) errors.push("caveats must be an array");
+  if (o.whyItMatters !== undefined && !isString(o.whyItMatters, 300)) errors.push("whyItMatters must be a non-empty string of at most 300 characters");
+  if (o.isNewsworthy !== undefined && !isBoolean(o.isNewsworthy)) errors.push("isNewsworthy must be a boolean");
+  if (!isStringArray(o.keyPoints, 10)) errors.push("keyPoints must be a string array");
+  if (!isStringArray(o.citedSourceIds, 16)) errors.push("citedSourceIds must be a string array");
+  if (!isStringArray(o.caveats, 10)) errors.push("caveats must be a string array");
 
   const validConfidences = ["high", "medium", "low"];
   if (!isString(o.proposedConfidence) || !validConfidences.includes(o.proposedConfidence as string)) {

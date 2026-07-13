@@ -112,7 +112,7 @@ const evidenceStates = [
           <input type="password" id="admin-token" placeholder="Paste your ADMIN_API_TOKEN…" style="flex:1;font-family:var(--font-mono);font-size:0.8rem;" />
           <button type="button" id="save-token-btn" class="btn btn-secondary" style="white-space:nowrap;font-size:0.8rem;">Save</button>
         </div>
-        <p class="meta" style="margin-top:0.35rem;font-size:0.75rem;">Stored in session storage only — cleared when you close the tab. Never sent to the Pages server.</p>
+        <p class="meta" style="margin-top:0.35rem;font-size:0.75rem;">Stored in session storage only and sent as a bearer token only to protected TRACE admin endpoints. Never sent to DeepSeek.</p>
       </div>
 
       <!-- Cluster selector -->
@@ -202,6 +202,21 @@ const evidenceStates = [
       // Helper: typed getElementById
       function $<T extends HTMLElement>(id: string): T | null {
         return document.getElementById(id) as T | null;
+      }
+
+      function escapeHTML(value: string): string {
+        const element = document.createElement("div");
+        element.textContent = value;
+        return element.innerHTML;
+      }
+
+      function safeExternalUrl(value: string): string {
+        try {
+          const url = new URL(value, window.location.origin);
+          return url.protocol === "http:" || url.protocol === "https:" ? url.href : "#";
+        } catch {
+          return "#";
+        }
       }
 
       // Save token
@@ -317,11 +332,11 @@ const evidenceStates = [
           list.innerHTML = sources.map((s, i) => `
             <div style="padding:0.5rem 0;border-bottom:1px solid var(--border);${i === sources.length - 1 ? "border-bottom:none;" : ""}">
               <div style="display:flex;gap:0.5rem;align-items:baseline;flex-wrap:wrap;">
-                <span class="badge badge-sm" style="font-size:0.65rem;">Tier ${s.sourceTier}</span>
-                <span class="meta" style="font-size:0.7rem;">${s.sourceName}</span>
+                <span class="badge badge-sm" style="font-size:0.65rem;">Tier ${escapeHTML(s.sourceTier)}</span>
+                <span class="meta" style="font-size:0.7rem;">${escapeHTML(s.sourceName)}</span>
               </div>
-              <a href="${s.url}" target="_blank" rel="noopener" style="font-size:0.85rem;font-weight:550;display:block;margin-top:0.2rem;">${s.title}</a>
-              ${s.excerpt ? `<p class="meta" style="font-size:0.75rem;margin-top:0.15rem;line-height:1.4;">${s.excerpt.slice(0, 300)}${s.excerpt.length > 300 ? "…" : ""}</p>` : ""}
+              <a href="${escapeHTML(safeExternalUrl(s.url))}" target="_blank" rel="noopener" style="font-size:0.85rem;font-weight:550;display:block;margin-top:0.2rem;">${escapeHTML(s.title)}</a>
+              ${s.excerpt ? `<p class="meta" style="font-size:0.75rem;margin-top:0.15rem;line-height:1.4;">${escapeHTML(s.excerpt.slice(0, 300))}${s.excerpt.length > 300 ? "…" : ""}</p>` : ""}
             </div>
           `).join("");
         } catch (e) {
@@ -358,7 +373,7 @@ const evidenceStates = [
             summary: string;
             whyItMatters: string;
             keyFacts: string[];
-            rawAnalysis: string;
+            requestId: string;
           } = await res.json();
 
           // Populate form fields
@@ -379,14 +394,20 @@ const evidenceStates = [
                 ${newsBadge}
                 <span class="meta" style="font-size:0.75rem;">AI analysis — review before publishing</span>
               </div>
-              ${analysis.keyFacts.length > 0 ? `<p class="meta" style="font-size:0.8rem;margin-bottom:0.35rem;"><strong>Key facts:</strong> ${analysis.keyFacts.join(" · ")}</p>` : ""}
-              <p class="meta" style="font-size:0.75rem;color:var(--muted);">Fields populated above. Edit as needed, then publish.</p>
+              ${analysis.keyFacts.length > 0 ? `<p class="meta" style="font-size:0.8rem;margin-bottom:0.35rem;"><strong>Key facts:</strong> ${analysis.keyFacts.map(escapeHTML).join(" · ")}</p>` : ""}
+              <p class="meta" style="font-size:0.75rem;color:var(--muted);">Fields populated above. Edit as needed, then publish.${analysis.requestId ? ` Request ${escapeHTML(analysis.requestId)}.` : ""}</p>
             `;
           }
 
-          status(analysis.isNewsworthy ? "AI: This looks like news. Review and publish." : "AI: This appears to be a routine update.", !analysis.isNewsworthy);
+          status(analysis.isNewsworthy ? "AI: This looks like news. Review and publish." : "AI: This appears to be a routine update.", false);
         } catch (e: any) {
-          if (resultDiv) resultDiv.innerHTML = `<p class="meta" style="color:var(--ev-disputed);">AI analysis failed: ${e.message}. The model gateway may need a DEEPSEEK_API_KEY set.</p>`;
+          if (resultDiv) {
+            const errorText = document.createElement("p");
+            errorText.className = "meta";
+            errorText.style.color = "var(--ev-disputed)";
+            errorText.textContent = `AI analysis failed: ${e.message}`;
+            resultDiv.replaceChildren(errorText);
+          }
           status("AI analysis failed.", true);
           console.error(e);
         } finally {

@@ -5,13 +5,13 @@
   "scripts": {
     "dev": "astro dev",
     "start": "astro dev",
-    "build": "astro check && astro build",
+    "build": "astro check && astro build && node scripts/verify-cloudflare-routes.mjs",
     "preview": "astro preview",
     "astro": "astro",
     "deploy:site": "npm run build",
     "deploy:worker": "wrangler deploy --config wrangler.worker.toml",
     "worker:dev": "wrangler dev --config wrangler.worker.toml --test-scheduled",
-    "test": "npx tsx workers/ingestion/__tests__/run-tests.ts"
+    "test": "npx tsx workers/ingestion/__tests__/run-tests.ts && npx tsx src/ai/__tests__/ai-triage.test.ts"
   },
   "dependencies": {
     "@astrojs/check": "^0.9.9",

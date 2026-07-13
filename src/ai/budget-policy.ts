@@ -93,6 +93,7 @@ export function checkBudgetThreshold(config: TraceAIConfig, providerBalance?: nu
 export interface ReservationResult {
   reserved: boolean;
   reservationId?: string;
+  reservedAmount?: number;
   reason?: string;
 }
 
@@ -126,9 +127,9 @@ export function reserveBudget(
 
   // Reserve
   currentReservation += maxCost;
-  const reservationId = `res_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const reservationId = `res_${crypto.randomUUID()}`;
 
-  return { reserved: true, reservationId };
+  return { reserved: true, reservationId, reservedAmount: maxCost };
 }
 
 /**
@@ -140,6 +141,7 @@ export function reconcileReservation(
   actualCost: number,
   reservedAmount: number,
 ): void {
+  void reservationId;
   // Record actual usage
   dailyUsed += actualCost;
   monthlyUsed += actualCost;
@@ -156,6 +158,7 @@ export function reconcileReservation(
  * Release a reservation without recording usage (for failed/cancelled requests).
  */
 export function releaseReservation(reservationId: string, reservedAmount: number): void {
+  void reservationId;
   currentReservation = Math.max(0, currentReservation - reservedAmount);
 }
 
@@ -183,12 +186,17 @@ export function estimateCost(
   return inputCost + outputCost;
 }
 
-export function estimateMaxCost(config: TraceAIConfig): number {
-  const pricing = MODEL_PRICING[config.publicModel];
+export function estimateMaxCost(
+  config: TraceAIConfig,
+  model: string = config.publicModel,
+  maxInputTokens: number = config.maxInputTokens,
+  maxOutputTokens: number = config.maxOutputTokens,
+): number {
+  const pricing = MODEL_PRICING[model];
   if (!pricing) return config.maxCostPerRequest;
 
-  const inputCost = (config.maxInputTokens / 1_000_000) * pricing.input;
-  const outputCost = (config.maxOutputTokens / 1_000_000) * pricing.output;
+  const inputCost = (maxInputTokens / 1_000_000) * pricing.input;
+  const outputCost = (maxOutputTokens / 1_000_000) * pricing.output;
 
   return Math.min(inputCost + outputCost, config.maxCostPerRequest);
 }

@@ -80,8 +80,11 @@ export interface TraceAnswerDraft {
 }
 
 export interface TraceEditorialDraft {
+  headline?: string;
   summary: string;
   analysis: string;
+  whyItMatters?: string;
+  isNewsworthy?: boolean;
   keyPoints: string[];
   citedSourceIds: string[];
   caveats: string[];

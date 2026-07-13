@@ -168,6 +168,7 @@ export class DeepSeekProvider implements TraceModelProvider {
         "Content-Type": "application/json",
       },
       body,
+      signal: AbortSignal.timeout(this.config.requestTimeoutMs),
     });
 
     // Explicit retry policy per ADR-0008 section 7.3
@@ -239,8 +240,11 @@ export class DeepSeekProvider implements TraceModelProvider {
     }
 
     return {
+      headline: parsed.headline ?? undefined,
       summary: parsed.summary ?? "",
       analysis: parsed.analysis ?? "",
+      whyItMatters: parsed.why_it_matters ?? parsed.whyItMatters ?? undefined,
+      isNewsworthy: parsed.is_newsworthy ?? parsed.isNewsworthy ?? undefined,
       keyPoints: parsed.key_points ?? parsed.keyPoints ?? [],
       citedSourceIds: parsed.cited_source_ids ?? parsed.citedSourceIds ?? [],
       caveats: parsed.caveats ?? [],
@@ -343,8 +347,11 @@ ${material}
 
 Respond with JSON:
 {
+  "headline": "factual headline when requested (optional)",
   "summary": "neutral summary of what happened",
   "analysis": "TRACE analysis — why it matters, what may be overstated",
+  "why_it_matters": "one-sentence practical significance when requested (optional)",
+  "is_newsworthy": true,
   "key_points": ["point 1", "point 2"],
   "cited_source_ids": ["source_id"],
   "caveats": ["limitation or uncertainty"],

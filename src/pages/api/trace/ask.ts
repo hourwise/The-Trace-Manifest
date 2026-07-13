@@ -8,8 +8,7 @@ import type { APIRoute } from "astro";
 import { ensureInitialised } from "../../../ai/config";
 import { askTrace } from "../../../ai/trace-model-gateway";
 
-// Initialise the AI gateway on first request (lazy, once per isolate)
-ensureInitialised();
+export const prerender = false;
 
 // ============================================================
 // Rate limiting (simple in-memory — replace with Cloudflare Rate Limiting in production)
@@ -122,7 +121,7 @@ export const OPTIONS: APIRoute = async ({ request }) => {
   });
 };
 
-export const POST: APIRoute = async ({ request }) => {
+export const POST: APIRoute = async ({ request, locals }) => {
   const origin = request.headers.get("Origin");
   const headers = corsHeaders(origin);
 
@@ -197,10 +196,22 @@ export const POST: APIRoute = async ({ request }) => {
     );
   }
 
-  // 6. Call the AI gateway (server-side only — never exposes provider to browser)
+  // 6. Initialise from request-time Cloudflare bindings.
+  try {
+    ensureInitialised(locals.runtime.env);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Unknown initialisation error";
+    console.error(JSON.stringify({ message: "Ask TRACE gateway initialisation failed", error: message }));
+    return new Response(JSON.stringify({ message: "Ask TRACE is temporarily unavailable." }), {
+      status: 503,
+      headers: { ...headers, "Content-Type": "application/json" },
+    });
+  }
+
+  // 7. Call the AI gateway (server-side only — never exposes provider to browser)
   const result = await askTrace(validation.data.question, []);
 
-  // 7. Build response — never expose internal details
+  // 8. Build response — never expose internal details
   const responseHeaders: Record<string, string> = {
     ...headers,
     "Content-Type": "application/json",
