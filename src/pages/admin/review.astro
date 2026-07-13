@@ -131,7 +131,11 @@ const evidenceStates = [
 
       <!-- Source Material — appears when cluster selected -->
       <div id="source-material" class="card" style="margin-bottom:1.5rem;background:var(--surface-2);display:none;">
-        <h3 style="font-size:0.95rem;margin-bottom:0.75rem;">Source Material <span class="meta" style="font-weight:400;" id="source-count"></span></h3>
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.5rem;margin-bottom:0.75rem;">
+          <h3 style="font-size:0.95rem;margin:0;">Source Material <span class="meta" style="font-weight:400;" id="source-count"></span></h3>
+          <button type="button" id="ai-analyze-btn" class="btn btn-secondary" style="font-size:0.8rem;" disabled>🤖 AI Analyze</button>
+        </div>
+        <div id="ai-result" style="display:none;margin-bottom:0.75rem;padding:0.75rem;background:color-mix(in oklch, var(--accent) 6%, transparent);border-radius:var(--radius);border-left:3px solid var(--accent);"></div>
         <div id="source-list" style="display:flex;flex-direction:column;gap:0.75rem;max-height:400px;overflow-y:auto;"></div>
       </div>
 
@@ -280,24 +284,34 @@ const evidenceStates = [
       $<HTMLTextAreaElement>("pub-summary")?.addEventListener("input", checkPublishReady);
 
       // Load source material when cluster is selected
+      let currentSources: Array<{ title: string; excerpt: string | null }> = [];
+
       $<HTMLSelectElement>("cluster-select")?.addEventListener("change", async function() {
         const clusterId = parseInt(this.value || "");
         const panel = document.getElementById("source-material");
         const list = document.getElementById("source-list");
         const count = document.getElementById("source-count");
+        const aiBtn = $<HTMLButtonElement>("ai-analyze-btn");
+        const aiResult = document.getElementById("ai-result");
         if (!panel || !list || !count) return;
 
-        if (!clusterId) { panel.style.display = "none"; return; }
+        if (!clusterId) { panel.style.display = "none"; currentSources = []; return; }
         if (!getToken()) return;
 
         panel.style.display = "block";
         list.innerHTML = '<p class="meta">Loading source material…</p>';
         count.textContent = "";
+        if (aiBtn) aiBtn.disabled = true;
+        if (aiResult) aiResult.style.display = "none";
+        currentSources = [];
 
         try {
           const res = await fetch(`${WORKER_URL}/admin/cluster-sources?clusterId=${clusterId}`, { headers: authHeaders() });
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           const sources: Array<{ title: string; url: string; excerpt: string | null; sourceName: string; sourceTier: string; publishedAt: string | null }> = await res.json();
+
+          currentSources = sources.map(s => ({ title: s.title, excerpt: s.excerpt }));
+          if (aiBtn) aiBtn.disabled = currentSources.length === 0;
 
           count.textContent = `(${sources.length} source${sources.length !== 1 ? "s" : ""})`;
           list.innerHTML = sources.map((s, i) => `
@@ -313,6 +327,70 @@ const evidenceStates = [
         } catch (e) {
           list.innerHTML = '<p class="meta" style="color:var(--ev-disputed);">Failed to load source material.</p>';
           console.error(e);
+        }
+      });
+
+      // AI Analyze button — sends source material to TRACE AI for analysis
+      $<HTMLButtonElement>("ai-analyze-btn")?.addEventListener("click", async () => {
+        if (currentSources.length === 0) { status("No source material loaded.", true); return; }
+
+        const btn = $<HTMLButtonElement>("ai-analyze-btn");
+        const resultDiv = document.getElementById("ai-result");
+        if (btn) { btn.disabled = true; btn.textContent = "🤖 Analyzing…"; }
+        if (resultDiv) { resultDiv.style.display = "block"; resultDiv.innerHTML = '<p class="meta">Asking TRACE AI to analyze these sources…</p>'; }
+        status("AI analyzing…", false);
+
+        try {
+          const res = await fetch("/api/admin/ai-triage", {
+            method: "POST",
+            headers: { "Authorization": "Bearer " + getToken(), "Content-Type": "application/json" },
+            body: JSON.stringify({ sources: currentSources }),
+          });
+
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+            throw new Error(err.error || `HTTP ${res.status}`);
+          }
+
+          const analysis: {
+            isNewsworthy: boolean;
+            headline: string;
+            summary: string;
+            whyItMatters: string;
+            keyFacts: string[];
+            rawAnalysis: string;
+          } = await res.json();
+
+          // Populate form fields
+          const headlineEl = $<HTMLInputElement>("pub-headline");
+          const summaryEl = $<HTMLTextAreaElement>("pub-summary");
+          const whyEl = $<HTMLInputElement>("pub-why");
+          if (headlineEl && analysis.headline) headlineEl.value = analysis.headline;
+          if (summaryEl && analysis.summary) { summaryEl.value = analysis.summary; checkPublishReady(); }
+          if (whyEl && analysis.whyItMatters) whyEl.value = analysis.whyItMatters;
+
+          // Show result
+          if (resultDiv) {
+            const newsBadge = analysis.isNewsworthy
+              ? '<span class="badge badge-confirmed" style="font-size:0.7rem;">News</span>'
+              : '<span class="badge badge-outdated" style="font-size:0.7rem;">Routine update</span>';
+            resultDiv.innerHTML = `
+              <div style="display:flex;gap:0.5rem;align-items:center;margin-bottom:0.5rem;">
+                ${newsBadge}
+                <span class="meta" style="font-size:0.75rem;">AI analysis — review before publishing</span>
+              </div>
+              ${analysis.keyFacts.length > 0 ? `<p class="meta" style="font-size:0.8rem;margin-bottom:0.35rem;"><strong>Key facts:</strong> ${analysis.keyFacts.join(" · ")}</p>` : ""}
+              <p class="meta" style="font-size:0.75rem;color:var(--muted);">Fields populated above. Edit as needed, then publish.</p>
+            `;
+          }
+
+          status(analysis.isNewsworthy ? "AI: This looks like news. Review and publish." : "AI: This appears to be a routine update.", !analysis.isNewsworthy);
+        } catch (e: any) {
+          if (resultDiv) resultDiv.innerHTML = `<p class="meta" style="color:var(--ev-disputed);">AI analysis failed: ${e.message}. The model gateway may need a DEEPSEEK_API_KEY set.</p>`;
+          status("AI analysis failed.", true);
+          console.error(e);
+        } finally {
+          if (btn) { btn.disabled = false; btn.textContent = "🤖 AI Analyze"; }
         }
       });
 

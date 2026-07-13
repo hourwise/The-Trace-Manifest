@@ -11,3 +11,6 @@ name = "the-trace-manifest"
 
 [env.production.vars]
 PUBLIC_INGESTION_API_URL = "https://trace-manifest-ingestion.philgeran.workers.dev"
+
+# Admin API token — also set as a Pages secret:
+# npx wrangler pages secret put ADMIN_API_TOKEN
