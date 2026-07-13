@@ -104,6 +104,23 @@ Build the recurring weekly digest and retention channel. Eight-section edition s
 
 Build public prediction performance metrics: aggregate counts by outcome, accuracy excluding unresolved, probability-band analysis, formal calibration metric (Brier score) when sufficient data exists. Public methodology page. Independently verifiable from the archive.
 
+## Phase 5E — Live Publication and Frontend Data Wiring
+**Estimate:** 5–10 working days | **Status:** Not started | **Dependency:** Phases 2–4 complete
+
+Connect the Astro frontend to live D1 data while preserving editorial, evidence, and publication boundaries. Converts the static demonstration shell into a live intelligence platform without exposing raw ingestion records.
+
+**Architecture:** Static-first with on-demand rendering only for live routes (`/feed`, `/stories/[slug]`, `/topics/[slug]`, `/briefing/daily`, `/briefing/weekly`, homepage, RSS). Cloudflare adapter + D1 binding on Astro 5 + Cloudflare Pages. Typed server-only data layer at `src/lib/server/public-data.ts` with publication gate, pagination, defensive JSON parsing, and prepared statements.
+
+**Publication model:** `published_stories` table (or extended `story_clusters`) with stable slugs, editorial-analysis fields, publication state, review timestamps, and topic mapping. Clear boundary between machine clustering and public editorial output.
+
+**Route work:** Replace all hardcoded content arrays with live D1 queries. 404 for unpublished/invalid slugs. Honest empty states. RSS from same published-story contract as `/feed`.
+
+**Security:** No D1 in browser JS. Prepared statements for all user-influenced values. No `SELECT *`. No unpublished story leakage. No raw metadata JSON exposure.
+
+**Tests:** Publication-boundary data-layer tests, route rendering tests, deployment binding verification.
+
+**Delivery order:** 5E.1 Schema → 5E.2 Astro runtime → 5E.3 Data layer → 5E.4 Feed + Stories → 5E.5 Topics + Briefings + Homepage + RSS → 5E.6 Cache + Security → 5E.7 Ask TRACE integration.
+
 ## Phase 6 — Accounts and Personalisation
 **Estimate:** 4–8 weeks
 

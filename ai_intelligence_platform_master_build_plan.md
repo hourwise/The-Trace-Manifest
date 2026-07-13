@@ -1728,6 +1728,114 @@ Candidate stories selected
 
 ---
 
+## Phase 5E — Live Publication and Frontend Data Wiring
+
+**Estimate:** 5–10 working days  
+**Status:** Not started  
+**Dependency:** Phases 2–4 (ingestion pipeline, clustering, models/benchmarks) are complete and populating D1. Phase 5E does not depend on Ask TRACE being finished — it provides the canonical public content layer that Ask TRACE, TRACE Predicts, and the newsletter will consume.
+
+### Purpose
+
+Connect The Trace Manifest's public Astro frontend to the live Cloudflare D1 intelligence database while preserving the platform's editorial, evidence, and publication boundaries. This phase converts the current static demonstration shell into a genuinely live intelligence platform.
+
+It must not expose raw ingestion records merely because they exist in D1.
+
+### Problem
+
+The ingestion Worker is collecting, classifying, and deduplicating source material in D1, but the public-facing Astro pages continue to render hardcoded demonstration content. Affected surfaces: `/`, `/feed`, `/stories/[slug]`, `/topics/[slug]`, `/briefing/daily`, `/briefing/weekly`, RSS. Newly ingested material never reaches the public site, and hardcoded story URLs and evidence data diverge from the live platform.
+
+### Architectural decision
+
+The site remains **static-first**. Only routes requiring current database content use Astro on-demand rendering (`export const prerender = false`). Static routes such as methodology, corrections policy, and trust documentation continue to be prerendered. The initial implementation remains on Astro 5 and Cloudflare Pages.
+
+### Publication boundary
+
+Raw ingestion is not equivalent to publication. The public frontend must never render arbitrary rows from `feed_items`. The pipeline stages must remain distinct: ingestion → classification → deduplication → clustering → evidence evaluation → human review → deliberate publication. Every public query must fail closed — unpublished, rejected, archived, duplicate, or review-pending records must not become public through fallback behaviour.
+
+### Public story model
+
+Create a clear public publication model. Preferred: a `published_stories` table with `id`, `cluster_id`, `slug`, `headline`, `summary`, `editorial_analysis`, `why_it_matters`, `topic`, `evidence_status`, `publication_status`, `reviewed_by`, `reviewed_at`, `published_at`, `updated_at`. Alternative for MVP: extend `story_clusters` with stable slug and editorial presentation fields, preserving a distinguishable boundary between machine-generated clustering and public editorial output.
+
+### Database work
+
+Add or confirm: stable unique story slugs, public summary and editorial-analysis storage, publication state and timestamp, review timestamp and reviewer identity, topic slug mapping, indexes covering publication status/date/topic/slug, deterministic primary-source identification per cluster, published briefing records, and safe handling of corrections and superseded stories. All queries use prepared statements — no ad hoc SQL in page files.
+
+### Cloudflare and Astro integration
+
+1. Install and pin a Cloudflare adapter version compatible with Astro 5 and Cloudflare Pages.
+2. Add the adapter to `astro.config.ts`.
+3. Retain Astro's static default output.
+4. Mark only live routes with `export const prerender = false`.
+5. Add the existing TRACE D1 database as a binding to the Pages project (local, preview, production).
+6. Add TypeScript declarations for the Cloudflare runtime and D1 binding.
+7. All D1 access runs in the server-rendered Astro layer — never exposed to browser-side JavaScript.
+
+### Shared public data layer
+
+Create `src/lib/server/public-data.ts` — a typed server-only module exposing functions: `getPublishedStories`, `getPublishedStoryBySlug`, `getPublishedStoriesByTopic`, `getPublishedTopics`, `getLatestPublishedBriefing`, `getPublishedBriefingByDate`, `getPublishedSourcesForStory`, `getCorrectionsForStory`, `getRelatedStories`. Pages consume typed public view models, not raw D1 row shapes. The module applies the publication gate, normalises dates, parses JSON defensively, rejects malformed records, limits returned fields, supports pagination, provides predictable empty states, and logs operational errors without leaking implementation details.
+
+### Route implementation
+
+**`/feed`** — Replace hardcoded array with published stories ordered by publication date. Add topic filtering, evidence-status filtering, cursor-based pagination, stable story links, source-count display, publication and last-checked dates, and a proper empty state. Must not silently substitute placeholder stories when D1 is unavailable.
+
+**`/stories/[slug]`** — Remove hardcoded `getStaticPaths()`. Resolve slug at request time. Render: headline, summary, TRACE editorial analysis, why it matters, evidence status, source classification, published/last-checked dates, supporting sources, related entities, claims and evidence, conflicts, corrections, related published stories. Return 404 for nonexistent, unpublished, or withdrawn slugs. Withdrawn/superseded stories may remain visible when required by corrections policy but must be clearly labelled.
+
+**`/topics/[slug]`** — Resolve dynamically. Display only published stories. Support topic description, latest developments, evidence-status summary, pagination, empty topic state, stable canonical URLs.
+
+**`/briefing/daily` and `/briefing/weekly`** — Load latest published briefing or specific requested date. Do not construct an apparently editorial briefing by listing raw recent items. When no briefing is published, show honest empty state.
+
+**Homepage** — Replace hardcoded "latest" content with bounded selection of published stories and latest published briefing. Must remain usable if dynamic content component fails.
+
+**RSS** — Generate from the same published-story contract used by `/feed`. Must not contain raw, review-pending, or unpublished records.
+
+### Caching
+
+Apply bounded edge caching: feed/topic pages (short cache), story pages (longer cache with revalidation), corrections/withdrawn content (very short cache or invalidation), briefings (cache according to publication cadence).
+
+### Relationship with Ask TRACE
+
+Phase 5E must be completed before the public Ask TRACE frontend is considered complete. Ask TRACE uses the same canonical public data contracts for story metadata, evidence labels, source citations, corrections, publication state, and stable URLs. Where Ask TRACE cites material not yet a published TRACE story, the response must identify it as source material rather than presenting it as an established TRACE conclusion.
+
+### Security requirements
+
+No D1 queries in browser-delivered JavaScript. No administrative endpoints exposed through public page code. No reliance on URL parameters as trusted SQL input. All limits and filters bounded server-side. Prepared statements for every user-influenced value. Public query functions explicitly select fields — no `SELECT *`. No raw metadata JSON exposed by default. No unpublished story leakage through related-content queries. No fallback to first available story when slug is invalid. Database failures must not reveal SQL, table names, or binding details. Public source URLs validated before rendering.
+
+### Testing requirements
+
+**Data-layer:** published stories returned, unpublished/review-pending/rejected/archived excluded, topic filters cannot cross publication boundaries, pagination deterministic, invalid JSON does not crash routes, SQL-injection strings treated as values, corrections remain attached to correct story.
+
+**Route:** `/feed` renders live data, new published story appears without rebuild, `/stories/[slug]` resolves valid published story, invalid/unpublished slugs return 404, topic pages contain only matching published stories, briefing pages use only published briefings, empty states honest and usable, RSS matches public feed contract.
+
+**Deployment:** local/preview/production D1 bindings work, static pages remain prerendered, dynamic pages execute through Cloudflare runtime, existing sitemap/theme/navigation/accessibility intact.
+
+### Acceptance criteria
+
+1. Public feed content originates from D1.
+2. Newly published stories appear without a site rebuild.
+3. Raw ingestion records cannot leak onto public pages.
+4. Story pages use stable live slugs.
+5. Invalid and unpublished stories return correct 404 responses.
+6. Topic pages use live published data.
+7. Daily and weekly briefings use published briefing records.
+8. Homepage and RSS use the same public story contract.
+9. Static trust and methodology pages remain static.
+10. Preview and production bindings work correctly.
+11. Automated tests cover publication-boundary failures.
+12. Placeholder stories and hardcoded public feed arrays are removed.
+13. Ask TRACE can reuse the resulting public data layer.
+
+### Recommended delivery order
+
+1. **5E.1** — Publication contract and schema (public story model, publication gate, indexes, migrations)
+2. **5E.2** — Astro runtime integration (Cloudflare adapter, D1 binding, runtime types, static-first)
+3. **5E.3** — Typed public data layer (`src/lib/server/public-data.ts` with tests)
+4. **5E.4** — Feed and story routes (`/feed`, `/stories/[slug]`)
+5. **5E.5** — Topics, briefings, homepage, and RSS
+6. **5E.6** — Cache, failure, and security testing
+7. **5E.7** — Ask TRACE integration (wire frontend to canonical live content contracts)
+
+---
+
 ## Phase 6 — Accounts and Personalisation
 
 Build:

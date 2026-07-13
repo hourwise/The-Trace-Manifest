@@ -14,6 +14,11 @@ import { runClustering } from "./cluster";
 import { runClaimExtraction, detectClaimConflicts } from "./extract-claims";
 import { recordClusterCorrection, recordClaimCorrection, listPublishedCorrections, validateCorrectionInput } from "./corrections";
 import { runModelDataExtraction, seedModelData } from "./model-data";
+import {
+  publishStory, updateStoryStatus, publishBriefing,
+  getPublishedStories, getPublishedStoryBySlug, getPublishedTopics,
+  getLatestPublishedBriefing, getPublishedSourcesForStory, getRelatedStories,
+} from "./publish";
 import type { Source, FeedItem } from "./types";
 
 // ============================================================
@@ -350,6 +355,14 @@ async function handleAdminRoute(path: string, request: Request, env: Env, ctx: E
       return handleSeedModelData(env);
     case "/admin/extract-model-data":
       return handleModelDataExtraction(env);
+    case "/admin/publish-story":
+      return handlePublishStory(request, env);
+    case "/admin/withdraw-story":
+      return handleWithdrawStory(request, env);
+    case "/admin/publish-briefing":
+      return handlePublishBriefing(request, env);
+    case "/admin/published-stories":
+      return handlePublishedStoriesList(request, env);
     default:
       return Response.json({ error: "Not found" }, { status: 404 });
   }
@@ -473,4 +486,107 @@ async function handleSeedModelData(env: Env): Promise<Response> {
 async function handleModelDataExtraction(env: Env): Promise<Response> {
   const result = await runModelDataExtraction(env.DB);
   return Response.json({ status: "ok", ...result });
+}
+
+// ============================================================
+// Phase 5E Publication handlers
+// ============================================================
+
+async function handlePublishStory(request: Request, env: Env): Promise<Response> {
+  const body = await request.json() as {
+    clusterId?: number;
+    headline?: string;
+    summary?: string;
+    editorialAnalysis?: string;
+    whyItMatters?: string;
+    headlineImageUrl?: string;
+    reviewedBy?: string;
+  };
+
+  if (!body.clusterId) {
+    return Response.json({ error: "clusterId is required" }, { status: 400 });
+  }
+  if (!body.summary || body.summary.trim().length < 20) {
+    return Response.json({ error: "summary is required (min 20 characters)" }, { status: 400 });
+  }
+
+  const result = await publishStory(env, {
+    clusterId: body.clusterId,
+    headline: body.headline,
+    summary: body.summary,
+    editorialAnalysis: body.editorialAnalysis,
+    whyItMatters: body.whyItMatters,
+    headlineImageUrl: body.headlineImageUrl,
+    reviewedBy: body.reviewedBy || "admin",
+  });
+
+  if (!result.success) {
+    return Response.json({ error: result.error }, { status: 400 });
+  }
+
+  return Response.json({ status: "ok", story: result.story });
+}
+
+async function handleWithdrawStory(request: Request, env: Env): Promise<Response> {
+  const body = await request.json() as {
+    clusterId?: number;
+    status?: string;
+    reason?: string;
+  };
+
+  if (!body.clusterId) {
+    return Response.json({ error: "clusterId is required" }, { status: 400 });
+  }
+
+  const newStatus = body.status === "superseded" ? "superseded" : "withdrawn";
+  const result = await updateStoryStatus(env, body.clusterId, newStatus, body.reason);
+
+  if (!result.success) {
+    return Response.json({ error: result.error }, { status: 400 });
+  }
+
+  return Response.json({ status: "ok" });
+}
+
+async function handlePublishBriefing(request: Request, env: Env): Promise<Response> {
+  const body = await request.json() as {
+    briefingType?: string;
+    briefingDate?: string;
+    title?: string;
+    summary?: string;
+    contentJson?: string;
+    reviewedBy?: string;
+  };
+
+  if (!body.briefingType || !["daily", "weekly"].includes(body.briefingType)) {
+    return Response.json({ error: "briefingType must be 'daily' or 'weekly'" }, { status: 400 });
+  }
+  if (!body.briefingDate || !body.title || !body.summary || !body.contentJson) {
+    return Response.json({ error: "briefingDate, title, summary, and contentJson are required" }, { status: 400 });
+  }
+
+  const result = await publishBriefing(env, {
+    briefingType: body.briefingType as "daily" | "weekly",
+    briefingDate: body.briefingDate,
+    title: body.title,
+    summary: body.summary,
+    contentJson: body.contentJson,
+    reviewedBy: body.reviewedBy || "admin",
+  });
+
+  if (!result.success) {
+    return Response.json({ error: result.error }, { status: 400 });
+  }
+
+  return Response.json({ status: "ok", briefing: result.briefing });
+}
+
+async function handlePublishedStoriesList(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const topic = url.searchParams.get("topic") || undefined;
+  const limit = parseInt(url.searchParams.get("limit") || "20");
+  const offset = parseInt(url.searchParams.get("offset") || "0");
+
+  const stories = await getPublishedStories(env, { topic, limit, offset });
+  return Response.json(stories);
 }
