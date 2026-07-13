@@ -2,140 +2,59 @@
 import BaseLayout from "../../layouts/BaseLayout.astro";
 import EvidenceBadge from "../../components/EvidenceBadge.astro";
 import RatingExplanation from "../../components/RatingExplanation.astro";
+import {
+  getPublishedStoryBySlug,
+  getPublishedSourcesForStory,
+  getCorrectionsForStory,
+  getRelatedStories,
+} from "../../lib/server/d1";
 
 export const prerender = false;
 
-export function getStaticPaths() {
-  return [
-    { params: { slug: "new-frontier-model-july-2026" } },
-    { params: { slug: "open-weight-model-16gb-july-2026" } },
-    { params: { slug: "prompt-injection-advisory-july-2026" } },
-    { params: { slug: "eu-ai-act-guidance-july-2026" } },
-    { params: { slug: "provider-pricing-drop-july-2026" } },
-  ];
-}
-
 const { slug } = Astro.params;
 
-const storiesMap: Record<string, any> = {
-  "new-frontier-model-july-2026": {
-    headline: "New frontier model release — vendor claims state-of-the-art coding benchmarks",
-    summary: "A major provider has announced a new model with claimed improvements across coding, reasoning, and agentic tasks. Independent verification is pending.",
-    topic: "Frontier Models",
-    published: "2026-07-12",
-    lastChecked: "2026-07-12",
-    sourceClass: "Vendor announcement",
-    sourceTier: "B",
-    evidenceStatus: "vendor_reported",
-    corroborationCount: 0,
-    hasIndependentVerification: false,
-    hasConflicts: false,
-    isReproducible: null,
-    sources: [
-      { label: "Official announcement", url: "#" },
-      { label: "Model card", url: "#" },
-    ],
-    relatedEntities: ["GPT-5", "Claude 4", "Gemini 3"],
-    corrections: [
-      {
-        type: "Factual error",
-        date: "2026-07-13",
-        previous: "The model was initially reported with a 1M token context window based on vendor pre-release materials.",
-        updated: "The released model has a 256K token context window. The 1M figure referred to a planned future update.",
-        reason: "Vendor corrected the specification in the official model card after release.",
-        impact: "Context window comparison tables updated. Model ranking adjusted for long-context use cases.",
-      },
-    ],
-  },
-  "open-weight-model-16gb-july-2026": {
-    headline: "Open-weight model surpasses previous best for local inference under 16 GB RAM",
-    summary: "Community benchmarks show a new open-weight model achieving competitive performance on consumer hardware. Multiple independent tests confirm the results.",
-    topic: "Open-weight Models",
-    published: "2026-07-11",
-    lastChecked: "2026-07-11",
-    sourceClass: "Independent benchmark",
-    sourceTier: "A",
-    evidenceStatus: "confirmed",
-    corroborationCount: 4,
-    hasIndependentVerification: true,
-    hasConflicts: false,
-    isReproducible: true,
-    sources: [
-      { label: "Community benchmark results", url: "#" },
-      { label: "Model repository", url: "#" },
-    ],
-    relatedEntities: ["Llama 4", "DeepSeek Coder V3", "Ollama"],
-    corrections: [],
-  },
-  "prompt-injection-advisory-july-2026": {
-    headline: "Security advisory: prompt injection vulnerability in popular agent framework",
-    summary: "Researchers have identified a prompt injection vector affecting several widely used agent frameworks. Patches are available. Users should update immediately.",
-    topic: "Security",
-    published: "2026-07-11",
-    lastChecked: "2026-07-11",
-    sourceClass: "Security advisory",
-    sourceTier: "A",
-    evidenceStatus: "confirmed",
-    corroborationCount: 2,
-    hasIndependentVerification: true,
-    hasConflicts: false,
-    isReproducible: true,
-    sources: [
-      { label: "CVE advisory", url: "#" },
-      { label: "Framework security patch notes", url: "#" },
-    ],
-    relatedEntities: ["LangChain", "CrewAI", "AutoGen"],
-    corrections: [],
-  },
-  "eu-ai-act-guidance-july-2026": {
-    headline: "EU AI Act implementation guidance published — what developers need to know",
-    summary: "New regulatory guidance clarifies compliance requirements for AI systems deployed in the EU. Classification thresholds and documentation requirements are detailed.",
-    topic: "Regulation",
-    published: "2026-07-10",
-    lastChecked: "2026-07-10",
-    sourceClass: "Official primary source",
-    sourceTier: "A",
-    evidenceStatus: "confirmed",
-    corroborationCount: 1,
-    hasIndependentVerification: false,
-    hasConflicts: false,
-    isReproducible: null,
-    sources: [
-      { label: "EU Commission guidance document", url: "#" },
-      { label: "AI Act text", url: "#" },
-    ],
-    relatedEntities: ["EU AI Act", "GDPR", "AI Liability Directive"],
-    corrections: [],
-  },
-  "provider-pricing-drop-july-2026": {
-    headline: "Provider pricing war intensifies — API costs drop 40% for mid-tier models",
-    summary: "Multiple providers have cut prices on mid-tier models, with some now offering free tiers with generous limits. Comparison tables have been updated.",
-    topic: "Provider Updates",
-    published: "2026-07-10",
-    lastChecked: "2026-07-10",
-    sourceClass: "Provider pricing page",
-    sourceTier: "B",
-    evidenceStatus: "confirmed",
-    corroborationCount: 3,
-    hasIndependentVerification: true,
-    hasConflicts: false,
-    isReproducible: true,
-    sources: [
-      { label: "Provider pricing pages", url: "#" },
-      { label: "API changelogs", url: "#" },
-    ],
-    relatedEntities: ["OpenAI", "Anthropic", "Groq", "Together AI"],
-    corrections: [],
-  },
-};
+if (!slug) {
+  return new Response("Not found", { status: 404 });
+}
 
-const story = storiesMap[slug] ?? storiesMap["new-frontier-model-july-2026"];
+// Fetch story from D1 — returns null if slug doesn't exist or isn't published
+const story = await getPublishedStoryBySlug(slug);
+if (!story) {
+  return new Response("Not found", { status: 404 });
+}
+
+// Fetch supporting data
+let sources: Awaited<ReturnType<typeof getPublishedSourcesForStory>> = [];
+let corrections: Awaited<ReturnType<typeof getCorrectionsForStory>> = [];
+let relatedStories: Awaited<ReturnType<typeof getRelatedStories>> = [];
+
+try {
+  [sources, corrections, relatedStories] = await Promise.all([
+    getPublishedSourcesForStory(story.id),
+    getCorrectionsForStory(story.id),
+    getRelatedStories(story.id, 4),
+  ]);
+} catch (e: any) {
+  // Supporting data fetch failed — story page still renders, just without enrichments
+  console.error(`Enrichment fetch failed for slug "${slug}":`, e.message);
+}
+
+// Evidence rating factors derived from story data
+const hasConflicts = story.evidenceStatus === "disputed";
+const isReproducible = story.sourceCount >= 2 ? true : null;
+const corroborationCount = story.sourceCount;
+const hasIndependentVerification = story.sourceCount >= 2 && story.sourceClass !== "Vendor announcement";
 ---
 
-<BaseLayout title={story.headline} description={story.summary}>
+<BaseLayout
+  title={`${story.headline} — The Trace Manifest`}
+  description={story.summary || `Published story: ${story.headline}`}
+>
   <div class="container" style="max-width:42rem;">
     <nav aria-label="Breadcrumb" class="meta" style="margin-bottom:1.5rem;">
-      <a href="/feed">Feed</a> &rsaquo; <a href={`/topics/${story.topic.toLowerCase().replace(/\s+/g,'-')}`}>{story.topic}</a>
+      <a href="/feed">Feed</a>
+      {story.topic && <> &rsaquo; <a href={`/feed?topic=${story.topic.toLowerCase().replace(/\s+/g, "-")}`}>{story.topic}</a></>}
+      &rsaquo; <span>{story.headline}</span>
     </nav>
 
     <EvidenceBadge status={story.evidenceStatus} />
@@ -143,78 +62,138 @@ const story = storiesMap[slug] ?? storiesMap["new-frontier-model-july-2026"];
     <h1 style="margin-top:0.75rem;">{story.headline}</h1>
 
     <div class="meta" style="margin-top:0.75rem;display:flex;gap:1rem;flex-wrap:wrap;">
-      <span>Published: {story.published}</span>
-      <span>Last checked: {story.lastChecked}</span>
-      <span>Source: {story.sourceClass}</span>
+      {story.publishedAt && <span>Published: {new Date(story.publishedAt).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}</span>}
+      {story.lastCheckedAt && <span>Last checked: {new Date(story.lastCheckedAt).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}</span>}
+      {story.sourceClass && <span>Source: {story.sourceClass}</span>}
     </div>
 
-    <div style="margin-top:2rem;">
-      <h2>Summary</h2>
-      <p>{story.summary}</p>
-    </div>
+    <!-- Status banners for withdrawn/superseded -->
+    {story.publicationStatus === "withdrawn" && (
+      <div class="card" style="margin-top:1.5rem;padding:1rem;background:color-mix(in oklch, var(--ev-corrected) 8%, transparent);border-left:4px solid var(--ev-corrected);">
+        <p class="meta" style="font-weight:600;color:var(--ev-corrected);">⚠ This story has been withdrawn. The information below is retained for transparency in accordance with our corrections policy.</p>
+      </div>
+    )}
+    {story.publicationStatus === "superseded" && (
+      <div class="card" style="margin-top:1.5rem;padding:1rem;background:color-mix(in oklch, var(--ev-outdated) 8%, transparent);border-left:4px solid var(--ev-outdated);">
+        <p class="meta" style="font-weight:600;color:var(--ev-outdated);">⚠ This story has been superseded by more recent information. It is retained for reference.</p>
+      </div>
+    )}
+
+    <!-- Summary -->
+    {story.summary && (
+      <div style="margin-top:2rem;">
+        <h2>Summary</h2>
+        <p>{story.summary}</p>
+      </div>
+    )}
+
+    <!-- TRACE Editorial Analysis -->
+    {story.editorialAnalysis && (
+      <div style="margin-top:2rem;">
+        <h2>TRACE Analysis</h2>
+        <div style="padding:1rem;background:color-mix(in oklch, var(--accent) 5%, transparent);border-radius:var(--radius);border-left:4px solid var(--accent);">
+          <p style="margin:0;">{story.editorialAnalysis}</p>
+        </div>
+      </div>
+    )}
+
+    <!-- Why it matters -->
+    {story.whyItMatters && (
+      <div style="margin-top:1.5rem;">
+        <h2>Why this matters</h2>
+        <p>{story.whyItMatters}</p>
+      </div>
+    )}
+
+    <!-- Headline image -->
+    {story.headlineImageUrl && (
+      <div style="margin-top:1.5rem;">
+        <img
+          src={story.headlineImageUrl}
+          alt={story.headline}
+          style="max-width:100%;border-radius:var(--radius-lg);"
+          loading="lazy"
+        />
+      </div>
+    )}
 
     <RatingExplanation
       status={story.evidenceStatus}
-      sourceClass={story.sourceClass}
-      sourceTier={story.sourceTier}
-      corroborationCount={story.corroborationCount}
-      hasIndependentVerification={story.hasIndependentVerification}
-      hasConflicts={story.hasConflicts}
-      lastChecked={story.lastChecked}
-      publishedDate={story.published}
-      isReproducible={story.isReproducible}
+      sourceClass={story.sourceClass || "Unknown"}
+      sourceTier={story.sourceCount >= 2 ? "A" : "B"}
+      corroborationCount={corroborationCount}
+      hasIndependentVerification={hasIndependentVerification}
+      hasConflicts={hasConflicts}
+      lastChecked={story.lastCheckedAt}
+      publishedDate={story.publishedAt || undefined}
+      isReproducible={isReproducible}
     />
 
-    <div style="margin-top:2rem;">
-      <h2>Sources</h2>
-      <ul style="padding-left:1.25rem;">
-        {story.sources.map((s: any) => (
-          <li><a href={s.url}>{s.label}</a></li>
-        ))}
-      </ul>
-    </div>
-
-    <div style="margin-top:2rem;">
-      <h2>Related</h2>
-      <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
-        {story.relatedEntities.map((e: string) => (
-          <span style="font-size:0.85rem;padding:0.25rem 0.5rem;background:var(--surface-2);border-radius:var(--radius);">{e}</span>
-        ))}
+    <!-- Sources -->
+    {sources.length > 0 && (
+      <div style="margin-top:2rem;">
+        <h2>Sources</h2>
+        <ul style="padding-left:1.25rem;">
+          {sources.map(s => (
+            <li style="margin-bottom:0.35rem;">
+              <a href={s.url}>{s.label}</a>
+              <span class="meta" style="margin-left:0.5rem;">({s.sourceName}, Tier {s.sourceTier})</span>
+            </li>
+          ))}
+        </ul>
       </div>
-    </div>
+    )}
 
-    {
-      story.corrections.length > 0 ? (
-        <div style="margin-top:2rem;">
-          <h2>Corrections</h2>
-          {story.corrections.map((c: any) => (
-            <div style="margin-top:0.75rem;padding:1rem;background:color-mix(in oklch, var(--ev-corrected) 6%, transparent);border:1px solid color-mix(in oklch, var(--ev-corrected) 18%, transparent);border-radius:var(--radius);border-left:4px solid var(--ev-corrected);">
-              <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.5rem;">
-                <span class="badge badge-sm badge-corrected">{c.type || 'Correction'}</span>
-                <span class="meta">{c.date}</span>
-              </div>
-              <div style="padding:0.4rem 0.6rem;background:color-mix(in oklch, var(--ev-disputed) 8%, transparent);border-radius:4px;margin-bottom:0.4rem;">
-                <p style="font-size:0.82rem;text-decoration:line-through;color:var(--ev-disputed);margin:0;">Previously: {c.previous}</p>
-              </div>
-              <div style="padding:0.4rem 0.6rem;background:color-mix(in oklch, var(--ev-confirmed) 8%, transparent);border-radius:4px;">
-                <p style="font-size:0.85rem;color:var(--ev-confirmed);margin:0;">Updated: {c.updated}</p>
-              </div>
-              <p class="meta" style="margin-top:0.5rem;"><strong>Reason:</strong> {c.reason}</p>
-              {c.impact && <p class="meta"><strong>Impact:</strong> {c.impact}</p>}
+    <!-- Related stories -->
+    {relatedStories.length > 0 && (
+      <div style="margin-top:2rem;">
+        <h2>Related stories</h2>
+        <div style="display:flex;flex-direction:column;gap:0.5rem;">
+          {relatedStories.map(r => (
+            <div class="card" style="padding:0.6rem 1rem;">
+              <a href={`/stories/${r.slug}`} style="font-size:0.9rem;">{r.headline}</a>
+              {r.topic && <span class="meta" style="margin-left:0.75rem;">{r.topic}</span>}
             </div>
           ))}
-          <p class="meta" style="margin-top:0.75rem;">
-            <a href="/corrections">View all corrections in the public ledger &rarr;</a>
-          </p>
         </div>
-      ) : (
-        <div style="margin-top:2rem;padding:1rem;background:var(--surface-2);border-radius:var(--radius);">
-          <p class="meta">
-            <strong>Corrections:</strong> No corrections have been recorded for this item.
-            <a href="/corrections" style="margin-left:0.5rem;">View all corrections &rarr;</a>
-          </p>
-        </div>
-      )
-    }
+      </div>
+    )}
+
+    <!-- Corrections -->
+    {corrections.length > 0 && (
+      <div style="margin-top:2rem;">
+        <h2>Corrections</h2>
+        {corrections.map(c => (
+          <div style="margin-top:0.75rem;padding:1rem;background:color-mix(in oklch, var(--ev-corrected) 6%, transparent);border:1px solid color-mix(in oklch, var(--ev-corrected) 18%, transparent);border-radius:var(--radius);border-left:4px solid var(--ev-corrected);">
+            <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.5rem;">
+              <span class="badge badge-sm badge-corrected">{c.correctionType}</span>
+              <span class="meta">{new Date(c.createdAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}</span>
+            </div>
+            <div style="padding:0.4rem 0.6rem;background:color-mix(in oklch, var(--ev-disputed) 8%, transparent);border-radius:4px;margin-bottom:0.4rem;">
+              <p style="font-size:0.82rem;text-decoration:line-through;color:var(--ev-disputed);margin:0;">Previously: {c.previousStatement}</p>
+            </div>
+            <div style="padding:0.4rem 0.6rem;background:color-mix(in oklch, var(--ev-confirmed) 8%, transparent);border-radius:4px;">
+              <p style="font-size:0.85rem;color:var(--ev-confirmed);margin:0;">Updated: {c.updatedStatement}</p>
+            </div>
+            <p class="meta" style="margin-top:0.5rem;"><strong>Reason:</strong> {c.reason}</p>
+          </div>
+        ))}
+        <p class="meta" style="margin-top:0.75rem;">
+          <a href="/corrections">View all corrections in the public ledger &rarr;</a>
+        </p>
+      </div>
+    )}
+
+    <!-- Review metadata -->
+    <footer style="margin-top:3rem;padding-top:1.5rem;border-top:1px solid var(--border);">
+      <p class="meta">
+        {story.reviewedBy && <>Reviewed by: {story.reviewedBy}{story.reviewedAt && <> on {new Date(story.reviewedAt).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}</>}. </>}
+        Evidence rating assigned by The Trace Manifest methodology.
+        <a href="/methodology">How ratings work &rarr;</a>
+      </p>
+      <p class="meta">
+        <a href="/corrections">Report an error or suggest a correction &rarr;</a>
+      </p>
+    </footer>
   </div>
 </BaseLayout>
