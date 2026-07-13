@@ -539,3 +539,26 @@ export async function getClusterSources(
     publishedAt: r.published_at,
   }));
 }
+
+// ============================================================
+// Admin — archive a cluster (set to 'archived' so it disappears from drafts)
+// ============================================================
+
+export async function archiveCluster(
+  env: Env,
+  clusterId: number,
+): Promise<{ success: boolean; error?: string }> {
+  const cluster = await env.DB.prepare(
+    `SELECT id FROM story_clusters WHERE id = ?`,
+  ).bind(clusterId).first<{ id: number }>();
+
+  if (!cluster) {
+    return { success: false, error: `Cluster ${clusterId} not found.` };
+  }
+
+  await env.DB.prepare(
+    `UPDATE story_clusters SET publication_status = 'archived', updated_at = datetime('now') WHERE id = ?`,
+  ).bind(clusterId).run();
+
+  return { success: true };
+}

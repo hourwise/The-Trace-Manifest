@@ -165,6 +165,7 @@ const evidenceStates = [
         </div>
         <div style="margin-top:1rem;display:flex;gap:0.75rem;align-items:center;flex-wrap:wrap;">
           <button type="button" id="publish-btn" class="btn btn-primary" disabled>Publish Story</button>
+          <button type="button" id="archive-btn" class="btn btn-secondary" style="font-size:0.8rem;" disabled>Archive (not news)</button>
           <span id="publish-status" class="meta"></span>
         </div>
       </div>
@@ -226,10 +227,24 @@ const evidenceStates = [
 
           select.innerHTML = '<option value="">— Select a cluster —</option>';
           if (clusters.length > 0) {
-            clusters.forEach((c) => {
+            // Fetch source types for all clusters to show indicators
+            const clusterMeta: Record<number, string> = {};
+            await Promise.all(clusters.slice(0, 15).map(async (c: any) => {
+              try {
+                const srcRes = await fetch(`${WORKER_URL}/admin/cluster-sources?clusterId=${c.id}`, { headers: authHeaders() });
+                if (srcRes.ok) {
+                  const srcs: Array<{ sourceName: string }> = await srcRes.json();
+                  const names = new Set(srcs.map((s: any) => s.sourceName));
+                  clusterMeta[c.id] = [...names].slice(0, 3).join(", ");
+                }
+              } catch { clusterMeta[c.id] = ""; }
+            }));
+
+            clusters.forEach((c: any) => {
               const opt = document.createElement("option");
               opt.value = String(c.id);
-              opt.textContent = `#${c.id}: ${c.title.slice(0, 80)} [${c.publication_status}] (${c.source_count || 0} sources)`;
+              const meta = clusterMeta[c.id] ? ` — ${clusterMeta[c.id]}` : "";
+              opt.textContent = `#${c.id}: ${c.title.slice(0, 70)} [${c.publication_status}] (${c.source_count || 0} sources${meta})`;
               select.appendChild(opt);
             });
             count.textContent = `${clusters.length} clusters loaded. ${clusters.filter((c) => c.publication_status === 'draft').length} drafts.`;
@@ -251,10 +266,14 @@ const evidenceStates = [
       // Enable publish button when cluster selected and summary has content
       function checkPublishReady(): void {
         const btn = $<HTMLButtonElement>("publish-btn");
+        const archBtn = $<HTMLButtonElement>("archive-btn");
         const select = $<HTMLSelectElement>("cluster-select");
         const summary = $<HTMLTextAreaElement>("pub-summary");
         if (btn && select && summary) {
           btn.disabled = !select.value || !summary.value || summary.value.trim().length < 20;
+        }
+        if (archBtn && select) {
+          archBtn.disabled = !select.value;
         }
       }
       $<HTMLSelectElement>("cluster-select")?.addEventListener("change", checkPublishReady);
@@ -294,6 +313,34 @@ const evidenceStates = [
         } catch (e) {
           list.innerHTML = '<p class="meta" style="color:var(--ev-disputed);">Failed to load source material.</p>';
           console.error(e);
+        }
+      });
+
+      // Archive button — hide boring clusters from the draft list
+      $<HTMLButtonElement>("archive-btn")?.addEventListener("click", async () => {
+        if (!getToken()) { status("Save your admin token first.", true); return; }
+        const select = $<HTMLSelectElement>("cluster-select");
+        const clusterId = parseInt(select?.value || "");
+        if (!clusterId || isNaN(clusterId)) { status("Select a cluster first.", true); return; }
+
+        const btn = $<HTMLButtonElement>("archive-btn");
+        if (btn) { btn.disabled = true; btn.textContent = "Archiving…"; }
+        status("Archiving…", false);
+
+        try {
+          const res = await fetch(`${WORKER_URL}/admin/archive-cluster`, {
+            method: "POST",
+            headers: authHeaders(),
+            body: JSON.stringify({ clusterId }),
+          });
+          if (!res.ok) { const d = await res.json() as { error?: string }; throw new Error(d.error || `HTTP ${res.status}`); }
+          status("Archived. Click Load Clusters to refresh.", false);
+          // Remove from dropdown
+          if (select) { const opt = select.querySelector(`option[value="${clusterId}"]`); if (opt) opt.remove(); }
+        } catch (e: any) {
+          status(e.message || "Archive failed", true);
+        } finally {
+          if (btn) { btn.disabled = false; btn.textContent = "Archive (not news)"; }
         }
       });
 

@@ -18,7 +18,7 @@ import {
   publishStory, updateStoryStatus, publishBriefing,
   getPublishedStories, getPublishedStoryBySlug, getPublishedTopics,
   getLatestPublishedBriefing, getPublishedSourcesForStory, getRelatedStories,
-  getAllClusters, getClusterSources,
+  getAllClusters, getClusterSources, archiveCluster,
 } from "./publish";
 import type { Source, FeedItem } from "./types";
 
@@ -368,6 +368,8 @@ async function handleAdminRoute(path: string, request: Request, env: Env, ctx: E
       return handleClustersList(request, env);
     case "/admin/cluster-sources":
       return handleClusterSources(request, env);
+    case "/admin/archive-cluster":
+      return handleArchiveCluster(request, env);
     default:
       return Response.json({ error: "Not found" }, { status: 404 });
   }
@@ -615,4 +617,22 @@ async function handleClusterSources(request: Request, env: Env): Promise<Respons
 
   const sources = await getClusterSources(env, clusterId);
   return Response.json(sources);
+}
+
+async function handleArchiveCluster(request: Request, env: Env): Promise<Response> {
+  if (request.method !== "POST") {
+    return Response.json({ error: "Method not allowed" }, { status: 405 });
+  }
+
+  const body = await request.json() as { clusterId?: number };
+  if (!body.clusterId) {
+    return Response.json({ error: "clusterId is required" }, { status: 400 });
+  }
+
+  const result = await archiveCluster(env, body.clusterId);
+  if (!result.success) {
+    return Response.json({ error: result.error }, { status: 400 });
+  }
+
+  return Response.json({ status: "ok" });
 }
