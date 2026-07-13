@@ -11,6 +11,8 @@ import { deduplicateURL, hashURL } from "./dedup";
 import { runClassification } from "./classify";
 import { runCrossSourceMatching } from "./cross-source-match";
 import { runClustering } from "./cluster";
+import { runClaimExtraction, detectClaimConflicts } from "./extract-claims";
+import { recordClusterCorrection, recordClaimCorrection, listPublishedCorrections, validateCorrectionInput } from "./corrections";
 import type { Source, FeedItem } from "./types";
 
 // ============================================================
@@ -66,6 +68,8 @@ export default {
           await runClassificationPipeline(env);
           await runCrossSourceMatchingPipeline(env);
           await runClusteringPipeline(env);
+          await runClaimExtractionPipeline(env);
+          await runConflictDetectionPipeline(env);
           break;
         case "0 18 * * *":
           await checkAllSourcesHealth(env);
@@ -258,6 +262,30 @@ async function runClusteringPipeline(env: Env) {
 }
 
 // ============================================================
+// Claim extraction pipeline (runs after clustering)
+// ============================================================
+async function runClaimExtractionPipeline(env: Env) {
+  console.log("Claim extraction: starting...");
+  const result = await runClaimExtraction(env.DB,
+    (processed, total) => {
+      if (processed % 50 === 0 || processed === total) {
+        console.log(`Claim extraction progress: ${processed}/${total}`);
+      }
+    }
+  );
+  console.log(`Claim extraction: done — ${result.claimsExtracted} claims from ${result.processed} items, ${result.evidenceCreated} evidence records`);
+}
+
+// ============================================================
+// Conflict detection pipeline (runs after claim extraction)
+// ============================================================
+async function runConflictDetectionPipeline(env: Env) {
+  console.log("Conflict detection: starting...");
+  const result = await detectClaimConflicts(env.DB);
+  console.log(`Conflict detection: done — ${result.conflictsDetected} conflicts detected`);
+}
+
+// ============================================================
 // Source health check
 // ============================================================
 async function checkAllSourcesHealth(env: Env) {
@@ -293,6 +321,14 @@ async function handleAdminRoute(path: string, request: Request, env: Env, ctx: E
       return handleCrossSourceMatch(env);
     case "/admin/cluster":
       return handleManualCluster(env);
+    case "/admin/extract-claims":
+      return handleManualClaimExtraction(env);
+    case "/admin/detect-conflicts":
+      return handleManualConflictDetection(env);
+    case "/admin/corrections":
+      return handleCorrectionsList(env);
+    case "/admin/correct":
+      return handleRecordCorrection(request, env);
     default:
       return Response.json({ error: "Not found" }, { status: 404 });
   }
@@ -360,4 +396,50 @@ async function handleCrossSourceMatch(env: Env): Promise<Response> {
 async function handleManualCluster(env: Env): Promise<Response> {
   const result = await runClustering(env.DB);
   return Response.json({ status: "ok", ...result });
+}
+
+async function handleManualClaimExtraction(env: Env): Promise<Response> {
+  const result = await runClaimExtraction(env.DB);
+  return Response.json({ status: "ok", ...result });
+}
+
+async function handleManualConflictDetection(env: Env): Promise<Response> {
+  const result = await detectClaimConflicts(env.DB);
+  return Response.json({ status: "ok", ...result });
+}
+
+async function handleCorrectionsList(env: Env): Promise<Response> {
+  const results = await listPublishedCorrections(env.DB);
+  return Response.json(results || []);
+}
+
+async function handleRecordCorrection(request: Request, env: Env): Promise<Response> {
+  if (request.method !== "POST") {
+    return Response.json({ error: "Method not allowed — use POST" }, { status: 405 });
+  }
+
+  let body: any;
+  try {
+    body = await request.json();
+  } catch {
+    return Response.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+
+  const validationError = validateCorrectionInput(body);
+  if (validationError) {
+    return Response.json({ error: validationError }, { status: 400 });
+  }
+
+  try {
+    if (body.clusterId) {
+      const result = await recordClusterCorrection(env.DB, body);
+      return Response.json({ status: "ok", ...result });
+    } else if (body.claimId) {
+      const result = await recordClaimCorrection(env.DB, body);
+      return Response.json({ status: "ok", ...result });
+    }
+    return Response.json({ error: "clusterId or claimId required" }, { status: 400 });
+  } catch (err: any) {
+    return Response.json({ error: err.message }, { status: 500 });
+  }
 }

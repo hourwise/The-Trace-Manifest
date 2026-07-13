@@ -30,12 +30,13 @@ import BaseLayout from "../../layouts/BaseLayout.astro";
       </a>
     </div>
 
-    <section style="margin-top:3rem;padding:1rem;background:var(--color-bg-alt);border-radius:var(--radius);">
+    <section style="margin-top:3rem;padding:1rem;background:var(--surface-2);border-radius:var(--radius);">
       <h2>Phase 3 Status</h2>
       <div style="margin-top:0.75rem;">
-        <p class="meta"><strong>Pipeline:</strong> 64 sources → ingestion (every 30 min) → classification (16 topics, lexical) → cross-source matching (Jaccard) → story clustering → human review → publication.</p>
-        <p class="meta"><strong>Worker:</strong> <code>trace-manifest-ingestion.philgeran.workers.dev</code> with 5 cron triggers. D1 database (16 tables + pipeline_stages). 138 items ingested, awaiting 09:00 UTC classification run.</p>
-        <p class="meta"><strong>Next:</strong> Claim extraction, evidence labelling, conflict detection. Golden evaluation dataset under construction (45 tests passing).</p>
+        <p class="meta"><strong>Pipeline:</strong> 64 sources → ingestion (every 30 min) → classification (16 topics, lexical) → cross-source matching (Jaccard) → story clustering → claim extraction → conflict detection → human review → publication.</p>
+        <p class="meta"><strong>Worker:</strong> <code>trace-manifest-ingestion.philgeran.workers.dev</code> with 5 cron triggers. D1 database (16 tables + pipeline_stages). 138 items ingested.</p>
+        <p class="meta"><strong>Completed:</strong> Classification, cross-source matching, semantic dedup, story clustering, claim extraction (10 claim classes), conflict detection, evidence labelling (10-state system), rating explanation panel.</p>
+        <p class="meta"><strong>Next:</strong> Correction workflow, knowledge base (Phase 3B), golden evaluation dataset expansion.</p>
       </div>
     </section>
   </div>

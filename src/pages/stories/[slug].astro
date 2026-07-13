@@ -1,5 +1,7 @@
 ---
 import BaseLayout from "../../layouts/BaseLayout.astro";
+import EvidenceBadge from "../../components/EvidenceBadge.astro";
+import RatingExplanation from "../../components/RatingExplanation.astro";
 
 export function getStaticPaths() {
   return [
@@ -21,13 +23,27 @@ const storiesMap: Record<string, any> = {
     published: "2026-07-12",
     lastChecked: "2026-07-12",
     sourceClass: "Vendor announcement",
-    evidenceStatus: "Vendor-reported",
+    sourceTier: "B",
+    evidenceStatus: "vendor_reported",
+    corroborationCount: 0,
+    hasIndependentVerification: false,
+    hasConflicts: false,
+    isReproducible: null,
     sources: [
       { label: "Official announcement", url: "#" },
       { label: "Model card", url: "#" },
     ],
     relatedEntities: ["GPT-5", "Claude 4", "Gemini 3"],
-    corrections: [],
+    corrections: [
+      {
+        type: "Factual error",
+        date: "2026-07-13",
+        previous: "The model was initially reported with a 1M token context window based on vendor pre-release materials.",
+        updated: "The released model has a 256K token context window. The 1M figure referred to a planned future update.",
+        reason: "Vendor corrected the specification in the official model card after release.",
+        impact: "Context window comparison tables updated. Model ranking adjusted for long-context use cases.",
+      },
+    ],
   },
   "open-weight-model-16gb-july-2026": {
     headline: "Open-weight model surpasses previous best for local inference under 16 GB RAM",
@@ -36,7 +52,12 @@ const storiesMap: Record<string, any> = {
     published: "2026-07-11",
     lastChecked: "2026-07-11",
     sourceClass: "Independent benchmark",
-    evidenceStatus: "Confirmed",
+    sourceTier: "A",
+    evidenceStatus: "confirmed",
+    corroborationCount: 4,
+    hasIndependentVerification: true,
+    hasConflicts: false,
+    isReproducible: true,
     sources: [
       { label: "Community benchmark results", url: "#" },
       { label: "Model repository", url: "#" },
@@ -51,7 +72,12 @@ const storiesMap: Record<string, any> = {
     published: "2026-07-11",
     lastChecked: "2026-07-11",
     sourceClass: "Security advisory",
-    evidenceStatus: "Confirmed",
+    sourceTier: "A",
+    evidenceStatus: "confirmed",
+    corroborationCount: 2,
+    hasIndependentVerification: true,
+    hasConflicts: false,
+    isReproducible: true,
     sources: [
       { label: "CVE advisory", url: "#" },
       { label: "Framework security patch notes", url: "#" },
@@ -66,7 +92,12 @@ const storiesMap: Record<string, any> = {
     published: "2026-07-10",
     lastChecked: "2026-07-10",
     sourceClass: "Official primary source",
-    evidenceStatus: "Confirmed",
+    sourceTier: "A",
+    evidenceStatus: "confirmed",
+    corroborationCount: 1,
+    hasIndependentVerification: false,
+    hasConflicts: false,
+    isReproducible: null,
     sources: [
       { label: "EU Commission guidance document", url: "#" },
       { label: "AI Act text", url: "#" },
@@ -81,7 +112,12 @@ const storiesMap: Record<string, any> = {
     published: "2026-07-10",
     lastChecked: "2026-07-10",
     sourceClass: "Provider pricing page",
-    evidenceStatus: "Confirmed",
+    sourceTier: "B",
+    evidenceStatus: "confirmed",
+    corroborationCount: 3,
+    hasIndependentVerification: true,
+    hasConflicts: false,
+    isReproducible: true,
     sources: [
       { label: "Provider pricing pages", url: "#" },
       { label: "API changelogs", url: "#" },
@@ -92,18 +128,6 @@ const storiesMap: Record<string, any> = {
 };
 
 const story = storiesMap[slug] ?? storiesMap["new-frontier-model-july-2026"];
-
-const evidenceLabelClass = (status: string) => {
-  const map: Record<string,string> = {
-    "Confirmed": "evidence-label--confirmed",
-    "Vendor-reported": "evidence-label--vendor",
-    "Disputed": "evidence-label--disputed",
-    "Unverified": "evidence-label--unverified",
-    "Corrected": "evidence-label--corrected",
-    "Outdated": "evidence-label--outdated",
-  };
-  return map[status] ?? "evidence-label--unverified";
-};
 ---
 
 <BaseLayout title={story.headline} description={story.summary}>
@@ -112,7 +136,7 @@ const evidenceLabelClass = (status: string) => {
       <a href="/feed">Feed</a> &rsaquo; <a href={`/topics/${story.topic.toLowerCase().replace(/\s+/g,'-')}`}>{story.topic}</a>
     </nav>
 
-    <span class={`evidence-label ${evidenceLabelClass(story.evidenceStatus)}`}>{story.evidenceStatus}</span>
+    <EvidenceBadge status={story.evidenceStatus} />
 
     <h1 style="margin-top:0.75rem;">{story.headline}</h1>
 
@@ -127,17 +151,17 @@ const evidenceLabelClass = (status: string) => {
       <p>{story.summary}</p>
     </div>
 
-    <div style="margin-top:2rem;">
-      <h2>Why this rating?</h2>
-      <p class="meta">
-        This item is rated <strong>{story.evidenceStatus}</strong> because the primary source is a vendor announcement.
-        No independent benchmark results or third-party verification were available at the time of publication.
-        The rating will be updated when independent evidence becomes available.
-      </p>
-      <p class="meta" style="margin-top:0.5rem;">
-        <a href="/methodology">Read about our evidence-rating methodology &rarr;</a>
-      </p>
-    </div>
+    <RatingExplanation
+      status={story.evidenceStatus}
+      sourceClass={story.sourceClass}
+      sourceTier={story.sourceTier}
+      corroborationCount={story.corroborationCount}
+      hasIndependentVerification={story.hasIndependentVerification}
+      hasConflicts={story.hasConflicts}
+      lastChecked={story.lastChecked}
+      publishedDate={story.published}
+      isReproducible={story.isReproducible}
+    />
 
     <div style="margin-top:2rem;">
       <h2>Sources</h2>
@@ -152,16 +176,43 @@ const evidenceLabelClass = (status: string) => {
       <h2>Related</h2>
       <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
         {story.relatedEntities.map((e: string) => (
-          <span style="font-size:0.85rem;padding:0.25rem 0.5rem;background:var(--color-bg-alt);border-radius:var(--radius);">{e}</span>
+          <span style="font-size:0.85rem;padding:0.25rem 0.5rem;background:var(--surface-2);border-radius:var(--radius);">{e}</span>
         ))}
       </div>
     </div>
 
-    <div style="margin-top:2rem;padding:1rem;background:var(--color-bg-alt);border-radius:var(--radius);">
-      <p class="meta">
-        <strong>Corrections:</strong> No corrections have been recorded for this item.
-        <a href="/corrections">View all corrections &rarr;</a>
-      </p>
-    </div>
+    {
+      story.corrections.length > 0 ? (
+        <div style="margin-top:2rem;">
+          <h2>Corrections</h2>
+          {story.corrections.map((c: any) => (
+            <div style="margin-top:0.75rem;padding:1rem;background:color-mix(in oklch, var(--ev-corrected) 6%, transparent);border:1px solid color-mix(in oklch, var(--ev-corrected) 18%, transparent);border-radius:var(--radius);border-left:4px solid var(--ev-corrected);">
+              <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.5rem;">
+                <span class="badge badge-sm badge-corrected">{c.type || 'Correction'}</span>
+                <span class="meta">{c.date}</span>
+              </div>
+              <div style="padding:0.4rem 0.6rem;background:color-mix(in oklch, var(--ev-disputed) 8%, transparent);border-radius:4px;margin-bottom:0.4rem;">
+                <p style="font-size:0.82rem;text-decoration:line-through;color:var(--ev-disputed);margin:0;">Previously: {c.previous}</p>
+              </div>
+              <div style="padding:0.4rem 0.6rem;background:color-mix(in oklch, var(--ev-confirmed) 8%, transparent);border-radius:4px;">
+                <p style="font-size:0.85rem;color:var(--ev-confirmed);margin:0;">Updated: {c.updated}</p>
+              </div>
+              <p class="meta" style="margin-top:0.5rem;"><strong>Reason:</strong> {c.reason}</p>
+              {c.impact && <p class="meta"><strong>Impact:</strong> {c.impact}</p>}
+            </div>
+          ))}
+          <p class="meta" style="margin-top:0.75rem;">
+            <a href="/corrections">View all corrections in the public ledger &rarr;</a>
+          </p>
+        </div>
+      ) : (
+        <div style="margin-top:2rem;padding:1rem;background:var(--surface-2);border-radius:var(--radius);">
+          <p class="meta">
+            <strong>Corrections:</strong> No corrections have been recorded for this item.
+            <a href="/corrections" style="margin-left:0.5rem;">View all corrections &rarr;</a>
+          </p>
+        </div>
+      )
+    }
   </div>
 </BaseLayout>

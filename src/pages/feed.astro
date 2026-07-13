@@ -1,5 +1,6 @@
 ﻿---
 import BaseLayout from "../layouts/BaseLayout.astro";
+import EvidenceBadge from "../components/EvidenceBadge.astro";
 
 // Static placeholder feed items — replaced by data layer in Phase 2
 const feedItems = [
@@ -9,7 +10,7 @@ const feedItems = [
     topic: "Frontier Models",
     date: "2026-07-12",
     sourceClass: "Vendor announcement",
-    evidenceStatus: "Vendor-reported",
+    evidenceStatus: "vendor_reported",
     slug: "new-frontier-model-july-2026",
   },
   {
@@ -18,7 +19,7 @@ const feedItems = [
     topic: "Open-weight Models",
     date: "2026-07-11",
     sourceClass: "Independent benchmark",
-    evidenceStatus: "Confirmed",
+    evidenceStatus: "confirmed",
     slug: "open-weight-model-16gb-july-2026",
   },
   {
@@ -27,7 +28,7 @@ const feedItems = [
     topic: "Security",
     date: "2026-07-11",
     sourceClass: "Security advisory",
-    evidenceStatus: "Confirmed",
+    evidenceStatus: "confirmed",
     slug: "prompt-injection-advisory-july-2026",
   },
   {
@@ -36,7 +37,7 @@ const feedItems = [
     topic: "Regulation",
     date: "2026-07-10",
     sourceClass: "Official primary source",
-    evidenceStatus: "Confirmed",
+    evidenceStatus: "confirmed",
     slug: "eu-ai-act-guidance-july-2026",
   },
   {
@@ -45,22 +46,10 @@ const feedItems = [
     topic: "Provider Updates",
     date: "2026-07-10",
     sourceClass: "Provider pricing page",
-    evidenceStatus: "Confirmed",
+    evidenceStatus: "confirmed",
     slug: "provider-pricing-drop-july-2026",
   },
 ];
-
-const evidenceLabelClass = (status: string) => {
-  const map: Record<string,string> = {
-    "Confirmed": "evidence-label--confirmed",
-    "Vendor-reported": "evidence-label--vendor",
-    "Disputed": "evidence-label--disputed",
-    "Unverified": "evidence-label--unverified",
-    "Corrected": "evidence-label--corrected",
-    "Outdated": "evidence-label--outdated",
-  };
-  return map[status] ?? "evidence-label--unverified";
-};
 ---
 
 <BaseLayout
@@ -91,7 +80,7 @@ const evidenceLabelClass = (status: string) => {
         <article class="card">
           <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:0.5rem;">
             <span class="meta">{item.topic}</span>
-            <span class={`evidence-label ${evidenceLabelClass(item.evidenceStatus)}`}>{item.evidenceStatus}</span>
+            <EvidenceBadge status={item.evidenceStatus} size="sm" />
           </div>
           <h2 style="font-size:1.15rem;margin-top:0.5rem;">
             <a href={`/stories/${item.slug}`}>{item.headline}</a>

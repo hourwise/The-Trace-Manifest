@@ -121,50 +121,109 @@ CREATE TABLE IF NOT EXISTS story_entities (
 );
 
 -- ============================================================
--- Claims and evidence
+-- Claims and evidence (Phase 3: Curation and Trust)
 -- ============================================================
+-- Claim classes per ADR-0007 and build plan:
+--   specification-defined, official-vendor-claim, observed-implementation-behaviour,
+--   independent-research-finding, benchmark-result, community-report,
+--   legal-or-regulatory-statement, editorial-synthesis, trace-manifest-inference
 CREATE TABLE IF NOT EXISTS claims (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  cluster_id INTEGER NOT NULL REFERENCES story_clusters(id),
+  cluster_id INTEGER REFERENCES story_clusters(id),
+  feed_item_id INTEGER NOT NULL REFERENCES feed_items(id),
   claim_text TEXT NOT NULL,
-  claim_type TEXT NOT NULL CHECK(claim_type IN ('factual','benchmark','pricing','security','licence','capability','regulatory','other')),
+  claim_class TEXT NOT NULL CHECK(claim_class IN (
+    'specification_defined','official_vendor_claim','observed_implementation_behaviour',
+    'independent_research_finding','benchmark_result','community_report',
+    'legal_or_regulatory_statement','editorial_synthesis','trace_manifest_inference'
+  )),
+  claim_domain TEXT NOT NULL DEFAULT 'general' CHECK(claim_domain IN (
+    'model_capability','model_release','benchmark','pricing','security',
+    'licence','regulation','research','product','funding','hardware','general'
+  )),
   severity TEXT NOT NULL DEFAULT 'standard' CHECK(severity IN ('low','standard','high','extraordinary')),
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  evidence_quality TEXT NOT NULL DEFAULT 'unrated' CHECK(evidence_quality IN (
+    'unrated','weak','moderate','strong','very_strong','disputed'
+  )),
+  confidence_score REAL NOT NULL DEFAULT 0,
+  is_disputed BOOLEAN NOT NULL DEFAULT 0,
+  is_corrected BOOLEAN NOT NULL DEFAULT 0,
+  superseded_by INTEGER REFERENCES claims(id),
+  extraction_method TEXT NOT NULL DEFAULT 'rule_based',
+  extraction_version TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE INDEX IF NOT EXISTS idx_claims_cluster ON claims(cluster_id);
+CREATE INDEX IF NOT EXISTS idx_claims_feed_item ON claims(feed_item_id);
+CREATE INDEX IF NOT EXISTS idx_claims_class ON claims(claim_class);
+CREATE INDEX IF NOT EXISTS idx_claims_domain ON claims(claim_domain);
+
+-- Evidence relationship types per build plan:
+--   supports, partially_supports, qualifies, contradicts, reports,
+--   reproduces, fails_to_reproduce, supersedes, corrects, contextualises
 CREATE TABLE IF NOT EXISTS claim_evidence (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   claim_id INTEGER NOT NULL REFERENCES claims(id),
   feed_item_id INTEGER REFERENCES feed_items(id),
-  evidence_type TEXT NOT NULL CHECK(evidence_type IN ('primary_source','independent_test','vendor_claim','community_report','expert_analysis','corroboration','contradiction')),
+  relationship TEXT NOT NULL CHECK(relationship IN (
+    'supports','partially_supports','qualifies','contradicts',
+    'reports','reproduces','fails_to_reproduce',
+    'supersedes','corrects','contextualises'
+  )),
   evidence_summary TEXT NOT NULL,
+  source_tier TEXT,
+  is_primary_source BOOLEAN NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE INDEX IF NOT EXISTS idx_claim_evidence_claim ON claim_evidence(claim_id);
 
 CREATE TABLE IF NOT EXISTS claim_conflicts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   claim_a_id INTEGER NOT NULL REFERENCES claims(id),
   claim_b_id INTEGER NOT NULL REFERENCES claims(id),
-  conflict_type TEXT NOT NULL CHECK(conflict_type IN ('direct_contradiction','methodology_difference','version_difference','interpretation_difference')),
+  conflict_type TEXT NOT NULL CHECK(conflict_type IN (
+    'direct_contradiction','methodology_difference',
+    'version_difference','interpretation_difference',
+    'source_disagreement','temporal_difference'
+  )),
+  severity TEXT NOT NULL DEFAULT 'standard' CHECK(severity IN ('low','standard','high','critical')),
   resolution TEXT,
+  resolved_by TEXT,
+  resolved_at TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE INDEX IF NOT EXISTS idx_claim_conflicts_claims ON claim_conflicts(claim_a_id, claim_b_id);
+
 -- ============================================================
--- Corrections ledger
+-- Corrections ledger (product principle 2.5: visible corrections)
 -- ============================================================
 CREATE TABLE IF NOT EXISTS corrections (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   cluster_id INTEGER REFERENCES story_clusters(id),
   claim_id INTEGER REFERENCES claims(id),
+  correction_type TEXT NOT NULL CHECK(correction_type IN (
+    'factual_error','rating_change','licence_correction','pricing_correction',
+    'benchmark_correction','supersession','deprecation','methodology_update','other'
+  )),
   previous_statement TEXT NOT NULL,
   updated_statement TEXT NOT NULL,
+  previous_evidence_status TEXT,
+  updated_evidence_status TEXT,
   reason TEXT NOT NULL,
   evidence_url TEXT,
   impact TEXT,
   corrected_by TEXT NOT NULL,
-  corrected_at TEXT NOT NULL DEFAULT (datetime('now'))
+  corrected_at TEXT NOT NULL DEFAULT (datetime('now')),
+  published BOOLEAN NOT NULL DEFAULT 1
 );
+
+CREATE INDEX IF NOT EXISTS idx_corrections_cluster ON corrections(cluster_id);
+CREATE INDEX IF NOT EXISTS idx_corrections_claim ON corrections(claim_id);
+CREATE INDEX IF NOT EXISTS idx_corrections_published ON corrections(published);
 
 -- ============================================================
 -- Ingestion jobs (tracking scheduled fetches)
@@ -172,7 +231,7 @@ CREATE TABLE IF NOT EXISTS corrections (
 CREATE TABLE IF NOT EXISTS ingestion_jobs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   source_id INTEGER REFERENCES sources(id),
-  job_type TEXT NOT NULL CHECK(job_type IN ('fetch','classify','dedup','cluster','health_check','briefing')),
+  job_type TEXT NOT NULL CHECK(job_type IN ('fetch','classify','dedup','cluster','health_check','briefing','extract_claims','conflict_detection')),
   status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','running','completed','failed')),
   items_processed INTEGER DEFAULT 0,
   items_created INTEGER DEFAULT 0,
@@ -240,7 +299,7 @@ CREATE INDEX IF NOT EXISTS idx_cron_runs_started ON cron_runs(started_at);
 CREATE TABLE IF NOT EXISTS pipeline_stages (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   feed_item_id INTEGER NOT NULL REFERENCES feed_items(id),
-  stage TEXT NOT NULL CHECK(stage IN ('classified','cross_source_matched','clustered','claim_extracted','evidence_labelled','reviewed','published')),
+  stage TEXT NOT NULL CHECK(stage IN ('classified','cross_source_matched','clustered','claim_extracted','evidence_labelled','reviewed','published','corrected')),
   algorithm_version TEXT NOT NULL,
   started_at TEXT NOT NULL DEFAULT (datetime('now')),
   completed_at TEXT,

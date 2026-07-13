@@ -1,0 +1,296 @@
+---
+// The Trace Manifest — Rating Explanation Panel
+// Decomposes every evidence rating into its constituent factors.
+// Implements product principle 2.3: "Every rating should be decomposable."
+// Use in: story detail pages, model pages, benchmark pages, admin review.
+
+export interface RatingFactor {
+  label: string;
+  value: string;
+  assessment: "positive" | "neutral" | "negative" | "warning";
+  detail: string;
+}
+
+export interface Props {
+  /** Evidence status from the 10-state system */
+  status: string;
+  /** Source classification (primary, vendor, community, mixed) */
+  sourceClass?: string;
+  /** Source tier (A, B, C) */
+  sourceTier?: string;
+  /** Number of corroborating sources */
+  corroborationCount?: number;
+  /** Whether independent verification exists */
+  hasIndependentVerification?: boolean;
+  /** Whether conflicts have been detected */
+  hasConflicts?: boolean;
+  /** Date of last evidence check */
+  lastChecked?: string;
+  /** Original publication date */
+  publishedDate?: string;
+  /** Whether the item has been corrected */
+  isCorrected?: boolean;
+  /** Whether the item has been superseded */
+  isSuperseded?: boolean;
+  /** Whether the claim is reproducible */
+  isReproducible?: boolean | null;
+}
+
+const {
+  status,
+  sourceClass = "Unknown",
+  sourceTier = "C",
+  corroborationCount = 0,
+  hasIndependentVerification = false,
+  hasConflicts = false,
+  lastChecked,
+  publishedDate,
+  isCorrected = false,
+  isSuperseded = false,
+  isReproducible = null,
+} = Astro.props;
+
+// ============================================================
+// Build rating factors
+// ============================================================
+
+function buildFactors(): RatingFactor[] {
+  const factors: RatingFactor[] = [];
+
+  // 1. Source class
+  const sourceAssessment = sourceClass.toLowerCase().includes("primary")
+    ? "positive" as const
+    : sourceClass.toLowerCase().includes("vendor")
+      ? "neutral" as const
+      : sourceClass.toLowerCase().includes("community")
+        ? "neutral" as const
+        : "warning" as const;
+
+  const sourceDetail = sourceClass.toLowerCase().includes("primary")
+    ? "Primary source — direct from official documentation, research paper, or specification."
+    : sourceClass.toLowerCase().includes("vendor")
+      ? "Vendor-reported — claims originate from the provider and may reflect commercial interest."
+      : sourceClass.toLowerCase().includes("community")
+        ? "Community-reported — claims originate from users and community members."
+        : "Source class not determined — additional verification recommended.";
+
+  factors.push({
+    label: "Source class",
+    value: sourceClass,
+    assessment: sourceAssessment,
+    detail: sourceDetail,
+  });
+
+  // 2. Source tier
+  const tierAssessment = sourceTier === "A" ? "positive" as const
+    : sourceTier === "B" ? "neutral" as const
+    : "warning" as const;
+
+  factors.push({
+    label: "Source tier",
+    value: `Tier ${sourceTier}`,
+    assessment: tierAssessment,
+    detail: sourceTier === "A"
+      ? "Tier A — primary technical or research source with strong provenance."
+      : sourceTier === "B"
+        ? "Tier B — reputable secondary source with editorial standards."
+        : "Tier C — community, aggregator, or unverified source.",
+  });
+
+  // 3. Corroboration
+  const corroborationAssessment = corroborationCount >= 3 ? "positive" as const
+    : corroborationCount >= 1 ? "neutral" as const
+    : "warning" as const;
+
+  factors.push({
+    label: "Corroboration",
+    value: corroborationCount >= 3
+      ? `${corroborationCount} independent sources`
+      : corroborationCount === 1
+        ? "Single source"
+        : corroborationCount === 0
+          ? "No corroborating sources"
+          : `${corroborationCount} sources`,
+    assessment: corroborationAssessment,
+    detail: corroborationCount >= 3
+      ? "Multiple independent sources report consistent findings."
+      : corroborationCount >= 1
+        ? "Limited corroboration — additional sources would strengthen confidence."
+        : "No independent corroboration available yet — single-source claim.",
+  });
+
+  // 4. Independent verification
+  factors.push({
+    label: "Independent verification",
+    value: hasIndependentVerification ? "Yes" : "Not yet",
+    assessment: hasIndependentVerification ? "positive" as const : "warning" as const,
+    detail: hasIndependentVerification
+      ? "At least one independent third party has verified or reproduced the claim."
+      : "No independent third-party verification is currently available.",
+  });
+
+  // 5. Conflict of interest
+  const hasCOI = sourceClass.toLowerCase().includes("vendor");
+  factors.push({
+    label: "Conflict of interest",
+    value: hasCOI ? "Possible" : "Low risk",
+    assessment: hasCOI ? "neutral" as const : "positive" as const,
+    detail: hasCOI
+      ? "Source may have commercial interest in the claim. Cross-reference with independent sources."
+      : "No obvious commercial conflict of interest identified.",
+  });
+
+  // 6. Timeliness
+  let timelinessAssessment: "positive" | "neutral" | "negative" | "warning" = "neutral";
+  let timelinessValue = "Current";
+  let timelinessDetail = "Information is current based on the last check date.";
+
+  if (lastChecked) {
+    const checked = new Date(lastChecked);
+    const now = new Date();
+    const daysAgo = Math.floor((now.getTime() - checked.getTime()) / (1000 * 60 * 60 * 24));
+
+    if (daysAgo <= 3) {
+      timelinessAssessment = "positive";
+      timelinessValue = "Current";
+      timelinessDetail = `Last checked ${daysAgo === 0 ? "today" : `${daysAgo} day${daysAgo > 1 ? "s" : ""} ago`}.`;
+    } else if (daysAgo <= 14) {
+      timelinessAssessment = "neutral";
+      timelinessValue = `${daysAgo} days ago`;
+      timelinessDetail = `Last checked ${daysAgo} days ago — still within acceptable range.`;
+    } else {
+      timelinessAssessment = "warning";
+      timelinessValue = `${daysAgo} days ago`;
+      timelinessDetail = `Last checked ${daysAgo} days ago — information may be outdated.`;
+    }
+  }
+
+  factors.push({
+    label: "Timeliness",
+    value: timelinessValue,
+    assessment: timelinessAssessment,
+    detail: timelinessDetail,
+  });
+
+  // 7. Reproducibility
+  if (isReproducible !== null) {
+    factors.push({
+      label: "Reproducibility",
+      value: isReproducible ? "Reproducible" : "Not verified",
+      assessment: isReproducible ? "positive" as const : "warning" as const,
+      detail: isReproducible
+        ? "Claim has been reproduced by independent parties."
+        : "Reproducibility has not been confirmed.",
+    });
+  }
+
+  // 8. Disagreement / conflict level
+  if (hasConflicts) {
+    factors.push({
+      label: "Disagreement level",
+      value: "Conflicts detected",
+      assessment: "warning" as const,
+      detail: "Conflicting claims have been identified. See conflict details below.",
+    });
+  } else if (corroborationCount >= 2) {
+    factors.push({
+      label: "Disagreement level",
+      value: "Consistent",
+      assessment: "positive" as const,
+      detail: "No conflicting claims detected across available sources.",
+    });
+  }
+
+  // 9. Correction status
+  if (isCorrected) {
+    factors.push({
+      label: "Correction status",
+      value: "Corrected",
+      assessment: "warning" as const,
+      detail: "This item has been corrected. See the corrections ledger for details.",
+    });
+  }
+
+  // 10. Supersession
+  if (isSuperseded) {
+    factors.push({
+      label: "Supersession",
+      value: "Superseded",
+      assessment: "negative" as const,
+      detail: "A more recent item supersedes this information.",
+    });
+  }
+
+  return factors;
+}
+
+const factors = buildFactors();
+
+// Status descriptions for the summary header
+const statusDescriptions: Record<string, string> = {
+  confirmed: "Multiple independent primary sources confirm this information. High confidence.",
+  strongly_supported: "Primary sources with corroboration strongly support this claim.",
+  provisionally_supported: "Available evidence supports this claim, but verification is incomplete.",
+  vendor_reported: "Information originates from a vendor. Independent verification is pending or not yet available.",
+  community_reported: "Information reported by the community. Awaiting primary-source confirmation.",
+  disputed: "Conflicting claims or evidence exist. Treat with caution.",
+  unverified: "This item has not yet been verified against primary or independent sources.",
+  corrected: "This item has been corrected. The original statement was inaccurate or incomplete.",
+  superseded: "A more recent item provides updated or more accurate information.",
+  outdated: "The information may no longer be current. Seek more recent sources.",
+};
+
+const normalisedStatus = (status ?? "unverified").toLowerCase().replace(/[\s_-]+/g, "_");
+const statusDescription = statusDescriptions[normalisedStatus] ?? "Evidence status has not been assessed.";
+
+// Assessment icon map
+const assessmentIcons: Record<string, string> = {
+  positive: "✓",
+  neutral: "~",
+  negative: "✗",
+  warning: "⚠",
+};
+---
+
+<div class="rating-explanation">
+  <!-- Summary -->
+  <div class="rating-summary">
+    <span class={`badge badge-${normalisedStatus === "strongly_supported" ? "strong" : normalisedStatus === "provisionally_supported" ? "provisional" : normalisedStatus === "vendor_reported" ? "vendor" : normalisedStatus === "community_reported" ? "community" : normalisedStatus in ["superseded", "outdated"] ? "outdated" : normalisedStatus}`} badge-sm`>
+      {status}
+    </span>
+    <p class="rating-summary-text">{statusDescription}</p>
+  </div>
+
+  <!-- Factor breakdown -->
+  <details class="rating-details">
+    <summary class="rating-details-toggle">
+      <span>Why this rating?</span>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+    </summary>
+
+    <div class="rating-factors">
+      {factors.map((factor) => (
+        <div class="rating-factor">
+          <div class={`rating-factor-indicator rating-factor--${factor.assessment}`}>
+            <span class="rating-factor-icon" aria-hidden="true">{assessmentIcons[factor.assessment]}</span>
+          </div>
+          <div class="rating-factor-body">
+            <div class="rating-factor-header">
+              <span class="rating-factor-label">{factor.label}</span>
+              <span class={`rating-factor-value rating-factor-value--${factor.assessment}`}>{factor.value}</span>
+            </div>
+            <p class="rating-factor-detail">{factor.detail}</p>
+          </div>
+        </div>
+      ))}
+    </div>
+
+    <div class="rating-footer">
+      <p class="meta">
+        Ratings are based on the Trace Manifest <a href="/methodology">evidence methodology</a>.
+        Factors are re-evaluated when new evidence becomes available.
+        {lastChecked && <> Last checked: {lastChecked}.</>}
+      </p>
+    </div>
+  </details>
+</div>

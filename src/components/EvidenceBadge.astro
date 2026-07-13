@@ -1,0 +1,61 @@
+---
+// The Trace Manifest — Evidence Badge Component
+// Displays evidence status as a colour-coded badge with optional label text.
+// Implements the 10-state evidence system from the build plan.
+// Use in: stories, models, benchmarks, topics, feed items, admin review.
+
+export interface Props {
+  /** Evidence status from the 10-state system */
+  status: string;
+  /** Badge size */
+  size?: "sm" | "md";
+  /** Show the text label next to the dot */
+  showLabel?: boolean;
+  /** Additional CSS class */
+  class?: string;
+}
+
+const { status, size = "md", showLabel = true, class: extraClass } = Astro.props;
+
+// Normalise and map to CSS class
+const normalised = (status ?? "unverified").toLowerCase().replace(/[\s_-]+/g, "_");
+
+const badgeClassMap: Record<string, string> = {
+  confirmed: "badge-confirmed",
+  strongly_supported: "badge-strong",
+  provisionally_supported: "badge-provisional",
+  vendor_reported: "badge-vendor",
+  community_reported: "badge-community",
+  disputed: "badge-disputed",
+  unverified: "badge-unverified",
+  corrected: "badge-corrected",
+  superseded: "badge-superseded",
+  outdated: "badge-outdated",
+};
+
+const labelMap: Record<string, string> = {
+  confirmed: "Confirmed",
+  strongly_supported: "Strongly Supported",
+  provisionally_supported: "Provisionally Supported",
+  vendor_reported: "Vendor-reported",
+  community_reported: "Community-reported",
+  disputed: "Disputed",
+  unverified: "Unverified",
+  corrected: "Corrected",
+  superseded: "Superseded",
+  outdated: "Outdated",
+};
+
+const badgeClass = badgeClassMap[normalised] ?? "badge-unverified";
+const label = labelMap[normalised] ?? status;
+const sizeClass = size === "sm" ? "badge-sm" : "";
+---
+
+<span
+  class={`badge ${badgeClass} ${sizeClass} ${extraClass ?? ""}`}
+  role="status"
+  aria-label={`Evidence status: ${label}`}
+  title={`Evidence status: ${label}`}
+>
+  {showLabel ? label : null}
+</span>

@@ -1,5 +1,20 @@
 ﻿---
 import BaseLayout from "../../layouts/BaseLayout.astro";
+import EvidenceBadge from "../../components/EvidenceBadge.astro";
+
+// All 10 evidence states with their meanings and review triggers
+const evidenceStates = [
+  { status: "confirmed", label: "Confirmed", desc: "Multiple independent primary sources confirm this information. High confidence.", triggersReview: false },
+  { status: "strongly_supported", label: "Strongly Supported", desc: "Primary sources with corroboration strongly support this claim.", triggersReview: false },
+  { status: "provisionally_supported", label: "Provisionally Supported", desc: "Available evidence supports this claim, but verification is incomplete.", triggersReview: true },
+  { status: "vendor_reported", label: "Vendor-reported", desc: "Information originates from a vendor. Independent verification pending.", triggersReview: true },
+  { status: "community_reported", label: "Community-reported", desc: "Information reported by the community. Awaiting primary-source confirmation.", triggersReview: true },
+  { status: "disputed", label: "Disputed", desc: "Conflicting claims or evidence exist. Treat with caution.", triggersReview: true },
+  { status: "unverified", label: "Unverified", desc: "This item has not yet been verified against primary or independent sources.", triggersReview: true },
+  { status: "corrected", label: "Corrected", desc: "This item has been corrected. The original statement was inaccurate or incomplete.", triggersReview: false },
+  { status: "superseded", label: "Superseded", desc: "A more recent item provides updated or more accurate information.", triggersReview: false },
+  { status: "outdated", label: "Outdated", desc: "The information may no longer be current. Seek more recent sources.", triggersReview: true },
+];
 ---
 
 <BaseLayout
@@ -9,45 +24,121 @@ import BaseLayout from "../../layouts/BaseLayout.astro";
   <div class="wrap">
     <h1>Admin: Review Queue</h1>
     <p class="meta" style="margin-bottom:2rem;">
-      <a href="/admin/sources">← Sources</a> &middot; <a href="/admin">Admin home</a>
+      <a href="/admin/sources">← Sources</a> &middot; <a href="/admin/jobs">Jobs</a> &middot; <a href="/admin">Admin home</a>
     </p>
 
     <p style="padding:0.75rem;background:var(--surface-2);border-radius:var(--radius);font-size:0.9rem;margin-bottom:2rem;">
       Items flagged for human review per <a href="/docs/adr/0004-human-review-boundary.md">ADR-0004</a>.
-      Review is required for: high-impact security claims, legal/regulatory claims, accusations of misconduct,
-      major benchmark conclusions, best-model/provider rankings, and corrections affecting prominent stories.
+      The pipeline auto-flags items when: only Tier C sources report a story, a single non-Tier-A source reports,
+      vendor claims conflict with independent findings, or story confidence is below threshold.
     </p>
 
-    <section style="margin-bottom:2rem;">
+    <!-- Pending review queue -->
+    <section style="margin-bottom:2.5rem;">
       <h2>Pending Review</h2>
       <div class="card" style="text-align:center;padding:2rem;">
         <p class="meta">No items currently pending review.</p>
         <p class="meta" style="margin-top:0.5rem;">
-          Items appear here when stories are flagged during the classification pipeline (Phase 3).
+          Items flagged with <code>needs_human_review = 1</code> in the <code>story_clusters</code> table appear here.
+          The pipeline runs claim extraction and conflict detection at 09:00 UTC daily.
+        </p>
+        <p class="meta" style="margin-top:0.75rem;">
+          API: <code>POST /admin/extract-claims</code> &middot; <code>POST /admin/detect-conflicts</code>
         </p>
       </div>
     </section>
 
-    <section style="margin-bottom:2rem;">
+    <!-- Evidence state reference -->
+    <section style="margin-bottom:2.5rem;">
+      <h2>Evidence States Reference</h2>
+      <p class="meta" style="margin-bottom:1rem;">
+        The 10-state evidence system. Each state determines whether an item needs human review.
+      </p>
+      <div style="display:flex;flex-direction:column;gap:0.65rem;">
+        {evidenceStates.map((state) => (
+          <div class="card" style="display:flex;align-items:flex-start;gap:0.75rem;padding:0.75rem 1rem;">
+            <EvidenceBadge status={state.status} size="sm" />
+            <div style="flex:1;min-width:0;">
+              <p style="font-size:0.85rem;margin:0;">{state.desc}</p>
+              {state.triggersReview && (
+                <span class="review-indicator" style="margin-top:0.35rem;">Needs Review</span>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+
+    <!-- Review criteria -->
+    <section style="margin-bottom:2.5rem;">
       <h2>Review Criteria</h2>
       <p class="meta">The following require human review before publication (per ADR-0004):</p>
       <ul style="padding-left:1.5rem;margin-top:0.75rem;display:flex;flex-direction:column;gap:0.35rem;" class="meta">
-        <li>High-impact security claims</li>
-        <li>Legal or regulatory claims</li>
-        <li>Claims accusing organisations or individuals of misconduct</li>
-        <li>Major benchmark conclusions</li>
-        <li>"Best model" or "best provider" rankings</li>
-        <li>Corrections affecting prominent stories</li>
-        <li>Sponsored comparisons</li>
-        <li>Claims based mainly on community reports</li>
-        <li>Stories with strong contradictory evidence</li>
+        <li><strong>High-impact security claims</strong> — CVEs, vulnerabilities, advisories</li>
+        <li><strong>Legal or regulatory claims</strong> — legislation, compliance requirements</li>
+        <li><strong>Claims accusing organisations or individuals of misconduct</strong></li>
+        <li><strong>Major benchmark conclusions</strong> — "best model" rankings</li>
+        <li><strong>"Best model" or "best provider" rankings</strong> — must be evidence-grounded</li>
+        <li><strong>Corrections affecting prominent stories</strong> — must follow correction workflow</li>
+        <li><strong>Sponsored comparisons</strong> — must flag commercial interest</li>
+        <li><strong>Claims based mainly on community reports</strong> — Tier C only clusters</li>
+        <li><strong>Stories with strong contradictory evidence</strong> — conflict detected</li>
+        <li><strong>Extraordinary-severity claims</strong> — automatic flag regardless of source</li>
       </ul>
     </section>
 
+    <!-- Review history -->
     <section>
       <h2>Review History</h2>
       <div class="card" style="text-align:center;padding:2rem;">
         <p class="meta">No reviews have been completed yet.</p>
+        <p class="meta" style="margin-top:0.5rem;">
+          Completed reviews are recorded in <code>story_clusters.reviewed_by</code> and <code>story_clusters.reviewed_at</code>.
+        </p>
+      </div>
+    </section>
+
+    <!-- Record a correction -->
+    <section style="margin-top:2.5rem;">
+      <h2>Record a Correction</h2>
+      <p class="meta" style="margin-bottom:1rem;">
+        Use <code>POST /admin/correct</code> to record a correction against a cluster or claim.
+        Corrections are permanent and visible on the public <a href="/corrections">corrections ledger</a>.
+      </p>
+
+      <div class="card" style="background:var(--surface-2);">
+        <h3 style="font-size:0.95rem;margin-bottom:0.75rem;">API Reference</h3>
+        <pre style="font-size:0.78rem;line-height:1.55;overflow-x:auto;padding:0.75rem;background:var(--bg);border-radius:var(--radius);" class="mono"><code>POST /admin/correct
+Authorization: Bearer &lt;ADMIN_API_TOKEN&gt;
+Content-Type: application/json
+
+{
+  "clusterId": 1,              // optional: target cluster
+  "claimId": null,             // optional: target claim (use clusterId OR claimId)
+  "correctionType": "factual_error | rating_change | licence_correction |
+                     pricing_correction | benchmark_correction | supersession |
+                     deprecation | methodology_update | other",
+  "previousStatement": "Original text that was incorrect",
+  "updatedStatement": "Corrected text",
+  "previousEvidenceStatus": "vendor_reported",    // optional
+  "updatedEvidenceStatus": "corrected",           // optional, defaults to "corrected"
+  "reason": "Why the correction was made",
+  "evidenceUrl": "https://...",                   // optional
+  "impact": "What changed as a result",           // optional
+  "correctedBy": "reviewer-name"
+}</code></pre>
+      </div>
+
+      <div class="card" style="margin-top:1rem;background:var(--surface-2);">
+        <h3 style="font-size:0.95rem;margin-bottom:0.75rem;">Correction Types</h3>
+        <div style="display:flex;flex-wrap:wrap;gap:0.5rem;">
+          {[
+            "factual_error", "rating_change", "licence_correction", "pricing_correction",
+            "benchmark_correction", "supersession", "deprecation", "methodology_update", "other"
+          ].map(t => (
+            <code style="font-size:0.75rem;padding:0.2em 0.5em;background:var(--bg);border-radius:4px;">{t}</code>
+          ))}
+        </div>
       </div>
     </section>
   </div>

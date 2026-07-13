@@ -43,7 +43,7 @@ export interface FeedItem {
 export interface IngestionJob {
   id: number;
   source_id: number | null;
-  job_type: "fetch" | "classify" | "dedup" | "cluster" | "health_check" | "briefing";
+  job_type: "fetch" | "classify" | "dedup" | "cluster" | "health_check" | "briefing" | "extract_claims" | "conflict_detection";
   status: "pending" | "running" | "completed" | "failed";
   items_processed: number;
   items_created: number;
@@ -80,4 +80,83 @@ export interface ArxivEntry {
   updated: string;
   links: { href: string; type: string }[];
   categories: { term: string }[];
+}
+
+// ============================================================
+// Phase 3: Claims and Evidence
+// ============================================================
+
+/** Claim classes per build plan — reflects who/what kind of source made the claim */
+export type ClaimClass =
+  | "specification_defined"
+  | "official_vendor_claim"
+  | "observed_implementation_behaviour"
+  | "independent_research_finding"
+  | "benchmark_result"
+  | "community_report"
+  | "legal_or_regulatory_statement"
+  | "editorial_synthesis"
+  | "trace_manifest_inference";
+
+/** Claim domains — what the claim is about */
+export type ClaimDomain =
+  | "model_capability"
+  | "model_release"
+  | "benchmark"
+  | "pricing"
+  | "security"
+  | "licence"
+  | "regulation"
+  | "research"
+  | "product"
+  | "funding"
+  | "hardware"
+  | "general";
+
+/** Evidence relationship types per build plan */
+export type EvidenceRelationship =
+  | "supports"
+  | "partially_supports"
+  | "qualifies"
+  | "contradicts"
+  | "reports"
+  | "reproduces"
+  | "fails_to_reproduce"
+  | "supersedes"
+  | "corrects"
+  | "contextualises";
+
+export interface ExtractedClaim {
+  claimText: string;
+  claimClass: ClaimClass;
+  claimDomain: ClaimDomain;
+  severity: "low" | "standard" | "high" | "extraordinary";
+  evidenceQuality: "weak" | "moderate" | "strong" | "very_strong";
+  confidenceScore: number;
+  supportingPhrase: string;   // the text snippet that triggered extraction
+}
+
+export interface ClaimExtractionResult {
+  feedItemId: number;
+  clusterId: number | null;
+  claims: ExtractedClaim[];
+}
+
+export interface ClaimRecord {
+  id: number;
+  cluster_id: number | null;
+  feed_item_id: number;
+  claim_text: string;
+  claim_class: ClaimClass;
+  claim_domain: ClaimDomain;
+  severity: string;
+  evidence_quality: string;
+  confidence_score: number;
+  is_disputed: boolean;
+  is_corrected: boolean;
+  superseded_by: number | null;
+  extraction_method: string;
+  extraction_version: string;
+  created_at: string;
+  updated_at: string;
 }
