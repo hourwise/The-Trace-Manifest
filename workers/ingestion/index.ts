@@ -18,7 +18,7 @@ import {
   publishStory, updateStoryStatus, publishBriefing,
   getPublishedStories, getPublishedStoryBySlug, getPublishedTopics,
   getLatestPublishedBriefing, getPublishedSourcesForStory, getRelatedStories,
-  getAllClusters,
+  getAllClusters, getClusterSources,
 } from "./publish";
 import type { Source, FeedItem } from "./types";
 
@@ -366,6 +366,8 @@ async function handleAdminRoute(path: string, request: Request, env: Env, ctx: E
       return handlePublishedStoriesList(request, env);
     case "/admin/clusters":
       return handleClustersList(request, env);
+    case "/admin/cluster-sources":
+      return handleClusterSources(request, env);
     default:
       return Response.json({ error: "Not found" }, { status: 404 });
   }
@@ -601,4 +603,16 @@ async function handleClustersList(request: Request, env: Env): Promise<Response>
 
   const clusters = await getAllClusters(env, { limit, status });
   return Response.json(clusters);
+}
+
+async function handleClusterSources(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const clusterId = parseInt(url.searchParams.get("clusterId") || "0");
+
+  if (!clusterId) {
+    return Response.json({ error: "clusterId query param is required" }, { status: 400 });
+  }
+
+  const sources = await getClusterSources(env, clusterId);
+  return Response.json(sources);
 }

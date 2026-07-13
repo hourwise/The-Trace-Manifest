@@ -506,3 +506,36 @@ export async function getAllClusters(
   }>();
   return result.results;
 }
+
+// ============================================================
+// Admin query — get source feed items for a cluster
+// ============================================================
+
+export async function getClusterSources(
+  env: Env,
+  clusterId: number,
+): Promise<{ title: string; url: string; excerpt: string | null; sourceName: string; sourceTier: string; publishedAt: string | null }[]> {
+  const result = await env.DB.prepare(`
+    SELECT fi.title, fi.url, fi.content_excerpt, s.name as source_name,
+           s.tier as source_tier, fi.published_at
+    FROM story_cluster_members scm
+    JOIN feed_items fi ON scm.feed_item_id = fi.id
+    JOIN sources s ON fi.source_id = s.id
+    WHERE scm.cluster_id = ?
+    ORDER BY scm.is_primary DESC, s.tier ASC
+  `)
+    .bind(clusterId)
+    .all<{
+      title: string; url: string; content_excerpt: string | null;
+      source_name: string; source_tier: string; published_at: string | null;
+    }>();
+
+  return result.results.map((r) => ({
+    title: r.title,
+    url: r.url,
+    excerpt: r.content_excerpt,
+    sourceName: r.source_name,
+    sourceTier: r.source_tier,
+    publishedAt: r.published_at,
+  }));
+}

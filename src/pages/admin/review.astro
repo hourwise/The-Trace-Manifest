@@ -129,6 +129,12 @@ const evidenceStates = [
         <p class="meta" style="margin-top:0.35rem;font-size:0.75rem;" id="cluster-count"></p>
       </div>
 
+      <!-- Source Material — appears when cluster selected -->
+      <div id="source-material" class="card" style="margin-bottom:1.5rem;background:var(--surface-2);display:none;">
+        <h3 style="font-size:0.95rem;margin-bottom:0.75rem;">Source Material <span class="meta" style="font-weight:400;" id="source-count"></span></h3>
+        <div id="source-list" style="display:flex;flex-direction:column;gap:0.75rem;max-height:400px;overflow-y:auto;"></div>
+      </div>
+
       <!-- Editorial fields -->
       <div class="card" style="margin-bottom:1.5rem;background:var(--surface-2);">
         <div style="display:flex;flex-direction:column;gap:1rem;">
@@ -253,6 +259,43 @@ const evidenceStates = [
       }
       $<HTMLSelectElement>("cluster-select")?.addEventListener("change", checkPublishReady);
       $<HTMLTextAreaElement>("pub-summary")?.addEventListener("input", checkPublishReady);
+
+      // Load source material when cluster is selected
+      $<HTMLSelectElement>("cluster-select")?.addEventListener("change", async function() {
+        const clusterId = parseInt(this.value || "");
+        const panel = document.getElementById("source-material");
+        const list = document.getElementById("source-list");
+        const count = document.getElementById("source-count");
+        if (!panel || !list || !count) return;
+
+        if (!clusterId) { panel.style.display = "none"; return; }
+        if (!getToken()) return;
+
+        panel.style.display = "block";
+        list.innerHTML = '<p class="meta">Loading source material…</p>';
+        count.textContent = "";
+
+        try {
+          const res = await fetch(`${WORKER_URL}/admin/cluster-sources?clusterId=${clusterId}`, { headers: authHeaders() });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const sources: Array<{ title: string; url: string; excerpt: string | null; sourceName: string; sourceTier: string; publishedAt: string | null }> = await res.json();
+
+          count.textContent = `(${sources.length} source${sources.length !== 1 ? "s" : ""})`;
+          list.innerHTML = sources.map((s, i) => `
+            <div style="padding:0.5rem 0;border-bottom:1px solid var(--border);${i === sources.length - 1 ? "border-bottom:none;" : ""}">
+              <div style="display:flex;gap:0.5rem;align-items:baseline;flex-wrap:wrap;">
+                <span class="badge badge-sm" style="font-size:0.65rem;">Tier ${s.sourceTier}</span>
+                <span class="meta" style="font-size:0.7rem;">${s.sourceName}</span>
+              </div>
+              <a href="${s.url}" target="_blank" rel="noopener" style="font-size:0.85rem;font-weight:550;display:block;margin-top:0.2rem;">${s.title}</a>
+              ${s.excerpt ? `<p class="meta" style="font-size:0.75rem;margin-top:0.15rem;line-height:1.4;">${s.excerpt.slice(0, 300)}${s.excerpt.length > 300 ? "…" : ""}</p>` : ""}
+            </div>
+          `).join("");
+        } catch (e) {
+          list.innerHTML = '<p class="meta" style="color:var(--ev-disputed);">Failed to load source material.</p>';
+          console.error(e);
+        }
+      });
 
       // Publish button
       $<HTMLButtonElement>("publish-btn")?.addEventListener("click", async () => {
