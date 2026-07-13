@@ -43,14 +43,16 @@ function parseRSSXML(xml: string): Array<{
 }> {
   const items: ReturnType<typeof parseRSSXML> = [];
 
-  // Simple regex-based RSS/Atom parser (no XML library dependency)
-  // Matches <item> blocks in RSS 2.0 and <entry> blocks in Atom
-  const itemRegex = /<item>([\s\S]*?)<\/item>/gi;
-  const entryRegex = /<entry>([\s\S]*?)<\/entry>/gi;
-
-  const blocks = xml.match(itemRegex) || xml.match(entryRegex) || [];
-
-  for (const block of blocks) {
+  // Split by <item and </item> to handle any attribute variations
+  // Works for: <item>, <item rdf:about="...">, <item xmlns="...">
+  const parts = xml.split(/<item[\s>]/i);
+  
+  for (let i = 1; i < parts.length; i++) {
+    const endIdx = parts[i].lastIndexOf("</item>");
+    if (endIdx === -1) continue;
+    
+    const block = parts[i].substring(0, endIdx);
+    
     const title = extractTag(block, "title");
     const link = extractTag(block, "link") || extractLinkHref(block);
     const description = extractTag(block, "description") || extractTag(block, "summary") || extractTag(block, "content");
@@ -58,18 +60,18 @@ function parseRSSXML(xml: string): Array<{
     const pubDate = extractTag(block, "pubDate") || extractTag(block, "published") || extractTag(block, "updated");
     const guid = extractTag(block, "guid") || extractTag(block, "id");
 
-    if (title && link) {
-      items.push({
-        external_id: guid || null,
-        url: link,
-        title: decodeHTML(title).trim(),
-        summary: description ? decodeHTML(stripHTML(description)).trim().substring(0, 500) : null,
-        content_excerpt: description ? decodeHTML(description).trim().substring(0, 300) : null,
-        author: author ? decodeHTML(author).trim() : null,
-        published_at: pubDate ? normalizeDate(pubDate) : null,
-        raw_metadata: { feed_type: "rss", raw_date: pubDate },
-      });
-    }
+    if (!title && !link) continue; // Skip empty blocks
+
+    items.push({
+      external_id: guid || link || null,
+      url: link || "",
+      title: decodeHTML(title || "Untitled"),
+      summary: decodeHTML(description),
+      content_excerpt: decodeHTML(description)?.slice(0, 500) ?? null,
+      author: author || null,
+      published_at: pubDate || null,
+      raw_metadata: { feedTitle: "", itemGuid: guid || null },
+    });
   }
 
   return items;
