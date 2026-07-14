@@ -1,448 +1,438 @@
-// The Trace Manifest — AI Model Gateway
-// Phase 5: Central entry point for all model-assisted features.
-// Enforces all ADR-0008 controls: provider neutrality, budget reservation,
-// circuit breakers, validation, idempotency, loop prevention, retry policy.
-// This is the ONLY module that application code calls for model access.
-
 import type {
-  TraceAnswerInput, TraceEditorialInput, TracePredictionInput,
-  TraceAnswerDraft, TraceEditorialDraft, TracePredictionCandidate,
-  TraceAIConfig, CircuitBreakerId,
+  EvidenceExcerpt, TraceAIConfig, TraceAnswerDraft, TraceEditorialDraft, TraceModelId,
 } from "./provider";
-import { validateModelAssignment } from "./model-router";
 import { DeepSeekAPIError, DeepSeekProvider } from "./providers/deepseek";
+import { buildConfig, configuredTaskDailyBudget, type TraceAIEnvironment } from "./config";
 import { validateTaskInput } from "./schemas";
-import { validateAnswerOutput, validateEditorialOutput, validatePredictionOutput } from "./validation";
+import { validateAnswerOutput, validateEditorialOutput } from "./validation";
+import { validateModelAssignment } from "./model-router";
 import {
-  checkBudgetThreshold, reserveBudget, reconcileReservation,
-  releaseReservation, estimateCost, estimateMaxCost,
-} from "./budget-policy";
-import { recordUsage, getDailyTotals } from "./usage-ledger";
+  DurableAIGovernance,
+  type DurableAIConfig,
+  type ProviderUsageSettlement,
+} from "./durable-governance";
 import {
-  checkPublicAskTraceBreakers, recordSuccess, recordFailure,
-  allowRequest, activateGlobalKillSwitch, isGlobalKillSwitchActive,
-} from "./circuit-breaker";
+  calculateDeterministicConfidence,
+  type DeterministicConfidence,
+} from "../lib/server/ask-evidence";
 
-// ============================================================
-// Gateway state
-// ============================================================
+export type TraceAIRuntimeEnvironment = TraceAIEnvironment & { DB?: D1Database };
 
-let provider: DeepSeekProvider | null = null;
-let config: TraceAIConfig | null = null;
-
-// ============================================================
-// Initialisation
-// ============================================================
-
-export function initGateway(cfg: TraceAIConfig): void {
-  config = cfg;
-
-  // Validate that the API key is not exposed
-  if (typeof window !== "undefined") {
-    throw new Error("TRACE AI Gateway must not be initialised in browser context. API keys must remain server-side.");
-  }
-
-  provider = new DeepSeekProvider(cfg);
-  if (cfg.globalKillSwitch) activateGlobalKillSwitch("TRACE_GLOBAL_KILL_SWITCH is enabled.");
+export interface AskTraceContext {
+  requestId: string;
+  idempotencyKeyHash: string;
+  visitorHash: string;
+  questionHash: string;
+  question: string;
+  evidenceExcerpts: EvidenceExcerpt[];
 }
 
-// ============================================================
-// Public API: Ask TRACE
-// ============================================================
+export interface PublicCitation {
+  sourceId: string;
+  claimId?: string;
+  sourceName: string;
+  sourceUrl?: string;
+  sourceClassification: string;
+  observedAt?: string;
+  publishedAt?: string;
+}
+
+export interface AskTracePayload {
+  answer: string;
+  keyPoints: string[];
+  claims: { text: string; evidenceSourceIds: string[]; evidenceClaimIds: string[] }[];
+  citations: PublicCitation[];
+  confidence: DeterministicConfidence["label"];
+  confidenceScore: number;
+  confidenceReasons: string[];
+  freshestObservedAt: string | null;
+  hasMaterialDisagreement: boolean;
+  disagreements: string[];
+  caveats: string[];
+  whatCouldChange: string;
+  requestId: string;
+  nonAnswer: boolean;
+}
 
 export interface AskTraceResult {
-  status: "ok" | "error" | "temporarily_unavailable" | "rate_limited";
+  status: "ok" | "error" | "temporarily_unavailable" | "rate_limited" | "in_progress";
   requestId: string;
-  answer?: TraceAnswerDraft;
+  payload?: AskTracePayload;
   message?: string;
-  citations?: { sourceId: string; claimId?: string }[];
 }
 
-export async function askTrace(
-  question: string,
-  evidenceExcerpts: { sourceId: string; claimId?: string; text: string; sourceClassification: string }[],
-  maxOutputTokens?: number,
-): Promise<AskTraceResult> {
-  if (!config || !provider) {
-    return { status: "error", requestId: "uninitialised", message: "AI Gateway not initialised." };
-  }
-
-  const requestId = `ask_${crypto.randomUUID()}`;
-  const idempotencyKeyHash = await hashIdempotencyKey(`${question}:${requestId}`);
-  const startTime = Date.now();
-
-  try {
-    // 1. Circuit breaker check
-    const breakerCheck = checkPublicAskTraceBreakers();
-    if (!breakerCheck.allowed) {
-      return {
-        status: "temporarily_unavailable",
-        requestId,
-        message: "Ask TRACE is temporarily unavailable. No request was charged. Please try again later.",
-      };
-    }
-
-    // 2. Global kill switch
-    if (isGlobalKillSwitchActive()) {
-      return { status: "temporarily_unavailable", requestId, message: "Service temporarily unavailable." };
-    }
-
-    // 3. Feature switch
-    if (!config.publicAskTraceEnabled) {
-      return { status: "temporarily_unavailable", requestId, message: "Ask TRACE is not currently enabled." };
-    }
-
-    // 4. Budget threshold check
-    const budgetAction = checkBudgetThreshold(config);
-    if (budgetAction === "stop") {
-      recordFailure("daily_budget", "Budget exhausted");
-      return { status: "temporarily_unavailable", requestId, message: "Service temporarily unavailable due to budget limits." };
-    }
-
-    // 5. Rate limiting
-    const daily = getDailyTotals();
-    if (daily.count >= config.dailyPublicQuestionsPerVisitor * 10) { // rough global limit
-      return { status: "rate_limited", requestId, message: "Daily question limit reached. Please try again tomorrow." };
-    }
-
-    // 6. Input validation
-    const maxTokens = maxOutputTokens ?? config.maxOutputTokens;
-    const input: TraceAnswerInput = {
-      taskType: "ask_trace",
-      question: question.slice(0, config.maxQuestionLength),
-      evidenceExcerpts: evidenceExcerpts.slice(0, config.maxEvidenceExcerpts).map(e => ({
-        sourceId: e.sourceId,
-        claimId: e.claimId,
-        text: e.text.slice(0, 2000),
-        sourceClassification: e.sourceClassification,
-      })),
-      maxOutputTokens: Math.min(maxTokens, config.maxOutputTokens),
-    };
-
-    // 7. Budget reservation (atomic)
-    const estimatedCost = estimateMaxCost(config);
-    const reservation = reserveBudget(config, estimatedCost);
-    if (!reservation.reserved || !reservation.reservationId || reservation.reservedAmount === undefined) {
-      return { status: "temporarily_unavailable", requestId, message: reservation.reason ?? "Budget reservation failed." };
-    }
-
-    // 8. Model call (one call only — no loops per ADR-0008)
-    let draft: TraceAnswerDraft;
-    try {
-      draft = await provider.generateAnswer(input);
-      recordSuccess("model_flash");
-    } catch (error: unknown) {
-      const message = getErrorMessage(error);
-      recordFailure("model_flash", message);
-
-      // Explicit retry policy — only retry on 5xx, max 1 retry
-      if (message.includes("500") || message.includes("503")) {
-        try {
-          draft = await provider.generateAnswer(input);
-          recordSuccess("model_flash");
-        } catch (retryError: unknown) {
-          releaseReservation(reservation.reservationId, reservation.reservedAmount);
-          recordFailure("failure_rate", getErrorMessage(retryError));
-          return { status: "error", requestId, message: "Unable to generate answer. Please try again." };
-        }
-      } else if (message.includes("401")) {
-        recordFailure("auth_error", message);
-        releaseReservation(reservation.reservationId, reservation.reservedAmount);
-        return { status: "error", requestId, message: "Service configuration error." };
-      } else if (message.includes("402")) {
-        recordFailure("balance", message);
-        releaseReservation(reservation.reservationId, reservation.reservedAmount);
-        return { status: "temporarily_unavailable", requestId, message: "Service temporarily unavailable." };
-      } else {
-        releaseReservation(reservation.reservationId, reservation.reservedAmount);
-        return { status: "error", requestId, message: "Unable to generate answer." };
-      }
-    }
-
-    // 9. Post-generation validation
-    const validation = validateAnswerOutput(draft, input.evidenceExcerpts, input.maxOutputTokens);
-    const latencyMs = Date.now() - startTime;
-
-    // 10. Reconcile budget
-    const actualCost = estimateCost(config.publicModel, 0, input.maxOutputTokens);
-    reconcileReservation(reservation.reservationId, actualCost, reservation.reservedAmount);
-
-    // 11. Record usage
-    recordUsage({
-      requestId,
-      idempotencyKeyHash,
-      taskType: "ask_trace",
-      provider: "deepseek",
-      model: config.publicModel,
-      inputTokens: 0, // Provider returns actual token counts — use those in production
-      outputTokens: 0,
-      cachedTokens: 0,
-      estimatedCost,
-      actualCost,
-      attemptNumber: 1,
-      latencyMs,
-      providerStatus: 200,
-      validationStatus: validation.passed ? "passed" : "failed",
-      validationFailures: validation.failures,
-      budgetReservation: reservation.reservedAmount,
-    });
-
-    if (!validation.passed) {
-      return {
-        status: "ok",
-        requestId,
-        answer: validation.safeResponse,
-        message: "Answer could not be fully validated. A safe response is provided.",
-      };
-    }
-
-    return { status: "ok", requestId, answer: draft };
-  } catch (error: unknown) {
-    return { status: "error", requestId, message: `Unexpected error: ${getErrorMessage(error)}` };
-  }
+function dollarsToMicrousd(value: number): number {
+  return Math.ceil(value * 1_000_000);
 }
 
-// ============================================================
-// Public API: Editorial generation (admin/scheduled only)
-// ============================================================
+function estimateTokens(text: string): number {
+  return Math.max(1, Math.ceil(text.length / 4));
+}
 
-export async function generateEditorial(
-  instruction: string,
-  sourceMaterial: { sourceId: string; text: string; sourceClassification: string }[],
-  options: { maxOutputTokens?: number; modelTier?: "routine" | "editorial" } = {},
-): Promise<{
-  status: "ok" | "error" | "temporarily_unavailable" | "validation_failed";
-  requestId: string;
-  draft?: TraceEditorialDraft;
-  error?: string;
-}> {
-  const requestId = `editorial_${crypto.randomUUID()}`;
-  if (!config || !provider) return { status: "error", requestId, error: "Gateway not initialised." };
+function estimatedCost(config: TraceAIConfig, model: TraceModelId, inputTokens: number, outputTokens: number): number {
+  const pricing = config.modelPricing[model];
+  return (inputTokens * pricing.inputPerMillionUsd + outputTokens * pricing.outputPerMillionUsd) / 1_000_000;
+}
 
-  const gatewayConfig = config;
-  const modelProvider = provider;
-  const selectedModel = options.modelTier === "routine"
-    ? gatewayConfig.publicModel
-    : gatewayConfig.editorialModel;
-  const modelBreaker: CircuitBreakerId = selectedModel === "deepseek-v4-flash" ? "model_flash" : "model_pro";
-  const blockingBreakers: CircuitBreakerId[] = [
-    "global_kill", "scheduled_jobs", "provider_deepseek", modelBreaker,
-    "daily_budget", "monthly_budget", "balance", "auth_error", "failure_rate",
-  ];
-
-  for (const breaker of blockingBreakers) {
-    if (!allowRequest(breaker)) {
-      return {
-        status: "temporarily_unavailable",
-        requestId,
-        error: "Editorial generation is temporarily unavailable.",
-      };
-    }
-  }
-
-  if (checkBudgetThreshold(gatewayConfig) === "stop") {
-    recordFailure("daily_budget", "Budget exhausted");
-    return { status: "temporarily_unavailable", requestId, error: "AI budget is currently unavailable." };
-  }
-
-  const assignment = validateModelAssignment(selectedModel, "editorial", gatewayConfig);
-  if (!assignment.valid) {
-    return { status: "error", requestId, error: assignment.reason ?? "Editorial model assignment rejected." };
-  }
-
-  const maxOutputTokens = Math.min(options.maxOutputTokens ?? gatewayConfig.maxOutputTokens, gatewayConfig.maxOutputTokens);
-  const input: TraceEditorialInput = {
-    taskType: "editorial",
-    model: selectedModel,
-    instruction: instruction.slice(0, 4000),
-    sourceMaterial: sourceMaterial.slice(0, gatewayConfig.maxEvidenceExcerpts).map(source => ({
-      sourceId: source.sourceId.slice(0, 100),
-      text: source.text.slice(0, 4000),
-      sourceClassification: source.sourceClassification.slice(0, 100),
-    })),
-    maxOutputTokens,
+function durableConfig(
+  config: TraceAIConfig,
+  env: TraceAIEnvironment,
+  task: "ask_trace" | "editorial",
+): DurableAIConfig {
+  const fallback = task === "ask_trace" ? config.dailyPublicBudget : config.dailyPublicBudget;
+  return {
+    dailyBudgetMicrousd: dollarsToMicrousd(config.dailyPublicBudget),
+    monthlyBudgetMicrousd: dollarsToMicrousd(config.monthlyPublicBudget),
+    taskDailyBudgetMicrousd: dollarsToMicrousd(configuredTaskDailyBudget(env, task, fallback)),
+    maxRequestMicrousd: dollarsToMicrousd(config.maxCostPerRequest),
+    dailyQuestionsPerVisitor: config.dailyPublicQuestionsPerVisitor,
   };
+}
 
-  const inputValidation = validateTaskInput(input, "editorial");
-  if (!inputValidation.valid) {
-    return { status: "error", requestId, error: inputValidation.errors.join("; ") };
+function safeNonAnswer(requestId: string, confidence: DeterministicConfidence, reason: string): AskTracePayload {
+  return {
+    answer: "TRACE does not have enough eligible published evidence to answer this question reliably.",
+    keyPoints: [],
+    claims: [],
+    citations: [],
+    confidence: "insufficient_evidence",
+    confidenceScore: confidence.score,
+    confidenceReasons: [...confidence.reasons, reason],
+    freshestObservedAt: confidence.freshestObservedAt,
+    hasMaterialDisagreement: confidence.hasMaterialDisagreement,
+    disagreements: [],
+    caveats: [reason],
+    whatCouldChange: "Additional reviewed and published evidence may make an answer possible.",
+    requestId,
+    nonAnswer: true,
+  };
+}
+
+function citationsFor(draft: TraceAnswerDraft, evidence: EvidenceExcerpt[]): PublicCitation[] {
+  const citedSources = new Set([
+    ...draft.citedSourceIds,
+    ...draft.claims.flatMap((claim) => claim.evidenceSourceIds),
+  ]);
+  const citedClaims = new Set([
+    ...draft.citedClaimIds,
+    ...draft.claims.flatMap((claim) => claim.evidenceClaimIds),
+  ]);
+  return evidence
+    .filter((item) => citedSources.has(item.sourceId) || Boolean(item.claimId && citedClaims.has(item.claimId)))
+    .map((item) => ({
+      sourceId: item.sourceId,
+      claimId: item.claimId,
+      sourceName: item.sourceName ?? item.sourceId,
+      sourceUrl: item.sourceUrl,
+      sourceClassification: item.sourceClassification,
+      observedAt: item.observedAt,
+      publishedAt: item.publishedAt,
+    }));
+}
+
+function answerPayload(
+  requestId: string,
+  draft: TraceAnswerDraft,
+  evidence: EvidenceExcerpt[],
+  confidence: DeterministicConfidence,
+): AskTracePayload {
+  return {
+    answer: draft.answer,
+    keyPoints: draft.keyPoints,
+    claims: draft.claims,
+    citations: citationsFor(draft, evidence),
+    confidence: confidence.label,
+    confidenceScore: confidence.score,
+    confidenceReasons: confidence.reasons,
+    freshestObservedAt: confidence.freshestObservedAt,
+    hasMaterialDisagreement: confidence.hasMaterialDisagreement,
+    disagreements: draft.disagreements,
+    caveats: draft.caveats,
+    whatCouldChange: draft.whatCouldChange,
+    requestId,
+    nonAnswer: false,
+  };
+}
+
+function usageSettlement(
+  config: TraceAIConfig,
+  model: TraceModelId,
+  usage: { inputTokens: number | null; outputTokens: number | null; cachedTokens: number | null },
+  fallbackInput: number,
+  fallbackOutput: number,
+  latencyMs: number,
+  providerStatus: number | null,
+  validationStatus: string,
+  billingUncertain = false,
+): ProviderUsageSettlement {
+  const actualAvailable = usage.inputTokens !== null && usage.outputTokens !== null;
+  const cost = estimatedCost(
+    config,
+    model,
+    usage.inputTokens ?? fallbackInput,
+    usage.outputTokens ?? fallbackOutput,
+  );
+  return {
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+    cachedTokens: usage.cachedTokens,
+    actualMicrousd: dollarsToMicrousd(cost),
+    costBasis: actualAvailable ? "provider_usage" : "estimated",
+    billingUncertain,
+    latencyMs,
+    providerStatus,
+    validationStatus,
+  };
+}
+
+function failurePublicMessage(error: unknown): string {
+  if (!(error instanceof DeepSeekAPIError)) return "TRACE could not produce a validated response.";
+  if (["rate_limit", "provider", "timeout", "network", "balance"].includes(error.kind)) {
+    return "TRACE is temporarily unavailable.";
+  }
+  return "TRACE could not produce a validated response.";
+}
+
+function failureCircuit(error: unknown): { id: string; threshold: number; seconds: number | null } {
+  if (error instanceof DeepSeekAPIError && error.kind === "authentication") return { id: "auth_error", threshold: 1, seconds: null };
+  if (error instanceof DeepSeekAPIError && error.kind === "balance") return { id: "balance", threshold: 1, seconds: null };
+  if (error instanceof DeepSeekAPIError && error.kind === "rate_limit") return { id: "provider_deepseek", threshold: 3, seconds: 120 };
+  return { id: "provider_deepseek", threshold: 3, seconds: 300 };
+}
+
+function billingUncertain(error: unknown): boolean {
+  if (!(error instanceof DeepSeekAPIError)) return true;
+  return ["timeout", "network", "provider", "invalid_response"].includes(error.kind);
+}
+
+function failedUsageSettlement(
+  latencyMs: number,
+  providerStatus: number | null,
+  uncertain: boolean,
+): ProviderUsageSettlement {
+  return {
+    inputTokens: null,
+    outputTokens: null,
+    cachedTokens: null,
+    actualMicrousd: null,
+    costBasis: "unknown",
+    billingUncertain: uncertain,
+    latencyMs,
+    providerStatus,
+    validationStatus: "failed",
+  };
+}
+
+export async function askTrace(env: TraceAIRuntimeEnvironment, context: AskTraceContext): Promise<AskTraceResult> {
+  const config = buildConfig(env);
+  if (!config.publicAskTraceEnabled || config.globalKillSwitch) {
+    return { status: "temporarily_unavailable", requestId: context.requestId, message: "Ask TRACE is not currently enabled." };
+  }
+  if (!env.DB || !config.deepseekApiKey) {
+    return { status: "temporarily_unavailable", requestId: context.requestId, message: "Ask TRACE is not configured." };
   }
 
-  const estimatedInputTokens = Math.min(
-    gatewayConfig.maxInputTokens,
-    Math.ceil((input.instruction.length + input.sourceMaterial.reduce((sum, source) => sum + source.text.length, 0)) / 4),
-  );
-  const estimatedCost = estimateMaxCost(gatewayConfig, selectedModel, estimatedInputTokens, maxOutputTokens);
-  const reservation = reserveBudget(gatewayConfig, estimatedCost);
-  if (!reservation.reserved || !reservation.reservationId || reservation.reservedAmount === undefined) {
+  const governance = new DurableAIGovernance(env.DB);
+  const begin = await governance.begin({
+    requestId: context.requestId,
+    idempotencyKeyHash: context.idempotencyKeyHash,
+    visitorHash: context.visitorHash,
+    questionHash: context.questionHash,
+    taskType: "ask_trace",
+    evidenceIds: context.evidenceExcerpts.flatMap((item) => [item.sourceId, ...(item.claimId ? [item.claimId] : [])]),
+  });
+  if (begin.status === "duplicate_completed") {
+    return { status: "ok", requestId: context.requestId, payload: begin.response as AskTracePayload };
+  }
+  if (begin.status === "duplicate_in_progress") {
+    return { status: "in_progress", requestId: begin.requestId, message: "The original request is still processing." };
+  }
+  if (begin.status === "duplicate_terminal") {
+    return { status: "error", requestId: context.requestId, message: begin.message };
+  }
+
+  const dayKey = new Date().toISOString().slice(0, 10);
+  const quota = await governance.consumeQuota(context.requestId, context.visitorHash, dayKey, config.dailyPublicQuestionsPerVisitor);
+  if (quota !== "accepted") {
     return {
-      status: "temporarily_unavailable",
-      requestId,
-      error: reservation.reason ?? "Budget reservation failed.",
+      status: "rate_limited",
+      requestId: context.requestId,
+      message: quota === "concurrency_limit" ? "Another question is already processing." : "Daily question limit reached.",
     };
   }
 
-  const idempotencyKeyHash = await hashIdempotencyKey(
-    `${instruction}:${input.sourceMaterial.map(source => source.sourceId).join(":")}:${requestId}`,
-  );
-  const startedAt = Date.now();
-
-  try {
-    // Editorial requests make exactly one provider call. No endpoint can bypass this gateway.
-    const draft = await modelProvider.generateEditorial(input);
-    const validation = validateEditorialOutput(draft, input.sourceMaterial);
-    const latencyMs = Date.now() - startedAt;
-    const actualCost = estimateCost(selectedModel, estimatedInputTokens, maxOutputTokens);
-
-    reconcileReservation(reservation.reservationId, actualCost, reservation.reservedAmount);
-    recordUsage({
-      requestId,
-      idempotencyKeyHash,
-      taskType: "editorial",
-      provider: gatewayConfig.provider,
-      model: selectedModel,
-      inputTokens: estimatedInputTokens,
-      outputTokens: maxOutputTokens,
-      cachedTokens: 0,
-      estimatedCost,
-      actualCost,
-      attemptNumber: 1,
-      latencyMs,
-      providerStatus: 200,
-      validationStatus: validation.passed ? "passed" : "failed",
-      validationFailures: validation.failures,
-      budgetReservation: reservation.reservedAmount,
-    });
-
-    if (!validation.passed) {
-      recordFailure("failure_rate", "Editorial output failed validation.");
-      return {
-        status: "validation_failed",
-        requestId,
-        error: "AI output failed TRACE validation and was not returned.",
-      };
-    }
-
-    recordSuccess(modelBreaker);
-    recordSuccess("provider_deepseek");
-    return { status: "ok", requestId, draft };
-  } catch (error: unknown) {
-    releaseReservation(reservation.reservationId, reservation.reservedAmount);
-    const message = error instanceof Error ? error.message : "Unknown provider error";
-    recordFailure(modelBreaker, message);
-    recordFailure("provider_deepseek", message);
-    if (error instanceof DeepSeekAPIError && error.kind === "authentication") {
-      recordFailure("auth_error", "Provider authentication failed.");
-    }
-    if (error instanceof DeepSeekAPIError && error.kind === "balance") {
-      recordFailure("balance", "Provider balance unavailable.");
-    }
-
-    console.error(JSON.stringify({ message: "Editorial model request failed", requestId, error: message }));
-    return classifyEditorialFailure(error, requestId);
-  }
-}
-
-// ============================================================
-// Public API: Predictions (admin/scheduled only)
-// ============================================================
-
-export async function generatePredictions(
-  evidenceSummary: string,
-  forecastDays: number = 7,
-): Promise<{ status: string; candidates?: TracePredictionCandidate[]; error?: string }> {
-  if (!config || !provider) return { status: "error", error: "Gateway not initialised." };
-
-  if (!allowRequest("scheduled_jobs")) {
-    return { status: "error", error: "Prediction generation circuit breaker is open." };
-  }
-
-  const now = new Date();
-  const forecastEnd = new Date(now.getTime() + forecastDays * 86_400_000);
-
-  const input: TracePredictionInput = {
-    taskType: "prediction",
-    evidenceSummary,
-    candidateCount: 3,
-    forecastWindow: {
-      from: now.toISOString().slice(0, 10),
-      to: forecastEnd.toISOString().slice(0, 10),
-    },
+  const input = {
+    taskType: "ask_trace" as const,
+    question: context.question,
+    evidenceExcerpts: context.evidenceExcerpts,
     maxOutputTokens: config.maxOutputTokens,
   };
+  const inputValidation = validateTaskInput(input, "ask_trace");
+  if (!inputValidation.valid) {
+    await governance.reject(context.requestId, "Request validation failed.");
+    return { status: "error", requestId: context.requestId, message: "Request validation failed." };
+  }
+  await governance.validate(context.requestId);
 
+  const confidence = calculateDeterministicConfidence(context.evidenceExcerpts);
+  if (confidence.label === "insufficient_evidence") {
+    const payload = safeNonAnswer(context.requestId, confidence, "Eligible evidence did not meet the minimum corroboration policy.");
+    await governance.completeWithoutModel(context.requestId, payload);
+    return { status: "ok", requestId: context.requestId, payload };
+  }
+
+  if (await governance.anyCircuitOpen(["global_kill", "public_ask", "provider_deepseek", "model_flash", "daily_budget", "monthly_budget", "balance", "auth_error"])) {
+    await governance.reject(context.requestId, "Ask TRACE is temporarily unavailable.", "circuit_open");
+    return { status: "temporarily_unavailable", requestId: context.requestId, message: "Ask TRACE is temporarily unavailable." };
+  }
+
+  const inputTokens = Math.min(config.maxInputTokens, estimateTokens(context.question + context.evidenceExcerpts.map((item) => item.text).join("\n")));
+  const estimatedMicrousd = dollarsToMicrousd(estimatedCost(config, config.publicModel, inputTokens, config.maxOutputTokens));
+  const reservation = await governance.reserve(context.requestId, "ask_trace", estimatedMicrousd, durableConfig(config, env, "ask_trace"));
+  if (!reservation) {
+    await governance.reject(context.requestId, "Ask TRACE is temporarily unavailable due to budget policy.");
+    return { status: "temporarily_unavailable", requestId: context.requestId, message: "Ask TRACE is temporarily unavailable." };
+  }
+
+  const provider = new DeepSeekProvider(config);
+  if (!await governance.startProvider(context.requestId, config.provider, config.publicModel)) {
+    return { status: "in_progress", requestId: context.requestId, message: "The request is already processing." };
+  }
+
+  const startedAt = Date.now();
   try {
-    const candidates = await provider.generatePredictions(input);
-    recordSuccess("model_pro");
-    const validation = validatePredictionOutput(candidates);
-    return { status: validation.passed ? "ok" : "partial", candidates: validation.validCandidates };
+    const generation = await provider.generateAnswer(input);
+    const validation = validateAnswerOutput(generation.output, input.evidenceExcerpts, input.maxOutputTokens);
+    const payload = validation.passed
+      ? answerPayload(context.requestId, generation.output, context.evidenceExcerpts, confidence)
+      : safeNonAnswer(context.requestId, confidence, "The generated draft failed citation or structure validation.");
+    const settlement = usageSettlement(
+      config, config.publicModel, generation.usage, inputTokens, input.maxOutputTokens,
+      Date.now() - startedAt, generation.providerStatus, validation.passed ? "passed" : "failed",
+    );
+    await governance.settleSuccess(
+      context.requestId, reservation.reservationId, config.provider, config.publicModel,
+      estimatedMicrousd, settlement, payload,
+    );
+    await governance.recordCircuitSuccess("provider_deepseek");
+    await governance.recordCircuitSuccess("model_flash");
+    return { status: "ok", requestId: context.requestId, payload };
   } catch (error: unknown) {
-    const message = getErrorMessage(error);
-    recordFailure("model_pro", message);
-    return { status: "error", error: message };
+    const circuit = failureCircuit(error);
+    await governance.recordCircuitFailure(circuit.id, error instanceof DeepSeekAPIError ? error.kind : "invalid_response", circuit.threshold, circuit.seconds);
+    const uncertain = billingUncertain(error);
+    await governance.settleFailure(
+      context.requestId, reservation.reservationId, config.provider, config.publicModel, estimatedMicrousd,
+      failedUsageSettlement(Date.now() - startedAt, error instanceof DeepSeekAPIError ? error.status ?? null : null, uncertain),
+      failurePublicMessage(error),
+    );
+    console.error(JSON.stringify({ message: "TRACE model request failed", requestId: context.requestId, kind: error instanceof DeepSeekAPIError ? error.kind : "invalid_response" }));
+    return { status: "temporarily_unavailable", requestId: context.requestId, message: failurePublicMessage(error) };
   }
 }
 
-// ============================================================
-// Admin controls
-// ============================================================
-
-export function getGatewayStatus() {
-  return {
-    initialised: config !== null,
-    provider: config?.provider ?? "none",
-    publicModel: config?.publicModel ?? "none",
-    publicAskTraceEnabled: config?.publicAskTraceEnabled ?? false,
-    killSwitchActive: isGlobalKillSwitchActive(),
-    dailyUsage: getDailyTotals(),
-  };
-}
-
-export function shutdown(reason: string): void {
-  activateGlobalKillSwitch(reason);
-}
-
-// ============================================================
-// Helpers
-// ============================================================
-
-async function hashIdempotencyKey(key: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(key));
-  const hash = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("");
-  return `ik_${hash}`;
-}
-
-function getErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "Unknown error";
-}
-
-function classifyEditorialFailure(
-  error: unknown,
-  requestId: string,
-): {
-  status: "error" | "temporarily_unavailable";
+export interface EditorialContext {
   requestId: string;
-  error: string;
-} {
-  if (!(error instanceof DeepSeekAPIError)) {
-    return { status: "error", requestId, error: "DeepSeek returned an unusable response." };
+  idempotencyKeyHash: string;
+  instruction: string;
+  sourceMaterial: EvidenceExcerpt[];
+  modelTier?: "routine" | "editorial";
+  maxOutputTokens?: number;
+}
+
+export async function generateEditorial(
+  env: TraceAIRuntimeEnvironment,
+  context: EditorialContext,
+): Promise<{ status: "ok" | "error" | "temporarily_unavailable" | "in_progress"; requestId: string; draft?: TraceEditorialDraft; error?: string }> {
+  const config = buildConfig(env);
+  if (!config.editorialAIEnabled || config.globalKillSwitch || !env.DB || !config.deepseekApiKey) {
+    return { status: "temporarily_unavailable", requestId: context.requestId, error: "Editorial AI is not configured." };
+  }
+  const governance = new DurableAIGovernance(env.DB);
+  const begin = await governance.begin({
+    requestId: context.requestId,
+    idempotencyKeyHash: context.idempotencyKeyHash,
+    visitorHash: null,
+    questionHash: null,
+    taskType: "editorial",
+    evidenceIds: context.sourceMaterial.map((item) => item.sourceId),
+  });
+  if (begin.status === "duplicate_completed") {
+    const stored = begin.response as { draft?: TraceEditorialDraft };
+    return stored.draft ? { status: "ok", requestId: context.requestId, draft: stored.draft } : { status: "error", requestId: context.requestId, error: "Stored result is unavailable." };
+  }
+  if (begin.status === "duplicate_in_progress") return { status: "in_progress", requestId: begin.requestId, error: "The original request is still processing." };
+  if (begin.status === "duplicate_terminal") return { status: "error", requestId: context.requestId, error: begin.message };
+
+  const selectedModel = context.modelTier === "routine" ? config.publicModel : config.editorialModel;
+  const assignment = validateModelAssignment(selectedModel, "editorial", config);
+  const maxOutputTokens = Math.min(context.maxOutputTokens ?? config.maxOutputTokens, config.maxOutputTokens);
+  const input = {
+    taskType: "editorial" as const,
+    model: selectedModel,
+    instruction: context.instruction.slice(0, 4_000),
+    sourceMaterial: context.sourceMaterial.slice(0, config.maxEvidenceExcerpts),
+    maxOutputTokens,
+  };
+  const validation = validateTaskInput(input, "editorial");
+  if (!assignment.valid || !validation.valid) {
+    await governance.reject(context.requestId, "Editorial request validation failed.");
+    return { status: "error", requestId: context.requestId, error: "Editorial request validation failed." };
+  }
+  await governance.validate(context.requestId);
+  const modelBreaker = selectedModel === config.publicModel ? "model_flash" : "model_pro";
+  if (await governance.anyCircuitOpen(["global_kill", "provider_deepseek", modelBreaker, "daily_budget", "monthly_budget", "balance", "auth_error"])) {
+    await governance.reject(context.requestId, "Editorial AI is temporarily unavailable.", "circuit_open");
+    return { status: "temporarily_unavailable", requestId: context.requestId, error: "Editorial AI is temporarily unavailable." };
   }
 
-  switch (error.kind) {
-    case "authentication":
-      return { status: "error", requestId, error: "DeepSeek rejected the configured API key." };
-    case "balance":
-      return { status: "temporarily_unavailable", requestId, error: "The DeepSeek account has insufficient balance." };
-    case "rate_limit":
-      return { status: "temporarily_unavailable", requestId, error: "DeepSeek is rate limiting requests. Try again shortly." };
-    case "timeout":
-      return { status: "temporarily_unavailable", requestId, error: "DeepSeek did not respond before the request timeout." };
-    case "network":
-    case "provider":
-      return { status: "temporarily_unavailable", requestId, error: "DeepSeek is temporarily unavailable." };
-    case "invalid_request":
-      return { status: "error", requestId, error: "DeepSeek rejected the model request parameters." };
-    case "invalid_response":
-      return { status: "error", requestId, error: "DeepSeek returned an invalid response." };
+  const inputTokens = Math.min(config.maxInputTokens, estimateTokens(input.instruction + input.sourceMaterial.map((item) => item.text).join("\n")));
+  const estimatedMicrousd = dollarsToMicrousd(estimatedCost(config, selectedModel, inputTokens, maxOutputTokens));
+  const reservation = await governance.reserve(context.requestId, "editorial", estimatedMicrousd, durableConfig(config, env, "editorial"));
+  if (!reservation) {
+    await governance.reject(context.requestId, "Editorial AI is unavailable due to budget policy.");
+    return { status: "temporarily_unavailable", requestId: context.requestId, error: "Editorial AI is temporarily unavailable." };
   }
+  if (!await governance.startProvider(context.requestId, config.provider, selectedModel)) {
+    return { status: "in_progress", requestId: context.requestId, error: "The request is already processing." };
+  }
+
+  const provider = new DeepSeekProvider(config);
+  const startedAt = Date.now();
+  try {
+    const generation = await provider.generateEditorial(input);
+    const outputValidation = validateEditorialOutput(generation.output, input.sourceMaterial);
+    if (!outputValidation.passed) {
+      await governance.settleSuccess(
+        context.requestId, reservation.reservationId, config.provider, selectedModel, estimatedMicrousd,
+        usageSettlement(config, selectedModel, generation.usage, inputTokens, maxOutputTokens, Date.now() - startedAt, generation.providerStatus, "failed"),
+        { draft: null, validationFailed: true },
+      );
+      return { status: "error", requestId: context.requestId, error: "AI output failed TRACE validation and was not returned." };
+    }
+    const response = { draft: generation.output };
+    await governance.settleSuccess(
+      context.requestId, reservation.reservationId, config.provider, selectedModel, estimatedMicrousd,
+      usageSettlement(config, selectedModel, generation.usage, inputTokens, maxOutputTokens, Date.now() - startedAt, generation.providerStatus, "passed"),
+      response,
+    );
+    await governance.recordCircuitSuccess("provider_deepseek");
+    await governance.recordCircuitSuccess(modelBreaker);
+    return { status: "ok", requestId: context.requestId, draft: generation.output };
+  } catch (error: unknown) {
+    const circuit = failureCircuit(error);
+    await governance.recordCircuitFailure(circuit.id, error instanceof DeepSeekAPIError ? error.kind : "invalid_response", circuit.threshold, circuit.seconds);
+    await governance.settleFailure(
+      context.requestId, reservation.reservationId, config.provider, selectedModel, estimatedMicrousd,
+      failedUsageSettlement(Date.now() - startedAt, error instanceof DeepSeekAPIError ? error.status ?? null : null, billingUncertain(error)),
+      failurePublicMessage(error),
+    );
+    console.error(JSON.stringify({ message: "TRACE editorial request failed", requestId: context.requestId, kind: error instanceof DeepSeekAPIError ? error.kind : "invalid_response" }));
+    return { status: "temporarily_unavailable", requestId: context.requestId, error: failurePublicMessage(error) };
+  }
+}
+
+export async function hashPrivateIdentifier(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }

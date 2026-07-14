@@ -1,22 +1,42 @@
-# The Trace Manifest — Local Development Secrets
-# Copy this file to .dev.vars and fill in your actual values.
-# .dev.vars is gitignored — never commit real secrets.
-#
-# For production, set these as encrypted secrets:
-#   npx wrangler secret put DEEPSEEK_API_KEY
-#
-# All TRACE_* variables have sensible defaults (see src/ai/config.ts).
-# Only DEEPSEEK_API_KEY is required for the AI gateway to function.
+# Copy to .dev.vars for local development only. Never commit real values.
+TRACE_ENVIRONMENT=development
+TRACE_ALLOWED_ORIGINS=http://localhost:4321,http://127.0.0.1:4321
 
-# Required — your DeepSeek API key (starts with sk-)
-DEEPSEEK_API_KEY=sk-your-key-here
+# Public AI is fail-closed. Enable only after D1 migrations and controls exist.
+TRACE_AI_PUBLIC_ENABLED=false
+TRACE_AI_EDITORIAL_ENABLED=false
+TRACE_AI_SCHEDULED_ENABLED=false
+TRACE_AI_GLOBAL_KILL_SWITCH=false
+DEEPSEEK_API_KEY=replace-with-local-secret
+TRACE_VISITOR_HASH_SECRET=replace-with-at-least-32-random-characters
+TRACE_AI_PUBLIC_MODEL=deepseek-v4-flash
+TRACE_AI_EDITORIAL_MODEL=deepseek-v4-pro
+TRACE_AI_DAILY_PUBLIC_BUDGET_USD=1.00
+TRACE_AI_MONTHLY_PUBLIC_BUDGET_USD=10.00
+TRACE_AI_ASK_DAILY_BUDGET_USD=1.00
+TRACE_AI_EDITORIAL_DAILY_BUDGET_USD=1.00
+TRACE_AI_MAX_COST_PER_REQUEST_USD=0.02
+TRACE_AI_MAX_QUESTION_LENGTH=1000
+TRACE_AI_MAX_EVIDENCE_EXCERPTS=8
+TRACE_AI_MAX_INPUT_TOKENS=12000
+TRACE_AI_MAX_OUTPUT_TOKENS=1500
+TRACE_AI_REQUEST_TIMEOUT_MS=25000
+TRACE_AI_DAILY_QUESTIONS=3
+TRACE_AI_MAX_CONCURRENT=1
 
-# Optional — override defaults
-# TRACE_PUBLIC_MODEL=deepseek-v4-flash
-# TRACE_EDITORIAL_MODEL=deepseek-v4-pro
-# TRACE_PUBLIC_ASK_ENABLED=true
-# TRACE_DAILY_BUDGET=1.00
-# TRACE_MONTHLY_BUDGET=10.00
-# TRACE_MAX_COST_PER_REQUEST=0.02
-# TRACE_MAX_OUTPUT_TOKENS=1500
-# TRACE_DAILY_QUESTIONS=3
+# Replace every pricing placeholder with reviewed current provider pricing.
+TRACE_AI_FLASH_INPUT_USD_PER_MILLION=replace-with-reviewed-price
+TRACE_AI_FLASH_OUTPUT_USD_PER_MILLION=replace-with-reviewed-price
+TRACE_AI_PRO_INPUT_USD_PER_MILLION=replace-with-reviewed-price
+TRACE_AI_PRO_OUTPUT_USD_PER_MILLION=replace-with-reviewed-price
+
+# Cloudflare Access and the first-party admin proxy.
+CF_ACCESS_TEAM_DOMAIN=your-team.cloudflareaccess.com
+CF_ACCESS_AUD=replace-with-access-application-audience
+TRACE_ADMIN_READERS=reader@example.com
+TRACE_ADMIN_PUBLISHERS=publisher@example.com
+TRACE_INGESTION_WORKER_URL=https://replace-with-worker-host.example
+TRACE_INTERNAL_SERVICE_SECRET=replace-with-at-least-32-random-characters
+
+# Optional Worker-only secret for higher GitHub API limits.
+GITHUB_TOKEN=replace-with-github-token-or-remove

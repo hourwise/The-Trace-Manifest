@@ -45,18 +45,41 @@ function isStringArray(v: unknown, maxLen?: number): v is string[] {
   return isArray(v, 0, maxLen) && v.every(item => typeof item === "string");
 }
 
+function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
+  const keys = new Set(allowed);
+  return Object.keys(value).every((key) => keys.has(key));
+}
+
+function isOptionalString(v: unknown, maxLen: number): v is string | undefined {
+  return v === undefined || isString(v, maxLen);
+}
+
 // ============================================================
 // Evidence excerpt validator
 // ============================================================
 
 export function validateEvidenceExcerpt(v: unknown): v is EvidenceExcerpt {
-  if (!v || typeof v !== "object") return false;
+  if (!v || typeof v !== "object" || Array.isArray(v)) return false;
   const e = v as Record<string, unknown>;
-  return isString(e.sourceId) && isString(e.text) && isString(e.sourceClassification);
+  return hasOnlyKeys(e, [
+    "sourceId", "claimId", "text", "sourceClassification", "sourceName", "sourceUrl",
+    "observedAt", "publishedAt", "trustNotes", "relationship", "isDisputed",
+  ])
+    && isString(e.sourceId, 128)
+    && isOptionalString(e.claimId, 128)
+    && isString(e.text, 8_000)
+    && isString(e.sourceClassification, 300)
+    && isOptionalString(e.sourceName, 300)
+    && isOptionalString(e.sourceUrl, 2_048)
+    && isOptionalString(e.observedAt, 64)
+    && isOptionalString(e.publishedAt, 64)
+    && isOptionalString(e.trustNotes, 1_000)
+    && isOptionalString(e.relationship, 100)
+    && (e.isDisputed === undefined || isBoolean(e.isDisputed));
 }
 
-export function validateEvidenceExcerpts(excerpts: unknown): ValidationResult {
-  if (!isArray(excerpts, 0, 16)) return fail("evidenceExcerpts must be an array of 0–16 items");
+export function validateEvidenceExcerpts(excerpts: unknown, minimum = 0): ValidationResult {
+  if (!isArray(excerpts, minimum, 16)) return fail(`evidenceExcerpts must be an array of ${minimum}–16 items`);
   for (let i = 0; i < (excerpts as unknown[]).length; i++) {
     if (!validateEvidenceExcerpt((excerpts as unknown[])[i])) {
       return fail(`evidenceExcerpts[${i}] is invalid — requires sourceId, text, sourceClassification`);
@@ -71,18 +94,25 @@ export function validateEvidenceExcerpts(excerpts: unknown): ValidationResult {
 
 export function validateAskTraceInput(input: unknown): ValidationResult {
   const i = input as Record<string, unknown>;
-  if (!i || typeof i !== "object") return fail("Input must be an object");
+  if (!i || typeof i !== "object" || Array.isArray(i)) return fail("Input must be an object");
+  if (!hasOnlyKeys(i, ["taskType", "question", "evidenceExcerpts", "timeWindow", "maxOutputTokens"])) {
+    return fail("Ask TRACE input contains unknown fields");
+  }
 
   if (i.taskType !== "ask_trace") return fail("taskType must be 'ask_trace'");
   if (!isString(i.question, 1000)) return fail("question is required, max 1000 characters");
-
-  const excerpts = i.evidenceExcerpts;
-  if (excerpts !== undefined) {
-    const evResult = validateEvidenceExcerpts(excerpts);
-    if (!evResult.valid) return evResult;
+  const evResult = validateEvidenceExcerpts(i.evidenceExcerpts, 1);
+  if (!evResult.valid) return evResult;
+  if (i.timeWindow !== undefined) {
+    if (!i.timeWindow || typeof i.timeWindow !== "object" || Array.isArray(i.timeWindow)) {
+      return fail("timeWindow must be an object when supplied");
+    }
+    const window = i.timeWindow as Record<string, unknown>;
+    if (!hasOnlyKeys(window, ["from", "to"]) || !isOptionalString(window.from, 64) || !isOptionalString(window.to, 64)) {
+      return fail("timeWindow may contain only bounded from and to values");
+    }
   }
-
-  if (i.maxOutputTokens !== undefined && !isNumber(i.maxOutputTokens, 1, 4000)) {
+  if (!isNumber(i.maxOutputTokens, 1, 4000)) {
     return fail("maxOutputTokens must be 1–4000");
   }
 
@@ -91,17 +121,23 @@ export function validateAskTraceInput(input: unknown): ValidationResult {
 
 export function validateEditorialInput(input: unknown): ValidationResult {
   const i = input as Record<string, unknown>;
-  if (!i || typeof i !== "object") return fail("Input must be an object");
-
-  if (i.taskType !== "editorial") return fail("taskType must be 'editorial'");
-  if (!isString(i.instruction, 4000)) return fail("instruction is required, max 4000 characters");
-
-  if (i.sourceMaterial !== undefined) {
-    const evResult = validateEvidenceExcerpts(i.sourceMaterial);
-    if (!evResult.valid) return evResult;
+  if (!i || typeof i !== "object" || Array.isArray(i)) return fail("Input must be an object");
+  if (!hasOnlyKeys(i, ["taskType", "model", "instruction", "sourceMaterial", "editorialContext", "maxOutputTokens"])) {
+    return fail("Editorial input contains unknown fields");
   }
 
-  if (i.maxOutputTokens !== undefined && !isNumber(i.maxOutputTokens, 1, 8000)) {
+  if (i.taskType !== "editorial") return fail("taskType must be 'editorial'");
+  if (i.model !== undefined && i.model !== "deepseek-v4-flash" && i.model !== "deepseek-v4-pro") {
+    return fail("model is not allowlisted");
+  }
+  if (!isString(i.instruction, 4000)) return fail("instruction is required, max 4000 characters");
+  if (!isOptionalString(i.editorialContext, 4_000)) return fail("editorialContext must be bounded when supplied");
+
+  if (!isArray(i.sourceMaterial, 1, 16)) return fail("sourceMaterial must contain 1–16 evidence items");
+  const evResult = validateEvidenceExcerpts(i.sourceMaterial, 1);
+  if (!evResult.valid) return evResult;
+
+  if (!isNumber(i.maxOutputTokens, 1, 8000)) {
     return fail("maxOutputTokens must be 1–8000");
   }
 
@@ -110,13 +146,23 @@ export function validateEditorialInput(input: unknown): ValidationResult {
 
 export function validatePredictionInput(input: unknown): ValidationResult {
   const i = input as Record<string, unknown>;
-  if (!i || typeof i !== "object") return fail("Input must be an object");
+  if (!i || typeof i !== "object" || Array.isArray(i)) return fail("Input must be an object");
+  if (!hasOnlyKeys(i, ["taskType", "evidenceSummary", "candidateCount", "forecastWindow", "maxOutputTokens"])) {
+    return fail("Prediction input contains unknown fields");
+  }
 
   if (i.taskType !== "prediction") return fail("taskType must be 'prediction'");
   if (!isString(i.evidenceSummary, 8000)) return fail("evidenceSummary is required, max 8000 characters");
   if (!isNumber(i.candidateCount, 1, 5)) return fail("candidateCount must be 1–5");
 
-  if (i.maxOutputTokens !== undefined && !isNumber(i.maxOutputTokens, 1, 8000)) {
+  if (!i.forecastWindow || typeof i.forecastWindow !== "object" || Array.isArray(i.forecastWindow)) {
+    return fail("forecastWindow is required");
+  }
+  const window = i.forecastWindow as Record<string, unknown>;
+  if (!hasOnlyKeys(window, ["from", "to"]) || !isString(window.from, 64) || !isString(window.to, 64)) {
+    return fail("forecastWindow requires bounded from and to values");
+  }
+  if (!isNumber(i.maxOutputTokens, 1, 8000)) {
     return fail("maxOutputTokens must be 1–8000");
   }
 
@@ -141,14 +187,30 @@ export function validateAnswerDraft(output: unknown): ValidationResult {
   if (!o || typeof o !== "object") return fail("Output must be an object");
 
   const errors: string[] = [];
+  if (!hasOnlyKeys(o, [
+    "answer", "keyPoints", "claims", "citedSourceIds", "citedClaimIds", "confirmedFacts",
+    "reportedClaims", "analysis", "disagreements", "caveats", "whatCouldChange", "proposedConfidence",
+  ])) errors.push("answer contains unknown fields");
   if (!isString(o.answer)) errors.push("answer is required and must be a non-empty string");
-  if (!isStringArray(o.keyPoints)) errors.push("keyPoints must be a string array");
-  if (!isStringArray(o.citedSourceIds)) errors.push("citedSourceIds must be a string array");
-  if (!isStringArray(o.citedClaimIds)) errors.push("citedClaimIds must be a string array");
-  if (!isStringArray(o.confirmedFacts)) errors.push("confirmedFacts must be a string array");
-  if (!isStringArray(o.reportedClaims)) errors.push("reportedClaims must be a string array");
-  if (!isStringArray(o.disagreements)) errors.push("disagreements must be a string array");
-  if (!isStringArray(o.caveats)) errors.push("caveats must be a string array");
+  if (!isStringArray(o.keyPoints, 10) || !(o.keyPoints as string[]).every((item) => isString(item, 1_000))) errors.push("keyPoints must contain at most 10 bounded strings");
+  if (!isArray(o.claims, 0, 20) || !(o.claims as unknown[]).every((claim) => {
+    if (!claim || typeof claim !== "object") return false;
+    const item = claim as Record<string, unknown>;
+    return hasOnlyKeys(item, ["text", "evidenceSourceIds", "evidenceClaimIds"])
+      && isString(item.text, 1000)
+      && isStringArray(item.evidenceSourceIds, 16)
+      && isStringArray(item.evidenceClaimIds, 16)
+      && (item.evidenceSourceIds as string[]).length > 0
+      && (item.evidenceClaimIds as string[]).length > 0;
+  })) errors.push("claims must contain evidence-linked claim objects");
+  if (!isStringArray(o.citedSourceIds, 16)) errors.push("citedSourceIds must contain at most 16 strings");
+  if (!isStringArray(o.citedClaimIds, 16)) errors.push("citedClaimIds must contain at most 16 strings");
+  if (!isStringArray(o.confirmedFacts, 10) || !(o.confirmedFacts as string[]).every((item) => isString(item, 1_000))) errors.push("confirmedFacts must contain at most 10 bounded strings");
+  if (!isStringArray(o.reportedClaims, 10) || !(o.reportedClaims as string[]).every((item) => isString(item, 1_000))) errors.push("reportedClaims must contain at most 10 bounded strings");
+  if (!isStringArray(o.disagreements, 10) || !(o.disagreements as string[]).every((item) => isString(item, 1_000))) errors.push("disagreements must contain at most 10 bounded strings");
+  if (!isStringArray(o.caveats, 10) || !(o.caveats as string[]).every((item) => isString(item, 1_000))) errors.push("caveats must contain at most 10 bounded strings");
+  if (o.analysis !== undefined && (typeof o.analysis !== "string" || o.analysis.length > 4_000)) errors.push("analysis must be a bounded string when supplied");
+  if (!isString(o.whatCouldChange, 2_000)) errors.push("whatCouldChange is required and must be bounded");
 
   const validConfidences = ["high", "medium", "low", "insufficient_evidence"];
   if (!isString(o.proposedConfidence) || !validConfidences.includes(o.proposedConfidence as string)) {
@@ -163,14 +225,18 @@ export function validateEditorialDraft(output: unknown): ValidationResult {
   if (!o || typeof o !== "object") return fail("Output must be an object");
 
   const errors: string[] = [];
-  if (o.headline !== undefined && !isString(o.headline, 150)) errors.push("headline must be a non-empty string of at most 150 characters");
-  if (!isString(o.summary)) errors.push("summary is required");
-  if (!isString(o.analysis)) errors.push("analysis is required");
-  if (o.whyItMatters !== undefined && !isString(o.whyItMatters, 300)) errors.push("whyItMatters must be a non-empty string of at most 300 characters");
-  if (o.isNewsworthy !== undefined && !isBoolean(o.isNewsworthy)) errors.push("isNewsworthy must be a boolean");
-  if (!isStringArray(o.keyPoints, 10)) errors.push("keyPoints must be a string array");
-  if (!isStringArray(o.citedSourceIds, 16)) errors.push("citedSourceIds must be a string array");
-  if (!isStringArray(o.caveats, 10)) errors.push("caveats must be a string array");
+  if (!hasOnlyKeys(o, [
+    "headline", "summary", "analysis", "whyItMatters", "isNewsworthy", "keyPoints",
+    "citedSourceIds", "caveats", "proposedConfidence",
+  ])) errors.push("editorial output contains unknown fields");
+  if (!isString(o.headline, 150)) errors.push("headline is required and must be at most 150 characters");
+  if (!isString(o.summary, 2_000)) errors.push("summary is required and must be bounded");
+  if (!isString(o.analysis, 4_000)) errors.push("analysis is required and must be bounded");
+  if (!isString(o.whyItMatters, 300)) errors.push("whyItMatters is required and must be at most 300 characters");
+  if (!isBoolean(o.isNewsworthy)) errors.push("isNewsworthy is required and must be a boolean");
+  if (!isStringArray(o.keyPoints, 10) || !(o.keyPoints as string[]).every((item) => isString(item, 1_000))) errors.push("keyPoints must contain at most 10 bounded strings");
+  if (!isStringArray(o.citedSourceIds, 16) || (o.citedSourceIds as string[]).length < 1) errors.push("citedSourceIds must contain 1–16 source IDs");
+  if (!isStringArray(o.caveats, 10) || !(o.caveats as string[]).every((item) => isString(item, 1_000))) errors.push("caveats must contain at most 10 bounded strings");
 
   const validConfidences = ["high", "medium", "low"];
   if (!isString(o.proposedConfidence) || !validConfidences.includes(o.proposedConfidence as string)) {

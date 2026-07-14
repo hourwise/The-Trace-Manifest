@@ -1,103 +1,134 @@
-// The Trace Manifest — AI Gateway Configuration
-// Builds configuration from request-time Cloudflare bindings.
-// Secrets remain server-side and are never read from the client bundle.
-
-import { initGateway } from "./trace-model-gateway";
 import type { TraceAIConfig, TraceModelId } from "./provider";
 
 export type TraceAIEnvironment = Partial<Record<
   | "DEEPSEEK_API_KEY"
-  | "TRACE_PUBLIC_MODEL"
-  | "TRACE_EDITORIAL_MODEL"
-  | "TRACE_PUBLIC_ASK_ENABLED"
-  | "TRACE_SCHEDULED_JOBS_ENABLED"
-  | "TRACE_GLOBAL_KILL_SWITCH"
-  | "TRACE_DAILY_BUDGET"
-  | "TRACE_MONTHLY_BUDGET"
-  | "TRACE_MAX_COST_PER_REQUEST"
-  | "TRACE_WARNING_BALANCE"
-  | "TRACE_RESTRICT_BALANCE"
-  | "TRACE_STOP_BALANCE"
-  | "TRACE_MAX_QUESTION_LENGTH"
-  | "TRACE_MAX_EVIDENCE_EXCERPTS"
-  | "TRACE_MAX_INPUT_TOKENS"
-  | "TRACE_MAX_OUTPUT_TOKENS"
-  | "TRACE_REQUEST_TIMEOUT_MS"
-  | "TRACE_DAILY_QUESTIONS"
-  | "TRACE_MAX_CONCURRENT",
+  | "TRACE_ENVIRONMENT"
+  | "TRACE_AI_PUBLIC_ENABLED"
+  | "TRACE_AI_EDITORIAL_ENABLED"
+  | "TRACE_AI_SCHEDULED_ENABLED"
+  | "TRACE_AI_GLOBAL_KILL_SWITCH"
+  | "TRACE_AI_PUBLIC_MODEL"
+  | "TRACE_AI_EDITORIAL_MODEL"
+  | "TRACE_AI_DAILY_PUBLIC_BUDGET_USD"
+  | "TRACE_AI_MONTHLY_PUBLIC_BUDGET_USD"
+  | "TRACE_AI_ASK_DAILY_BUDGET_USD"
+  | "TRACE_AI_EDITORIAL_DAILY_BUDGET_USD"
+  | "TRACE_AI_MAX_COST_PER_REQUEST_USD"
+  | "TRACE_AI_MAX_QUESTION_LENGTH"
+  | "TRACE_AI_MAX_EVIDENCE_EXCERPTS"
+  | "TRACE_AI_MAX_INPUT_TOKENS"
+  | "TRACE_AI_MAX_OUTPUT_TOKENS"
+  | "TRACE_AI_REQUEST_TIMEOUT_MS"
+  | "TRACE_AI_DAILY_QUESTIONS"
+  | "TRACE_AI_MAX_CONCURRENT"
+  | "TRACE_AI_FLASH_INPUT_USD_PER_MILLION"
+  | "TRACE_AI_FLASH_OUTPUT_USD_PER_MILLION"
+  | "TRACE_AI_PRO_INPUT_USD_PER_MILLION"
+  | "TRACE_AI_PRO_OUTPUT_USD_PER_MILLION",
   string
 >>;
 
 function getEnv(runtimeEnv: TraceAIEnvironment, key: keyof TraceAIEnvironment): string {
   const runtimeValue = runtimeEnv[key];
   if (typeof runtimeValue === "string") return runtimeValue;
-
-  // Supports the Node-based test runner and local development outside platformProxy.
-  if (typeof process !== "undefined" && process.env) {
+  const processEnvironment = typeof process !== "undefined" && process.env
+    ? process.env.TRACE_ENVIRONMENT
+    : undefined;
+  const effectiveEnvironment = runtimeEnv.TRACE_ENVIRONMENT || processEnvironment;
+  if (key === "TRACE_ENVIRONMENT" && processEnvironment) return processEnvironment;
+  if (typeof process !== "undefined" && process.env && effectiveEnvironment !== "production") {
     return process.env[key] ?? "";
   }
-
   return "";
+}
+
+function numberValue(
+  env: (key: keyof TraceAIEnvironment) => string,
+  key: keyof TraceAIEnvironment,
+  fallback: number,
+  minimum: number,
+  maximum: number,
+): number {
+  const raw = env(key);
+  const value = raw ? Number(raw) : fallback;
+  if (!Number.isFinite(value) || value < minimum || value > maximum) {
+    throw new Error(`Invalid numeric TRACE configuration: ${key}.`);
+  }
+  return value;
+}
+
+function modelValue(value: string, fallback: TraceModelId): TraceModelId {
+  const model = value || fallback;
+  if (model !== "deepseek-v4-flash" && model !== "deepseek-v4-pro") {
+    throw new Error("Configured TRACE model is not allowlisted.");
+  }
+  return model;
 }
 
 export function buildConfig(runtimeEnv: TraceAIEnvironment = {}): TraceAIConfig {
   const env = (key: keyof TraceAIEnvironment): string => getEnv(runtimeEnv, key);
+  const publicAskTraceEnabled = env("TRACE_AI_PUBLIC_ENABLED") === "true";
+  const editorialAIEnabled = env("TRACE_AI_EDITORIAL_ENABLED") === "true";
+  const scheduledJobsEnabled = env("TRACE_AI_SCHEDULED_ENABLED") === "true";
+  const anyAIEnabled = publicAskTraceEnabled || editorialAIEnabled || scheduledJobsEnabled;
+  const production = env("TRACE_ENVIRONMENT") === "production";
   const apiKey = env("DEEPSEEK_API_KEY");
 
-  const publicModel = (env("TRACE_PUBLIC_MODEL") || "deepseek-v4-flash") as TraceModelId;
-  const editorialModel = (env("TRACE_EDITORIAL_MODEL") || "deepseek-v4-pro") as TraceModelId;
+  if (anyAIEnabled && !apiKey) throw new Error("TRACE AI is enabled but its provider secret is missing.");
+  const pricingKeys: (keyof TraceAIEnvironment)[] = [
+    "TRACE_AI_FLASH_INPUT_USD_PER_MILLION", "TRACE_AI_FLASH_OUTPUT_USD_PER_MILLION",
+    "TRACE_AI_PRO_INPUT_USD_PER_MILLION", "TRACE_AI_PRO_OUTPUT_USD_PER_MILLION",
+  ];
+  if (production && anyAIEnabled && pricingKeys.some((key) => !env(key))) {
+    throw new Error("TRACE AI is enabled but reviewed provider pricing configuration is incomplete.");
+  }
 
   return {
-    publicAskTraceEnabled: env("TRACE_PUBLIC_ASK_ENABLED") !== "false",
-    scheduledJobsEnabled: env("TRACE_SCHEDULED_JOBS_ENABLED") === "true",
-    globalKillSwitch: env("TRACE_GLOBAL_KILL_SWITCH") === "true",
-
+    publicAskTraceEnabled,
+    editorialAIEnabled,
+    scheduledJobsEnabled,
+    globalKillSwitch: env("TRACE_AI_GLOBAL_KILL_SWITCH") === "true",
     provider: "deepseek",
     deepseekApiKey: apiKey,
-
-    publicModel,
-    editorialModel,
+    publicModel: modelValue(env("TRACE_AI_PUBLIC_MODEL"), "deepseek-v4-flash"),
+    editorialModel: modelValue(env("TRACE_AI_EDITORIAL_MODEL"), "deepseek-v4-pro"),
     modelAllowlist: ["deepseek-v4-flash", "deepseek-v4-pro"],
-
-    dailyPublicBudget: parseFloat(env("TRACE_DAILY_BUDGET") || "1.00"),
-    monthlyPublicBudget: parseFloat(env("TRACE_MONTHLY_BUDGET") || "10.00"),
-    maxCostPerRequest: parseFloat(env("TRACE_MAX_COST_PER_REQUEST") || "0.02"),
-    warningBalance: parseFloat(env("TRACE_WARNING_BALANCE") || "2.00"),
-    restrictBalance: parseFloat(env("TRACE_RESTRICT_BALANCE") || "0.50"),
-    stopBalance: parseFloat(env("TRACE_STOP_BALANCE") || "0.10"),
-
-    maxQuestionLength: parseInt(env("TRACE_MAX_QUESTION_LENGTH") || "1000", 10),
-    maxEvidenceExcerpts: parseInt(env("TRACE_MAX_EVIDENCE_EXCERPTS") || "16", 10),
-    maxInputTokens: parseInt(env("TRACE_MAX_INPUT_TOKENS") || "12000", 10),
-    maxOutputTokens: parseInt(env("TRACE_MAX_OUTPUT_TOKENS") || "1500", 10),
+    dailyPublicBudget: numberValue(env, "TRACE_AI_DAILY_PUBLIC_BUDGET_USD", 1, 0.01, 10_000),
+    monthlyPublicBudget: numberValue(env, "TRACE_AI_MONTHLY_PUBLIC_BUDGET_USD", 10, 0.01, 100_000),
+    maxCostPerRequest: numberValue(env, "TRACE_AI_MAX_COST_PER_REQUEST_USD", 0.02, 0.000001, 100),
+    warningBalance: 2,
+    restrictBalance: 0.5,
+    stopBalance: 0.1,
+    maxQuestionLength: numberValue(env, "TRACE_AI_MAX_QUESTION_LENGTH", 1_000, 1, 4_000),
+    maxEvidenceExcerpts: numberValue(env, "TRACE_AI_MAX_EVIDENCE_EXCERPTS", 8, 1, 16),
+    maxInputTokens: numberValue(env, "TRACE_AI_MAX_INPUT_TOKENS", 12_000, 100, 64_000),
+    maxOutputTokens: numberValue(env, "TRACE_AI_MAX_OUTPUT_TOKENS", 1_500, 50, 8_000),
     maxModelCallsPerRequest: 1,
-    maxRetries: 1,
+    maxRetries: 0,
     maxValidationRegenerations: 0,
-    requestTimeoutMs: parseInt(env("TRACE_REQUEST_TIMEOUT_MS") || "30000", 10),
-
-    dailyPublicQuestionsPerVisitor: parseInt(env("TRACE_DAILY_QUESTIONS") || "3", 10),
-    maxConcurrentPerSession: parseInt(env("TRACE_MAX_CONCURRENT") || "1", 10),
+    requestTimeoutMs: numberValue(env, "TRACE_AI_REQUEST_TIMEOUT_MS", 25_000, 1_000, 55_000),
+    dailyPublicQuestionsPerVisitor: numberValue(env, "TRACE_AI_DAILY_QUESTIONS", 3, 1, 100),
+    maxConcurrentPerSession: numberValue(env, "TRACE_AI_MAX_CONCURRENT", 1, 1, 1),
+    modelPricing: {
+      "deepseek-v4-flash": {
+        inputPerMillionUsd: numberValue(env, "TRACE_AI_FLASH_INPUT_USD_PER_MILLION", 1, 0.000001, 1_000),
+        outputPerMillionUsd: numberValue(env, "TRACE_AI_FLASH_OUTPUT_USD_PER_MILLION", 5, 0.000001, 1_000),
+      },
+      "deepseek-v4-pro": {
+        inputPerMillionUsd: numberValue(env, "TRACE_AI_PRO_INPUT_USD_PER_MILLION", 2, 0.000001, 1_000),
+        outputPerMillionUsd: numberValue(env, "TRACE_AI_PRO_OUTPUT_USD_PER_MILLION", 10, 0.000001, 1_000),
+      },
+    },
   };
 }
 
-let initialised = false;
-
-export function ensureInitialised(runtimeEnv: TraceAIEnvironment = {}): void {
-  if (initialised) return;
-
-  const config = buildConfig(runtimeEnv);
-  if (!config.deepseekApiKey) {
-    throw new Error("TRACE AI Gateway cannot initialise without DEEPSEEK_API_KEY.");
-  }
-
-  initGateway(config);
-  initialised = true;
-
-  console.log(JSON.stringify({
-    message: "TRACE AI Gateway initialised",
-    provider: config.provider,
-    publicModel: config.publicModel,
-    editorialModel: config.editorialModel,
-    dailyBudget: config.dailyPublicBudget,
-  }));
+export function configuredTaskDailyBudget(
+  runtimeEnv: TraceAIEnvironment,
+  task: "ask_trace" | "editorial",
+  fallback: number,
+): number {
+  const key = task === "ask_trace" ? "TRACE_AI_ASK_DAILY_BUDGET_USD" : "TRACE_AI_EDITORIAL_DAILY_BUDGET_USD";
+  const value = Number(getEnv(runtimeEnv, key) || fallback);
+  if (!Number.isFinite(value) || value <= 0) throw new Error(`Invalid numeric TRACE configuration: ${key}.`);
+  return value;
 }

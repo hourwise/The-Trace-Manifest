@@ -48,6 +48,9 @@ export function validateAnswerOutput(
   // 2. Citation validation — every cited source was supplied
   const suppliedSourceIds = suppliedExcerpts.map(e => e.sourceId);
   const suppliedClaimIds = suppliedExcerpts.filter(e => e.claimId).map(e => e.claimId!);
+  const suppliedPairs = new Set(
+    suppliedExcerpts.filter((excerpt) => excerpt.claimId).map((excerpt) => `${excerpt.sourceId}\u0000${excerpt.claimId}`),
+  );
   const citationCheck = validateCitations(
     answer.citedSourceIds,
     answer.citedClaimIds,
@@ -60,6 +63,24 @@ export function validateAnswerOutput(
       `Unknown source IDs cited: ${citationCheck.unknownSourceIds.join(", ")}`,
       `Unknown claim IDs cited: ${citationCheck.unknownClaimIds.join(", ")}`,
     );
+  }
+
+  for (const [index, claim] of answer.claims.entries()) {
+    const claimCheck = validateCitations(
+      claim.evidenceSourceIds,
+      claim.evidenceClaimIds,
+      suppliedSourceIds,
+      suppliedClaimIds,
+    );
+    const pairsAreValid = claim.evidenceClaimIds.every((claimId) =>
+      claim.evidenceSourceIds.some((sourceId) => suppliedPairs.has(`${sourceId}\u0000${claimId}`)),
+    );
+    if (!claimCheck.valid || claim.evidenceSourceIds.length === 0 || claim.evidenceClaimIds.length === 0 || !pairsAreValid) {
+      failures.push(`Claim ${index + 1} is not linked only to supplied evidence.`);
+    }
+  }
+  if (answer.claims.length === 0) {
+    failures.push("Answer has no evidence-linked claims.");
   }
 
   // 3. Truncation check
@@ -82,10 +103,8 @@ export function validateAnswerOutput(
   }
 
   // 6. Disagreements should not be suppressed
-  if (suppliedExcerpts.length >= 2 && answer.disagreements.length === 0) {
-    // Not a hard failure, but note it
-    // In production, check if the supplied excerpts actually contain disagreements
-  }
+  const suppliedDisagreement = suppliedExcerpts.some((excerpt) => excerpt.isDisputed || excerpt.relationship === "contradicts");
+  if (suppliedDisagreement && answer.disagreements.length === 0) failures.push("Material disagreement in the supplied evidence was omitted.");
 
   // 7. Confidence sanity check
   if (answer.proposedConfidence === "high" && suppliedExcerpts.length < 2) {
@@ -185,6 +204,7 @@ function safeNonAnswer(reason: string): TraceAnswerDraft {
   return {
     answer: "TRACE was unable to produce a validated answer for this question. The available evidence may be insufficient, or the question may require information not currently in the TRACE corpus.",
     keyPoints: ["No validated answer could be produced."],
+    claims: [],
     citedSourceIds: [],
     citedClaimIds: [],
     confirmedFacts: [],

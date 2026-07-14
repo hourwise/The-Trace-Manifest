@@ -1,262 +1,169 @@
-// The Trace Manifest — Ask TRACE API Endpoint
-// POST /api/trace/ask
-// Phase 5: Public endpoint for Ask TRACE Q&A.
-// Per ADR-0008: browser calls this endpoint, never DeepSeek directly.
-// Enforces rate limiting, abuse protection, and safe error responses.
-
 import type { APIRoute } from "astro";
-import { ensureInitialised } from "../../../ai/config";
-import { askTrace } from "../../../ai/trace-model-gateway";
+import { buildConfig, type TraceAIEnvironment } from "../../../ai/config";
+import { askTrace, hashPrivateIdentifier, type TraceAIRuntimeEnvironment } from "../../../ai/trace-model-gateway";
+import { retrievePublishedEvidence } from "../../../lib/server/ask-evidence";
+import { corsHeaders, isAllowedOrigin, type OriginPolicyEnvironment } from "../../../security/origin-policy";
 
 export const prerender = false;
 
-// ============================================================
-// Rate limiting (simple in-memory — replace with Cloudflare Rate Limiting in production)
-// ============================================================
+const MAX_BODY_BYTES = 16 * 1024;
+const IDEMPOTENCY_PATTERN = /^[A-Za-z0-9._:-]{16,128}$/;
 
-interface RateLimitEntry {
-  count: number;
-  resetAt: number;
-}
+type AskEnvironment = TraceAIRuntimeEnvironment & OriginPolicyEnvironment & {
+  TRACE_VISITOR_HASH_SECRET?: string;
+};
 
-const rateLimitMap = new Map<string, RateLimitEntry>();
-const DAILY_LIMIT = 3;       // Per visitor per day (ADR-0008)
-const WINDOW_MS = 86_400_000; // 24 hours
+interface AskTraceRequest { question: string }
 
-function checkRateLimit(identifier: string): { allowed: boolean; remaining: number } {
-  const now = Date.now();
-  const entry = rateLimitMap.get(identifier);
-
-  if (!entry || now > entry.resetAt) {
-    rateLimitMap.set(identifier, { count: 1, resetAt: now + WINDOW_MS });
-    return { allowed: true, remaining: DAILY_LIMIT - 1 };
-  }
-
-  if (entry.count >= DAILY_LIMIT) {
-    return { allowed: false, remaining: 0 };
-  }
-
-  entry.count++;
-  return { allowed: true, remaining: DAILY_LIMIT - entry.count };
-}
-
-// Clean up old entries periodically
-function pruneRateLimitMap(): void {
-  const now = Date.now();
-  for (const [key, entry] of rateLimitMap) {
-    if (now > entry.resetAt) {
-      rateLimitMap.delete(key);
-    }
-  }
-}
-
-// ============================================================
-// Request schema
-// ============================================================
-
-interface AskTraceRequest {
-  question: string;
-}
-
-function validateBody(body: unknown): { valid: true; data: AskTraceRequest } | { valid: false; error: string } {
-  if (!body || typeof body !== "object") {
+export function validateAskBody(body: unknown, maximumLength = 1_000):
+  | { valid: true; data: AskTraceRequest }
+  | { valid: false; error: string } {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
     return { valid: false, error: "Request body must be a JSON object." };
   }
-
   const data = body as Record<string, unknown>;
+  if (Object.keys(data).some((key) => key !== "question")) return { valid: false, error: "Unexpected request field." };
+  if (typeof data.question !== "string") return { valid: false, error: "question is required." };
+  const question = data.question.normalize("NFKC").replace(/[\u0000-\u001F\u007F]/g, " ").replace(/\s+/g, " ").trim();
+  if (!question) return { valid: false, error: "question must not be empty." };
+  if (question.length > maximumLength) return { valid: false, error: `question must be ${maximumLength.toLocaleString("en-GB")} characters or fewer.` };
+  return { valid: true, data: { question } };
+}
 
-  if (typeof data.question !== "string" || data.question.trim().length === 0) {
-    return { valid: false, error: "question is required and must be a non-empty string." };
-  }
+async function readBoundedJson(request: Request): Promise<{ body?: unknown; error?: string; status?: number }> {
+  const declaredLength = Number(request.headers.get("Content-Length") ?? "0");
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_BODY_BYTES) return { error: "Request body too large.", status: 413 };
+  if (!request.body) return { error: "Invalid JSON.", status: 400 };
 
-  if (data.question.length > 1000) {
-    return { valid: false, error: "question must be 1,000 characters or fewer." };
-  }
-
-  // Reject unexpected fields
-  const allowedFields = new Set(["question"]);
-  for (const key of Object.keys(data)) {
-    if (!allowedFields.has(key)) {
-      return { valid: false, error: `Unexpected field: ${key}` };
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      totalBytes += value.byteLength;
+      if (totalBytes > MAX_BODY_BYTES) {
+        await reader.cancel();
+        return { error: "Request body too large.", status: 413 };
+      }
+      chunks.push(value);
     }
+  } finally {
+    reader.releaseLock();
+  }
+  const bytes = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  try {
+    return { body: JSON.parse(new TextDecoder().decode(bytes)) };
+  } catch {
+    return { error: "Invalid JSON.", status: 400 };
+  }
+}
+
+function json(message: unknown, status: number, headers: Record<string, string>, requestId?: string): Response {
+  return Response.json(message, {
+    status,
+    headers: {
+      ...headers,
+      "Cache-Control": "no-store",
+      ...(requestId ? { "X-Request-Id": requestId } : {}),
+    },
+  });
+}
+
+async function visitorIdentity(request: Request, env: AskEnvironment, dayKey: string): Promise<string | null> {
+  const secret = env.TRACE_VISITOR_HASH_SECRET ?? "";
+  const production = env.TRACE_ENVIRONMENT === "production";
+  if (secret.length < 32) return null;
+  const cloudflareIp = request.headers.get("CF-Connecting-IP")?.trim();
+  if (production && !cloudflareIp) return null;
+  const networkIdentity = cloudflareIp || `${new URL(request.url).hostname}:development`;
+  return hashPrivateIdentifier(`${secret}:${dayKey}:${networkIdentity}`);
+}
+
+export async function handleAskRequest(request: Request, env: AskEnvironment): Promise<Response> {
+  const originHeaders = corsHeaders(request, env, "POST, OPTIONS");
+  const origin = request.headers.get("Origin");
+  if (!isAllowedOrigin(origin, env)) return json({ error: "Origin rejected." }, 403, originHeaders);
+  if (request.method !== "POST") return json({ error: "Method not allowed." }, 405, originHeaders);
+  if (!(request.headers.get("Content-Type") ?? "").toLowerCase().startsWith("application/json")) {
+    return json({ error: "Content-Type must be application/json." }, 415, originHeaders);
   }
 
-  return { valid: true, data: { question: data.question.trim() } };
+  const parsed = await readBoundedJson(request);
+  if (parsed.error) return json({ error: parsed.error }, parsed.status ?? 400, originHeaders);
+
+  let config;
+  try {
+    config = buildConfig(env);
+  } catch {
+    return json({ message: "Ask TRACE is not configured." }, 503, originHeaders);
+  }
+  const validation = validateAskBody(parsed.body, config.maxQuestionLength);
+  if (!validation.valid) return json({ error: validation.error }, 400, originHeaders);
+  if (!config.publicAskTraceEnabled || config.globalKillSwitch) {
+    return json({ message: "Ask TRACE is not currently enabled." }, 503, originHeaders);
+  }
+  if (!env.DB) return json({ message: "Ask TRACE is not configured." }, 503, originHeaders);
+
+  const suppliedIdempotencyKey = request.headers.get("Idempotency-Key")?.trim();
+  if (suppliedIdempotencyKey && !IDEMPOTENCY_PATTERN.test(suppliedIdempotencyKey)) {
+    return json({ error: "Idempotency-Key is malformed." }, 400, originHeaders);
+  }
+
+  const requestId = `ask_${crypto.randomUUID()}`;
+  const dayKey = new Date().toISOString().slice(0, 10);
+  const visitorHash = await visitorIdentity(request, env, dayKey);
+  if (!visitorHash) return json({ message: "Ask TRACE abuse controls are not configured." }, 503, originHeaders, requestId);
+  const questionHash = await hashPrivateIdentifier(`${env.TRACE_VISITOR_HASH_SECRET}:question:${validation.data.question.toLowerCase()}`);
+  const stableActionKey = `${dayKey}:${visitorHash}:${suppliedIdempotencyKey || questionHash}`;
+  const idempotencyKeyHash = await hashPrivateIdentifier(`${env.TRACE_VISITOR_HASH_SECRET}:${stableActionKey}`);
+
+  let evidence;
+  try {
+    evidence = await retrievePublishedEvidence(env.DB, validation.data.question, config.maxEvidenceExcerpts);
+  } catch {
+    console.error(JSON.stringify({ message: "Ask TRACE evidence retrieval failed", requestId }));
+    return json({ message: "Ask TRACE evidence is temporarily unavailable.", requestId }, 503, originHeaders, requestId);
+  }
+
+  let result;
+  try {
+    result = await askTrace(env, {
+      requestId,
+      idempotencyKeyHash,
+      visitorHash,
+      questionHash,
+      question: validation.data.question,
+      evidenceExcerpts: evidence,
+    });
+  } catch {
+    console.error(JSON.stringify({ message: "Ask TRACE request failed closed", requestId }));
+    return json({ message: "Ask TRACE is temporarily unavailable.", requestId }, 503, originHeaders, requestId);
+  }
+
+  if (result.status === "ok" && result.payload) return json(result.payload, 200, originHeaders, result.payload.requestId);
+  if (result.status === "rate_limited") {
+    const retryAfter = result.message?.startsWith("Daily") ? "86400" : "30";
+    return json({ message: result.message, requestId: result.requestId }, 429, { ...originHeaders, "Retry-After": retryAfter }, result.requestId);
+  }
+  if (result.status === "in_progress") return json({ message: result.message, requestId: result.requestId }, 409, originHeaders, result.requestId);
+  return json({ message: result.message ?? "Ask TRACE is temporarily unavailable.", requestId: result.requestId }, result.status === "error" ? 422 : 503, originHeaders, result.requestId);
 }
 
-// ============================================================
-// CORS
-// ============================================================
-
-const ALLOWED_ORIGINS = new Set([
-  "https://thetracemanifest.com",
-  "https://www.thetracemanifest.com",
-  "https://thetracemanifest.uk",
-  "https://www.thetracemanifest.uk",
-]);
-
-// During development, allow localhost
-if (import.meta.env.DEV) {
-  ALLOWED_ORIGINS.add("http://localhost:4321");
-}
-
-function corsHeaders(origin: string | null): Record<string, string> {
-  const allowedOrigin = origin && ALLOWED_ORIGINS.has(origin) ? origin : "";
-  return {
-    "Access-Control-Allow-Origin": allowedOrigin,
-    "Access-Control-Allow-Methods": "POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
-    "Access-Control-Max-Age": "86400",
-  };
-}
-
-// ============================================================
-// Endpoint handlers
-// ============================================================
-
-export const OPTIONS: APIRoute = async ({ request }) => {
-  return new Response(null, {
-    status: 204,
-    headers: corsHeaders(request.headers.get("Origin")),
-  });
+export const OPTIONS: APIRoute = async ({ request, locals }) => {
+  const env = (locals.runtime?.env ?? {}) as AskEnvironment;
+  const headers = corsHeaders(request, env, "POST, OPTIONS");
+  return isAllowedOrigin(request.headers.get("Origin"), env)
+    ? new Response(null, { status: 204, headers })
+    : new Response(null, { status: 403, headers });
 };
 
 export const POST: APIRoute = async ({ request, locals }) => {
-  const origin = request.headers.get("Origin");
-  const headers = corsHeaders(origin);
-
-  // 1. Method check (Astro handles this, but belt-and-suspenders)
-  if (request.method !== "POST") {
-    return new Response(JSON.stringify({ error: "Method not allowed" }), {
-      status: 405,
-      headers: { ...headers, "Content-Type": "application/json" },
-    });
-  }
-
-  // 2. Content-Type check
-  const contentType = request.headers.get("Content-Type") ?? "";
-  if (!contentType.includes("application/json")) {
-    return new Response(JSON.stringify({ error: "Content-Type must be application/json" }), {
-      status: 415,
-      headers: { ...headers, "Content-Type": "application/json" },
-    });
-  }
-
-  // 3. Body size check (before parsing)
-  const contentLength = parseInt(request.headers.get("Content-Length") ?? "0", 10);
-  if (contentLength > 16_384) { // 16 KB
-    return new Response(JSON.stringify({ error: "Request body too large." }), {
-      status: 413,
-      headers: { ...headers, "Content-Type": "application/json" },
-    });
-  }
-
-  // 4. Parse and validate body
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return new Response(JSON.stringify({ error: "Invalid JSON." }), {
-      status: 400,
-      headers: { ...headers, "Content-Type": "application/json" },
-    });
-  }
-
-  const validation = validateBody(body);
-  if (!validation.valid) {
-    return new Response(JSON.stringify({ error: validation.error }), {
-      status: 400,
-      headers: { ...headers, "Content-Type": "application/json" },
-    });
-  }
-
-  // 5. Rate limiting — privacy-preserving IP hash
-  const ipIdentifier = request.headers.get("CF-Connecting-IP")
-    ?? request.headers.get("X-Forwarded-For")
-    ?? "unknown";
-  const sessionId = request.headers.get("X-Session-Id") ?? ipIdentifier;
-
-  pruneRateLimitMap();
-  const rateCheck = checkRateLimit(sessionId);
-  if (!rateCheck.allowed) {
-    return new Response(
-      JSON.stringify({
-        error: "Daily question limit reached. Please try again tomorrow.",
-        retryAfter: "Tomorrow",
-      }),
-      {
-        status: 429,
-        headers: {
-          ...headers,
-          "Content-Type": "application/json",
-          "Retry-After": "86400",
-          "X-RateLimit-Remaining": "0",
-        },
-      },
-    );
-  }
-
-  // 6. Initialise from request-time Cloudflare bindings.
-  try {
-    ensureInitialised(locals.runtime.env);
-  } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : "Unknown initialisation error";
-    console.error(JSON.stringify({ message: "Ask TRACE gateway initialisation failed", error: message }));
-    return new Response(JSON.stringify({ message: "Ask TRACE is temporarily unavailable." }), {
-      status: 503,
-      headers: { ...headers, "Content-Type": "application/json" },
-    });
-  }
-
-  // 7. Call the AI gateway (server-side only — never exposes provider to browser)
-  const result = await askTrace(validation.data.question, []);
-
-  // 8. Build response — never expose internal details
-  const responseHeaders: Record<string, string> = {
-    ...headers,
-    "Content-Type": "application/json",
-    "X-Request-Id": result.requestId,
-    "X-RateLimit-Remaining": String(rateCheck.remaining),
-  };
-
-  switch (result.status) {
-    case "ok":
-      return new Response(
-        JSON.stringify({
-          answer: result.answer?.answer,
-          keyPoints: result.answer?.keyPoints,
-          confidence: result.answer?.proposedConfidence,
-          caveats: result.answer?.caveats,
-          requestId: result.requestId,
-        }),
-        { status: 200, headers: responseHeaders },
-      );
-
-    case "temporarily_unavailable":
-      return new Response(
-        JSON.stringify({
-          message: result.message ?? "Service temporarily unavailable. No request was charged.",
-          requestId: result.requestId,
-        }),
-        { status: 503, headers: responseHeaders },
-      );
-
-    case "rate_limited":
-      return new Response(
-        JSON.stringify({
-          message: result.message,
-          requestId: result.requestId,
-        }),
-        { status: 429, headers: responseHeaders },
-      );
-
-    default:
-      return new Response(
-        JSON.stringify({
-          message: "An unexpected error occurred.",
-          requestId: result.requestId,
-        }),
-        { status: 500, headers: responseHeaders },
-      );
-  }
+  return handleAskRequest(request, locals.runtime.env as AskEnvironment);
 };

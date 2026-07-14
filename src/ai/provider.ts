@@ -59,8 +59,13 @@ export interface EvidenceExcerpt {
   claimId?: string;
   text: string;
   sourceClassification: string;
+  sourceName?: string;
+  sourceUrl?: string;
+  observedAt?: string;
   publishedAt?: string;
   trustNotes?: string;
+  relationship?: string;
+  isDisputed?: boolean;
 }
 
 // ============================================================
@@ -70,6 +75,7 @@ export interface EvidenceExcerpt {
 export interface TraceAnswerDraft {
   answer: string;
   keyPoints: string[];
+  claims: TraceAnswerClaim[];
   citedSourceIds: string[];
   citedClaimIds: string[];
   confirmedFacts: string[];
@@ -79,6 +85,12 @@ export interface TraceAnswerDraft {
   caveats: string[];
   whatCouldChange: string;
   proposedConfidence: "high" | "medium" | "low" | "insufficient_evidence";
+}
+
+export interface TraceAnswerClaim {
+  text: string;
+  evidenceSourceIds: string[];
+  evidenceClaimIds: string[];
 }
 
 export interface TraceEditorialDraft {
@@ -113,16 +125,28 @@ export interface TraceModelProvider {
   readonly providerId: string;
 
   /** Generate a structured answer from evidence */
-  generateAnswer(input: TraceAnswerInput): Promise<TraceAnswerDraft>;
+  generateAnswer(input: TraceAnswerInput): Promise<ProviderGeneration<TraceAnswerDraft>>;
 
   /** Generate editorial content from source material */
-  generateEditorial(input: TraceEditorialInput): Promise<TraceEditorialDraft>;
+  generateEditorial(input: TraceEditorialInput): Promise<ProviderGeneration<TraceEditorialDraft>>;
 
   /** Generate prediction candidates from evidence */
-  generatePredictions(input: TracePredictionInput): Promise<TracePredictionCandidate[]>;
+  generatePredictions(input: TracePredictionInput): Promise<ProviderGeneration<TracePredictionCandidate[]>>;
 
   /** Check provider health/balance — never exposed publicly */
   healthCheck(): Promise<ProviderHealth>;
+}
+
+export interface ProviderTokenUsage {
+  inputTokens: number | null;
+  outputTokens: number | null;
+  cachedTokens: number | null;
+}
+
+export interface ProviderGeneration<T> {
+  output: T;
+  usage: ProviderTokenUsage;
+  providerStatus: number;
 }
 
 export interface ProviderHealth {
@@ -140,6 +164,7 @@ export interface ProviderHealth {
 export interface TraceAIConfig {
   // Feature switches
   publicAskTraceEnabled: boolean;
+  editorialAIEnabled: boolean;
   scheduledJobsEnabled: boolean;
   globalKillSwitch: boolean;
 
@@ -173,6 +198,7 @@ export interface TraceAIConfig {
   // Rate limiting
   dailyPublicQuestionsPerVisitor: number;
   maxConcurrentPerSession: number;
+  modelPricing: Record<TraceModelId, { inputPerMillionUsd: number; outputPerMillionUsd: number }>;
 }
 
 // ============================================================
