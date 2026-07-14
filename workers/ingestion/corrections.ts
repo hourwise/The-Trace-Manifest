@@ -77,46 +77,35 @@ export async function recordClusterCorrection(
 
   // Get current cluster info for the previous_evidence_status
   const cluster = await db.prepare(
-    "SELECT evidence_status, title FROM story_clusters WHERE id = ?"
-  ).bind(input.clusterId).first<{ evidence_status: string; title: string }>();
+    "SELECT evidence_status, title, publication_status FROM story_clusters WHERE id = ?"
+  ).bind(input.clusterId).first<{ evidence_status: string; title: string; publication_status: string }>();
+  if (!cluster || cluster.publication_status !== "published") {
+    throw new Error("Corrections may only be recorded against a published story.");
+  }
 
   const previousEvidenceStatus = input.previousEvidenceStatus ?? cluster?.evidence_status ?? null;
 
-  // Insert the correction record
-  const { meta } = await db.prepare(
-    `INSERT INTO corrections
-     (cluster_id, correction_type, previous_statement, updated_statement,
-      previous_evidence_status, updated_evidence_status, reason, evidence_url, impact, corrected_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).bind(
-    input.clusterId,
-    input.correctionType,
-    input.previousStatement,
-    input.updatedStatement,
-    previousEvidenceStatus,
-    input.updatedEvidenceStatus ?? "corrected",
-    input.reason,
-    input.evidenceUrl ?? null,
-    input.impact ?? null,
-    input.correctedBy,
-  ).run();
-
-  const correctionId = meta.last_row_id;
-
-  // Update the cluster evidence status to "corrected" and mark as reviewed
   const targetStatus = input.updatedEvidenceStatus ?? "corrected";
-  await db.prepare(
-    `UPDATE story_clusters
-     SET evidence_status = ?, is_published = 1, updated_at = datetime('now')
-     WHERE id = ?`
-  ).bind(targetStatus, input.clusterId).run();
-
-  // Mark all member feed items as needing re-review
-  await db.prepare(
-    `UPDATE feed_items
-     SET ingestion_status = 'classified'
-     WHERE id IN (SELECT feed_item_id FROM story_cluster_members WHERE cluster_id = ?)`
-  ).bind(input.clusterId).run();
+  const [inserted] = await db.batch([
+    db.prepare(
+      `INSERT INTO corrections
+       (cluster_id, correction_type, previous_statement, updated_statement,
+        previous_evidence_status, updated_evidence_status, reason, evidence_url, impact, corrected_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(
+      input.clusterId, input.correctionType, input.previousStatement, input.updatedStatement,
+      previousEvidenceStatus, targetStatus, input.reason, input.evidenceUrl ?? null,
+      input.impact ?? null, input.correctedBy,
+    ),
+    db.prepare(
+      `UPDATE story_clusters SET evidence_status = ?, updated_at = datetime('now') WHERE id = ?`
+    ).bind(targetStatus, input.clusterId),
+    db.prepare(
+      `UPDATE feed_items SET ingestion_status = 'classified'
+       WHERE id IN (SELECT feed_item_id FROM story_cluster_members WHERE cluster_id = ?)`
+    ).bind(input.clusterId),
+  ]);
+  const correctionId = inserted.meta.last_row_id;
 
   console.log(`Correction ${correctionId}: cluster ${input.clusterId} — ${input.correctionType}`);
 
@@ -135,51 +124,48 @@ export async function recordClaimCorrection(
   }
 
   // Get current claim info
-  const claim = await db.prepare(
-    "SELECT claim_text, evidence_quality, cluster_id FROM claims WHERE id = ?"
-  ).bind(input.claimId).first<{ claim_text: string; evidence_quality: string; cluster_id: number | null }>();
+  const claim = await db.prepare(`
+    SELECT c.claim_text, c.evidence_quality, c.cluster_id, sc.publication_status
+    FROM claims c
+    JOIN story_clusters sc ON sc.id = c.cluster_id
+    WHERE c.id = ?
+  `).bind(input.claimId).first<{
+    claim_text: string;
+    evidence_quality: string;
+    cluster_id: number;
+    publication_status: string;
+  }>();
+  if (!claim || claim.publication_status !== "published") {
+    throw new Error("Corrections may only be recorded against claims in a published story.");
+  }
 
   const previousEvidenceStatus = input.previousEvidenceStatus ?? claim?.evidence_quality ?? null;
+  const targetStatus = input.updatedEvidenceStatus ?? "corrected";
 
-  // Insert the correction
-  const { meta } = await db.prepare(
-    `INSERT INTO corrections
-     (cluster_id, claim_id, correction_type, previous_statement, updated_statement,
-      previous_evidence_status, updated_evidence_status, reason, evidence_url, impact, corrected_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).bind(
-    claim?.cluster_id ?? null,
-    input.claimId,
-    input.correctionType,
-    input.previousStatement,
-    input.updatedStatement,
-    previousEvidenceStatus,
-    input.updatedEvidenceStatus ?? "corrected",
-    input.reason,
-    input.evidenceUrl ?? null,
-    input.impact ?? null,
-    input.correctedBy,
-  ).run();
-
-  // Mark the claim as corrected
-  await db.prepare(
-    `UPDATE claims
-     SET is_corrected = 1, evidence_quality = 'disputed', updated_at = datetime('now')
-     WHERE id = ?`
-  ).bind(input.claimId).run();
-
-  // If claim belongs to a cluster, update cluster status too
-  if (claim?.cluster_id) {
-    await db.prepare(
-      `UPDATE story_clusters
-       SET evidence_status = 'corrected', updated_at = datetime('now')
+  const [inserted] = await db.batch([
+    db.prepare(
+      `INSERT INTO corrections
+       (cluster_id, claim_id, correction_type, previous_statement, updated_statement,
+        previous_evidence_status, updated_evidence_status, reason, evidence_url, impact, corrected_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(
+      claim.cluster_id, input.claimId, input.correctionType, input.previousStatement,
+      input.updatedStatement, previousEvidenceStatus, targetStatus,
+      input.reason, input.evidenceUrl ?? null, input.impact ?? null, input.correctedBy,
+    ),
+    db.prepare(
+      `UPDATE claims SET is_corrected = 1, evidence_quality = 'disputed', updated_at = datetime('now') WHERE id = ?`
+    ).bind(input.claimId),
+    db.prepare(
+      `UPDATE story_clusters SET evidence_status = ?, updated_at = datetime('now')
        WHERE id = ? AND evidence_status NOT IN ('corrected', 'superseded', 'outdated')`
-    ).bind(claim.cluster_id).run();
-  }
+    ).bind(targetStatus, claim.cluster_id),
+  ]);
+  const correctionId = inserted.meta.last_row_id;
 
   console.log(`Correction ${correctionId}: claim ${input.claimId} — ${input.correctionType}`);
 
-  return { correctionId: meta.last_row_id };
+  return { correctionId };
 }
 
 // ============================================================

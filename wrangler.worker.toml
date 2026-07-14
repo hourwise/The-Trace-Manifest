@@ -22,3 +22,9 @@ crons = [
   "0 9 * * *",
   "0 18 * * *"
 ]
+
+# Required encrypted secret:
+#   npx wrangler secret put TRACE_INTERNAL_SERVICE_SECRET --config wrangler.worker.toml
+# It must match the Pages secret. The Worker accepts no browser bearer token.
+# Optional encrypted secret for authenticated GitHub API limits:
+#   npx wrangler secret put GITHUB_TOKEN --config wrangler.worker.toml

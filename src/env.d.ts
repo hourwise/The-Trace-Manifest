@@ -1,52 +1,52 @@
 /// <reference types="astro/client" />
+/// <reference types="@cloudflare/workers-types" />
+
+import type { OperatorIdentity } from "./security/access-auth";
 
 interface CloudflarePagesEnv {
   DB: D1Database;
-  PUBLIC_INGESTION_API_URL: string;
-  ADMIN_API_TOKEN?: string;
   DEEPSEEK_API_KEY?: string;
-  TRACE_PUBLIC_MODEL?: string;
-  TRACE_EDITORIAL_MODEL?: string;
-  TRACE_PUBLIC_ASK_ENABLED?: string;
-  TRACE_SCHEDULED_JOBS_ENABLED?: string;
-  TRACE_GLOBAL_KILL_SWITCH?: string;
-  TRACE_DAILY_BUDGET?: string;
-  TRACE_MONTHLY_BUDGET?: string;
-  TRACE_MAX_COST_PER_REQUEST?: string;
-  TRACE_WARNING_BALANCE?: string;
-  TRACE_RESTRICT_BALANCE?: string;
-  TRACE_STOP_BALANCE?: string;
-  TRACE_MAX_QUESTION_LENGTH?: string;
-  TRACE_MAX_EVIDENCE_EXCERPTS?: string;
-  TRACE_MAX_INPUT_TOKENS?: string;
-  TRACE_MAX_OUTPUT_TOKENS?: string;
-  TRACE_REQUEST_TIMEOUT_MS?: string;
-  TRACE_DAILY_QUESTIONS?: string;
-  TRACE_MAX_CONCURRENT?: string;
+  TRACE_ENVIRONMENT?: string;
+  TRACE_ALLOWED_ORIGINS?: string;
+  TRACE_VISITOR_HASH_SECRET?: string;
+  TRACE_INTERNAL_SERVICE_SECRET?: string;
+  TRACE_INGESTION_WORKER_URL?: string;
+  CF_ACCESS_TEAM_DOMAIN?: string;
+  CF_ACCESS_AUD?: string;
+  TRACE_ADMIN_READERS?: string;
+  TRACE_ADMIN_PUBLISHERS?: string;
+  TRACE_AI_PUBLIC_ENABLED?: string;
+  TRACE_AI_EDITORIAL_ENABLED?: string;
+  TRACE_AI_SCHEDULED_ENABLED?: string;
+  TRACE_AI_GLOBAL_KILL_SWITCH?: string;
+  TRACE_AI_PUBLIC_MODEL?: string;
+  TRACE_AI_EDITORIAL_MODEL?: string;
+  TRACE_AI_DAILY_PUBLIC_BUDGET_USD?: string;
+  TRACE_AI_MONTHLY_PUBLIC_BUDGET_USD?: string;
+  TRACE_AI_ASK_DAILY_BUDGET_USD?: string;
+  TRACE_AI_EDITORIAL_DAILY_BUDGET_USD?: string;
+  TRACE_AI_MAX_COST_PER_REQUEST_USD?: string;
+  TRACE_AI_MAX_QUESTION_LENGTH?: string;
+  TRACE_AI_MAX_EVIDENCE_EXCERPTS?: string;
+  TRACE_AI_MAX_INPUT_TOKENS?: string;
+  TRACE_AI_MAX_OUTPUT_TOKENS?: string;
+  TRACE_AI_REQUEST_TIMEOUT_MS?: string;
+  TRACE_AI_DAILY_QUESTIONS?: string;
+  TRACE_AI_MAX_CONCURRENT?: string;
+  TRACE_AI_FLASH_INPUT_USD_PER_MILLION?: string;
+  TRACE_AI_FLASH_OUTPUT_USD_PER_MILLION?: string;
+  TRACE_AI_PRO_INPUT_USD_PER_MILLION?: string;
+  TRACE_AI_PRO_OUTPUT_USD_PER_MILLION?: string;
 }
 
 type CloudflareRuntime = import("@astrojs/cloudflare").Runtime<CloudflarePagesEnv>;
 
-declare namespace App {
-  interface Locals extends CloudflareRuntime {}
+declare global {
+  namespace App {
+    interface Locals extends CloudflareRuntime {
+      operator?: OperatorIdentity;
+    }
+  }
 }
 
-// D1 types (subset used by public data layer)
-interface D1Database {
-  prepare(query: string): D1PreparedStatement;
-}
-
-interface D1PreparedStatement {
-  bind(...values: unknown[]): D1PreparedStatement;
-  first<T = Record<string, unknown>>(): Promise<T | null>;
-  all<T = Record<string, unknown>>(): Promise<{ results: T[] }>;
-  run(): Promise<{ meta: { last_row_id: number } }>;
-}
-
-interface ImportMetaEnv {
-  readonly PUBLIC_INGESTION_API_URL: string;
-}
-
-interface ImportMeta {
-  readonly env: ImportMetaEnv;
-}
+export {};

@@ -2,42 +2,38 @@
 import BaseLayout from "../../layouts/BaseLayout.astro";
 ---
 
-<BaseLayout
-  title="Admin"
-  description="The Trace Manifest administration dashboard."
->
+<BaseLayout title="Admin" description="The Trace Manifest administration dashboard.">
   <div class="container">
     <h1>Admin</h1>
     <p class="meta" style="margin-bottom:2rem;">
-      Administration dashboard for source management, ingestion monitoring, and editorial review.
+      Authenticated operations for source health, ingestion outcomes, and editorial review. Values in each view are read
+      from the bound database; unavailable data is reported as unavailable.
     </p>
 
     <div class="grid grid--3">
       <a href="/admin/sources" class="card" style="text-decoration:none;color:inherit;">
         <h2 style="font-size:1.15rem;">Sources</h2>
-        <p class="meta" style="margin-top:0.5rem;">Manage 64 sources across 3 tiers. View health status, trigger manual fetches, pause or remove sources.</p>
-        <p style="margin-top:0.75rem;color:var(--color-accent);">Manage sources →</p>
+        <p class="meta">Inspect configured sources, real health state, connector support, and last successful ingestion.</p>
+        <p style="color:var(--color-accent);">View sources &rarr;</p>
       </a>
       <a href="/admin/jobs" class="card" style="text-decoration:none;color:inherit;">
-        <h2 style="font-size:1.15rem;">Ingestion Jobs</h2>
-        <p class="meta" style="margin-top:0.5rem;">Monitor scheduled and manual ingestion jobs. View success rates, item counts, and error logs.</p>
-        <p style="margin-top:0.75rem;color:var(--color-accent);">View jobs →</p>
+        <h2 style="font-size:1.15rem;">Ingestion jobs</h2>
+        <p class="meta">Inspect scheduled and manual outcomes, counts, and sanitised failure details.</p>
+        <p style="color:var(--color-accent);">View jobs &rarr;</p>
       </a>
       <a href="/admin/review" class="card" style="text-decoration:none;color:inherit;">
-        <h2 style="font-size:1.15rem;">Review Queue</h2>
-        <p class="meta" style="margin-top:0.5rem;">Items flagged for human review per ADR-0004. Approve, edit, or reject before publication.</p>
-        <p style="margin-top:0.75rem;color:var(--color-accent);">Open queue →</p>
+        <h2 style="font-size:1.15rem;">Review queue</h2>
+        <p class="meta">Review eligible clusters and apply publisher-only publication or archive decisions.</p>
+        <p style="color:var(--color-accent);">Open queue &rarr;</p>
       </a>
     </div>
 
-    <section style="margin-top:3rem;padding:1rem;background:var(--surface-2);border-radius:var(--radius);">
-      <h2>Phase 3 Status</h2>
-      <div style="margin-top:0.75rem;">
-        <p class="meta"><strong>Pipeline:</strong> 64 sources → ingestion (every 30 min) → classification (16 topics, lexical) → cross-source matching (Jaccard) → story clustering → claim extraction → conflict detection → human review → publication.</p>
-        <p class="meta"><strong>Worker:</strong> <code>trace-manifest-ingestion.philgeran.workers.dev</code> with 5 cron triggers. D1 database (16 tables + pipeline_stages). 138 items ingested.</p>
-        <p class="meta"><strong>Completed:</strong> Classification, cross-source matching, semantic dedup, story clustering, claim extraction (10 claim classes), conflict detection, evidence labelling (10-state system), rating explanation panel.</p>
-        <p class="meta"><strong>Next:</strong> Correction workflow, knowledge base (Phase 3B), golden evaluation dataset expansion.</p>
-      </div>
+    <section class="card" style="margin-top:3rem;">
+      <h2>Security boundary</h2>
+      <p class="meta">
+        Cloudflare Access authenticates this area. Server-side role mapping authorises mutations, which are forwarded
+        through signed, replay-protected internal requests. Browser-held administrator secrets are not used.
+      </p>
     </section>
   </div>
 </BaseLayout>

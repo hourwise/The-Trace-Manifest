@@ -1,171 +1,75 @@
-﻿---
+---
 import BaseLayout from "../../layouts/BaseLayout.astro";
 
-// Phase 2: Admin — Source management page
-// Connects to the ingestion worker API for source status and controls
+export const prerender = false;
+
+interface SourceRow {
+  id: number; name: string; url: string; tier: string; treatment: string; ingestion_type: string;
+  cadence_minutes: number; health_status: string; active: number; last_fetched_at: string | null;
+  last_success_at: string | null; last_error_at: string | null; last_error_message: string | null;
+  consecutive_failures: number;
+}
+
+let sources: SourceRow[] = [];
+let loadError: string | null = null;
+try {
+  sources = (await Astro.locals.runtime.env.DB.prepare(`
+    SELECT id, name, url, tier, treatment, ingestion_type, cadence_minutes, health_status,
+           active, last_fetched_at, last_success_at, last_error_at, last_error_message, consecutive_failures
+    FROM sources ORDER BY tier, name
+  `).all<SourceRow>()).results;
+} catch {
+  loadError = "Source health is unavailable. Verify the D1 binding and schema migrations.";
+}
+
+const implemented = new Set(["rss", "github_api", "arxiv_api", "hackernews_api"]);
+const active = sources.filter((source) => Boolean(source.active));
+const count = (status: string) => active.filter((source) => source.health_status === status).length;
+const fmt = (value: string | null) => value ? new Date(value).toLocaleString("en-GB") : "Never";
+const safeHttpUrl = (value: string): string | null => {
+  try {
+    const url = new URL(value);
+    return (url.protocol === "https:" || url.protocol === "http:") && !url.username && !url.password ? url.href : null;
+  } catch { return null; }
+};
 ---
 
-<BaseLayout
-  title="Admin — Sources"
-  description="Manage ingestion sources, view health status, trigger manual fetches."
->
+<BaseLayout title="Admin — Sources" description="Live source registry and connector health.">
   <div class="wrap">
     <h1>Admin: Sources</h1>
-    <p class="meta" style="margin-bottom:2rem;">
-      Source registry management, health monitoring, and manual ingestion controls.
-      <a href="/admin">← Admin home</a>
-    </p>
+    <p class="meta" style="margin-bottom:2rem;"><a href="/admin/jobs">Jobs</a> · <a href="/admin/review">Review</a> · <a href="/admin">Admin home</a></p>
 
-    <p style="padding:0.75rem;background:var(--surface-2);border-radius:var(--radius);font-size:0.9rem;margin-bottom:2rem;">
-      <strong>Phase 2:</strong> Source data is loaded from the Cloudflare D1 database via the ingestion Worker API.
-      In local dev, sources display from the seed data in <code>db/seed.sql</code>.
-    </p>
+    {loadError ? <div class="card"><p class="meta">{loadError}</p></div> : <>
+      <section class="grid-3" style="margin-bottom:2rem;">
+        <div class="card" style="text-align:center;"><p style="font-size:2rem;font-weight:700;">{active.length}</p><p class="meta">Active sources</p></div>
+        <div class="card" style="text-align:center;"><p style="font-size:2rem;font-weight:700;color:var(--ev-disputed);">{count("degraded") + count("failing")}</p><p class="meta">Degraded or failing</p></div>
+        <div class="card" style="text-align:center;"><p style="font-size:2rem;font-weight:700;color:var(--ev-provisional);">{active.filter((source) => !implemented.has(source.ingestion_type)).length}</p><p class="meta">Unsupported connectors</p></div>
+      </section>
 
-    <!-- Health summary -->
-    <section style="margin-bottom:2rem;">
-      <h2>Source Health</h2>
-      <div class="grid-3" style="margin-top:1rem;">
-        <div class="card" style="text-align:center;">
-          <p style="font-size:2rem;font-weight:700;color:#166534;">64</p>
-          <p class="meta">Total sources</p>
+      <section>
+        <h2>Registry and health</h2>
+        <p class="meta">Times, connector support, and failures are read directly from D1. No synthetic health values are displayed.</p>
+        <div style="overflow-x:auto;margin-top:1rem;">
+          <table style="width:100%;border-collapse:collapse;font-size:0.82rem;">
+            <thead><tr style="text-align:left;border-bottom:2px solid var(--border);"><th>Source</th><th>Tier</th><th>Connector</th><th>Status</th><th>Last success</th><th>Last observation</th><th>Failure detail</th></tr></thead>
+            <tbody>
+              {sources.map((source) => {
+                const supported = implemented.has(source.ingestion_type);
+                const status = !source.active ? "disabled" : !supported ? "unsupported" : source.health_status;
+                const sourceUrl = safeHttpUrl(source.url);
+                return <tr style="vertical-align:top;border-bottom:1px solid var(--border);">
+                  <td>{sourceUrl ? <a href={sourceUrl} rel="noopener noreferrer">{source.name}</a> : source.name}<br /><span class="meta">{source.treatment}</span></td>
+                  <td>{source.tier}</td><td><code>{source.ingestion_type}</code><br /><span class="meta">{source.cadence_minutes} min</span></td>
+                  <td><span class={`badge badge-${status === "healthy" ? "confirmed" : status === "failing" ? "disputed" : "provisional"}`}>{status}</span></td>
+                  <td class="meta">{fmt(source.last_success_at)}</td><td class="meta">{fmt(source.last_fetched_at)}</td>
+                  <td class="meta">{!supported ? "No connector implementation; ingestion is skipped and reported." : source.last_error_message ?? "—"}</td>
+                </tr>;
+              })}
+              {sources.length === 0 && <tr><td colspan="7" class="meta" style="padding:2rem;text-align:center;">No sources are configured.</td></tr>}
+            </tbody>
+          </table>
         </div>
-        <div class="card" style="text-align:center;">
-          <p style="font-size:2rem;font-weight:700;color:#92400e;">0</p>
-          <p class="meta">Degraded</p>
-        </div>
-        <div class="card" style="text-align:center;">
-          <p style="font-size:2rem;font-weight:700;color:#991b1b;">0</p>
-          <p class="meta">Failing</p>
-        </div>
-      </div>
-    </section>
-
-    <!-- Source tiers -->
-    <section style="margin-bottom:2rem;">
-      <h2>Tier A — Auto-Ingest Sources</h2>
-      <p class="meta" style="margin-bottom:1rem;">47 sources polled every 30 min–3 hours. Eligible for automatic publication.</p>
-      <div style="overflow-x:auto;">
-        <table style="width:100%;border-collapse:collapse;font-size:0.9rem;">
-          <thead>
-            <tr style="border-bottom:2px solid var(--border);text-align:left;">
-              <th style="padding:0.5rem;">Source</th>
-              <th style="padding:0.5rem;">Type</th>
-              <th style="padding:0.5rem;">Cadence</th>
-              <th style="padding:0.5rem;">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {[
-              ["OpenAI News", "rss", "1h", "healthy"],
-              ["Anthropic Newsroom", "rss", "1h", "healthy"],
-              ["Google DeepMind", "rss", "2h", "healthy"],
-              ["Meta AI Blog", "rss", "2h", "healthy"],
-              ["Mistral News", "rss", "1–2h", "healthy"],
-              ["Hugging Face Blog", "rss", "2h", "healthy"],
-              ["GitHub — llama.cpp", "github_api", "3h", "healthy"],
-              ["GitHub — Ollama", "github_api", "3h", "healthy"],
-              ["GitHub — MCP Spec", "github_api", "3h", "healthy"],
-            ].map(([name, type, cadence, status]) => (
-              <tr style="border-bottom:1px solid var(--border);">
-                <td style="padding:0.5rem;">{name}</td>
-                <td style="padding:0.5rem;"><code style="font-size:0.8rem;">{type}</code></td>
-                <td style="padding:0.5rem;" class="meta">{cadence}</td>
-                <td style="padding:0.5rem;"><span class="badge badge-confirmed">{status}</span></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </section>
-
-    <section style="margin-bottom:2rem;">
-      <h2>Tier B — Research &amp; Benchmarks</h2>
-      <p class="meta" style="margin-bottom:1rem;">14 sources polled daily. Requires classification before publication.</p>
-      <div style="overflow-x:auto;">
-        <table style="width:100%;border-collapse:collapse;font-size:0.9rem;">
-          <thead>
-            <tr style="border-bottom:2px solid var(--border);text-align:left;">
-              <th style="padding:0.5rem;">Source</th>
-              <th style="padding:0.5rem;">Type</th>
-              <th style="padding:0.5rem;">Cadence</th>
-              <th style="padding:0.5rem;">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {[
-              ["arXiv cs.AI", "arxiv_api", "6h", "healthy"],
-              ["arXiv cs.CL", "arxiv_api", "6h", "healthy"],
-              ["arXiv cs.LG", "arxiv_api", "6h", "healthy"],
-              ["MLCommons", "manual", "daily", "healthy"],
-              ["Epoch AI Benchmarks", "manual", "daily", "healthy"],
-              ["LMSYS Chatbot Arena", "manual", "daily", "healthy"],
-              ["SWE-bench", "manual", "daily", "healthy"],
-            ].map(([name, type, cadence, status]) => (
-              <tr style="border-bottom:1px solid var(--border);">
-                <td style="padding:0.5rem;">{name}</td>
-                <td style="padding:0.5rem;"><code style="font-size:0.8rem;">{type}</code></td>
-                <td style="padding:0.5rem;" class="meta">{cadence}</td>
-                <td style="padding:0.5rem;"><span class="badge badge-confirmed">{status}</span></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </section>
-
-    <section style="margin-bottom:2rem;">
-      <h2>Tier C — Discovery Signals</h2>
-      <p class="meta" style="margin-bottom:1rem;">3 sources. Manual review only. Never auto-published as evidence.</p>
-      <div style="overflow-x:auto;">
-        <table style="width:100%;border-collapse:collapse;font-size:0.9rem;">
-          <thead>
-            <tr style="border-bottom:2px solid var(--border);text-align:left;">
-              <th style="padding:0.5rem;">Source</th>
-              <th style="padding:0.5rem;">Type</th>
-              <th style="padding:0.5rem;">Cadence</th>
-              <th style="padding:0.5rem;">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {[
-              ["Hacker News", "hackernews_api", "2h", "healthy"],
-              ["Specialist publications", "rss/manual", "daily", "healthy"],
-              ["Reddit (manual)", "manual", "daily", "active"],
-            ].map(([name, type, cadence, status]) => (
-              <tr style="border-bottom:1px solid var(--border);">
-                <td style="padding:0.5rem;">{name}</td>
-                <td style="padding:0.5rem;"><code style="font-size:0.8rem;">{type}</code></td>
-                <td style="padding:0.5rem;" class="meta">{cadence}</td>
-                <td style="padding:0.5rem;"><span class="badge badge-confirmed">{status}</span></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </section>
-
-    <!-- Actions -->
-    <section style="margin-top:2rem;padding:1rem;background:var(--surface-2);border-radius:var(--radius);">
-      <h2>Manual Actions</h2>
-      <div style="display:flex;gap:1rem;flex-wrap:wrap;margin-top:0.75rem;">
-        <button style="padding:0.5rem 1rem;background:var(--accent);color:#fff;border:none;border-radius:var(--radius);cursor:pointer;font-weight:600;" disabled>
-          Trigger Full Ingestion
-        </button>
-        <button style="padding:0.5rem 1rem;border:1px solid var(--border);border-radius:var(--radius);cursor:pointer;" disabled>
-          Check All Source Health
-        </button>
-        <button style="padding:0.5rem 1rem;border:1px solid var(--border);border-radius:var(--radius);cursor:pointer;" disabled>
-          Run Classification Pipeline
-        </button>
-      </div>
-      <p class="meta" style="margin-top:0.75rem;">
-        Controls will be active when connected to the live Worker API. Full functionality in Phase 2 deployment.
-      </p>
-    </section>
-
-    <p class="meta" style="margin-top:2rem;">
-      <a href="/admin/jobs">View ingestion jobs &rarr;</a> &middot;
-      <a href="/admin/review">Review queue &rarr;</a>
-    </p>
+      </section>
+    </>}
   </div>
 </BaseLayout>

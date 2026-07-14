@@ -2,6 +2,9 @@
 import BaseLayout from "../../layouts/BaseLayout.astro";
 import EvidenceBadge from "../../components/EvidenceBadge.astro";
 
+export const prerender = false;
+const editorialAIEnabled = Astro.locals.runtime.env.TRACE_AI_EDITORIAL_ENABLED === "true";
+
 // All 10 evidence states with their meanings and review triggers
 const evidenceStates = [
   { status: "confirmed", label: "Confirmed", desc: "Multiple independent primary sources confirm this information. High confidence.", triggersReview: false },
@@ -15,6 +18,34 @@ const evidenceStates = [
   { status: "superseded", label: "Superseded", desc: "A more recent item provides updated or more accurate information.", triggersReview: false },
   { status: "outdated", label: "Outdated", desc: "The information may no longer be current. Seek more recent sources.", triggersReview: true },
 ];
+
+interface ReviewRow { id: number; title: string; topic: string | null; evidence_status: string; publication_status: string; source_count: number; reviewed_by: string | null; reviewed_at: string | null }
+let pendingReviews: ReviewRow[] = [];
+let recentReviews: ReviewRow[] = [];
+let reviewLoadError: string | null = null;
+try {
+  const db = Astro.locals.runtime.env.DB;
+  [pendingReviews, recentReviews] = await Promise.all([
+    db.prepare(`
+      SELECT sc.id, sc.title, sc.topic, sc.evidence_status, sc.publication_status,
+             (SELECT COUNT(*) FROM story_cluster_members WHERE cluster_id = sc.id) AS source_count,
+             sc.reviewed_by, sc.reviewed_at
+      FROM story_clusters sc
+      WHERE sc.needs_human_review = 1 AND sc.publication_status IN ('draft','review')
+      ORDER BY sc.updated_at DESC LIMIT 50
+    `).all<ReviewRow>().then((result) => result.results),
+    db.prepare(`
+      SELECT sc.id, sc.title, sc.topic, sc.evidence_status, sc.publication_status,
+             (SELECT COUNT(*) FROM story_cluster_members WHERE cluster_id = sc.id) AS source_count,
+             sc.reviewed_by, sc.reviewed_at
+      FROM story_clusters sc
+      WHERE sc.reviewed_at IS NOT NULL
+      ORDER BY sc.reviewed_at DESC LIMIT 20
+    `).all<ReviewRow>().then((result) => result.results),
+  ]);
+} catch {
+  reviewLoadError = "Review data is unavailable. Verify the D1 binding and publication migration.";
+}
 ---
 
 <BaseLayout
@@ -36,16 +67,11 @@ const evidenceStates = [
     <!-- Pending review queue -->
     <section style="margin-bottom:2.5rem;">
       <h2>Pending Review</h2>
-      <div class="card" style="text-align:center;padding:2rem;">
-        <p class="meta">No items currently pending review.</p>
-        <p class="meta" style="margin-top:0.5rem;">
-          Items flagged with <code>needs_human_review = 1</code> in the <code>story_clusters</code> table appear here.
-          The pipeline runs claim extraction and conflict detection at 09:00 UTC daily.
-        </p>
-        <p class="meta" style="margin-top:0.75rem;">
-          API: <code>POST /admin/extract-claims</code> &middot; <code>POST /admin/detect-conflicts</code>
-        </p>
-      </div>
+      {reviewLoadError ? <div class="card"><p class="meta">{reviewLoadError}</p></div> : pendingReviews.length === 0 ?
+        <div class="card" style="text-align:center;padding:2rem;"><p class="meta">No items currently pending review.</p></div> :
+        <div style="display:flex;flex-direction:column;gap:0.65rem;">{pendingReviews.map((item) =>
+          <div class="card"><div style="display:flex;justify-content:space-between;gap:1rem;"><strong>#{item.id} {item.title}</strong><EvidenceBadge status={item.evidence_status} size="sm" /></div><p class="meta">{item.topic ?? "Uncategorised"} · {item.source_count} source{item.source_count === 1 ? "" : "s"} · {item.publication_status}</p></div>
+        )}</div>}
     </section>
 
     <!-- Evidence state reference -->
@@ -90,12 +116,10 @@ const evidenceStates = [
     <!-- Review history -->
     <section>
       <h2>Review History</h2>
-      <div class="card" style="text-align:center;padding:2rem;">
-        <p class="meta">No reviews have been completed yet.</p>
-        <p class="meta" style="margin-top:0.5rem;">
-          Completed reviews are recorded in <code>story_clusters.reviewed_by</code> and <code>story_clusters.reviewed_at</code>.
-        </p>
-      </div>
+      {recentReviews.length === 0 ? <div class="card" style="text-align:center;padding:2rem;"><p class="meta">No reviews have been completed yet.</p></div> :
+        <div style="display:flex;flex-direction:column;gap:0.65rem;">{recentReviews.map((item) =>
+          <div class="card"><strong>#{item.id} {item.title}</strong><p class="meta">{item.reviewed_by} · {item.reviewed_at ? new Date(item.reviewed_at).toLocaleString("en-GB") : "—"} · {item.publication_status}</p></div>
+        )}</div>}
     </section>
 
     <!-- Publish a story -->
@@ -105,23 +129,13 @@ const evidenceStates = [
         Select a draft cluster, write the editorial summary, and publish. Published stories appear on the public <a href="/feed">feed</a> and <a href="/">homepage</a>.
       </p>
 
-      <!-- Admin token -->
-      <div class="card" style="margin-bottom:1.5rem;background:var(--surface-2);">
-        <label for="admin-token" style="font-size:0.85rem;font-weight:600;display:block;margin-bottom:0.35rem;">Admin API Token</label>
-        <div style="display:flex;gap:0.5rem;">
-          <input type="password" id="admin-token" placeholder="Paste your ADMIN_API_TOKEN…" style="flex:1;font-family:var(--font-mono);font-size:0.8rem;" />
-          <button type="button" id="save-token-btn" class="btn btn-secondary" style="white-space:nowrap;font-size:0.8rem;">Save</button>
-        </div>
-        <p class="meta" style="margin-top:0.35rem;font-size:0.75rem;">Stored in session storage only and sent as a bearer token only to protected TRACE admin endpoints. Never sent to DeepSeek.</p>
-      </div>
-
       <!-- Cluster selector -->
       <div class="card" style="margin-bottom:1.5rem;background:var(--surface-2);">
         <div style="display:flex;gap:0.5rem;align-items:flex-end;flex-wrap:wrap;">
           <div style="flex:1;min-width:200px;">
             <label for="cluster-select" style="font-size:0.85rem;font-weight:600;display:block;margin-bottom:0.35rem;">Story Cluster</label>
             <select id="cluster-select" style="width:100%;" disabled>
-              <option value="">— Enter token and click Load —</option>
+              <option value="">— Click Load to view reviewed data —</option>
             </select>
           </div>
           <button type="button" id="load-clusters-btn" class="btn btn-secondary" style="font-size:0.8rem;">Load Clusters</button>
@@ -133,7 +147,7 @@ const evidenceStates = [
       <div id="source-material" class="card" style="margin-bottom:1.5rem;background:var(--surface-2);display:none;">
         <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.5rem;margin-bottom:0.75rem;">
           <h3 style="font-size:0.95rem;margin:0;">Source Material <span class="meta" style="font-weight:400;" id="source-count"></span></h3>
-          <button type="button" id="ai-analyze-btn" class="btn btn-secondary" style="font-size:0.8rem;" disabled>🤖 AI Analyze</button>
+          <button type="button" id="ai-analyze-btn" class="btn btn-secondary" style="font-size:0.8rem;" data-ai-enabled={String(editorialAIEnabled)} disabled>{editorialAIEnabled ? "🤖 AI Analyze" : "AI Analyze disabled"}</button>
         </div>
         <div id="ai-result" style="display:none;margin-bottom:0.75rem;padding:0.75rem;background:color-mix(in oklch, var(--accent) 6%, transparent);border-radius:var(--radius);border-left:3px solid var(--accent);"></div>
         <div id="source-list" style="display:flex;flex-direction:column;gap:0.75rem;max-height:400px;overflow-y:auto;"></div>
@@ -162,10 +176,6 @@ const evidenceStates = [
             <label for="pub-image" style="font-size:0.85rem;font-weight:600;display:block;margin-bottom:0.25rem;">Headline Image URL <span class="meta" style="font-weight:400;">(optional — auto-detected from feed if blank)</span></label>
             <input type="url" id="pub-image" placeholder="https://…" style="width:100%;" />
           </div>
-          <div>
-            <label for="pub-reviewer" style="font-size:0.85rem;font-weight:600;display:block;margin-bottom:0.25rem;">Reviewed By</label>
-            <input type="text" id="pub-reviewer" placeholder="Your name or initials" value="admin" style="width:100%;max-width:200px;" />
-          </div>
         </div>
         <div style="margin-top:1rem;display:flex;gap:0.75rem;align-items:center;flex-wrap:wrap;">
           <button type="button" id="publish-btn" class="btn btn-primary" disabled>Publish Story</button>
@@ -182,14 +192,8 @@ const evidenceStates = [
     </section>
 
     <script>
-      const WORKER_URL = "https://trace-manifest-ingestion.philgeran.workers.dev";
-
-      function getToken(): string { return sessionStorage.getItem("admin_token") || ""; }
-      function setToken(t: string): void { sessionStorage.setItem("admin_token", t); }
-
       function authHeaders(): Record<string, string> {
         return {
-          "Authorization": "Bearer " + getToken(),
           "Content-Type": "application/json",
         };
       }
@@ -213,19 +217,11 @@ const evidenceStates = [
       function safeExternalUrl(value: string): string {
         try {
           const url = new URL(value, window.location.origin);
-          return url.protocol === "http:" || url.protocol === "https:" ? url.href : "#";
+          return (url.protocol === "http:" || url.protocol === "https:") && !url.username && !url.password ? url.href : "#";
         } catch {
           return "#";
         }
       }
-
-      // Save token
-      $<HTMLButtonElement>("save-token-btn")?.addEventListener("click", () => {
-        const input = $<HTMLInputElement>("admin-token");
-        const t = input?.value?.trim();
-        if (t) { setToken(t); status("Token saved for this session.", false); }
-        else { status("Enter a token first.", true); }
-      });
 
       // Load clusters
       $<HTMLButtonElement>("load-clusters-btn")?.addEventListener("click", async () => {
@@ -233,14 +229,12 @@ const evidenceStates = [
         const count = document.getElementById("cluster-count");
         if (!select || !count) return;
 
-        if (!getToken()) { status("Save your admin token first.", true); return; }
-
         select.disabled = true;
         select.innerHTML = '<option value="">Loading…</option>';
         status("Loading clusters…", false);
 
         try {
-          const res = await fetch(`${WORKER_URL}/admin/clusters?limit=50`, { headers: authHeaders() });
+          const res = await fetch(`/api/admin/clusters?limit=50`, { headers: authHeaders() });
           if (!res.ok) { throw new Error(`HTTP ${res.status}`); }
           const clusters: Array<{ id: number; title: string; publication_status: string; source_count: number }> = await res.json();
 
@@ -250,7 +244,7 @@ const evidenceStates = [
             const clusterMeta: Record<number, string> = {};
             await Promise.all(clusters.slice(0, 15).map(async (c: any) => {
               try {
-                const srcRes = await fetch(`${WORKER_URL}/admin/cluster-sources?clusterId=${c.id}`, { headers: authHeaders() });
+                const srcRes = await fetch(`/api/admin/cluster-sources?clusterId=${c.id}`, { headers: authHeaders() });
                 if (srcRes.ok) {
                   const srcs: Array<{ sourceName: string }> = await srcRes.json();
                   const names = new Set(srcs.map((s: any) => s.sourceName));
@@ -277,7 +271,7 @@ const evidenceStates = [
           select.innerHTML = '<option value="">— Error loading —</option>';
           select.disabled = false;
           count.textContent = "";
-          status("Failed to load. Check your token and network.", true);
+          status("Failed to load. Check your Access role and network.", true);
           console.error(e);
         }
       });
@@ -311,8 +305,6 @@ const evidenceStates = [
         if (!panel || !list || !count) return;
 
         if (!clusterId) { panel.style.display = "none"; currentSources = []; return; }
-        if (!getToken()) return;
-
         panel.style.display = "block";
         list.innerHTML = '<p class="meta">Loading source material…</p>';
         count.textContent = "";
@@ -321,12 +313,12 @@ const evidenceStates = [
         currentSources = [];
 
         try {
-          const res = await fetch(`${WORKER_URL}/admin/cluster-sources?clusterId=${clusterId}`, { headers: authHeaders() });
+          const res = await fetch(`/api/admin/cluster-sources?clusterId=${clusterId}`, { headers: authHeaders() });
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           const sources: Array<{ title: string; url: string; excerpt: string | null; sourceName: string; sourceTier: string; publishedAt: string | null }> = await res.json();
 
           currentSources = sources.map(s => ({ title: s.title, excerpt: s.excerpt }));
-          if (aiBtn) aiBtn.disabled = currentSources.length === 0;
+          if (aiBtn) aiBtn.disabled = aiBtn.dataset.aiEnabled !== "true" || currentSources.length === 0;
 
           count.textContent = `(${sources.length} source${sources.length !== 1 ? "s" : ""})`;
           list.innerHTML = sources.map((s, i) => `
@@ -347,6 +339,8 @@ const evidenceStates = [
 
       // AI Analyze button — sends source material to TRACE AI for analysis
       $<HTMLButtonElement>("ai-analyze-btn")?.addEventListener("click", async () => {
+        const enabled = $<HTMLButtonElement>("ai-analyze-btn")?.dataset.aiEnabled === "true";
+        if (!enabled) { status("Editorial AI is disabled for this deployment.", true); return; }
         if (currentSources.length === 0) { status("No source material loaded.", true); return; }
 
         const btn = $<HTMLButtonElement>("ai-analyze-btn");
@@ -358,7 +352,7 @@ const evidenceStates = [
         try {
           const res = await fetch("/api/admin/ai-triage", {
             method: "POST",
-            headers: { "Authorization": "Bearer " + getToken(), "Content-Type": "application/json" },
+            headers: authHeaders(),
             body: JSON.stringify({ sources: currentSources }),
           });
 
@@ -412,13 +406,15 @@ const evidenceStates = [
           status("AI analysis failed.", true);
           console.error(e);
         } finally {
-          if (btn) { btn.disabled = false; btn.textContent = "🤖 AI Analyze"; }
+          if (btn) {
+            btn.disabled = btn.dataset.aiEnabled !== "true" || currentSources.length === 0;
+            btn.textContent = btn.dataset.aiEnabled === "true" ? "🤖 AI Analyze" : "AI Analyze disabled";
+          }
         }
       });
 
       // Archive button — hide boring clusters from the draft list
       $<HTMLButtonElement>("archive-btn")?.addEventListener("click", async () => {
-        if (!getToken()) { status("Save your admin token first.", true); return; }
         const select = $<HTMLSelectElement>("cluster-select");
         const clusterId = parseInt(select?.value || "");
         if (!clusterId || isNaN(clusterId)) { status("Select a cluster first.", true); return; }
@@ -428,7 +424,7 @@ const evidenceStates = [
         status("Archiving…", false);
 
         try {
-          const res = await fetch(`${WORKER_URL}/admin/archive-cluster`, {
+          const res = await fetch(`/api/admin/archive-cluster`, {
             method: "POST",
             headers: authHeaders(),
             body: JSON.stringify({ clusterId }),
@@ -446,8 +442,6 @@ const evidenceStates = [
 
       // Publish button
       $<HTMLButtonElement>("publish-btn")?.addEventListener("click", async () => {
-        if (!getToken()) { status("Save your admin token first.", true); return; }
-
         const select = $<HTMLSelectElement>("cluster-select");
         const clusterId = parseInt(select?.value || "");
         if (!clusterId || isNaN(clusterId)) { status("Select a cluster first.", true); return; }
@@ -462,7 +456,6 @@ const evidenceStates = [
           editorialAnalysis: $<HTMLTextAreaElement>("pub-analysis")?.value?.trim() || undefined,
           whyItMatters: $<HTMLInputElement>("pub-why")?.value?.trim() || undefined,
           headlineImageUrl: $<HTMLInputElement>("pub-image")?.value?.trim() || undefined,
-          reviewedBy: $<HTMLInputElement>("pub-reviewer")?.value?.trim() || "admin",
         };
 
         const btn = $<HTMLButtonElement>("publish-btn");
@@ -470,7 +463,7 @@ const evidenceStates = [
         status("Publishing…", false);
 
         try {
-          const res = await fetch(`${WORKER_URL}/admin/publish-story`, {
+          const res = await fetch(`/api/admin/publish-story`, {
             method: "POST",
             headers: authHeaders(),
             body: JSON.stringify(body),
@@ -483,7 +476,17 @@ const evidenceStates = [
             status(`Published! Slug: ${data.story.slug}`, false);
             const recent = document.getElementById("recent-publishes");
             if (recent) {
-              recent.innerHTML = `<a href="/stories/${data.story.slug}" style="font-weight:550;">${data.story.headline}</a> <span class="meta">— ${new Date().toLocaleTimeString()}</span>` + (recent.innerHTML !== "—" ? "<br>" + recent.innerHTML : "");
+              const line = document.createElement("div");
+              const link = document.createElement("a");
+              link.href = `/stories/${encodeURIComponent(data.story.slug)}`;
+              link.style.fontWeight = "550";
+              link.textContent = data.story.headline;
+              const timestamp = document.createElement("span");
+              timestamp.className = "meta";
+              timestamp.textContent = ` — ${new Date().toLocaleTimeString()}`;
+              line.append(link, timestamp);
+              if (recent.textContent?.trim() === "—") recent.replaceChildren(line);
+              else recent.prepend(line);
             }
           }
         } catch (e) {
@@ -494,14 +497,6 @@ const evidenceStates = [
         }
       });
 
-      // Restore saved token on load
-      (function() {
-        const saved = getToken();
-        if (saved) {
-          const input = $<HTMLInputElement>("admin-token");
-          if (input) input.value = saved;
-        }
-      })();
     </script>
 
     <!-- Record a correction -->
@@ -515,7 +510,6 @@ const evidenceStates = [
       <div class="card" style="background:var(--surface-2);">
         <h3 style="font-size:0.95rem;margin-bottom:0.75rem;">API Reference</h3>
         <pre style="font-size:0.78rem;line-height:1.55;overflow-x:auto;padding:0.75rem;background:var(--bg);border-radius:var(--radius);" class="mono"><code>POST /admin/correct
-Authorization: Bearer &lt;ADMIN_API_TOKEN&gt;
 Content-Type: application/json
 
 {'{'}
@@ -530,8 +524,7 @@ Content-Type: application/json
   "updatedEvidenceStatus": "corrected",           // optional, defaults to "corrected"
   "reason": "Why the correction was made",
   "evidenceUrl": "https://...",                   // optional
-  "impact": "What changed as a result",           // optional
-  "correctedBy": "reviewer-name"
+  "impact": "What changed as a result"            // optional
 {'}'}</code></pre>
       </div>
 

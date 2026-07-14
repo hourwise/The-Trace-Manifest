@@ -20,38 +20,104 @@ import {
   getLatestPublishedBriefing, getPublishedSourcesForStory, getRelatedStories,
   getAllClusters, getClusterSources, archiveCluster,
 } from "./publish";
-import type { Source, FeedItem } from "./types";
+import type { Source } from "./types";
+import { verifyInternalRequestSignature } from "../../src/security/internal-signature";
+import type { OperatorRole } from "../../src/security/access-auth";
 
 // ============================================================
-// CORS and authentication
+// Signed internal-service authentication
 // ============================================================
-const ALLOWED_ORIGINS = new Set([
-  "https://thetracemanifest.com",
-  "https://www.thetracemanifest.com",
-  "http://localhost:4321",
+interface InternalOperator { email: string; role: OperatorRole; requestId: string }
+
+const READ_ADMIN_ROUTES = new Set([
+  "/admin/sources", "/admin/sources/health", "/admin/jobs", "/admin/cron-runs",
+  "/admin/corrections", "/admin/published-stories", "/admin/clusters", "/admin/cluster-sources",
 ]);
+const WRITE_ADMIN_ROUTES = new Set([
+  "/admin/ingest", "/admin/classify", "/admin/dedup", "/admin/cluster",
+  "/admin/extract-claims", "/admin/detect-conflicts", "/admin/correct",
+  "/admin/seed-models", "/admin/extract-model-data", "/admin/publish-story",
+  "/admin/withdraw-story", "/admin/publish-briefing", "/admin/archive-cluster",
+]);
+const MAX_ADMIN_BODY_BYTES = 64 * 1024;
 
-function corsHeaders(request: Request): HeadersInit {
-  const origin = request.headers.get("Origin") ?? "";
-  return {
-    "Access-Control-Allow-Origin": ALLOWED_ORIGINS.has(origin) ? origin : "",
-    "Access-Control-Allow-Headers": "Authorization, Content-Type",
-    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Vary": "Origin",
-  };
+async function hashValue(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-function isAuthorised(request: Request, env: Env): boolean {
-  const supplied = request.headers.get("Authorization");
-  const expected = `Bearer ${env.ADMIN_API_TOKEN}`;
-  return supplied === expected;
+async function authenticateInternalRequest(request: Request, env: Env, body: string): Promise<InternalOperator | null> {
+  const secret = env.TRACE_INTERNAL_SERVICE_SECRET ?? "";
+  const version = request.headers.get("X-Trace-Internal-Version");
+  const operator = request.headers.get("X-Trace-Operator")?.trim().toLowerCase() ?? "";
+  const role = request.headers.get("X-Trace-Role") as OperatorRole | null;
+  const timestamp = request.headers.get("X-Trace-Timestamp") ?? "";
+  const nonce = request.headers.get("X-Trace-Nonce") ?? "";
+  const signature = request.headers.get("X-Trace-Signature") ?? "";
+  const numericTimestamp = Number(timestamp);
+  if (
+    secret.length < 32 || version !== "v1"
+    || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(operator)
+    || (role !== "reader" && role !== "publisher")
+    || !Number.isFinite(numericTimestamp) || Math.abs(Date.now() - numericTimestamp) > 60_000
+    || !/^[0-9a-f-]{36}$/i.test(nonce)
+  ) return null;
+  const url = new URL(request.url);
+  if (!await verifyInternalRequestSignature(
+    secret, request.method, `${url.pathname}${url.search}`, body,
+    { operator, role, timestamp, nonce }, signature,
+  )) return null;
+  try {
+    await env.DB.prepare("DELETE FROM admin_request_nonces WHERE expires_at <= datetime('now')").run();
+    const inserted = await env.DB.prepare(`
+      INSERT OR IGNORE INTO admin_request_nonces (nonce, operator_hash, expires_at)
+      VALUES (?, ?, datetime('now', '+2 minutes'))
+    `).bind(nonce, await hashValue(operator)).run();
+    if (Number(inserted.meta.changes ?? 0) !== 1) return null;
+  } catch {
+    return null;
+  }
+  return { email: operator, role, requestId: nonce };
+}
+
+function routeAllowed(path: string, method: string, role: OperatorRole): boolean {
+  if (method === "GET") return READ_ADMIN_ROUTES.has(path);
+  return method === "POST" && role === "publisher" && WRITE_ADMIN_ROUTES.has(path);
+}
+
+async function readBoundedAdminBody(request: Request): Promise<string | null> {
+  if (request.method === "GET") return "";
+  const declared = Number(request.headers.get("Content-Length") ?? "0");
+  if (Number.isFinite(declared) && declared > MAX_ADMIN_BODY_BYTES) return null;
+  if (!request.body) return "";
+
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > MAX_ADMIN_BODY_BYTES) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  const body = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(body);
 }
 
 export interface Env {
   DB: D1Database;
   RAW_STORE: R2Bucket;
-  ADMIN_API_TOKEN: string;
-  ALLOWED_ADMIN_ORIGIN: string;
+  TRACE_INTERNAL_SERVICE_SECRET: string;
+  GITHUB_TOKEN?: string;
 }
 
 export default {
@@ -59,17 +125,18 @@ export default {
   async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
     const cron = event.cron;
     const cronRunId = await cronRunStart(env, cron);
+    let ingestionSummary: IngestSummary | undefined;
 
     try {
       switch (cron) {
         case "*/30 * * * *":
-          await ingestTier(env, ctx, "A", "fetch");
+          ingestionSummary = await ingestTier(env, ctx, "A", "fetch");
           break;
         case "0 */3 * * *":
-          await ingestTier(env, ctx, "A", "fetch");
+          ingestionSummary = await ingestTier(env, ctx, "A", "fetch");
           break;
         case "0 6 * * *":
-          await ingestTier(env, ctx, "B", "fetch");
+          ingestionSummary = await ingestTier(env, ctx, "B", "fetch");
           break;
         case "0 9 * * *":
           await runClassificationPipeline(env);
@@ -83,44 +150,114 @@ export default {
           await checkAllSourcesHealth(env);
           break;
         default:
-          console.log(`Unknown cron pattern: ${cron}`);
+          throw new Error(`Unsupported cron pattern: ${cron}`);
       }
-      await cronRunComplete(env, cronRunId, "completed");
+      await cronRunComplete(
+        env,
+        cronRunId,
+        ingestionSummary?.failed ? "failed" : "completed",
+        ingestionSummary?.failed ? "One or more source jobs failed." : undefined,
+        ingestionSummary,
+      );
     } catch (error: any) {
-      await cronRunComplete(env, cronRunId, "failed", error.message);
+      await cronRunComplete(env, cronRunId, "failed", redactError(error));
       throw error;
     }
   },
 
   // HTTP handler — CORS + admin API with auth
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    if (request.method === "OPTIONS") {
-      return new Response(null, { status: 204, headers: corsHeaders(request) });
-    }
-
     const url = new URL(request.url);
     const path = url.pathname;
 
     if (path.startsWith("/admin/")) {
-      if (!isAuthorised(request, env)) {
-        return Response.json(
-          { error: "Unauthorized" },
-          { status: 401, headers: corsHeaders(request) }
-        );
+      const body = await readBoundedAdminBody(request);
+      if (body === null) {
+        return Response.json({ error: "Request too large" }, { status: 413 });
       }
-      const response = await handleAdminRoute(path, request, env, ctx);
-      for (const [key, value] of Object.entries(corsHeaders(request))) {
-        if (value) response.headers.set(key, value);
+      const operator = await authenticateInternalRequest(request, env, body);
+      if (!operator) return Response.json({ error: "Unauthorized" }, { status: 401 });
+      if (!routeAllowed(path, request.method, operator.role)) return Response.json({ error: "Forbidden" }, { status: 403 });
+      const authenticatedRequest = new Request(request.url, {
+        method: request.method,
+        headers: request.headers,
+        body: request.method === "GET" ? undefined : body,
+      });
+      const targetId = adminTargetId(url, body);
+      try {
+        await recordAdminAuditWithRetry(env.DB, operator, path, targetId, "allowed");
+      } catch {
+        return Response.json({ error: "Audit service unavailable" }, { status: 503 });
       }
+      let response: Response;
+      try {
+        response = await handleAdminRoute(path, authenticatedRequest, env, ctx, operator);
+      } catch (error) {
+        console.error(JSON.stringify({
+          message: "Admin route failed closed",
+          requestId: operator.requestId,
+          action: path,
+          error: redactError(error),
+        }));
+        response = Response.json({ error: "Admin action failed." }, { status: 500 });
+      }
+      try {
+        await recordAdminAuditWithRetry(env.DB, operator, path, targetId, response.status === 200 ? "succeeded" : "failed");
+      } catch {
+        console.error(JSON.stringify({ message: "Admin outcome audit failed", requestId: operator.requestId, action: path }));
+        return Response.json({ error: "The action completed but its outcome audit could not be confirmed." }, { status: 503 });
+      }
+      response.headers.set("Cache-Control", "no-store");
       return response;
     }
 
     return new Response("The Trace Manifest — Ingestion Worker", {
       status: 200,
-      headers: corsHeaders(request),
     });
   },
 };
+
+function adminTargetId(url: URL, body: string): string | null {
+  const queryTarget = url.searchParams.get("clusterId") ?? url.searchParams.get("sourceId") ?? url.searchParams.get("claimId");
+  if (queryTarget && /^\d+$/.test(queryTarget)) return queryTarget;
+  if (!body) return null;
+  try {
+    const parsed = JSON.parse(body) as Record<string, unknown>;
+    const value = parsed.clusterId ?? parsed.sourceId ?? parsed.claimId;
+    return typeof value === "number" && Number.isInteger(value) && value > 0 ? String(value) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function recordAdminAudit(
+  db: D1Database,
+  operator: InternalOperator,
+  action: string,
+  targetId: string | null,
+  outcome: "allowed" | "succeeded" | "failed",
+): Promise<void> {
+  await db.prepare(`
+    INSERT INTO admin_audit_log
+      (event_id, operator_email, operator_role, action, target_type, target_id, request_id, outcome)
+    VALUES (?, ?, ?, ?, 'admin_route', ?, ?, ?)
+    ON CONFLICT(event_id) DO NOTHING
+  `).bind(`${operator.requestId}:${outcome}`, operator.email, operator.role, action, targetId, operator.requestId, outcome).run();
+}
+
+async function recordAdminAuditWithRetry(
+  db: D1Database,
+  operator: InternalOperator,
+  action: string,
+  targetId: string | null,
+  outcome: "allowed" | "succeeded" | "failed",
+): Promise<void> {
+  try {
+    await recordAdminAudit(db, operator, action, targetId, outcome);
+  } catch {
+    await recordAdminAudit(db, operator, action, targetId, outcome);
+  }
+}
 
 // ============================================================
 // Cron audit
@@ -132,44 +269,100 @@ async function cronRunStart(env: Env, cron: string): Promise<number> {
   return meta.last_row_id;
 }
 
-async function cronRunComplete(env: Env, runId: number, status: string, error?: string) {
+async function cronRunComplete(env: Env, runId: number, status: string, error?: string, summary?: IngestSummary) {
   await env.DB.prepare(
-    "UPDATE cron_runs SET completed_at = datetime('now'), status = ?, error_message = ? WHERE id = ?"
-  ).bind(status, error || null, runId).run();
+    `UPDATE cron_runs SET completed_at = datetime('now'), status = ?, error_message = ?,
+       items_processed = ?, items_failed = ?, items_rejected = ?, items_skipped = ?, outcome_detail = ? WHERE id = ?`
+  ).bind(
+    status,
+    error || null,
+    summary?.processed ?? 0,
+    summary?.failed ?? 0,
+    summary?.rejected ?? 0,
+    summary?.skipped ?? 0,
+    summary ? `${summary.succeeded} succeeded, ${summary.failed} failed, ${summary.rejected} items rejected, ${summary.skipped} unsupported.` : null,
+    runId,
+  ).run();
 }
 
 // ============================================================
 // Tier-based ingestion
 // ============================================================
-async function ingestTier(env: Env, ctx: ExecutionContext, tier: string, jobType: string) {
+interface IngestSummary { processed: number; created: number; succeeded: number; failed: number; rejected: number; skipped: number }
+interface FetchedFeedItem {
+  external_id: string | null;
+  url: string;
+  title: string;
+  summary: string | null;
+  content_excerpt: string | null;
+  author: string | null;
+  published_at: string | null;
+  raw_metadata: Record<string, unknown>;
+}
+
+async function ingestTier(env: Env, _ctx: ExecutionContext, tier: string, jobType: string): Promise<IngestSummary> {
   const { results: sources } = await env.DB.prepare(
     "SELECT * FROM sources WHERE tier = ? AND active = 1 AND (last_fetched_at IS NULL OR datetime(last_fetched_at, '+' || cadence_minutes || ' minutes') <= datetime('now'))"
   ).bind(tier).all<Source>();
 
   if (!sources || sources.length === 0) {
     console.log(`No sources to fetch for tier ${tier}`);
-    return;
+    return { processed: 0, created: 0, succeeded: 0, failed: 0, rejected: 0, skipped: 0 };
   }
 
   console.log(`Ingesting ${sources.length} sources for tier ${tier}`);
 
-  for (const source of sources) {
-    ctx.waitUntil(processSource(env, source, jobType));
+  const outcomes: Array<{ resultStatus: string; processed: number; created: number; rejected: number; skipped: number }> = [];
+  for (let index = 0; index < sources.length; index += 4) {
+    outcomes.push(...await Promise.all(sources.slice(index, index + 4).map((source) => processSource(env, source, jobType))));
   }
+  return {
+    processed: outcomes.reduce((sum, item) => sum + item.processed, 0),
+    created: outcomes.reduce((sum, item) => sum + item.created, 0),
+    succeeded: outcomes.filter((item) => item.resultStatus.startsWith("succeeded")).length,
+    failed: outcomes.filter((item) => item.resultStatus === "failed").length,
+    rejected: outcomes.reduce((sum, item) => sum + item.rejected, 0),
+    skipped: outcomes.reduce((sum, item) => sum + item.skipped, 0),
+  };
+}
+
+function eligibleFeedItem(item: FetchedFeedItem, rawMetadata: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(item.url);
+  } catch {
+    return false;
+  }
+  const host = url.hostname.toLowerCase();
+  const private172 = host.match(/^172\.(\d{1,3})\./);
+  const publicUrl = (url.protocol === "https:" || url.protocol === "http:")
+    && !url.username && !url.password && item.url.length <= 2_048
+    && !host.includes(":") && host !== "localhost" && !host.endsWith(".local")
+    && !/^(127\.|10\.|169\.254\.|192\.168\.|0\.)/.test(host)
+    && !(private172 && Number(private172[1]) >= 16 && Number(private172[1]) <= 31);
+  const publishedAt = item.published_at === null
+    || (typeof item.published_at === "string" && item.published_at.length <= 50 && !Number.isNaN(Date.parse(item.published_at)));
+  return publicUrl
+    && typeof item.title === "string" && item.title.trim().length >= 1 && item.title.length <= 500
+    && (item.external_id === null || (typeof item.external_id === "string" && item.external_id.length <= 500))
+    && (item.summary === null || (typeof item.summary === "string" && item.summary.length <= 4_000))
+    && (item.content_excerpt === null || (typeof item.content_excerpt === "string" && item.content_excerpt.length <= 4_000))
+    && (item.author === null || (typeof item.author === "string" && item.author.length <= 500))
+    && publishedAt && rawMetadata.length <= 32_000;
 }
 
 async function processSource(env: Env, source: Source, jobType: string) {
   const jobId = await createJob(env, source.id, jobType);
 
   try {
-    let items: Omit<FeedItem, "id" | "created_at">[] = [];
+    let items: FetchedFeedItem[] = [];
 
     switch (source.ingestion_type) {
       case "rss":
         items = await fetchRSS(source);
         break;
       case "github_api":
-        items = await fetchGitHubReleases(source);
+        items = await fetchGitHubReleases(source, env.GITHUB_TOKEN);
         break;
       case "arxiv_api":
         items = await fetchArxivPapers(source);
@@ -178,14 +371,23 @@ async function processSource(env: Env, source: Source, jobType: string) {
         items = await fetchHackerNews(source);
         break;
       default:
-        console.log(`Skipping source ${source.name}: ingestion_type=${source.ingestion_type} not yet implemented`);
-        await completeJob(env, jobId, "completed", 0, 0);
-        return;
+        console.warn(`Skipping source ${source.id}: connector type is not implemented`);
+        await env.DB.prepare(
+          "UPDATE sources SET health_status = 'degraded', last_fetched_at = datetime('now'), last_error_at = datetime('now'), last_error_message = ? WHERE id = ?"
+        ).bind(`Unsupported connector type: ${source.ingestion_type}`, source.id).run();
+        await completeJob(env, jobId, "completed", 0, 0, undefined, "unsupported", 0, 1, `Connector ${source.ingestion_type} is not implemented.`);
+        return { resultStatus: "unsupported", processed: 0, created: 0, rejected: 0, skipped: 1 };
     }
 
     // Deduplicate against existing items
     let created = 0;
+    let rejected = 0;
     for (const item of items) {
+      const rawMetadata = JSON.stringify(item.raw_metadata || {});
+      if (!eligibleFeedItem(item, rawMetadata)) {
+        rejected++;
+        continue;
+      }
       const urlHash = await hashURL(item.url);
       const isDup = await deduplicateURL(env.DB, urlHash);
 
@@ -196,7 +398,7 @@ async function processSource(env: Env, source: Source, jobType: string) {
         ).bind(
           source.id, item.external_id, item.url, urlHash, item.title,
           item.summary, item.content_excerpt, item.author,
-          item.published_at, JSON.stringify(item.raw_metadata || {})
+          item.published_at, rawMetadata
         ).run();
         created++;
       }
@@ -207,16 +409,23 @@ async function processSource(env: Env, source: Source, jobType: string) {
       "UPDATE sources SET last_fetched_at = datetime('now'), last_success_at = datetime('now'), consecutive_failures = 0, health_status = 'healthy' WHERE id = ?"
     ).bind(source.id).run();
 
-    await completeJob(env, jobId, "completed", items.length, created);
-    console.log(`Source ${source.name}: ${created}/${items.length} new items`);
+    const resultStatus = rejected > 0 ? "succeeded_with_rejections" : "succeeded";
+    await completeJob(
+      env, jobId, "completed", items.length, created, undefined, resultStatus, rejected, 0,
+      rejected ? `${rejected} malformed or ineligible fetched items were rejected.` : undefined,
+    );
+    console.log(`Source ${source.name}: ${created}/${items.length} new items; ${rejected} rejected`);
+    return { resultStatus, processed: items.length, created, rejected, skipped: 0 };
   } catch (error: any) {
-    console.error(`Error processing source ${source.name}: ${error.message}`);
+    const safeError = redactError(error);
+    console.error(JSON.stringify({ message: "Source processing failed", sourceId: source.id, error: safeError }));
 
     await env.DB.prepare(
-      "UPDATE sources SET last_fetched_at = datetime('now'), last_error_at = datetime('now'), last_error_message = ?, consecutive_failures = consecutive_failures + 1, health_status = CASE WHEN consecutive_failures >= 3 THEN 'failing' WHEN consecutive_failures >= 1 THEN 'degraded' ELSE health_status END WHERE id = ?"
-    ).bind(error.message, source.id).run();
+      "UPDATE sources SET last_fetched_at = datetime('now'), last_error_at = datetime('now'), last_error_message = ?, consecutive_failures = consecutive_failures + 1, health_status = CASE WHEN consecutive_failures + 1 >= 3 THEN 'failing' ELSE 'degraded' END WHERE id = ?"
+    ).bind(safeError, source.id).run();
 
-    await completeJob(env, jobId, "failed", 0, 0, error.message);
+    await completeJob(env, jobId, "failed", 0, 0, "Source processing failed.", "failed", 0, 0, "See source health for the redacted failure detail.");
+    return { resultStatus: "failed", processed: 0, created: 0, rejected: 0, skipped: 0 };
   }
 }
 
@@ -230,10 +439,34 @@ async function createJob(env: Env, sourceId: number, jobType: string): Promise<n
   return meta.last_row_id;
 }
 
-async function completeJob(env: Env, jobId: number, status: string, processed: number, created: number, error?: string) {
+async function completeJob(
+  env: Env,
+  jobId: number,
+  status: string,
+  processed: number,
+  created: number,
+  error?: string,
+  resultStatus = status === "failed" ? "failed" : "succeeded",
+  rejected = 0,
+  skipped = 0,
+  detail?: string,
+) {
   await env.DB.prepare(
-    "UPDATE ingestion_jobs SET status = ?, items_processed = ?, items_created = ?, error_message = ?, completed_at = datetime('now') WHERE id = ?"
-  ).bind(status, processed, created, error || null, jobId).run();
+    `UPDATE ingestion_jobs SET status = ?, items_processed = ?, items_created = ?, error_message = ?,
+       result_status = ?, items_rejected = ?, items_skipped = ?, outcome_detail = ?, completed_at = datetime('now')
+     WHERE id = ?`
+  ).bind(status, processed, created, error || null, resultStatus, rejected, skipped, detail || null, jobId).run();
+}
+
+function redactError(error: unknown): string {
+  const message = error instanceof Error ? error.message : "Unknown processing error";
+  return message
+    .replace(/https?:\/\/[^\s/@:]+:[^\s/@]+@/gi, "https://[REDACTED]@")
+    .replace(/Bearer\s+[A-Za-z0-9._~-]+/gi, "Bearer [REDACTED]")
+    .replace(/sk-[A-Za-z0-9_-]+/gi, "[REDACTED]")
+    .replace(/gh[pousr]_[A-Za-z0-9]+/gi, "[REDACTED]")
+    .replace(/(api[_-]?key|token|secret)=([^&\s]+)/gi, "$1=[REDACTED]")
+    .slice(0, 500);
 }
 
 // ============================================================
@@ -326,7 +559,13 @@ async function checkAllSourcesHealth(env: Env) {
 // ============================================================
 // Admin route dispatcher
 // ============================================================
-async function handleAdminRoute(path: string, request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+async function handleAdminRoute(
+  path: string,
+  request: Request,
+  env: Env,
+  ctx: ExecutionContext,
+  operator: InternalOperator,
+): Promise<Response> {
   switch (path) {
     case "/admin/ingest":
       return handleManualIngest(request, env, ctx);
@@ -351,17 +590,17 @@ async function handleAdminRoute(path: string, request: Request, env: Env, ctx: E
     case "/admin/corrections":
       return handleCorrectionsList(env);
     case "/admin/correct":
-      return handleRecordCorrection(request, env);
+      return handleRecordCorrection(request, env, operator);
     case "/admin/seed-models":
       return handleSeedModelData(env);
     case "/admin/extract-model-data":
       return handleModelDataExtraction(env);
     case "/admin/publish-story":
-      return handlePublishStory(request, env);
+      return handlePublishStory(request, env, operator);
     case "/admin/withdraw-story":
       return handleWithdrawStory(request, env);
     case "/admin/publish-briefing":
-      return handlePublishBriefing(request, env);
+      return handlePublishBriefing(request, env, operator);
     case "/admin/published-stories":
       return handlePublishedStoriesList(request, env);
     case "/admin/clusters":
@@ -378,22 +617,75 @@ async function handleAdminRoute(path: string, request: Request, env: Env, ctx: E
 // ============================================================
 // Admin API handlers
 // ============================================================
-async function handleManualIngest(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-  const { sourceId } = await request.json() as { sourceId?: number };
+async function readAdminObject(request: Request, allowedKeys: readonly string[]): Promise<Record<string, unknown> | null> {
+  try {
+    const parsed = await request.json() as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const record = parsed as Record<string, unknown>;
+    return Object.keys(record).every((key) => allowedKeys.includes(key)) ? record : null;
+  } catch {
+    return null;
+  }
+}
+
+function positiveInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value > 0;
+}
+
+function optionalText(value: unknown, maximum: number): value is string | undefined {
+  return value === undefined || (typeof value === "string" && value.length <= maximum);
+}
+
+function requiredText(value: unknown, minimum: number, maximum: number): value is string {
+  return typeof value === "string" && value.trim().length >= minimum && value.length <= maximum;
+}
+
+function optionalHttpUrl(value: unknown): value is string | null | undefined {
+  if (value === undefined || value === null || value === "") return true;
+  if (typeof value !== "string" || value.length > 2_048) return false;
+  try {
+    const url = new URL(value);
+    return (url.protocol === "https:" || url.protocol === "http:") && !url.username && !url.password;
+  } catch {
+    return false;
+  }
+}
+
+async function handleManualIngest(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
+  const body = await readAdminObject(request, ["sourceId"]);
+  if (!body || (body.sourceId !== undefined && !positiveInteger(body.sourceId))) {
+    return Response.json({ error: "Body must contain only an optional positive sourceId." }, { status: 400 });
+  }
+  const sourceId = body.sourceId as number | undefined;
 
   if (sourceId) {
     const source = await env.DB.prepare("SELECT * FROM sources WHERE id = ?").bind(sourceId).first<Source>();
     if (source) {
-      ctx.waitUntil(processSource(env, source, "fetch"));
-      return Response.json({ status: "ok", source: source.name });
+      const outcome = await processSource(env, source, "fetch");
+      const status = outcome.resultStatus === "succeeded" ? 200
+        : outcome.resultStatus === "succeeded_with_rejections" ? 207
+        : outcome.resultStatus === "unsupported" ? 422 : 502;
+      return Response.json({ status: outcome.resultStatus, source: source.name, outcome }, { status });
     }
     return Response.json({ error: "Source not found" }, { status: 404 });
   }
 
   // Ingest all due sources across all tiers
-  await ingestTier(env, ctx, "A", "fetch");
-  await ingestTier(env, ctx, "B", "fetch");
-  return Response.json({ status: "ok", message: "Full ingestion triggered" });
+  const tierA = await ingestTier(env, _ctx, "A", "fetch");
+  const tierB = await ingestTier(env, _ctx, "B", "fetch");
+  const failed = tierA.failed + tierB.failed;
+  const rejected = tierA.rejected + tierB.rejected;
+  const skipped = tierA.skipped + tierB.skipped;
+  return Response.json(
+    {
+      status: failed ? "partial_failure"
+        : skipped ? "completed_with_unsupported"
+        : rejected ? "completed_with_rejections"
+        : "completed",
+      tiers: { A: tierA, B: tierB },
+    },
+    { status: failed || skipped || rejected ? 207 : 200 },
+  );
 }
 
 async function handleSourceList(env: Env): Promise<Response> {
@@ -454,17 +746,43 @@ async function handleCorrectionsList(env: Env): Promise<Response> {
   return Response.json(results || []);
 }
 
-async function handleRecordCorrection(request: Request, env: Env): Promise<Response> {
+async function handleRecordCorrection(request: Request, env: Env, operator: InternalOperator): Promise<Response> {
   if (request.method !== "POST") {
     return Response.json({ error: "Method not allowed — use POST" }, { status: 405 });
   }
 
-  let body: any;
-  try {
-    body = await request.json();
-  } catch {
-    return Response.json({ error: "Invalid JSON body" }, { status: 400 });
-  }
+  const body = await readAdminObject(request, [
+    "clusterId", "claimId", "correctionType", "previousStatement", "updatedStatement", "reason",
+    "evidenceUrl", "impact", "previousEvidenceStatus", "updatedEvidenceStatus",
+  ]) as any;
+  if (!body) return Response.json({ error: "Invalid correction body." }, { status: 400 });
+
+  const correctionTypes = new Set([
+    "factual_error", "rating_change", "licence_correction", "pricing_correction",
+    "benchmark_correction", "supersession", "deprecation", "methodology_update", "other",
+  ]);
+  const evidenceStatuses = new Set([
+    "confirmed", "strongly_supported", "provisionally_supported", "vendor_reported",
+    "community_reported", "disputed", "unverified", "corrected", "superseded", "outdated",
+  ]);
+  const hasCluster = positiveInteger(body.clusterId);
+  const hasClaim = positiveInteger(body.claimId);
+  const optionalEvidenceStatus = (value: unknown) => value === undefined || value === null
+    || (typeof value === "string" && evidenceStatuses.has(value));
+  if (
+    hasCluster === hasClaim
+    || (body.clusterId !== undefined && !hasCluster)
+    || (body.claimId !== undefined && !hasClaim)
+    || typeof body.correctionType !== "string" || !correctionTypes.has(body.correctionType)
+    || !requiredText(body.previousStatement, 1, 8_000)
+    || !requiredText(body.updatedStatement, 1, 8_000)
+    || !requiredText(body.reason, 3, 2_000)
+    || !optionalText(body.impact, 2_000)
+    || !optionalHttpUrl(body.evidenceUrl)
+    || !optionalEvidenceStatus(body.previousEvidenceStatus)
+    || !optionalEvidenceStatus(body.updatedEvidenceStatus)
+  ) return Response.json({ error: "Correction fields are invalid, unbounded, or target more than one record." }, { status: 400 });
+  body.correctedBy = operator.email;
 
   const validationError = validateCorrectionInput(body);
   if (validationError) {
@@ -472,16 +790,25 @@ async function handleRecordCorrection(request: Request, env: Env): Promise<Respo
   }
 
   try {
-    if (body.clusterId) {
+    if (hasCluster) {
       const result = await recordClusterCorrection(env.DB, body);
       return Response.json({ status: "ok", ...result });
-    } else if (body.claimId) {
+    } else if (hasClaim) {
       const result = await recordClaimCorrection(env.DB, body);
       return Response.json({ status: "ok", ...result });
     }
     return Response.json({ error: "clusterId or claimId required" }, { status: 400 });
   } catch (err: any) {
-    return Response.json({ error: err.message }, { status: 500 });
+    console.error(JSON.stringify({
+      message: "Correction recording failed",
+      operator: operator.email,
+      error: redactError(err),
+    }));
+    const targetNotPublished = err instanceof Error && err.message.startsWith("Corrections may only be recorded against");
+    return Response.json(
+      { error: targetNotPublished ? "The correction target is not an eligible published record." : "Correction recording failed." },
+      { status: targetNotPublished ? 409 : 500 },
+    );
   }
 }
 
@@ -499,32 +826,32 @@ async function handleModelDataExtraction(env: Env): Promise<Response> {
 // Phase 5E Publication handlers
 // ============================================================
 
-async function handlePublishStory(request: Request, env: Env): Promise<Response> {
-  const body = await request.json() as {
-    clusterId?: number;
-    headline?: string;
-    summary?: string;
-    editorialAnalysis?: string;
-    whyItMatters?: string;
-    headlineImageUrl?: string;
-    reviewedBy?: string;
-  };
+async function handlePublishStory(request: Request, env: Env, operator: InternalOperator): Promise<Response> {
+  const body = await readAdminObject(request, [
+    "clusterId", "headline", "summary", "editorialAnalysis", "whyItMatters", "headlineImageUrl",
+  ]);
 
+  if (!body || !positiveInteger(body.clusterId)
+    || !optionalText(body.headline, 200) || !optionalText(body.summary, 2_000)
+    || !optionalText(body.editorialAnalysis, 8_000) || !optionalText(body.whyItMatters, 1_000)
+    || !optionalText(body.headlineImageUrl, 2_048)) {
+    return Response.json({ error: "Invalid or unexpected publication field." }, { status: 400 });
+  }
   if (!body.clusterId) {
     return Response.json({ error: "clusterId is required" }, { status: 400 });
   }
-  if (!body.summary || body.summary.trim().length < 20) {
+  if (typeof body.summary !== "string" || body.summary.trim().length < 20) {
     return Response.json({ error: "summary is required (min 20 characters)" }, { status: 400 });
   }
 
   const result = await publishStory(env, {
-    clusterId: body.clusterId,
-    headline: body.headline,
+    clusterId: body.clusterId as number,
+    headline: body.headline as string | undefined,
     summary: body.summary,
-    editorialAnalysis: body.editorialAnalysis,
-    whyItMatters: body.whyItMatters,
-    headlineImageUrl: body.headlineImageUrl,
-    reviewedBy: body.reviewedBy || "admin",
+    editorialAnalysis: body.editorialAnalysis as string | undefined,
+    whyItMatters: body.whyItMatters as string | undefined,
+    headlineImageUrl: body.headlineImageUrl as string | undefined,
+    reviewedBy: operator.email,
   });
 
   if (!result.success) {
@@ -535,18 +862,18 @@ async function handlePublishStory(request: Request, env: Env): Promise<Response>
 }
 
 async function handleWithdrawStory(request: Request, env: Env): Promise<Response> {
-  const body = await request.json() as {
-    clusterId?: number;
-    status?: string;
-    reason?: string;
-  };
+  const body = await readAdminObject(request, ["clusterId", "status", "reason"]);
 
+  if (!body || !positiveInteger(body.clusterId) || !["withdrawn", "superseded"].includes(String(body.status))
+    || !optionalText(body.reason, 1_000)) {
+    return Response.json({ error: "A valid clusterId, status, and bounded reason are required." }, { status: 400 });
+  }
   if (!body.clusterId) {
     return Response.json({ error: "clusterId is required" }, { status: 400 });
   }
 
   const newStatus = body.status === "superseded" ? "superseded" : "withdrawn";
-  const result = await updateStoryStatus(env, body.clusterId, newStatus, body.reason);
+  const result = await updateStoryStatus(env, body.clusterId as number, newStatus, body.reason as string | undefined);
 
   if (!result.success) {
     return Response.json({ error: result.error }, { status: 400 });
@@ -555,17 +882,15 @@ async function handleWithdrawStory(request: Request, env: Env): Promise<Response
   return Response.json({ status: "ok" });
 }
 
-async function handlePublishBriefing(request: Request, env: Env): Promise<Response> {
-  const body = await request.json() as {
-    briefingType?: string;
-    briefingDate?: string;
-    title?: string;
-    summary?: string;
-    contentJson?: string;
-    reviewedBy?: string;
-  };
+async function handlePublishBriefing(request: Request, env: Env, operator: InternalOperator): Promise<Response> {
+  const body = await readAdminObject(request, ["briefingType", "briefingDate", "title", "summary", "contentJson"]);
 
-  if (!body.briefingType || !["daily", "weekly"].includes(body.briefingType)) {
+  if (!body || !["daily", "weekly"].includes(String(body.briefingType))
+    || !optionalText(body.briefingDate, 10) || !optionalText(body.title, 200)
+    || !optionalText(body.summary, 2_000) || !optionalText(body.contentJson, 32_000)) {
+    return Response.json({ error: "Invalid or unexpected briefing field." }, { status: 400 });
+  }
+  if (!body.briefingType || !["daily", "weekly"].includes(body.briefingType as string)) {
     return Response.json({ error: "briefingType must be 'daily' or 'weekly'" }, { status: 400 });
   }
   if (!body.briefingDate || !body.title || !body.summary || !body.contentJson) {
@@ -574,11 +899,11 @@ async function handlePublishBriefing(request: Request, env: Env): Promise<Respon
 
   const result = await publishBriefing(env, {
     briefingType: body.briefingType as "daily" | "weekly",
-    briefingDate: body.briefingDate,
-    title: body.title,
-    summary: body.summary,
-    contentJson: body.contentJson,
-    reviewedBy: body.reviewedBy || "admin",
+    briefingDate: body.briefingDate as string,
+    title: body.title as string,
+    summary: body.summary as string,
+    contentJson: body.contentJson as string,
+    reviewedBy: operator.email,
   });
 
   if (!result.success) {
@@ -591,8 +916,13 @@ async function handlePublishBriefing(request: Request, env: Env): Promise<Respon
 async function handlePublishedStoriesList(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   const topic = url.searchParams.get("topic") || undefined;
-  const limit = parseInt(url.searchParams.get("limit") || "20");
-  const offset = parseInt(url.searchParams.get("offset") || "0");
+  const limit = Number(url.searchParams.get("limit") || "20");
+  const offset = Number(url.searchParams.get("offset") || "0");
+  if ((topic && !/^[A-Za-z0-9][A-Za-z0-9 -]{0,79}$/.test(topic))
+    || !Number.isInteger(limit) || limit < 1 || limit > 100
+    || !Number.isInteger(offset) || offset < 0 || offset > 10_000) {
+    return Response.json({ error: "Invalid list query." }, { status: 400 });
+  }
 
   const stories = await getPublishedStories(env, { topic, limit, offset });
   return Response.json(stories);
@@ -601,7 +931,11 @@ async function handlePublishedStoriesList(request: Request, env: Env): Promise<R
 async function handleClustersList(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   const status = url.searchParams.get("status") || undefined;
-  const limit = parseInt(url.searchParams.get("limit") || "50");
+  const limit = Number(url.searchParams.get("limit") || "50");
+  if ((status && !["draft", "review", "published", "withdrawn", "superseded"].includes(status))
+    || !Number.isInteger(limit) || limit < 1 || limit > 100) {
+    return Response.json({ error: "Invalid cluster query." }, { status: 400 });
+  }
 
   const clusters = await getAllClusters(env, { limit, status });
   return Response.json(clusters);
@@ -609,9 +943,9 @@ async function handleClustersList(request: Request, env: Env): Promise<Response>
 
 async function handleClusterSources(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
-  const clusterId = parseInt(url.searchParams.get("clusterId") || "0");
+  const clusterId = Number(url.searchParams.get("clusterId") || "0");
 
-  if (!clusterId) {
+  if (!Number.isInteger(clusterId) || clusterId < 1) {
     return Response.json({ error: "clusterId query param is required" }, { status: 400 });
   }
 
@@ -624,12 +958,12 @@ async function handleArchiveCluster(request: Request, env: Env): Promise<Respons
     return Response.json({ error: "Method not allowed" }, { status: 405 });
   }
 
-  const body = await request.json() as { clusterId?: number };
-  if (!body.clusterId) {
+  const body = await readAdminObject(request, ["clusterId"]);
+  if (!body || !positiveInteger(body.clusterId)) {
     return Response.json({ error: "clusterId is required" }, { status: 400 });
   }
 
-  const result = await archiveCluster(env, body.clusterId);
+  const result = await archiveCluster(env, body.clusterId as number);
   if (!result.success) {
     return Response.json({ error: result.error }, { status: 400 });
   }

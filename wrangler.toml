@@ -1,16 +1,30 @@
-# The Trace Manifest — Pages config (Astro site only)
-# Ingestion Worker is configured separately in wrangler.worker.toml
-
+# The Trace Manifest - Cloudflare Pages / Astro server configuration
 name = "the-trace-manifest"
 compatibility_date = "2026-07-12"
 pages_build_output_dir = "dist"
 
-# Astro Pages deployment
+[[d1_databases]]
+binding = "DB"
+database_name = "trace-manifest-db"
+database_id = "1625036a-ffe2-4103-bf9d-086bae150561"
+
 [env.production]
 name = "the-trace-manifest"
 
 [env.production.vars]
-PUBLIC_INGESTION_API_URL = "https://trace-manifest-ingestion.philgeran.workers.dev"
+TRACE_ENVIRONMENT = "production"
+TRACE_ALLOWED_ORIGINS = "https://thetracemanifest.com"
+TRACE_AI_PUBLIC_ENABLED = "false"
+TRACE_AI_EDITORIAL_ENABLED = "false"
+TRACE_AI_SCHEDULED_ENABLED = "false"
+TRACE_AI_GLOBAL_KILL_SWITCH = "false"
 
-# Admin API token — also set as a Pages secret:
-# npx wrangler pages secret put ADMIN_API_TOKEN
+# Server-only secrets configured with `wrangler pages secret put`:
+# DEEPSEEK_API_KEY (only when a governed AI path is intentionally enabled)
+# TRACE_VISITOR_HASH_SECRET
+# TRACE_INTERNAL_SERVICE_SECRET
+# CF_ACCESS_AUD
+#
+# Server-only variables configured in the Pages environment:
+# CF_ACCESS_TEAM_DOMAIN, TRACE_ADMIN_READERS, TRACE_ADMIN_PUBLISHERS,
+# TRACE_INGESTION_WORKER_URL, and reviewed TRACE_AI_* pricing/budget values.

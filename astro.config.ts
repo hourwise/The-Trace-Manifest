@@ -6,7 +6,7 @@ import cloudflare from "@astrojs/cloudflare";
 export default defineConfig({
   site: "https://thetracemanifest.com",
   integrations: [sitemap()],
-  output: "static",
+  output: "server",
   adapter: cloudflare({
     platformProxy: {
       enabled: true,
