@@ -1,7 +1,7 @@
 // GitHub Releases API fetcher
 import type { Source, GitHubRelease } from "../types";
 
-export async function fetchGitHubReleases(source: Source): Promise<Array<{
+export async function fetchGitHubReleases(source: Source, token?: string): Promise<Array<{
   external_id: string | null;
   url: string;
   title: string;
@@ -15,7 +15,7 @@ export async function fetchGitHubReleases(source: Source): Promise<Array<{
   const repoPath = extractRepoPath(source.url);
 
   if (!repoPath) {
-    throw new Error(`Invalid GitHub URL: ${source.url}`);
+    throw new Error("GitHub source URL is invalid.");
   }
 
   try {
@@ -25,8 +25,7 @@ export async function fetchGitHubReleases(source: Source): Promise<Array<{
         headers: {
           "User-Agent": "TheTraceManifest/0.1",
           "Accept": "application/vnd.github+json",
-          // Use GITHUB_TOKEN from env if available
-          ...(typeof GITHUB_TOKEN !== "undefined" ? { Authorization: `Bearer ${GITHUB_TOKEN}` } : {}),
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         signal: AbortSignal.timeout(30000),
       }
@@ -52,14 +51,11 @@ export async function fetchGitHubReleases(source: Source): Promise<Array<{
         tag_name: release.tag_name,
       },
     }));
-  } catch (error: any) {
-    console.error(`GitHub fetch failed for ${source.name}: ${error.message}`);
-    throw error;
-  }
+  } catch (error: unknown) { throw error; }
 }
 
 // Also check for security advisories
-export async function fetchGitHubAdvisories(source: Source): Promise<Array<{
+export async function fetchGitHubAdvisories(source: Source, token?: string): Promise<Array<{
   external_id: string | null;
   url: string;
   title: string;
@@ -79,7 +75,7 @@ export async function fetchGitHubAdvisories(source: Source): Promise<Array<{
         headers: {
           "User-Agent": "TheTraceManifest/0.1",
           "Accept": "application/vnd.github+json",
-          ...(typeof GITHUB_TOKEN !== "undefined" ? { Authorization: `Bearer ${GITHUB_TOKEN}` } : {}),
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         signal: AbortSignal.timeout(30000),
       }

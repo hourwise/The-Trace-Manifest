@@ -1,20 +1,26 @@
 // Source health monitoring
-import type { Source, Env } from "../types";
+import type { Source } from "./types";
+import type { Env } from "./index";
 
 export async function checkSourceHealth(env: Env, source: Source): Promise<void> {
+  if (!safeRemoteUrl(source.url)) {
+    await markDegraded(env.DB, source.id, "Source URL is not eligible for remote health checks.");
+    return;
+  }
   // Check if the source URL is still reachable
   try {
     const response = await fetch(source.url, {
       method: "HEAD",
       headers: { "User-Agent": "TheTraceManifest/0.1 (Health Check)" },
+      redirect: "manual",
       signal: AbortSignal.timeout(15000),
     });
 
     if (!response.ok) {
       await markDegraded(env.DB, source.id, `HTTP ${response.status}`);
     }
-  } catch (error: any) {
-    await markDegraded(env.DB, source.id, error.message);
+  } catch {
+    await markDegraded(env.DB, source.id, "Source health request failed.");
   }
 
   // Check for stale sources (not fetched in > 2x cadence)
@@ -26,6 +32,21 @@ export async function checkSourceHealth(env: Env, source: Source): Promise<void>
         "UPDATE sources SET health_status = 'degraded' WHERE id = ? AND health_status = 'healthy'"
       ).bind(source.id).run();
     }
+  }
+}
+
+function safeRemoteUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    const host = url.hostname.toLowerCase();
+    const private172 = host.match(/^172\.(\d{1,3})\./);
+    return (url.protocol === "https:" || url.protocol === "http:")
+      && !url.username && !url.password && (!url.port || url.port === "80" || url.port === "443")
+      && !host.includes(":") && host !== "localhost" && !host.endsWith(".local")
+      && !/^(127\.|10\.|169\.254\.|192\.168\.|0\.)/.test(host)
+      && !(private172 && Number(private172[1]) >= 16 && Number(private172[1]) <= 31);
+  } catch {
+    return false;
   }
 }
 

@@ -16,7 +16,7 @@ export async function fetchArxivPapers(source: Source): Promise<Array<{
   const category = source.feed_url || source.url.replace(/^.*arxiv\.org\//, "");
 
   try {
-    const apiUrl = `https://export.arxiv.org/api/query?search_query=cat:${category}&sortBy=submittedDate&sortOrder=descending&max_results=25`;
+    const apiUrl = `https://export.arxiv.org/api/query?search_query=cat:${encodeURIComponent(category)}&sortBy=submittedDate&sortOrder=descending&max_results=25`;
 
     const response = await fetch(apiUrl, {
       headers: { "User-Agent": "TheTraceManifest/0.1" },
@@ -29,10 +29,7 @@ export async function fetchArxivPapers(source: Source): Promise<Array<{
 
     const text = await response.text();
     return parseArxivAtom(text);
-  } catch (error: any) {
-    console.error(`arXiv fetch failed for ${source.name}: ${error.message}`);
-    throw error;
-  }
+  } catch (error: unknown) { throw error; }
 }
 
 function parseArxivAtom(xml: string): Array<{

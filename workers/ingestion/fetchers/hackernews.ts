@@ -55,8 +55,5 @@ export async function fetchHackerNews(source: Source): Promise<Array<{
           type: item.type,
         },
       }));
-  } catch (error: any) {
-    console.error(`HN fetch failed: ${error.message}`);
-    throw error;
-  }
+  } catch (error: unknown) { throw error; }
 }

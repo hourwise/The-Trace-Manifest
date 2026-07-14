@@ -479,8 +479,8 @@ export async function runClaimExtraction(
         ).run();
 
         evidenceCreated++;
-      } catch (err: any) {
-        console.error(`Claim extraction error for item ${item.id}: ${err.message}`);
+      } catch {
+        console.error(`Claim extraction failed for item ${item.id}.`);
       }
     }
 
@@ -523,8 +523,8 @@ async function recordPipelineStage(
          VALUES (?, ?, ?, ?, ?, ?, datetime('now'))`
       ).bind(feedItemId, stage, ALGORITHM_VERSION, status, summary, error ?? null).run();
     }
-  } catch (err: any) {
-    console.error(`Pipeline stage tracking error: ${err.message}`);
+  } catch {
+    console.error("Claim pipeline stage tracking failed.");
   }
 }
 
