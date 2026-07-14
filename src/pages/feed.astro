@@ -17,12 +17,13 @@ let allTopics: string[] = [];
 let error: string | null = null;
 
 try {
-  stories = await getPublishedStories({ topic, limit: 30 });
-  allTopics = await getPublishedTopics();
-} catch (e: any) {
+  const db = Astro.locals.runtime.env.DB;
+  stories = await getPublishedStories(db, { topic, limit: 30 });
+  allTopics = await getPublishedTopics(db);
+} catch {
   stories = [];
-  error = "Feed data is temporarily unavailable. The ingestion pipeline is running — stories will appear here after editorial review and publication.";
-  console.error("Feed query failed:", e.message);
+  error = "Feed data is temporarily unavailable. Stories appear here only after editorial review and publication.";
+  console.error(JSON.stringify({ message: "Feed query failed" }));
 }
 
 // Map topic slugs for filter links

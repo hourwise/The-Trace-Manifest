@@ -292,8 +292,8 @@ async function recordStage(
          VALUES (?, ?, ?, ?, ?, datetime('now'))`
       ).bind(feedItemId, stage, ALGORITHM_VERSION, status, summary).run();
     }
-  } catch (err: any) {
-    console.error(`Stage tracking error: ${err.message}`);
+  } catch {
+    console.error("Model-data stage tracking failed.");
   }
 }
 

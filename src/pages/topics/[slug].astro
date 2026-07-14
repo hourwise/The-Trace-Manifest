@@ -7,7 +7,7 @@ export const prerender = false;
 
 const { slug } = Astro.params;
 
-if (!slug) {
+if (!slug || slug.length > 80 || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) {
   return new Response("Not found", { status: 404 });
 }
 
@@ -23,10 +23,11 @@ let allTopics: string[] = [];
 let topicDescription = "";
 
 try {
-  stories = await getPublishedStoriesByTopic(topicName, { limit: 30 });
-  allTopics = await getPublishedTopics();
-} catch (e: any) {
-  console.error(`Topic query failed for "${slug}":`, e.message);
+  const db = Astro.locals.runtime.env.DB;
+  stories = await getPublishedStoriesByTopic(db, topicName, { limit: 30 });
+  allTopics = await getPublishedTopics(db);
+} catch {
+  console.error(JSON.stringify({ message: "Topic query failed" }));
 }
 
 // If no stories found for this topic, check if the topic even exists in published data

@@ -1,35 +1,26 @@
 ---
 import BaseLayout from "../../layouts/BaseLayout.astro";
 import BenchmarkHealthBadge from "../../components/BenchmarkHealthBadge.astro";
+import { getPublishedBenchmarks } from "../../lib/server/catalog-data";
 
-const benchmarks = [
-  { name: "SWE-bench", slug: "swe-bench", version: "2025", owner: "Princeton NLP", domain: "Software engineering", health: "healthy", desc: "Real-world software engineering tasks from GitHub issues." },
-  { name: "HumanEval", slug: "humaneval", version: "2024", owner: "OpenAI", domain: "Code generation", health: "saturating", desc: "Functional correctness of code generation from docstrings." },
-  { name: "MMLU", slug: "mmlu", version: "2024", owner: "UC Berkeley", domain: "General knowledge", health: "saturating", desc: "Multi-task language understanding across 57 subjects." },
-  { name: "AgentBench", slug: "agentbench", version: "2025", owner: "Tsinghua University", domain: "Agent capability", health: "healthy", desc: "Multi-environment agent capability evaluation." },
-  { name: "GSM8K", slug: "gsm8k", version: "2021", owner: "OpenAI", domain: "Math reasoning", health: "saturating", desc: "Grade-school math word problems." },
-  { name: "Chatbot Arena", slug: "chatbot-arena", version: "ongoing", owner: "LMSYS", domain: "Human preference", health: "healthy", desc: "Blind pairwise human preference evaluation." },
-  { name: "LiveBench", slug: "livebench", version: "ongoing", owner: "Independent", domain: "General capability", health: "healthy", desc: "Contamination-resistant live benchmark." },
-  { name: "MATH", slug: "math", version: "2021", owner: "UC Berkeley", domain: "Math reasoning", health: "limited", desc: "Competition mathematics problems." },
-];
-
-const healthSummary: Record<string, number> = { healthy: 0, saturating: 0, limited: 0, contamination_concern: 0, deprecated: 0 };
-benchmarks.forEach(b => { if (b.health in healthSummary) healthSummary[b.health]++; });
+export const prerender = false;
+let benchmarks: Awaited<ReturnType<typeof getPublishedBenchmarks>> = [];
+let unavailable = false;
+try { benchmarks = await getPublishedBenchmarks(Astro.locals.runtime.env.DB); } catch { unavailable = true; }
 ---
 
-<BaseLayout title="Benchmark Registry" description="Structured registry of AI benchmarks with health status, methodology, and results.">
+<BaseLayout title="Benchmark Registry" description="Reviewed benchmark records and health assessments.">
   <div class="wrap" style="max-width:52rem;">
     <h1 class="display h1">Benchmark Registry</h1>
-    <p class="lead" style="margin-bottom:2rem;">Benchmarks are not universally comparable. Each entry includes health status, reproducibility, contamination concerns, and methodology notes. <a href="/methodology">How we evaluate benchmarks →</a></p>
-
-    <div style="display:flex;gap:0.75rem;flex-wrap:wrap;margin-bottom:2rem;">
-      {Object.entries(healthSummary).map(([key, count]) => (<div class="card" style="flex:1;min-width:100px;text-align:center;padding:0.75rem;"><p style="font-size:1.25rem;font-weight:700;">{count}</p><BenchmarkHealthBadge healthStatus={key} size="sm" /></div>))}
-    </div>
-
-    <div class="table-wrap"><table class="data"><thead><tr><th>Benchmark</th><th>Version</th><th>Owner</th><th>Domain</th><th>Health</th></tr></thead><tbody>
-      {benchmarks.map(b => (<tr><td><a href={`/benchmarks/${b.slug}`} style="font-weight:550;">{b.name}</a><br/><span class="meta">{b.desc}</span></td><td class="meta mono">{b.version}</td><td class="meta">{b.owner}</td><td class="meta">{b.domain}</td><td><BenchmarkHealthBadge healthStatus={b.health} size="sm" /></td></tr>))}
-    </tbody></table></div>
-
-    <p class="meta" style="margin-top:1.5rem;">Benchmark health is assessed on: saturation, contamination risk, reproducibility, vendor independence, and continued maintenance. <a href="/methodology">Full methodology →</a></p>
+    <p class="lead">Only reviewed and explicitly published benchmark assessments appear here. <a href="/methodology">Methodology &rarr;</a></p>
+    {unavailable ? <div class="card" style="margin-top:2rem;"><p class="meta">Benchmark data is temporarily unavailable.</p></div> :
+      benchmarks.length === 0 ? <div class="card" style="margin-top:2rem;"><p class="meta">No benchmark records have completed editorial review and publication yet.</p></div> :
+      <div class="table-wrap" style="margin-top:2rem;"><table class="data"><thead><tr><th>Benchmark</th><th>Version</th><th>Owner</th><th>Domain</th><th>Health</th></tr></thead><tbody>
+        {benchmarks.map((item) => <tr>
+          <td><a href={`/benchmarks/${item.slug}`}>{item.name}</a><br /><span class="meta">{item.purpose}</span></td>
+          <td>{item.version ?? "—"}</td><td>{item.owner ?? "—"}</td><td>{item.domain}</td>
+          <td><BenchmarkHealthBadge healthStatus={item.healthStatus} size="sm" /></td>
+        </tr>)}
+      </tbody></table></div>}
   </div>
 </BaseLayout>

@@ -8,26 +8,26 @@ import EvidenceBadge from "./EvidenceBadge.astro";
 export interface ModelSpec {
   name: string;
   provider: string;
-  version?: string;
-  releaseDate?: string;
+  version?: string | null;
+  releaseDate?: string | null;
   status: string;
   openness: string;
-  licence?: string;
-  parameterCount?: string;
-  contextWindow?: string;
-  modalities?: string;
+  licence?: string | null;
+  parameterCount?: string | null;
+  contextWindow?: string | null;
+  modalities?: string | null;
   toolUse?: boolean;
   structuredOutput?: boolean;
   apiAvailable?: boolean;
   localAvailable?: boolean;
-  description?: string;
+  description?: string | null;
   bestUseCases?: string[];
   weaknesses?: string[];
-  hardwareRequirements?: string;
-  quantisationOptions?: string;
-  inputPrice?: string;
-  outputPrice?: string;
-  cachedInputPrice?: string;
+  hardwareRequirements?: string | null;
+  quantisationOptions?: string | null;
+  inputPrice?: string | null;
+  outputPrice?: string | null;
+  cachedInputPrice?: string | null;
   slug: string;
 }
 

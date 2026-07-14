@@ -11,16 +11,17 @@ let latestBriefing: Awaited<ReturnType<typeof getLatestPublishedBriefing>> = nul
 let topicCount = 0;
 
 try {
+  const db = Astro.locals.runtime.env.DB;
   [latestStories, latestBriefing, topicCount] = await Promise.all([
-    getPublishedStories({ limit: 4 }),
-    getLatestPublishedBriefing("daily"),
-    getPublishedTopics().then(t => t.length),
+    getPublishedStories(db, { limit: 4 }),
+    getLatestPublishedBriefing(db, "daily"),
+    getPublishedTopics(db).then(t => t.length),
   ]);
-} catch (e: any) {
-  console.error("Homepage query failed:", e.message);
+} catch {
+  console.error(JSON.stringify({ message: "Homepage query failed" }));
 }
 
-const hasLiveData = latestStories.length > 0 || latestBriefing !== null;
+const hasPublishedData = latestStories.length > 0 || latestBriefing !== null;
 ---
 
 <BaseLayout
@@ -39,7 +40,7 @@ const hasLiveData = latestStories.length > 0 || latestBriefing !== null;
       </p>
       <div class="hero-actions" style="justify-content:center;">
         <a href="/feed" class="btn btn-primary">View the feed</a>
-        <a href="/ask" class="btn btn-secondary">Ask a question</a>
+        <a href="/ask-trace" class="btn btn-secondary">Ask a question</a>
       </div>
     </div>
   </section>
@@ -50,7 +51,7 @@ const hasLiveData = latestStories.length > 0 || latestBriefing !== null;
       <div class="grid-3" style="text-align:center;">
         <div><p class="display h1" style="color:var(--accent);margin-bottom:0;">{topicCount || "—"}</p><p class="meta">Topics tracked</p></div>
         <div><p class="display h1" style="color:var(--accent);margin-bottom:0;">{latestBriefing ? "Today" : "—"}</p><p class="meta">Daily briefing</p></div>
-        <div><p class="display h1" style="color:var(--accent);margin-bottom:0;">{hasLiveData ? "Live" : "—"}</p><p class="meta">Evidence pipeline</p></div>
+        <div><p class="display h1" style="color:var(--accent);margin-bottom:0;">{hasPublishedData ? "Available" : "—"}</p><p class="meta">Published evidence</p></div>
       </div>
     </div>
   </section>
@@ -120,7 +121,7 @@ const hasLiveData = latestStories.length > 0 || latestBriefing !== null;
     <div class="wrap">
       <h2 class="display h2" style="text-align:center;margin-bottom:1.5rem;">Stay current</h2>
       <div class="grid-2">
-        <div class="card card-hover"><h3 class="h3">Daily Briefing</h3><p class="meta" style="margin-top:0.5rem;">Five things that matter today. Model releases, pricing changes, important research, security issues.</p><p style="margin-top:0.75rem;"><a href="/briefing/daily">Read today's briefing &rarr;</a></p></div>
+        <div class="card card-hover"><h3 class="h3">Daily Briefing</h3><p class="meta" style="margin-top:0.5rem;">Reviewed model releases, pricing changes, research, and security developments when a briefing has been published.</p><p style="margin-top:0.75rem;"><a href="/briefing/daily">Read the latest briefing &rarr;</a></p></div>
         <div class="card card-hover"><h3 class="h3">Newsletter &amp; RSS</h3><p class="meta" style="margin-top:0.5rem;">Get the daily briefing by email or follow via RSS. Briefings published as downloadable Markdown.</p><p style="margin-top:0.75rem;"><a href="/rss/daily.xml">Subscribe via RSS &rarr;</a></p></div>
       </div>
     </div>

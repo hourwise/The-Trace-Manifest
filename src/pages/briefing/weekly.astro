@@ -1,7 +1,7 @@
 ﻿---
 import BaseLayout from "../../layouts/BaseLayout.astro";
 import EvidenceBadge from "../../components/EvidenceBadge.astro";
-import { getLatestPublishedBriefing, getPublishedStories } from "../../lib/server/d1";
+import { getLatestPublishedBriefing, getPublishedStories, parsePublishedBriefingItems } from "../../lib/server/d1";
 
 export const prerender = false;
 
@@ -9,23 +9,16 @@ let briefing: Awaited<ReturnType<typeof getLatestPublishedBriefing>> = null;
 let recentStories: Awaited<ReturnType<typeof getPublishedStories>> = [];
 
 try {
-  briefing = await getLatestPublishedBriefing("weekly");
+  const db = Astro.locals.runtime.env.DB;
+  briefing = await getLatestPublishedBriefing(db, "weekly");
   if (!briefing) {
-    recentStories = await getPublishedStories({ limit: 10 });
+    recentStories = await getPublishedStories(db, { limit: 10 });
   }
-} catch (e: any) {
-  console.error("Weekly briefing query failed:", e.message);
+} catch {
+  console.error(JSON.stringify({ message: "Weekly briefing query failed" }));
 }
 
-let briefingItems: { headline: string; why: string; evidenceStatus: string; slug: string }[] = [];
-if (briefing?.contentJson) {
-  try {
-    const parsed = JSON.parse(briefing.contentJson);
-    if (Array.isArray(parsed)) {
-      briefingItems = parsed;
-    }
-  } catch { /* invalid JSON */ }
-}
+const briefingItems = briefing?.contentJson ? parsePublishedBriefingItems(briefing.contentJson) : [];
 ---
 
 <BaseLayout

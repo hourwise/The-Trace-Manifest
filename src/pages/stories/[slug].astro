@@ -18,7 +18,8 @@ if (!slug) {
 }
 
 // Fetch story from D1 — returns null if slug doesn't exist or isn't published
-const story = await getPublishedStoryBySlug(slug);
+const db = Astro.locals.runtime.env.DB;
+const story = await getPublishedStoryBySlug(db, slug);
 if (!story) {
   return new Response("Not found", { status: 404 });
 }
@@ -30,13 +31,13 @@ let relatedStories: Awaited<ReturnType<typeof getRelatedStories>> = [];
 
 try {
   [sources, corrections, relatedStories] = await Promise.all([
-    getPublishedSourcesForStory(story.id),
-    getCorrectionsForStory(story.id),
-    getRelatedStories(story.id, 4),
+    getPublishedSourcesForStory(db, story.id),
+    getCorrectionsForStory(db, story.id),
+    getRelatedStories(db, story.id, 4),
   ]);
-} catch (e: any) {
+} catch {
   // Supporting data fetch failed — story page still renders, just without enrichments
-  console.error(`Enrichment fetch failed for slug "${slug}":`, e.message);
+  console.error(JSON.stringify({ message: "Story enrichment query failed" }));
 }
 
 // Evidence rating factors derived from story data

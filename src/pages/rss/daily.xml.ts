@@ -4,15 +4,13 @@ import { getPublishedStories } from "../../lib/server/d1";
 
 export const prerender = false;
 
-let stories: Awaited<ReturnType<typeof getPublishedStories>> = [];
-
-try {
-  stories = await getPublishedStories({ limit: 20 });
-} catch (e: any) {
-  console.error("RSS feed query failed:", e.message);
-}
-
 export async function GET(context: APIContext) {
+  let stories: Awaited<ReturnType<typeof getPublishedStories>> = [];
+  try {
+    stories = await getPublishedStories(context.locals.runtime.env.DB, { limit: 20 });
+  } catch {
+    console.error(JSON.stringify({ message: "RSS feed query failed" }));
+  }
   return rss({
     title: "The Trace Manifest",
     description: "Evidence-linked AI intelligence. What changed, what is credible, what is disputed, and what people should actually use.",

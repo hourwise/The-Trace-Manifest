@@ -79,6 +79,8 @@ const hubLabels: Record<string, string> = {
   automation: "Automation", "local-models": "Local Models", "coding-agents": "Coding Agents",
   evaluation: "Evaluation", observability: "Observability",
 };
+const isPublished = page.status === "published";
+if (!isPublished) Astro.response.status = 404;
 ---
 
 <BaseLayout
@@ -90,6 +92,6 @@ const hubLabels: Record<string, string> = {
       <a href="/knowledge">Knowledge Base</a> &rsaquo; <a href={`/knowledge#${hub}`}>{hubLabels[hub] ?? hub}</a> &rsaquo; {page.title}
     </nav>
 
-    <KnowledgePage {...page} />
+    {isPublished ? <KnowledgePage {...page} /> : <div class="card" style="margin-top:2rem;"><h1>Knowledge page not published</h1><p class="meta">This entry is still in editorial draft and is not public content.</p></div>}
   </div>
 </BaseLayout>

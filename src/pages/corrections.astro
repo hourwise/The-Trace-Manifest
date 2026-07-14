@@ -1,133 +1,52 @@
-﻿---
+---
 import BaseLayout from "../layouts/BaseLayout.astro";
 import EvidenceBadge from "../components/EvidenceBadge.astro";
+import { getPublishedCorrections } from "../lib/server/d1";
 
-const corrections = [
-  {
-    date: "2026-07-10",
-    type: "licence_correction",
-    previous: "Model X was reported as open-weight under Apache 2.0 licence.",
-    updated: "Model X is released under a custom restricted licence, not Apache 2.0.",
-    reason: "Community report identified licence discrepancy. Verified against official model card.",
-    impact: "Licence classification changed from 'Open-weight permissive' to 'Open-weight restricted'.",
-    evidenceUrl: "#",
-    clusterId: null,
-  },
-  {
-    date: "2026-07-05",
-    type: "pricing_correction",
-    previous: "Provider Y API pricing listed at $10.00/1M input tokens.",
-    updated: "Provider Y API pricing is $15.00/1M input tokens for the specified model tier.",
-    reason: "Pricing page update. Original figure was for a different tier.",
-    impact: "Cost-comparison ranking adjusted. Provider Y moved from position 2 to position 4.",
-    evidenceUrl: "#",
-    clusterId: null,
-  },
-];
+export const prerender = false;
 
-const correctionTypeLabels: Record<string, string> = {
-  factual_error: "Factual error",
-  rating_change: "Rating change",
-  licence_correction: "Licence correction",
-  pricing_correction: "Pricing correction",
-  benchmark_correction: "Benchmark correction",
-  supersession: "Superseded",
-  deprecation: "Deprecated",
-  methodology_update: "Methodology update",
-  other: "Correction",
+let corrections: Awaited<ReturnType<typeof getPublishedCorrections>> = [];
+let loadError: string | null = null;
+try {
+  corrections = await getPublishedCorrections(Astro.locals.runtime.env.DB, 100);
+} catch {
+  loadError = "The corrections ledger is temporarily unavailable.";
+}
+
+const labels: Record<string, string> = {
+  factual_error: "Factual error", rating_change: "Rating change", licence_correction: "Licence correction",
+  pricing_correction: "Pricing correction", benchmark_correction: "Benchmark correction",
+  supersession: "Superseded", deprecation: "Deprecated", methodology_update: "Methodology update", other: "Correction",
+};
+const safeEvidenceUrl = (value: string | null) => {
+  if (!value) return null;
+  try { const url = new URL(value); return url.protocol === "https:" || url.protocol === "http:" ? url.href : null; } catch { return null; }
 };
 ---
 
-<BaseLayout
-  title="Corrections Ledger"
-  description="Public record of factual corrections, changed ratings, updated benchmarks, and superseded recommendations."
->
+<BaseLayout title="Corrections Ledger" description="Public record of reviewed corrections and superseded conclusions.">
   <div class="wrap" style="max-width:42rem;">
     <h1>Corrections Ledger</h1>
-    <p class="lead" style="margin-bottom:2rem;">
-      The Trace Manifest maintains a permanent public record of corrections.
-      We do not silently rewrite history. <a href="/methodology">Read our corrections policy &rarr;</a>
-    </p>
+    <p class="lead" style="margin-bottom:2rem;">Corrections remain public. Each entry below was explicitly recorded and published by an authorised reviewer.</p>
 
-    <!-- Summary stats -->
-    <div style="display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:2rem;">
-      <div class="card" style="flex:1;min-width:120px;text-align:center;padding:1rem;">
-        <p style="font-size:1.5rem;font-weight:700;">{corrections.length}</p>
-        <p class="meta">Total corrections</p>
-      </div>
-      <div class="card" style="flex:1;min-width:120px;text-align:center;padding:1rem;">
-        <p style="font-size:1.5rem;font-weight:700;">{corrections.filter(c => new Date(c.date) > new Date(Date.now() - 30*24*60*60*1000)).length}</p>
-        <p class="meta">Last 30 days</p>
-      </div>
-      <div class="card" style="flex:1;min-width:120px;text-align:center;padding:1rem;">
-        <p style="font-size:1.5rem;font-weight:700;">0</p>
-        <p class="meta">Pending review</p>
-      </div>
-    </div>
+    {loadError && <div class="card"><p class="meta">{loadError}</p></div>}
+    {!loadError && corrections.length === 0 && <div class="card" style="text-align:center;padding:2rem;"><p class="meta">No published corrections have been recorded.</p></div>}
 
-    <!-- Correction types legend -->
-    <details style="margin-bottom:2rem;">
-      <summary style="cursor:pointer;font-size:0.88rem;font-weight:550;color:var(--muted);padding:0.5rem 0;">Correction types explained</summary>
-      <div style="display:flex;flex-wrap:wrap;gap:0.5rem;margin-top:0.75rem;">
-        {Object.entries(correctionTypeLabels).map(([key, label]) => (
-          <span class="badge badge-sm badge-corrected">{label}</span>
-        ))}
-      </div>
-    </details>
-
-    <!-- Corrections list -->
     <div style="display:flex;flex-direction:column;gap:1.5rem;">
-      {corrections.map((c, i) => (
-        <article class="card" style="border-left:4px solid var(--ev-corrected);">
-          <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:0.5rem;">
-            <p class="meta" style="font-weight:600;">
-              {correctionTypeLabels[c.type] ?? c.type}
-              <span style="font-weight:400;margin-left:0.5rem;">— {c.date}</span>
-            </p>
+      {corrections.map((correction) => {
+        const evidenceUrl = safeEvidenceUrl(correction.evidenceUrl);
+        return <article class="card" style="border-left:4px solid var(--ev-corrected);">
+          <div style="display:flex;justify-content:space-between;gap:0.5rem;">
+            <p class="meta"><strong>{labels[correction.correctionType] ?? correction.correctionType}</strong> · {new Date(correction.correctedAt).toLocaleDateString("en-GB")}</p>
             <EvidenceBadge status="corrected" size="sm" />
           </div>
-
-          <div style="margin-top:0.75rem;">
-            <div style="padding:0.5rem 0.75rem;background:color-mix(in oklch, var(--ev-disputed) 8%, transparent);border-radius:var(--radius);border-left:3px solid var(--ev-disputed);">
-              <p style="font-size:0.8rem;text-decoration:line-through;color:var(--ev-disputed);margin:0;">Previously: {c.previous}</p>
-            </div>
-            <div style="padding:0.5rem 0.75rem;margin-top:0.5rem;background:color-mix(in oklch, var(--ev-confirmed) 8%, transparent);border-radius:var(--radius);border-left:3px solid var(--ev-confirmed);">
-              <p style="font-size:0.85rem;color:var(--ev-confirmed);margin:0;">Updated: {c.updated}</p>
-            </div>
-          </div>
-
-          <div class="meta" style="margin-top:0.75rem;display:flex;flex-direction:column;gap:0.35rem;">
-            <p><strong>Reason:</strong> {c.reason}</p>
-            {c.impact && <p><strong>Impact:</strong> {c.impact}</p>}
-            {c.evidenceUrl && <p><strong>Evidence:</strong> <a href={c.evidenceUrl}>View source &rarr;</a></p>}
-          </div>
-        </article>
-      ))}
-    </div>
-
-    <!-- Empty state -->
-    {corrections.length === 0 && (
-      <div class="card" style="text-align:center;padding:2rem;">
-        <p class="meta">No corrections have been recorded yet.</p>
-        <p class="meta" style="margin-top:0.5rem;">
-          Corrections appear here when stories or claims are updated with new evidence.
-        </p>
-      </div>
-    )}
-
-    <!-- Footer info -->
-    <div style="margin-top:2.5rem;padding:1rem;background:var(--surface-2);border-radius:var(--radius);">
-      <p class="meta">
-        <strong>Correction policy:</strong> Every correction is recorded permanently.
-        When a story is corrected, the original statement is preserved with a strikethrough,
-        and the updated statement is displayed alongside the reason for the change.
-        Evidence statuses are updated to reflect corrections —
-        look for the <EvidenceBadge status="corrected" size="sm" /> badge on affected stories.
-      </p>
-      <p class="meta" style="margin-top:0.75rem;">
-        Corrections are also surfaced through <a href="/rss/daily.xml">RSS</a> and daily briefings
-        to ensure readers are aware of important changes.
-      </p>
+          <div style="margin-top:0.75rem;padding:0.6rem;background:color-mix(in oklch, var(--ev-disputed) 8%, transparent);border-radius:var(--radius);"><p style="text-decoration:line-through;margin:0;">Previously: {correction.previousStatement}</p></div>
+          <div style="margin-top:0.5rem;padding:0.6rem;background:color-mix(in oklch, var(--ev-confirmed) 8%, transparent);border-radius:var(--radius);"><p style="margin:0;">Updated: {correction.updatedStatement}</p></div>
+          <p class="meta" style="margin-top:0.75rem;"><strong>Reason:</strong> {correction.reason}</p>
+          {correction.impact && <p class="meta"><strong>Impact:</strong> {correction.impact}</p>}
+          {evidenceUrl && <p class="meta"><a href={evidenceUrl} rel="noopener noreferrer">Review supporting evidence →</a></p>}
+        </article>;
+      })}
     </div>
   </div>
 </BaseLayout>

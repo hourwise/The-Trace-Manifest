@@ -60,6 +60,35 @@ export interface PublishBriefingInput {
   reviewedBy?: string;
 }
 
+interface BriefingInputItem {
+  storyId?: number;
+  story_id?: number;
+  slug?: string;
+  why?: string;
+  commentary?: string;
+}
+
+interface EligibleBriefingStory {
+  id: number;
+  slug: string;
+  headline: string;
+  evidence_status: string;
+}
+
+function boundedText(value: string | undefined, minimum: number, maximum: number): boolean {
+  return typeof value === "string" && value.trim().length >= minimum && value.trim().length <= maximum;
+}
+
+function safeHttpUrl(value: string | undefined): boolean {
+  if (!value) return true;
+  try {
+    const url = new URL(value);
+    return (url.protocol === "https:" || url.protocol === "http:") && !url.username && !url.password;
+  } catch {
+    return false;
+  }
+}
+
 // ============================================================
 // Slug generation
 // ============================================================
@@ -95,14 +124,15 @@ export async function publishStory(
 ): Promise<{ success: boolean; story?: PublishedStory; error?: string }> {
   // 1. Fetch the cluster and verify it exists
   const cluster = await env.DB.prepare(
-    `SELECT id, title, topic, evidence_status, source_class, published_at, last_checked_at,
-            reviewed_by, reviewed_at
+    `SELECT id, title, topic, evidence_status, source_class, publication_status,
+            published_at, last_checked_at, reviewed_by, reviewed_at
      FROM story_clusters WHERE id = ?`,
   )
     .bind(input.clusterId)
     .first<{
       id: number; title: string; topic: string | null;
       evidence_status: string; source_class: string | null;
+      publication_status: string;
       published_at: string | null; last_checked_at: string;
       reviewed_by: string | null; reviewed_at: string | null;
     }>();
@@ -110,13 +140,43 @@ export async function publishStory(
   if (!cluster) {
     return { success: false, error: `Cluster ${input.clusterId} not found.` };
   }
+  if (!['draft', 'review'].includes(cluster.publication_status)) {
+    return { success: false, error: `Cluster ${input.clusterId} cannot transition from ${cluster.publication_status} to published.` };
+  }
+  if (!input.reviewedBy) {
+    return { success: false, error: "An authenticated human reviewer is required." };
+  }
+  if (!boundedText(input.summary, 20, 2_000)) {
+    return { success: false, error: "A reviewed summary of 20-2,000 characters is required." };
+  }
+  if (input.headline && !boundedText(input.headline, 5, 200)) {
+    return { success: false, error: "The headline must be 5-200 characters." };
+  }
+  if (input.editorialAnalysis && !boundedText(input.editorialAnalysis, 1, 8_000)) {
+    return { success: false, error: "Editorial analysis exceeds the publication limit." };
+  }
+  if (input.whyItMatters && !boundedText(input.whyItMatters, 1, 1_000)) {
+    return { success: false, error: "Why-it-matters text exceeds the publication limit." };
+  }
+  if (!safeHttpUrl(input.headlineImageUrl)) {
+    return { success: false, error: "The headline image URL must be HTTP or HTTPS." };
+  }
+  if (["unverified", "outdated", "superseded"].includes(cluster.evidence_status)) {
+    return { success: false, error: `Evidence status ${cluster.evidence_status} is not publication-eligible.` };
+  }
 
   // 2. Count member sources
   const memberCount = await env.DB.prepare(
-    `SELECT COUNT(*) as count FROM story_cluster_members WHERE cluster_id = ?`,
+    `SELECT COUNT(*) as count
+     FROM story_cluster_members scm
+     JOIN feed_items fi ON fi.id = scm.feed_item_id
+     WHERE scm.cluster_id = ? AND fi.ingestion_status <> 'archived'`,
   )
     .bind(input.clusterId)
     .first<{ count: number }>();
+  if (!memberCount || memberCount.count < 1) {
+    return { success: false, error: "A story must contain at least one stored source item before publication." };
+  }
 
   // 3. Get primary source (first Tier A, or first member)
   const primaryMember = await env.DB.prepare(
@@ -124,7 +184,7 @@ export async function publishStory(
      FROM story_cluster_members scm
      JOIN feed_items fi ON scm.feed_item_id = fi.id
      JOIN sources s ON fi.source_id = s.id
-     WHERE scm.cluster_id = ?
+     WHERE scm.cluster_id = ? AND fi.ingestion_status <> 'archived'
      ORDER BY scm.is_primary DESC, s.tier ASC
      LIMIT 1`,
   )
@@ -138,8 +198,12 @@ export async function publishStory(
   const slugSet = new Set(existingSlugs.results.map((r) => r.slug));
 
   // 5. Generate slug
-  const headline = input.headline || cluster.title;
+  const headline = (input.headline || cluster.title).trim();
+  if (!boundedText(headline, 5, 200)) {
+    return { success: false, error: "The publication headline must be 5-200 characters." };
+  }
   const slug = generateSlug(headline, slugSet);
+  if (!slug) return { success: false, error: "The headline cannot produce a valid public slug." };
 
   // 6. Determine image URL — prefer explicit input, fall back to source feed metadata
   let headlineImageUrl = input.headlineImageUrl || null;
@@ -161,10 +225,13 @@ export async function publishStory(
       } catch { /* metadata parse failure — proceed without image */ }
     }
   }
+  if (headlineImageUrl && !safeHttpUrl(headlineImageUrl)) {
+    headlineImageUrl = null;
+  }
 
   // 7. Update the cluster with publication fields
   const now = new Date().toISOString();
-  await env.DB.prepare(
+  const publicationUpdate = env.DB.prepare(
     `UPDATE story_clusters
      SET slug = ?,
          title = ?,
@@ -176,13 +243,14 @@ export async function publishStory(
          published_at = COALESCE(published_at, ?),
          reviewed_by = ?,
          reviewed_at = ?,
+         is_published = 1,
          updated_at = ?
-     WHERE id = ?`,
+     WHERE id = ? AND publication_status IN ('draft', 'review')`,
   )
     .bind(
       slug,
       headline,
-      input.summary || null,
+      input.summary!.trim(),
       input.editorialAnalysis || null,
       input.whyItMatters || null,
       headlineImageUrl,
@@ -191,25 +259,28 @@ export async function publishStory(
       input.reviewedBy ? now : null,
       now,
       input.clusterId,
-    )
-    .run();
+    );
 
   // 8. Mark member feed items as published
-  await env.DB.prepare(
+  const memberUpdate = env.DB.prepare(
     `UPDATE feed_items
      SET ingestion_status = 'published'
      WHERE id IN (SELECT feed_item_id FROM story_cluster_members WHERE cluster_id = ?)
        AND ingestion_status NOT IN ('published', 'archived')`,
   )
-    .bind(input.clusterId)
-    .run();
+    .bind(input.clusterId);
+
+  const batchResult = await env.DB.batch([publicationUpdate, memberUpdate]);
+  if (Number(batchResult[0].meta.changes ?? 0) !== 1) {
+    return { success: false, error: "Publication state changed concurrently; reload and review again." };
+  }
 
   // 9. Return the published story
   const story: PublishedStory = {
     id: cluster.id,
     slug,
     headline,
-    summary: input.summary || null,
+    summary: input.summary!.trim(),
     editorial_analysis: input.editorialAnalysis || null,
     why_it_matters: input.whyItMatters || null,
     headline_image_url: headlineImageUrl,
@@ -219,8 +290,8 @@ export async function publishStory(
     publication_status: "published",
     published_at: cluster.published_at || now,
     last_checked_at: cluster.last_checked_at,
-    reviewed_by: input.reviewedBy || cluster.reviewed_by,
-    reviewed_at: input.reviewedBy ? now : cluster.reviewed_at,
+    reviewed_by: input.reviewedBy,
+    reviewed_at: now,
     source_count: memberCount?.count ?? 0,
     primary_source_url: primaryMember?.url ?? null,
     primary_source_name: primaryMember?.source_name ?? null,
@@ -257,6 +328,7 @@ export async function updateStoryStatus(
   await env.DB.prepare(
     `UPDATE story_clusters
      SET publication_status = ?,
+         is_published = 0,
          editorial_analysis = COALESCE(editorial_analysis, '') ||
            CASE WHEN ? IS NOT NULL THEN ' [Withdrawn: ' || ? || ']' ELSE '' END,
          updated_at = ?
@@ -276,12 +348,70 @@ export async function publishBriefing(
   env: Env,
   input: PublishBriefingInput,
 ): Promise<{ success: boolean; briefing?: PublishedBriefing; error?: string }> {
-  // Validate content_json is valid JSON
-  try {
-    JSON.parse(input.contentJson);
-  } catch {
-    return { success: false, error: "contentJson is not valid JSON." };
+  if (!input.reviewedBy) return { success: false, error: "An authenticated human reviewer is required." };
+  const briefingDate = new Date(`${input.briefingDate}T00:00:00Z`);
+  if (
+    !/^\d{4}-\d{2}-\d{2}$/.test(input.briefingDate)
+    || Number.isNaN(briefingDate.getTime())
+    || briefingDate.toISOString().slice(0, 10) !== input.briefingDate
+  ) {
+    return { success: false, error: "briefingDate must be a valid ISO date." };
   }
+  if (!boundedText(input.title, 5, 200) || !boundedText(input.summary, 20, 2_000)) {
+    return { success: false, error: "A bounded title and reviewed summary are required." };
+  }
+
+  let requestedItems: BriefingInputItem[];
+  try {
+    const parsed = JSON.parse(input.contentJson) as unknown;
+    if (!Array.isArray(parsed) || parsed.length < 1 || parsed.length > 20) throw new Error("invalid array");
+    requestedItems = parsed as BriefingInputItem[];
+  } catch {
+    return { success: false, error: "contentJson must be a JSON array containing 1-20 story references." };
+  }
+
+  const canonicalItems: Array<{ storyId: number; slug: string; headline: string; evidenceStatus: string; why: string }> = [];
+  const seen = new Set<number>();
+  for (const item of requestedItems) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      return { success: false, error: "Every briefing entry must be an object." };
+    }
+    if (Object.keys(item).some((key) => !["storyId", "story_id", "slug", "why", "commentary"].includes(key))) {
+      return { success: false, error: "A briefing entry contains an unsupported field." };
+    }
+    const storyId = Number(item.storyId ?? item.story_id);
+    const slug = typeof item.slug === "string" ? item.slug : "";
+    if ((!Number.isInteger(storyId) || storyId < 1) && !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) {
+      return { success: false, error: "Every briefing entry requires a valid storyId or slug." };
+    }
+    const why = typeof item.why === "string" ? item.why : typeof item.commentary === "string" ? item.commentary : "";
+    if (!boundedText(why, 1, 500)) return { success: false, error: "Every briefing entry requires bounded commentary." };
+
+    const story = await env.DB.prepare(`
+      SELECT id, slug, title AS headline, evidence_status
+      FROM story_clusters
+      WHERE ${Number.isInteger(storyId) && storyId > 0 ? "id = ?" : "slug = ?"}
+        AND publication_status = 'published' AND reviewed_by IS NOT NULL AND reviewed_at IS NOT NULL
+        AND summary IS NOT NULL AND trim(summary) <> '' AND slug IS NOT NULL
+        AND evidence_status NOT IN ('unverified','outdated','superseded')
+        AND EXISTS (
+          SELECT 1 FROM story_cluster_members scm JOIN feed_items fi ON fi.id = scm.feed_item_id
+          WHERE scm.cluster_id = story_clusters.id AND fi.ingestion_status = 'published'
+        )
+    `).bind(Number.isInteger(storyId) && storyId > 0 ? storyId : slug).first<EligibleBriefingStory>();
+    if (!story) return { success: false, error: "A briefing entry does not reference an eligible published story." };
+    if (seen.has(story.id)) return { success: false, error: "A briefing cannot contain the same story twice." };
+    seen.add(story.id);
+    canonicalItems.push({
+      storyId: story.id,
+      slug: story.slug,
+      headline: story.headline,
+      evidenceStatus: story.evidence_status,
+      why: why.trim(),
+    });
+  }
+
+  const canonicalContent = JSON.stringify(canonicalItems);
 
   const now = new Date().toISOString();
 
@@ -301,7 +431,7 @@ export async function publishBriefing(
            published_at = ?, reviewed_by = ?, reviewed_at = ?, updated_at = ?
        WHERE id = ?`,
     )
-      .bind(input.title, input.summary, input.contentJson, now, input.reviewedBy || null, now, now, existing.id)
+      .bind(input.title.trim(), input.summary.trim(), canonicalContent, now, input.reviewedBy, now, now, existing.id)
       .run();
     briefingId = existing.id;
   } else {
@@ -310,7 +440,7 @@ export async function publishBriefing(
        (briefing_type, briefing_date, title, summary, content_json, publication_status, published_at, reviewed_by, reviewed_at)
        VALUES (?, ?, ?, ?, ?, 'published', ?, ?, ?)`,
     )
-      .bind(input.briefingType, input.briefingDate, input.title, input.summary, input.contentJson, now, input.reviewedBy || null, now)
+      .bind(input.briefingType, input.briefingDate, input.title.trim(), input.summary.trim(), canonicalContent, now, input.reviewedBy, now)
       .run();
     briefingId = result.meta.last_row_id;
   }
@@ -319,9 +449,9 @@ export async function publishBriefing(
     id: briefingId,
     briefing_type: input.briefingType,
     briefing_date: input.briefingDate,
-    title: input.title,
-    summary: input.summary,
-    content_json: input.contentJson,
+    title: input.title.trim(),
+    summary: input.summary.trim(),
+    content_json: canonicalContent,
     publication_status: "published",
     published_at: now,
   };
@@ -343,8 +473,8 @@ export async function getPublishedStories(
     orderBy?: "published_at" | "last_checked_at";
   } = {},
 ): Promise<PublishedStory[]> {
-  const limit = Math.min(options.limit ?? 20, 100);
-  const offset = options.offset ?? 0;
+  const limit = Math.max(1, Math.min(Number.isInteger(options.limit) ? options.limit! : 20, 100));
+  const offset = Math.max(0, Number.isInteger(options.offset) ? options.offset! : 0);
   const orderBy = options.orderBy === "last_checked_at" ? "sc.last_checked_at" : "sc.published_at";
 
   let query = `
@@ -352,16 +482,29 @@ export async function getPublishedStories(
            sc.why_it_matters, sc.headline_image_url, sc.topic, sc.evidence_status,
            sc.source_class, sc.publication_status, sc.published_at, sc.last_checked_at,
            sc.reviewed_by, sc.reviewed_at,
-           (SELECT COUNT(*) FROM story_cluster_members WHERE cluster_id = sc.id) as source_count,
+           (SELECT COUNT(*) FROM story_cluster_members count_scm
+            JOIN feed_items count_fi ON count_fi.id = count_scm.feed_item_id
+            WHERE count_scm.cluster_id = sc.id AND count_fi.ingestion_status = 'published') as source_count,
            (SELECT fi.url FROM story_cluster_members scm
             JOIN feed_items fi ON scm.feed_item_id = fi.id
-            WHERE scm.cluster_id = sc.id ORDER BY scm.is_primary DESC LIMIT 1) as primary_source_url,
+             WHERE scm.cluster_id = sc.id AND fi.ingestion_status = 'published'
+             ORDER BY scm.is_primary DESC LIMIT 1) as primary_source_url,
            (SELECT s.name FROM story_cluster_members scm
             JOIN feed_items fi ON scm.feed_item_id = fi.id
             JOIN sources s ON fi.source_id = s.id
-            WHERE scm.cluster_id = sc.id ORDER BY scm.is_primary DESC LIMIT 1) as primary_source_name
+             WHERE scm.cluster_id = sc.id AND fi.ingestion_status = 'published'
+             ORDER BY scm.is_primary DESC LIMIT 1) as primary_source_name
     FROM story_clusters sc
-    WHERE sc.publication_status = 'published'
+    WHERE sc.publication_status = 'published' AND sc.slug IS NOT NULL AND sc.published_at IS NOT NULL
+      AND datetime(sc.published_at) <= datetime('now')
+      AND sc.reviewed_by IS NOT NULL AND sc.reviewed_at IS NOT NULL
+      AND sc.summary IS NOT NULL AND trim(sc.summary) <> ''
+      AND sc.evidence_status NOT IN ('unverified','outdated','superseded')
+      AND EXISTS (
+        SELECT 1 FROM story_cluster_members eligible_scm
+        JOIN feed_items eligible_fi ON eligible_fi.id = eligible_scm.feed_item_id
+        WHERE eligible_scm.cluster_id = sc.id AND eligible_fi.ingestion_status = 'published'
+      )
   `;
 
   const params: any[] = [];
@@ -387,16 +530,29 @@ export async function getPublishedStoryBySlug(
            sc.why_it_matters, sc.headline_image_url, sc.topic, sc.evidence_status,
            sc.source_class, sc.publication_status, sc.published_at, sc.last_checked_at,
            sc.reviewed_by, sc.reviewed_at,
-           (SELECT COUNT(*) FROM story_cluster_members WHERE cluster_id = sc.id) as source_count,
+           (SELECT COUNT(*) FROM story_cluster_members count_scm
+            JOIN feed_items count_fi ON count_fi.id = count_scm.feed_item_id
+            WHERE count_scm.cluster_id = sc.id AND count_fi.ingestion_status = 'published') as source_count,
            (SELECT fi.url FROM story_cluster_members scm
             JOIN feed_items fi ON scm.feed_item_id = fi.id
-            WHERE scm.cluster_id = sc.id ORDER BY scm.is_primary DESC LIMIT 1) as primary_source_url,
+             WHERE scm.cluster_id = sc.id AND fi.ingestion_status = 'published'
+             ORDER BY scm.is_primary DESC LIMIT 1) as primary_source_url,
            (SELECT s.name FROM story_cluster_members scm
             JOIN feed_items fi ON scm.feed_item_id = fi.id
             JOIN sources s ON fi.source_id = s.id
-            WHERE scm.cluster_id = sc.id ORDER BY scm.is_primary DESC LIMIT 1) as primary_source_name
+             WHERE scm.cluster_id = sc.id AND fi.ingestion_status = 'published'
+             ORDER BY scm.is_primary DESC LIMIT 1) as primary_source_name
     FROM story_clusters sc
-    WHERE sc.slug = ? AND sc.publication_status = 'published'
+    WHERE sc.slug = ? AND sc.publication_status = 'published' AND sc.published_at IS NOT NULL
+      AND datetime(sc.published_at) <= datetime('now')
+      AND sc.reviewed_by IS NOT NULL AND sc.reviewed_at IS NOT NULL
+      AND sc.summary IS NOT NULL AND trim(sc.summary) <> ''
+      AND sc.evidence_status NOT IN ('unverified','outdated','superseded')
+      AND EXISTS (
+        SELECT 1 FROM story_cluster_members eligible_scm
+        JOIN feed_items eligible_fi ON eligible_fi.id = eligible_scm.feed_item_id
+        WHERE eligible_scm.cluster_id = sc.id AND eligible_fi.ingestion_status = 'published'
+      )
   `)
     .bind(slug)
     .first<PublishedStory>();
@@ -404,8 +560,16 @@ export async function getPublishedStoryBySlug(
 
 export async function getPublishedTopics(env: Env): Promise<string[]> {
   const result = await env.DB.prepare(`
-    SELECT DISTINCT topic FROM story_clusters
-    WHERE publication_status = 'published' AND topic IS NOT NULL
+    SELECT DISTINCT sc.topic AS topic FROM story_clusters sc
+    WHERE sc.publication_status = 'published' AND sc.published_at IS NOT NULL
+      AND datetime(sc.published_at) <= datetime('now') AND sc.reviewed_by IS NOT NULL AND sc.reviewed_at IS NOT NULL
+      AND sc.summary IS NOT NULL AND trim(sc.summary) <> '' AND sc.slug IS NOT NULL AND sc.topic IS NOT NULL
+      AND sc.evidence_status NOT IN ('unverified','outdated','superseded')
+      AND EXISTS (
+        SELECT 1 FROM story_cluster_members eligible_scm
+        JOIN feed_items eligible_fi ON eligible_fi.id = eligible_scm.feed_item_id
+        WHERE eligible_scm.cluster_id = sc.id AND eligible_fi.ingestion_status = 'published'
+      )
     ORDER BY topic
   `).all<{ topic: string }>();
   return result.results.map((r) => r.topic);
@@ -420,6 +584,9 @@ export async function getLatestPublishedBriefing(
            publication_status, published_at
     FROM published_briefings
     WHERE briefing_type = ? AND publication_status = 'published'
+      AND briefing_date <= date('now')
+      AND reviewed_by IS NOT NULL AND reviewed_at IS NOT NULL AND published_at IS NOT NULL
+      AND trim(title) <> '' AND trim(summary) <> '' AND trim(content_json) <> ''
     ORDER BY briefing_date DESC
     LIMIT 1
   `)
@@ -436,7 +603,7 @@ export async function getPublishedSourcesForStory(
     FROM story_cluster_members scm
     JOIN feed_items fi ON scm.feed_item_id = fi.id
     JOIN sources s ON fi.source_id = s.id
-    WHERE scm.cluster_id = ?
+    WHERE scm.cluster_id = ? AND fi.ingestion_status = 'published'
     ORDER BY scm.is_primary DESC, s.tier ASC
   `)
     .bind(storyId)
@@ -461,10 +628,19 @@ export async function getRelatedStories(
   if (!story?.topic) return [];
 
   const result = await env.DB.prepare(`
-    SELECT slug, title as headline, topic
-    FROM story_clusters
-    WHERE publication_status = 'published' AND topic = ? AND id != ?
-    ORDER BY published_at DESC
+    SELECT sc.slug, sc.title as headline, sc.topic
+    FROM story_clusters sc
+    WHERE sc.publication_status = 'published' AND sc.published_at IS NOT NULL
+      AND datetime(sc.published_at) <= datetime('now') AND sc.reviewed_by IS NOT NULL AND sc.reviewed_at IS NOT NULL
+      AND sc.summary IS NOT NULL AND trim(sc.summary) <> '' AND sc.slug IS NOT NULL
+      AND sc.evidence_status NOT IN ('unverified','outdated','superseded')
+      AND sc.topic = ? AND sc.id != ?
+      AND EXISTS (
+        SELECT 1 FROM story_cluster_members eligible_scm
+        JOIN feed_items eligible_fi ON eligible_fi.id = eligible_scm.feed_item_id
+        WHERE eligible_scm.cluster_id = sc.id AND eligible_fi.ingestion_status = 'published'
+      )
+    ORDER BY sc.published_at DESC
     LIMIT ?
   `)
     .bind(story.topic, storyId, limit)
@@ -480,7 +656,7 @@ export async function getAllClusters(
   env: Env,
   options: { limit?: number; status?: string } = {},
 ): Promise<{ id: number; title: string; topic: string | null; evidence_status: string; publication_status: string; source_count: number; created_at: string }[]> {
-  const limit = Math.min(options.limit ?? 50, 100);
+  const limit = Math.max(1, Math.min(Number.isInteger(options.limit) ? options.limit! : 50, 100));
 
   let query = `
     SELECT sc.id, sc.title, sc.topic, sc.evidence_status, sc.publication_status,
@@ -556,9 +732,13 @@ export async function archiveCluster(
     return { success: false, error: `Cluster ${clusterId} not found.` };
   }
 
-  await env.DB.prepare(
-    `UPDATE story_clusters SET publication_status = 'archived', updated_at = datetime('now') WHERE id = ?`,
+  const changed = await env.DB.prepare(
+    `UPDATE story_clusters SET publication_status = 'withdrawn', updated_at = datetime('now')
+     WHERE id = ? AND publication_status IN ('draft', 'review')`,
   ).bind(clusterId).run();
+  if (Number(changed.meta.changes ?? 0) !== 1) {
+    return { success: false, error: "Only draft or review clusters can be archived." };
+  }
 
   return { success: true };
 }

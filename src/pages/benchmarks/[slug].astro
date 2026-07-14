@@ -1,79 +1,42 @@
 ---
 import BaseLayout from "../../layouts/BaseLayout.astro";
 import BenchmarkHealthBadge from "../../components/BenchmarkHealthBadge.astro";
-import ComparisonTable from "../../components/ComparisonTable.astro";
+import { getPublishedBenchmarkBySlug, getPublishedBenchmarkRuns } from "../../lib/server/catalog-data";
 
-export function getStaticPaths() {
-  return [
-    { params: { slug: "swe-bench" } },
-    { params: { slug: "humaneval" } },
-    { params: { slug: "mmlu" } },
-    { params: { slug: "agentbench" } },
-  ];
-}
-
-const { slug } = Astro.params;
-
-const benchmarksMap: Record<string, any> = {
-  "swe-bench": {
-    name: "SWE-bench", version: "2025", owner: "Princeton NLP",
-    purpose: "Evaluate models on real-world software engineering tasks from GitHub issues.",
-    domain: "Software engineering", health: "healthy",
-    reproducibility: "Reproducible", contaminationConcern: "Low",
-    saturation: "Not yet saturated — frontier models at ~60%",
-    codeAvailable: true, dataAvailable: true, lastReviewed: "2026-07-01",
-    results: [{ model: "GPT-5", score: "58.2%", date: "2026-07", isVendorRun: false }, { model: "Claude 4", score: "55.0%", date: "2026-06", isVendorRun: false }, { model: "Devin", score: "34.3%", date: "2025-03", isVendorRun: true }],
-  },
-  "humaneval": {
-    name: "HumanEval", version: "2024", owner: "OpenAI",
-    purpose: "Measure functional correctness of code generation from docstrings.",
-    domain: "Code generation", health: "saturating",
-    reproducibility: "Reproducible", contaminationConcern: "High",
-    saturation: "Saturated for frontier models — ceiling effect",
-    codeAvailable: true, dataAvailable: true, lastReviewed: "2026-06-15",
-    results: [{ model: "GPT-5", score: "95.1%", date: "2026-07", isVendorRun: false }, { model: "Claude 4", score: "93.4%", date: "2026-06", isVendorRun: false }, { model: "Llama 4 (405B)", score: "85.7%", date: "2026-05", isVendorRun: true }],
-  },
-  "mmlu": {
-    name: "MMLU", version: "2024", owner: "UC Berkeley",
-    purpose: "Multi-task language understanding across 57 subjects.",
-    domain: "General knowledge", health: "saturating",
-    reproducibility: "Reproducible", contaminationConcern: "Medium",
-    saturation: "Near-ceiling for frontier models — discrimination decreasing",
-    codeAvailable: true, dataAvailable: true, lastReviewed: "2026-06-20",
-    results: [{ model: "GPT-5", score: "92.5%", date: "2026-07", isVendorRun: false }, { model: "Claude 4", score: "91.8%", date: "2026-06", isVendorRun: false }, { model: "Gemini 2.5 Pro", score: "90.1%", date: "2026-Q2", isVendorRun: true }],
-  },
-  "agentbench": {
-    name: "AgentBench", version: "2025", owner: "Tsinghua University",
-    purpose: "Multi-environment agent capability evaluation across OS, web, code, and game environments.",
-    domain: "Agent capability", health: "healthy",
-    reproducibility: "Reproducible", contaminationConcern: "Low",
-    saturation: "Not yet saturated — significant headroom remains",
-    codeAvailable: true, dataAvailable: true, lastReviewed: "2026-07-01",
-    results: [{ model: "GPT-5", score: "72.3%", date: "2026-07", isVendorRun: false }, { model: "Claude 4", score: "68.1%", date: "2026-06", isVendorRun: false }, { model: "GPT-4o", score: "54.6%", date: "2025-06", isVendorRun: false }],
-  },
-};
-
-const bm = benchmarksMap[slug] ?? benchmarksMap["swe-bench"];
+export const prerender = false;
+const slug = Astro.params.slug ?? "";
+let benchmark: Awaited<ReturnType<typeof getPublishedBenchmarkBySlug>> = null;
+let runs: Awaited<ReturnType<typeof getPublishedBenchmarkRuns>> = [];
+let unavailable = false;
+try {
+  const db = Astro.locals.runtime.env.DB;
+  benchmark = await getPublishedBenchmarkBySlug(db, slug);
+  if (benchmark) runs = await getPublishedBenchmarkRuns(db, benchmark.id);
+} catch { unavailable = true; }
+Astro.response.status = unavailable ? 503 : benchmark ? 200 : 404;
 ---
 
-<BaseLayout title={`${bm.name} — Benchmark Detail`} description={`${bm.name} v${bm.version}: ${bm.purpose}`}>
+<BaseLayout title={benchmark ? `${benchmark.name} — Benchmark Detail` : "Benchmark not available"} description={benchmark?.purpose ?? "Reviewed benchmark record."}>
   <div class="wrap" style="max-width:46rem;">
-    <nav aria-label="Breadcrumb" class="meta" style="margin-bottom:1.5rem;"><a href="/benchmarks">Benchmarks</a> &rsaquo; {bm.name}</nav>
-
-    <div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;"><h1 class="display h1" style="margin:0;">{bm.name}</h1><BenchmarkHealthBadge healthStatus={bm.health} /></div>
-    <p class="meta">v{bm.version} · {bm.owner} · {bm.domain} · Reviewed {bm.lastReviewed}</p>
-    <p class="lead" style="margin-top:1.5rem;">{bm.purpose}</p>
-
-    <section style="margin-top:2rem;"><h2>Benchmark health</h2>
-      <div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(180px, 1fr));gap:0.75rem;">
-        {[{ label: "Saturation", value: bm.saturation }, { label: "Reproducibility", value: bm.reproducibility }, { label: "Contamination concern", value: bm.contaminationConcern }, { label: "Code available", value: bm.codeAvailable ? "✓ Yes" : "—" }, { label: "Data available", value: bm.dataAvailable ? "✓ Yes" : "—" }].map(item => (<div style="padding:0.5rem 0.75rem;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);"><span class="meta" style="display:block;font-size:0.62rem;">{item.label}</span><span style="font-size:0.85rem;">{item.value}</span></div>))}
-      </div>
-    </section>
-
-    <section style="margin-top:2.5rem;"><h2>Results</h2>
-      <ComparisonTable title="" headers={bm.results.map((r: any) => r.model)} rows={[{ aspect: "Score", values: bm.results.map((r: any) => r.score) }, { aspect: "Date", values: bm.results.map((r: any) => r.date) }, { aspect: "Source", values: bm.results.map((r: any) => r.isVendorRun ? "Vendor-reported" : "Independent") }]} caption="Results are not always directly comparable — prompting methods, hardware, and evaluation settings may differ between runs." />
-    </section>
-
-    <footer style="margin-top:3rem;padding-top:1.25rem;border-top:1px solid var(--border);"><p class="meta">Last reviewed: {bm.lastReviewed}. <a href="/methodology">Benchmark methodology →</a> · <a href="/corrections">Report an error →</a></p></footer>
+    <nav class="meta" aria-label="Breadcrumb"><a href="/benchmarks">Benchmarks</a> &rsaquo; {benchmark?.name ?? "Not available"}</nav>
+    {unavailable ? <div class="card" style="margin-top:2rem;"><h1>Benchmark data unavailable</h1></div> : !benchmark ?
+      <div class="card" style="margin-top:2rem;"><h1>Benchmark not found</h1><p class="meta">This benchmark is not published or does not exist.</p></div> :
+      <article style="margin-top:1.5rem;">
+        <div style="display:flex;gap:0.75rem;align-items:center;"><h1>{benchmark.name}</h1><BenchmarkHealthBadge healthStatus={benchmark.healthStatus} /></div>
+        <p class="meta">{benchmark.version ?? "Version not recorded"} · {benchmark.owner ?? "Owner not recorded"} · {benchmark.domain}</p>
+        <p class="lead">{benchmark.purpose}</p>
+        <dl class="card" style="display:grid;gap:0.6rem;">
+          <div><dt class="meta">Reproducibility</dt><dd>{benchmark.reproducibility ?? "Not assessed"}</dd></div>
+          <div><dt class="meta">Contamination concern</dt><dd>{benchmark.contaminationConcern ?? "Not assessed"}</dd></div>
+          <div><dt class="meta">Saturation</dt><dd>{benchmark.saturationLevel ?? "Not assessed"}</dd></div>
+          {benchmark.lastReviewedAt && <div><dt class="meta">Last reviewed</dt><dd>{benchmark.lastReviewedAt}</dd></div>}
+        </dl>
+        <section style="margin-top:2rem;"><h2>Reviewed results</h2>
+          {runs.length === 0 ? <p class="meta">No benchmark runs have independently completed review and publication.</p> :
+            <div class="table-wrap"><table class="data"><thead><tr><th>Model</th><th>Score</th><th>Date</th><th>Provenance</th><th>Source</th></tr></thead><tbody>
+              {runs.map((run) => <tr><td>{run.modelName ?? "Unlinked model"}</td><td>{run.scoreDisplay}</td><td>{run.testDate}</td><td>{run.isIndependent ? "Independent" : run.isVendorRun ? "Vendor-run" : "Other reviewed source"}</td><td>{run.sourceUrl ? <a href={run.sourceUrl} rel="noopener noreferrer">Evidence</a> : "Withheld"}</td></tr>)}
+            </tbody></table></div>}
+        </section>
+      </article>}
   </div>
 </BaseLayout>

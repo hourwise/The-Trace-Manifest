@@ -1,75 +1,38 @@
 ---
 import BaseLayout from "../../layouts/BaseLayout.astro";
-import ComparisonTable from "../../components/ComparisonTable.astro";
-import PricingHistory from "../../components/PricingHistory.astro";
+import { getPublishedModelBySlug } from "../../lib/server/catalog-data";
 
-export function getStaticPaths() {
-  return [
-    { params: { slug: "gpt-5" } },
-    { params: { slug: "claude-4" } },
-    { params: { slug: "llama-4" } },
-  ];
-}
-
-const { slug } = Astro.params;
-
-const modelsMap: Record<string, any> = {
-  "gpt-5": {
-    name: "GPT-5", provider: "OpenAI", family: "GPT", version: "2026-07", released: "2026-07-10",
-    openness: "Closed", licence: "Proprietary", parameters: "Undisclosed", contextWindow: "256K tokens",
-    modalities: ["Text", "Code", "Image"], toolUse: true, structuredOutput: true, apiAvailable: true, localAvailable: false,
-    providers: ["OpenAI", "Azure OpenAI"], inputPrice: "$15.00 / 1M", outputPrice: "$60.00 / 1M", cachedInputPrice: "$7.50 / 1M",
-    bestUseCases: ["Coding", "Reasoning", "Agent workflows"], weaknesses: ["Cost at scale", "No local deployment"],
-    lastVerified: "2026-07-12",
-    priceHistory: [{ date: "2026-07-10", inputPrice: 15.00, outputPrice: 60.00, cachedInputPrice: 7.50, changeReason: "Initial release" }],
-  },
-  "claude-4": {
-    name: "Claude 4", provider: "Anthropic", family: "Claude", version: "2026-06", released: "2026-06-15",
-    openness: "Closed", licence: "Proprietary", parameters: "Undisclosed", contextWindow: "200K tokens",
-    modalities: ["Text", "Code", "Image"], toolUse: true, structuredOutput: true, apiAvailable: true, localAvailable: false,
-    providers: ["Anthropic", "Amazon Bedrock"], inputPrice: "$15.00 / 1M", outputPrice: "$75.00 / 1M", cachedInputPrice: "$3.75 / 1M",
-    bestUseCases: ["Long-context analysis", "Coding"], weaknesses: ["Higher output cost"],
-    lastVerified: "2026-07-12",
-    priceHistory: [{ date: "2026-06-15", inputPrice: 15.00, outputPrice: 75.00, cachedInputPrice: 3.75, changeReason: "Initial release" }],
-  },
-  "llama-4": {
-    name: "Llama 4", provider: "Meta", family: "Llama", version: "2026-05", released: "2026-05-20",
-    openness: "Open-weight", licence: "Llama 4 Community Licence", parameters: "8B / 70B / 405B", contextWindow: "128K tokens",
-    modalities: ["Text", "Code"], toolUse: true, structuredOutput: true, apiAvailable: true, localAvailable: true,
-    providers: ["Self-hosted", "Together AI", "Groq"], inputPrice: "$0.20-$1.00 / 1M", outputPrice: "$0.60-$3.00 / 1M",
-    bestUseCases: ["Local deployment", "Fine-tuning"], weaknesses: ["Weaker than frontier closed models"],
-    hardwareRequirements: "16 GB RAM (8B, Q4) · 48 GB RAM (70B, Q4) · 4x GPU (405B)",
-    lastVerified: "2026-07-12",
-    priceHistory: [{ date: "2026-05-20", inputPrice: 0.20, outputPrice: 0.60, changeReason: "Initial release (Together AI)" }],
-  },
-};
-
-const model = modelsMap[slug] ?? modelsMap["gpt-5"];
+export const prerender = false;
+const slug = Astro.params.slug ?? "";
+let model: Awaited<ReturnType<typeof getPublishedModelBySlug>> = null;
+let unavailable = false;
+try { model = await getPublishedModelBySlug(Astro.locals.runtime.env.DB, slug); } catch { unavailable = true; }
+Astro.response.status = unavailable ? 503 : model ? 200 : 404;
+const openness: Record<string, string> = { closed: "Closed", api_only: "API only", open_weight: "Open-weight", open_source: "Open-source" };
 ---
 
-<BaseLayout title={`${model.name} — Model Detail`} description={`${model.name} by ${model.provider}: specifications, pricing, benchmarks.`}>
+<BaseLayout title={model ? `${model.name} — Model Detail` : "Model not available"} description={model?.description ?? "Reviewed model record."}>
   <div class="wrap" style="max-width:46rem;">
-    <nav aria-label="Breadcrumb" class="meta" style="margin-bottom:1.5rem;"><a href="/models">Models</a> &rsaquo; {model.name}</nav>
-    <div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;"><h1 class="display h1" style="margin:0;">{model.name}</h1><span class="badge">{model.openness}</span></div>
-    <p class="meta">by {model.provider} · {model.family} family · v{model.version} · Released {model.released}</p>
-
-    <div style="margin-top:2rem;display:grid;grid-template-columns:repeat(auto-fill, minmax(200px, 1fr));gap:0.75rem;">
-      {[{ label: "Parameters", value: model.parameters }, { label: "Context window", value: model.contextWindow }, { label: "Modalities", value: model.modalities.join(", ") }, { label: "Tool use", value: model.toolUse ? "✓" : "—" }, { label: "Structured output", value: model.structuredOutput ? "✓" : "—" }, { label: "API", value: model.apiAvailable ? "✓ Available" : "—" }, { label: "Local", value: model.localAvailable ? "✓ Available" : "—" }, { label: "Last verified", value: model.lastVerified }].map(spec => (<div style="padding:0.5rem 0.75rem;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);"><span class="meta" style="display:block;font-size:0.62rem;">{spec.label}</span><span style="font-size:0.85rem;">{spec.value}</span></div>))}
-    </div>
-
-    <section style="margin-top:2.5rem;"><h2>Pricing</h2>
-      <ComparisonTable title="" headers={["Price per 1M tokens"]} rows={[{ aspect: "Input", values: [model.inputPrice] }, { aspect: "Output", values: [model.outputPrice] }, { aspect: "Cached input", values: [model.cachedInputPrice ?? "N/A"] }]} />
-      <PricingHistory priceHistory={model.priceHistory} modelName={model.name} providerName={model.provider} />
-    </section>
-
-    <section style="margin-top:2.5rem;"><h2>Available providers</h2><div class="chip-row">{model.providers.map((p: string) => <span class="chip">{p}</span>)}</div></section>
-
-    {model.hardwareRequirements && (<section style="margin-top:2.5rem;"><h2>Hardware requirements</h2><p style="font-size:0.9rem;">{model.hardwareRequirements}</p></section>)}
-
-    <section style="margin-top:2.5rem;"><h2>Best use cases</h2><div class="chip-row">{model.bestUseCases.map((uc: string) => <span class="chip active">{uc}</span>)}</div></section>
-
-    <section style="margin-top:2.5rem;"><h2>Known weaknesses</h2><ul style="padding-left:1.25rem;">{model.weaknesses.map((w: string) => <li style="font-size:0.88rem;">{w}</li>)}</ul></section>
-
-    <footer style="margin-top:3rem;padding-top:1.25rem;border-top:1px solid var(--border);"><p class="meta">Last verified: {model.lastVerified}. <a href="/methodology">Methodology →</a> · <a href="/corrections">Report an error →</a></p></footer>
+    <nav class="meta" aria-label="Breadcrumb"><a href="/models">Models</a> &rsaquo; {model?.name ?? "Not available"}</nav>
+    {unavailable ? <div class="card" style="margin-top:2rem;"><h1>Model data unavailable</h1><p class="meta">The catalogue could not be read.</p></div> : !model ?
+      <div class="card" style="margin-top:2rem;"><h1>Model not found</h1><p class="meta">This model is not published or does not exist.</p></div> :
+      <article style="margin-top:1.5rem;">
+        <h1>{model.name}</h1>
+        <p class="meta">{model.provider} · {openness[model.openness] ?? model.openness}{model.version ? ` · ${model.version}` : ""}</p>
+        {model.description && <p class="lead">{model.description}</p>}
+        <dl class="card" style="margin-top:1.5rem;display:grid;gap:0.6rem;">
+          <div><dt class="meta">Status</dt><dd>{model.status}</dd></div>
+          {model.releaseDate && <div><dt class="meta">Release date</dt><dd>{model.releaseDate}</dd></div>}
+          {model.licence && <div><dt class="meta">Licence</dt><dd>{model.licence}</dd></div>}
+          {model.parameterCount && <div><dt class="meta">Parameters</dt><dd>{model.parameterCount}</dd></div>}
+          {model.contextWindow && <div><dt class="meta">Context window</dt><dd>{model.contextWindow}</dd></div>}
+          <div><dt class="meta">Modalities</dt><dd>{model.modalities}</dd></div>
+          <div><dt class="meta">Capabilities recorded</dt><dd>{[model.toolUse && "tool use", model.structuredOutput && "structured output", model.apiAvailable && "API", model.localAvailable && "local use"].filter(Boolean).join(", ") || "None recorded"}</dd></div>
+          {model.lastVerifiedAt && <div><dt class="meta">Last verified</dt><dd>{model.lastVerifiedAt}</dd></div>}
+        </dl>
+        {model.bestUseCases.length > 0 && <section><h2>Reviewed use cases</h2><ul>{model.bestUseCases.map((item) => <li>{item}</li>)}</ul></section>}
+        {model.weaknesses.length > 0 && <section><h2>Recorded limitations</h2><ul>{model.weaknesses.map((item) => <li>{item}</li>)}</ul></section>}
+        <p class="meta" style="margin-top:2rem;">Pricing is omitted until provider-model pricing rows have their own completed review and publication state.</p>
+      </article>}
   </div>
 </BaseLayout>

@@ -111,9 +111,18 @@ const hubs = [
   },
 ];
 
+// Static editorial records still obey their explicit publication state.
+const publishedSlugs = new Set([
+  "what-is-mcp", "mcp-architecture", "mcp-vs-function-calling",
+  "what-is-an-ai-agent", "prompt-injection-tool-poisoning",
+]);
+const publishedHubs = hubs
+  .map((hub) => ({ ...hub, pages: hub.pages.filter((page) => publishedSlugs.has(page.slug)) }))
+  .filter((hub) => hub.pages.length > 0);
+
 // Deduplicate pages (some appear in multiple hubs)
 const allPages = new Map<string, { slug: string; title: string; type: string; hubs: string[] }>();
-for (const hub of hubs) {
+for (const hub of publishedHubs) {
   for (const page of hub.pages) {
     const existing = allPages.get(page.slug);
     if (existing) {
@@ -144,7 +153,7 @@ for (const hub of hubs) {
         <p class="meta">Pages</p>
       </div>
       <div class="card" style="flex:1;min-width:100px;text-align:center;padding:1rem;">
-        <p style="font-size:1.5rem;font-weight:700;">{hubs.length}</p>
+        <p style="font-size:1.5rem;font-weight:700;">{publishedHubs.length}</p>
         <p class="meta">Subject hubs</p>
       </div>
       <div class="card" style="flex:1;min-width:100px;text-align:center;padding:1rem;">
@@ -155,7 +164,7 @@ for (const hub of hubs) {
 
     <!-- Hub grid -->
     <div class="grid-2" style="margin-bottom:3rem;">
-      {hubs.map(hub => (
+      {publishedHubs.map(hub => (
         <div class="card" id={hub.id}>
           <h2 style="font-size:1.1rem;margin-bottom:0.35rem;">
             <a href={`/knowledge#${hub.id}`}>{hub.name}</a>

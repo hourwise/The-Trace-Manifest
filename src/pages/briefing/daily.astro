@@ -1,7 +1,7 @@
 ﻿---
 import BaseLayout from "../../layouts/BaseLayout.astro";
 import EvidenceBadge from "../../components/EvidenceBadge.astro";
-import { getLatestPublishedBriefing, getPublishedStories } from "../../lib/server/d1";
+import { getLatestPublishedBriefing, getPublishedStories, parsePublishedBriefingItems } from "../../lib/server/d1";
 
 export const prerender = false;
 
@@ -10,32 +10,25 @@ let briefing: Awaited<ReturnType<typeof getLatestPublishedBriefing>> = null;
 let recentStories: Awaited<ReturnType<typeof getPublishedStories>> = [];
 
 try {
-  briefing = await getLatestPublishedBriefing("daily");
+  const db = Astro.locals.runtime.env.DB;
+  briefing = await getLatestPublishedBriefing(db, "daily");
   if (!briefing) {
     // No briefing published yet — show recent stories as fallback context
-    recentStories = await getPublishedStories({ limit: 5 });
+    recentStories = await getPublishedStories(db, { limit: 5 });
   }
-} catch (e: any) {
-  console.error("Daily briefing query failed:", e.message);
+} catch {
+  console.error(JSON.stringify({ message: "Daily briefing query failed" }));
 }
 
 const today = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
 
 // Parse briefing content if available
-let briefingItems: { headline: string; why: string; evidenceStatus: string; slug: string }[] = [];
-if (briefing?.contentJson) {
-  try {
-    const parsed = JSON.parse(briefing.contentJson);
-    if (Array.isArray(parsed)) {
-      briefingItems = parsed;
-    }
-  } catch { /* invalid JSON — ignore */ }
-}
+const briefingItems = briefing?.contentJson ? parsePublishedBriefingItems(briefing.contentJson) : [];
 ---
 
 <BaseLayout
   title={`Daily Briefing${briefing ? ` — ${new Date(briefing.briefingDate).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}` : ""}`}
-  description="Five things that matter in AI today. Model releases, pricing changes, research, security issues, and community discoveries."
+  description="Reviewed AI developments from explicitly published TRACE stories."
 >
   <div class="wrap" style="max-width:42rem;">
     <nav aria-label="Breadcrumb" class="meta" style="margin-bottom:1.5rem;">
