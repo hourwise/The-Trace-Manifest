@@ -33,6 +33,8 @@ export interface TraceAnswerInput {
 
 export interface TraceEditorialInput {
   taskType: "editorial";
+  /** Explicit gateway-selected model. Providers must not choose a different tier. */
+  model?: TraceModelId;
   instruction: string;
   sourceMaterial: EvidenceExcerpt[];
   editorialContext?: string;

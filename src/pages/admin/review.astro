@@ -363,8 +363,9 @@ const evidenceStates = [
           });
 
           if (!res.ok) {
-            const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-            throw new Error(err.error || `HTTP ${res.status}`);
+            const err: { error?: string; requestId?: string } = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+            const requestReference = err.requestId ? ` (request ${err.requestId})` : "";
+            throw new Error(`${err.error || `HTTP ${res.status}`}${requestReference}`);
           }
 
           const analysis: {

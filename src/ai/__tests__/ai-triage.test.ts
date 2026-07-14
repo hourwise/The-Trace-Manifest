@@ -34,11 +34,27 @@ try {
   });
   assert.equal(unconfigured.status, 503, "fails closed when the provider secret is absent");
 
+  globalThis.fetch = async () => {
+    throw new DOMException("The operation timed out", "TimeoutError");
+  };
+  const timedOut = await handleTriageRequest(request(), {
+    ADMIN_API_TOKEN: ADMIN_TOKEN,
+    DEEPSEEK_API_KEY: API_KEY,
+  });
+  const timeoutBody = await timedOut.json() as { error?: string; requestId?: string };
+  assert.equal(timedOut.status, 503, "maps provider timeouts to temporary unavailability");
+  assert.equal(timeoutBody.error, "DeepSeek did not respond before the request timeout.");
+  assert.match(timeoutBody.requestId ?? "", /^editorial_[0-9a-f-]+$/);
+
   let providerCalls = 0;
   globalThis.fetch = async (_input, init) => {
     providerCalls++;
-    const providerRequest = JSON.parse(String(init?.body)) as { model?: string };
-    assert.equal(providerRequest.model, "deepseek-v4-pro", "uses the gateway's editorial model route");
+    const providerRequest = JSON.parse(String(init?.body)) as {
+      model?: string;
+      thinking?: { type?: string };
+    };
+    assert.equal(providerRequest.model, "deepseek-v4-flash", "uses the gateway's routine model route");
+    assert.equal(providerRequest.thinking?.type, "disabled", "disables V4 thinking for bounded JSON triage");
 
     return Response.json({
       choices: [{
@@ -72,7 +88,7 @@ try {
 
   const usage = getUsageByTaskType("editorial");
   assert.equal(usage.length, 1, "records editorial usage through the gateway ledger");
-  assert.equal(usage[0].model, "deepseek-v4-pro");
+  assert.equal(usage[0].model, "deepseek-v4-flash");
   assert.ok(usage[0].budgetReservation > 0, "records the gateway budget reservation");
 
   console.log("AI triage gateway tests passed.");

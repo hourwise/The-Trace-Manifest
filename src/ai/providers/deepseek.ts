@@ -23,6 +23,27 @@ const MODEL_NAMES: Record<TraceModelId, string> = {
   "deepseek-v4-pro": "deepseek-v4-pro",
 };
 
+export type DeepSeekFailureKind =
+  | "invalid_request"
+  | "authentication"
+  | "balance"
+  | "rate_limit"
+  | "provider"
+  | "timeout"
+  | "network"
+  | "invalid_response";
+
+export class DeepSeekAPIError extends Error {
+  constructor(
+    readonly kind: DeepSeekFailureKind,
+    message: string,
+    readonly status?: number,
+  ) {
+    super(message);
+    this.name = "DeepSeekAPIError";
+  }
+}
+
 // ============================================================
 // DeepSeek provider implementation
 // ============================================================
@@ -60,7 +81,7 @@ export class DeepSeekProvider implements TraceModelProvider {
   // ============================================================
 
   async generateEditorial(input: TraceEditorialInput): Promise<TraceEditorialDraft> {
-    const model = MODEL_NAMES[this.config.editorialModel];
+    const model = MODEL_NAMES[input.model ?? this.config.editorialModel];
     const systemPrompt = buildEditorialSystemPrompt();
     const userPrompt = buildEditorialUserPrompt(input);
 
@@ -158,18 +179,35 @@ export class DeepSeekProvider implements TraceModelProvider {
       ],
       max_tokens: params.max_tokens,
       temperature: params.temperature,
+      // V4 defaults to thinking mode. Bounded JSON tasks need predictable
+      // latency and do not consume or expose reasoning_content.
+      thinking: { type: "disabled" },
       ...(params.response_format ? { response_format: params.response_format } : {}),
     });
 
-    const response = await fetch(`${DEEPSEEK_BASE_URL}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${this.apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body,
-      signal: AbortSignal.timeout(this.config.requestTimeoutMs),
-    });
+    let response: Response;
+    try {
+      response = await fetch(`${DEEPSEEK_BASE_URL}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${this.apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body,
+        signal: AbortSignal.timeout(this.config.requestTimeoutMs),
+      });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Unknown network failure";
+      const isTimeout = error instanceof Error && (
+        error.name === "TimeoutError" || error.name === "AbortError" || /timeout|timed out/i.test(message)
+      );
+      throw new DeepSeekAPIError(
+        isTimeout ? "timeout" : "network",
+        isTimeout
+          ? `DeepSeek request timed out after ${this.config.requestTimeoutMs}ms`
+          : `DeepSeek network request failed: ${message}`,
+      );
+    }
 
     // Explicit retry policy per ADR-0008 section 7.3
     if (!response.ok) {
@@ -178,24 +216,28 @@ export class DeepSeekProvider implements TraceModelProvider {
 
       switch (status) {
         case 400:
-          throw new Error(`DeepSeek 400: Invalid request format — ${errorBody}`);
+          throw new DeepSeekAPIError("invalid_request", `DeepSeek 400: Invalid request format — ${errorBody}`, status);
         case 401:
-          throw new Error(`DeepSeek 401: Authentication failure — key may be invalid or expired`);
+          throw new DeepSeekAPIError("authentication", "DeepSeek 401: Authentication failure — key may be invalid or expired", status);
         case 402:
-          throw new Error(`DeepSeek 402: Insufficient balance — topping up required`);
+          throw new DeepSeekAPIError("balance", "DeepSeek 402: Insufficient balance — topping up required", status);
         case 422:
-          throw new Error(`DeepSeek 422: Invalid parameters — ${errorBody}`);
+          throw new DeepSeekAPIError("invalid_request", `DeepSeek 422: Invalid parameters — ${errorBody}`, status);
         case 429:
-          throw new Error(`DeepSeek 429: Rate limited — retry with backoff`);
+          throw new DeepSeekAPIError("rate_limit", "DeepSeek 429: Rate limited — retry with backoff", status);
         case 500:
         case 503:
-          throw new Error(`DeepSeek ${status}: Provider error — may retry`);
+          throw new DeepSeekAPIError("provider", `DeepSeek ${status}: Provider error — may retry`, status);
         default:
-          throw new Error(`DeepSeek ${status}: Unexpected error — ${errorBody}`);
+          throw new DeepSeekAPIError("provider", `DeepSeek ${status}: Unexpected error — ${errorBody}`, status);
       }
     }
 
-    return response.json();
+    try {
+      return await response.json();
+    } catch {
+      throw new DeepSeekAPIError("invalid_response", "DeepSeek returned a non-JSON response", response.status);
+    }
   }
 
   // ============================================================

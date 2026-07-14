@@ -151,7 +151,7 @@ Do not invent facts or use hype. If the sources are thin, state that explicitly.
       text: `TITLE: ${source.title}\n\n${source.excerpt || "[No excerpt available]"}`,
       sourceClassification: "ingestion-feed",
     })),
-    { maxOutputTokens: 600 },
+    { maxOutputTokens: 600, modelTier: "routine" },
   );
 
   if (result.status !== "ok" || !result.draft) {

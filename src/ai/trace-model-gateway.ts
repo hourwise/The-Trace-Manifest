@@ -9,8 +9,8 @@ import type {
   TraceAnswerDraft, TraceEditorialDraft, TracePredictionCandidate,
   TraceAIConfig, CircuitBreakerId,
 } from "./provider";
-import { routeModel, validateModelAssignment } from "./model-router";
-import { DeepSeekProvider } from "./providers/deepseek";
+import { validateModelAssignment } from "./model-router";
+import { DeepSeekAPIError, DeepSeekProvider } from "./providers/deepseek";
 import { validateTaskInput } from "./schemas";
 import { validateAnswerOutput, validateEditorialOutput, validatePredictionOutput } from "./validation";
 import {
@@ -209,7 +209,7 @@ export async function askTrace(
 export async function generateEditorial(
   instruction: string,
   sourceMaterial: { sourceId: string; text: string; sourceClassification: string }[],
-  options: { maxOutputTokens?: number } = {},
+  options: { maxOutputTokens?: number; modelTier?: "routine" | "editorial" } = {},
 ): Promise<{
   status: "ok" | "error" | "temporarily_unavailable" | "validation_failed";
   requestId: string;
@@ -221,8 +221,12 @@ export async function generateEditorial(
 
   const gatewayConfig = config;
   const modelProvider = provider;
+  const selectedModel = options.modelTier === "routine"
+    ? gatewayConfig.publicModel
+    : gatewayConfig.editorialModel;
+  const modelBreaker: CircuitBreakerId = selectedModel === "deepseek-v4-flash" ? "model_flash" : "model_pro";
   const blockingBreakers: CircuitBreakerId[] = [
-    "global_kill", "scheduled_jobs", "provider_deepseek", "model_pro",
+    "global_kill", "scheduled_jobs", "provider_deepseek", modelBreaker,
     "daily_budget", "monthly_budget", "balance", "auth_error", "failure_rate",
   ];
 
@@ -241,8 +245,7 @@ export async function generateEditorial(
     return { status: "temporarily_unavailable", requestId, error: "AI budget is currently unavailable." };
   }
 
-  const route = routeModel("editorial", gatewayConfig);
-  const assignment = validateModelAssignment(route.model, "editorial", gatewayConfig);
+  const assignment = validateModelAssignment(selectedModel, "editorial", gatewayConfig);
   if (!assignment.valid) {
     return { status: "error", requestId, error: assignment.reason ?? "Editorial model assignment rejected." };
   }
@@ -250,6 +253,7 @@ export async function generateEditorial(
   const maxOutputTokens = Math.min(options.maxOutputTokens ?? gatewayConfig.maxOutputTokens, gatewayConfig.maxOutputTokens);
   const input: TraceEditorialInput = {
     taskType: "editorial",
+    model: selectedModel,
     instruction: instruction.slice(0, 4000),
     sourceMaterial: sourceMaterial.slice(0, gatewayConfig.maxEvidenceExcerpts).map(source => ({
       sourceId: source.sourceId.slice(0, 100),
@@ -268,7 +272,7 @@ export async function generateEditorial(
     gatewayConfig.maxInputTokens,
     Math.ceil((input.instruction.length + input.sourceMaterial.reduce((sum, source) => sum + source.text.length, 0)) / 4),
   );
-  const estimatedCost = estimateMaxCost(gatewayConfig, route.model, estimatedInputTokens, maxOutputTokens);
+  const estimatedCost = estimateMaxCost(gatewayConfig, selectedModel, estimatedInputTokens, maxOutputTokens);
   const reservation = reserveBudget(gatewayConfig, estimatedCost);
   if (!reservation.reserved || !reservation.reservationId || reservation.reservedAmount === undefined) {
     return {
@@ -288,7 +292,7 @@ export async function generateEditorial(
     const draft = await modelProvider.generateEditorial(input);
     const validation = validateEditorialOutput(draft, input.sourceMaterial);
     const latencyMs = Date.now() - startedAt;
-    const actualCost = estimateCost(route.model, estimatedInputTokens, maxOutputTokens);
+    const actualCost = estimateCost(selectedModel, estimatedInputTokens, maxOutputTokens);
 
     reconcileReservation(reservation.reservationId, actualCost, reservation.reservedAmount);
     recordUsage({
@@ -296,7 +300,7 @@ export async function generateEditorial(
       idempotencyKeyHash,
       taskType: "editorial",
       provider: gatewayConfig.provider,
-      model: route.model,
+      model: selectedModel,
       inputTokens: estimatedInputTokens,
       outputTokens: maxOutputTokens,
       cachedTokens: 0,
@@ -319,19 +323,23 @@ export async function generateEditorial(
       };
     }
 
-    recordSuccess("model_pro");
+    recordSuccess(modelBreaker);
     recordSuccess("provider_deepseek");
     return { status: "ok", requestId, draft };
   } catch (error: unknown) {
     releaseReservation(reservation.reservationId, reservation.reservedAmount);
     const message = error instanceof Error ? error.message : "Unknown provider error";
-    recordFailure("model_pro", message);
+    recordFailure(modelBreaker, message);
     recordFailure("provider_deepseek", message);
-    if (message.includes("401")) recordFailure("auth_error", "Provider authentication failed.");
-    if (message.includes("402")) recordFailure("balance", "Provider balance unavailable.");
+    if (error instanceof DeepSeekAPIError && error.kind === "authentication") {
+      recordFailure("auth_error", "Provider authentication failed.");
+    }
+    if (error instanceof DeepSeekAPIError && error.kind === "balance") {
+      recordFailure("balance", "Provider balance unavailable.");
+    }
 
     console.error(JSON.stringify({ message: "Editorial model request failed", requestId, error: message }));
-    return { status: "error", requestId, error: "Editorial model request failed." };
+    return classifyEditorialFailure(error, requestId);
   }
 }
 
@@ -406,4 +414,35 @@ async function hashIdempotencyKey(key: string): Promise<string> {
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Unknown error";
+}
+
+function classifyEditorialFailure(
+  error: unknown,
+  requestId: string,
+): {
+  status: "error" | "temporarily_unavailable";
+  requestId: string;
+  error: string;
+} {
+  if (!(error instanceof DeepSeekAPIError)) {
+    return { status: "error", requestId, error: "DeepSeek returned an unusable response." };
+  }
+
+  switch (error.kind) {
+    case "authentication":
+      return { status: "error", requestId, error: "DeepSeek rejected the configured API key." };
+    case "balance":
+      return { status: "temporarily_unavailable", requestId, error: "The DeepSeek account has insufficient balance." };
+    case "rate_limit":
+      return { status: "temporarily_unavailable", requestId, error: "DeepSeek is rate limiting requests. Try again shortly." };
+    case "timeout":
+      return { status: "temporarily_unavailable", requestId, error: "DeepSeek did not respond before the request timeout." };
+    case "network":
+    case "provider":
+      return { status: "temporarily_unavailable", requestId, error: "DeepSeek is temporarily unavailable." };
+    case "invalid_request":
+      return { status: "error", requestId, error: "DeepSeek rejected the model request parameters." };
+    case "invalid_response":
+      return { status: "error", requestId, error: "DeepSeek returned an invalid response." };
+  }
 }
