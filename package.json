@@ -11,7 +11,13 @@
     "deploy:site": "npm run build",
     "deploy:worker": "wrangler deploy --config wrangler.worker.toml",
     "worker:dev": "wrangler dev --config wrangler.worker.toml --test-scheduled",
-    "test": "npx tsx workers/ingestion/__tests__/run-tests.ts && npx tsx src/ai/__tests__/ai-triage.test.ts"
+    "typecheck": "astro check && tsc --noEmit -p workers/tsconfig.json",
+    "test": "tsx workers/ingestion/__tests__/run-tests.ts && tsx tests/stabilisation.test.ts",
+    "test:security": "node scripts/security-check.mjs",
+    "test:migrations": "node scripts/validate-migrations.mjs",
+    "test:diff": "node scripts/diff-check.mjs",
+    "audit:production": "npm audit --omit=dev --audit-level=high",
+    "ci": "npm run test:diff && npm run typecheck && npm test && npm run test:migrations && npm run test:security && npm run build"
   },
   "dependencies": {
     "@astrojs/check": "^0.9.9",
@@ -23,6 +29,7 @@
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260712.1",
     "@types/node": "^22.0.0",
+    "tsx": "^4.22.3",
     "typescript": "^5.9.3",
     "wrangler": "^4.110.0"
   }

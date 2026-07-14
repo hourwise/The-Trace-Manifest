@@ -1,7 +1,8 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
 
 const routes = JSON.parse(readFileSync("dist/_routes.json", "utf8"));
-const requiredRoutes = ["/api/admin/ai-triage", "/api/trace/ask"];
+const requiredRoutes = ["/api/admin/ai-triage", "/api/admin/publish-story", "/api/trace/ask", "/admin"];
 
 function patternMatches(pattern, route) {
   if (pattern.endsWith("/*")) return route.startsWith(pattern.slice(0, -1));
@@ -16,17 +17,25 @@ for (const route of requiredRoutes) {
   }
 }
 
-for (const modulePath of [
-  "dist/_worker.js/pages/api/admin/ai-triage.astro.mjs",
-  "dist/_worker.js/pages/api/trace/ask.astro.mjs",
+function sourceFiles(directory) {
+  if (!existsSync(directory)) return [];
+  return readdirSync(directory).flatMap((name) => {
+    const path = join(directory, name);
+    return statSync(path).isDirectory() ? sourceFiles(path) : /\.(?:m?js)$/.test(path) ? [path] : [];
+  });
+}
+
+const workerSource = sourceFiles("dist/_worker.js").map((path) => readFileSync(path, "utf8")).join("\n");
+for (const marker of ["Ask TRACE is not currently enabled", "Admin service is not configured", "Cf-Access-Jwt-Assertion"]) {
+  if (!workerSource.includes(marker)) throw new Error(`Cloudflare worker bundle is missing runtime boundary: ${marker}`);
+}
+
+const browserSource = sourceFiles("dist/_astro").map((path) => readFileSync(path, "utf8")).join("\n");
+for (const marker of [
+  "DEEPSEEK_API_KEY", "TRACE_INTERNAL_SERVICE_SECRET", "CF_ACCESS_AUD",
+  "api.deepseek.com", "DeepSeekProvider",
 ]) {
-  const moduleSource = readFileSync(modulePath, "utf8");
-  if (moduleSource.includes("Contents removed by Astro as it's used for prerendering only")) {
-    throw new Error(`${modulePath} was stripped during prerendering.`);
-  }
-  if (!moduleSource.includes("const prerender = false")) {
-    throw new Error(`${modulePath} is not configured for on-demand rendering.`);
-  }
+  if (browserSource.includes(marker)) throw new Error(`Browser bundle contains server-only marker: ${marker}`);
 }
 
 const endpointSource = readFileSync("src/pages/api/admin/ai-triage.ts", "utf8");
