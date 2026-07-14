@@ -1,6 +1,6 @@
 ﻿# AI Intelligence Platform — Master Build Plan
 
-**Status:** Concept / Pre-build  
+**Status:** Implementation in progress — stabilisation controls are present in the repository; desktop CI and deployment verification remain pending as of 14 July 2026
 **Document purpose:** Define the product, architecture, MVP, roadmap, monetisation, governance, and required documentation from the beginning.  
 **Product name:** The Trace Manifest  
 **Editorial identity:** T.R.A.C.E. — Traceable Research, Analysis, Context and Evidence  
@@ -1496,15 +1496,16 @@ The system must support: reviewer identity, review timestamp, approval status, v
 
 ---
 
-## Phase 4 — Model, Provider, and Benchmark Data  ✅ COMPLETED 13 July 2026
+## Phase 4 — Model, Provider, and Benchmark Data — PARTIALLY IMPLEMENTED
 
-Built and deployed: model directory (6 models, ModelCard component), provider directory (10 providers, pricing comparison), pricing history (PricingHistory timeline), benchmark registry (8 benchmarks, 7-state health badges), benchmark-run records (vendor/independent flags), comparison tables (ComparisonTable component), best-for views, versioning and supersession.  7 new DB tables + 16 indexes. Worker: `model-data.ts`. Admin: `POST /admin/seed-models`, `POST /admin/extract-model-data`.
+The model, provider, pricing-history, benchmark, and benchmark-run schemas and public catalogue views exist. Public catalogue queries now fail closed: only explicitly published, reviewed parent and child records are visible, so the site shows an honest empty state until editorial records pass those gates. Historical seed/extraction routes and deployment claims require a separate production review; no seeded placeholder record is treated as published evidence.
 
 ---
 
 ## Phase 5 — Ask TRACE
 
 **Estimate:** 6–12 weeks  
+**Status:** Source-grounded MVP implemented behind a disabled-by-default feature flag; desktop CI, migration, deployment, and evaluation verification remain pending
 **Model governance:** ADR-0008 (DeepSeek via provider-neutral gateway, cost containment, automated-loop prevention)
 
 Build the source-grounded question-answering system. Ask TRACE answers from the indexed evidence base rather than behaving as an unrestricted general chatbot. Per ADR-0008: the model is a replaceable drafting component — TRACE's governed corpus, citation validation, and deterministic confidence policy remain authoritative.
@@ -1550,7 +1551,7 @@ The DeepSeek API key must exist only in trusted server-side execution environmen
 - Public questions per visitor per day: 3 initially
 - Request timeout: bounded below platform max
 
-**Abuse resistance:** Cloudflare rate limiting, Turnstile bot challenge, opaque session IDs, privacy-preserving IP hash with rotating salt, global daily request/spend ceilings, per-session concurrency limits, request deduplication, temporary blocking after repeated malformed requests, administrative kill switch.
+**Abuse resistance:** Implemented repository controls include a server-derived, privacy-preserving daily visitor hash; persistent D1 daily quotas; one active request per visitor; durable request deduplication; atomic daily/monthly spend reservations; bounded request size and length; circuit breakers; and a disabled-by-default public feature switch. Cloudflare WAF/rate-limit rules and Turnstile are deployment follow-ups, not current repository guarantees. Caller-supplied session identifiers are not trusted.
 
 ### Financial controls (ADR-0008)
 
@@ -1586,15 +1587,15 @@ Before any answer is served, TRACE code must verify: every cited source ID was s
 - Provider-neutral model gateway (`src/ai/`) with DeepSeek adapter
 - Public endpoint `POST /api/trace/ask` with full security controls
 - Retrieval layer over approved TRACE corpus (evidence-bounded, not open RAG)
-- Atomic budget reservation + usage ledger (`usage-ledger.ts`, `budget-policy.ts`)
-- Circuit breaker system (10 breakers: global kill switch, per-provider, per-model, budget, balance, auth-error, failure-rate, latency)
-- Idempotency + request-state persistence (10+ state machine)
+- Durable D1 atomic budget reservations and batched usage ledger (`src/ai/durable-governance.ts`)
+- Durable circuit breakers for global, feature, provider, and model scopes
+- Persistent idempotency, request state, quota, and concurrency leases
 - Citation assembly with primary-source preference
 - Post-generation validation pipeline (structured output, claim verification, confidence calculation)
 - Answer structure with confidence labels + evidence-window display
 - Rate limiting, abuse protection, query length limits
 - Prompt-injection-resistant retrieval boundaries + source-content sanitisation
-- `ai_runs` audit log (token usage, cost, latency, validation status — never secrets or PII)
+- Durable `ai_requests`, `ai_budget_reservations`, `ai_usage_ledger`, `ai_quota_usage`, `ai_concurrency_leases`, and `ai_circuit_breakers` records (never plaintext IP addresses or secrets)
 - Global kill switch + per-feature switches (Ask TRACE, scheduled jobs, per-model)
 - "Insufficient evidence" explicit non-answer handling
 - Incident response procedures for key leaks, request storms, unexpected spend
@@ -1731,8 +1732,8 @@ Candidate stories selected
 ## Phase 5E — Live Publication and Frontend Data Wiring
 
 **Estimate:** 5–10 working days  
-**Status:** Not started  
-**Dependency:** Phases 2–4 (ingestion pipeline, clustering, models/benchmarks) are complete and populating D1. Phase 5E does not depend on Ask TRACE being finished — it provides the canonical public content layer that Ask TRACE, TRACE Predicts, and the newsletter will consume.
+**Status:** Publication boundary, D1-backed public queries, briefings, and corrections are implemented in the repository; desktop migration/CI and Cloudflare deployment verification remain pending
+**Dependency:** The ingestion, clustering, and catalogue schemas must be migrated and verified before production publication is enabled. Phase 5E does not depend on Ask TRACE being enabled — it provides the canonical public content layer that Ask TRACE, TRACE Predicts, and the newsletter consume.
 
 ### Purpose
 
@@ -1746,7 +1747,7 @@ The ingestion Worker is collecting, classifying, and deduplicating source materi
 
 ### Architectural decision
 
-The site remains **static-first**. Only routes requiring current database content use Astro on-demand rendering (`export const prerender = false`). Static routes such as methodology, corrections policy, and trust documentation continue to be prerendered. The initial implementation remains on Astro 5 and Cloudflare Pages.
+Astro uses Cloudflare server output so D1-backed and access-controlled routes execute on demand. Editorial assets that do not need runtime state remain simple content routes. The deployment target remains Astro 5 on Cloudflare Pages; successful production deployment is not asserted until the desktop verification and rollout checklist passes.
 
 ### Publication boundary
 
@@ -2503,12 +2504,12 @@ Recommended development principle:
 6. ~~Finalise source list~~ → **Done.** 65 named sources across 6 sections in `docs/sources/source-registry.md`
 7. ~~Define trust labels~~ → **Done.** Evidence label system (6 states) implemented in Phase 1 shell
 8. ~~Define MVP data model~~ → **Done.** Entity list and provenance rules in `docs/architecture/initial-data-model.md`
-9. ~~Build static Astro shell~~ → **Done.** 26 pages, RSS, sitemap, responsive nav, accessibility baseline
-10. ~~Add RSS and GitHub ingestion~~ → **Done.** Worker built with RSS, GitHub Releases, arXiv, and Hacker News fetchers; cron schedules configured; pending Cloudflare deploy
-11. ~~Add manual editorial workflow~~ → **Done.** Admin UI built (sources, jobs, review queue pages); review queue per ADR-0004
-12. ~~Add model and benchmark records~~ → **Done.** Static templates built with placeholder data; full structured data in Phase 4
-13. ~~Add daily briefing generation~~ → **Done.** Daily and weekly briefing templates built
-14. ~~Add citation-grounded ask prototype~~ → **Done.** 20 curated Q&As on `/ask` + typed ask results detail page at `/ask/[question]` with evidence breakdown, source provenance, and posture sidebar
+9. Build the Astro shell → **Implemented in repository;** server-rendered routes require desktop and deployment verification
+10. Add RSS and GitHub ingestion → **Implemented in Worker source;** connector outcomes, migrations, schedules, and production bindings require deployment verification
+11. Add manual editorial workflow → **Implemented behind Cloudflare Access and signed first-party admin routes;** production Access policy and secrets require rollout verification
+12. Add model and benchmark records → **Schema and reviewed-publication views implemented;** genuine editorial records and an admin publication workflow remain pending
+13. Add daily briefing generation → **Reviewed publication and D1-backed rendering implemented;** live scheduling/content verification remains pending
+14. Add citation-grounded Ask prototype → **Grounded MVP implemented at `/ask-trace`, disabled by default;** the former curated mock-answer routes now redirect and no longer present fixtures as live answers
 15. Add supporter and newsletter foundations
 
 ---
