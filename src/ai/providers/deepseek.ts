@@ -78,7 +78,7 @@ export class DeepSeekProvider implements TraceModelProvider {
 
   async generateAnswer(input: TraceAnswerInput): Promise<ProviderGeneration<TraceAnswerDraft>> {
     const model = MODEL_NAMES[this.config.publicModel];
-    const systemPrompt = buildAnswerSystemPrompt(input);
+    const systemPrompt = buildAnswerSystemPrompt();
     const userPrompt = buildAnswerUserPrompt(input);
 
     const response = await this.callAPI(model, systemPrompt, userPrompt, {
@@ -114,7 +114,7 @@ export class DeepSeekProvider implements TraceModelProvider {
 
   async generatePredictions(input: TracePredictionInput): Promise<ProviderGeneration<TracePredictionCandidate[]>> {
     const model = MODEL_NAMES[this.config.editorialModel]; // Predictions use editorial model
-    const systemPrompt = buildPredictionSystemPrompt(input);
+    const systemPrompt = buildPredictionSystemPrompt();
     const userPrompt = buildPredictionUserPrompt(input);
 
     const response = await this.callAPI(model, systemPrompt, userPrompt, {
@@ -386,7 +386,7 @@ function parseUsage(data: any): ProviderTokenUsage {
 // Prompt builders
 // ============================================================
 
-function buildAnswerSystemPrompt(input: TraceAnswerInput): string {
+function buildAnswerSystemPrompt(): string {
   return `You are TRACE — Traceable Research, Analysis, Context and Evidence.
 You answer questions using ONLY the evidence excerpts supplied to you.
 You must NOT invent facts, sources, or citations.
@@ -401,7 +401,7 @@ Respond ONLY with valid JSON matching the required schema.`;
 }
 
 function buildAnswerUserPrompt(input: TraceAnswerInput): string {
-  const excerpts = input.evidenceExcerpts.map((e, i) =>
+  const excerpts = input.evidenceExcerpts.map((e) =>
     `[SOURCE:${e.sourceId}]${e.claimId ? ` [CLAIM:${e.claimId}]` : ""} (${e.sourceClassification})\n${e.text}`
   ).join("\n\n");
 
@@ -442,7 +442,7 @@ Respond ONLY with valid JSON.`;
 }
 
 function buildEditorialUserPrompt(input: TraceEditorialInput): string {
-  const material = input.sourceMaterial.map((e, i) =>
+  const material = input.sourceMaterial.map((e) =>
     `[SOURCE:${e.sourceId}] ${e.text}`
   ).join("\n\n");
 
@@ -466,7 +466,7 @@ Respond with JSON:
 }`;
 }
 
-function buildPredictionSystemPrompt(input: TracePredictionInput): string {
+function buildPredictionSystemPrompt(): string {
   return `You are TRACE Predicts. You generate falsifiable, evidence-linked predictions.
 Every prediction must include: probability (0-100), confirmation criteria, failure criteria.
 Reject vague predictions that cannot be evaluated.

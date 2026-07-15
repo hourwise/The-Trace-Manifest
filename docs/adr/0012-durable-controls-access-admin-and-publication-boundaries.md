@@ -1,4 +1,4 @@
-# ADR-0012: Durable controls, Access-based administration, and publication boundaries
+# ADR 0012: Durable controls, Access-based administration, and publication boundaries
 
 - **Status:** Accepted; production rollout pending
 - **Date:** 2026-07-14

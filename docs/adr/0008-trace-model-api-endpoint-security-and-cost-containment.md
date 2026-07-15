@@ -1,4 +1,4 @@
-# ADR-00XX: TRACE Model API, Provider Selection, Endpoint Security and Cost Containment
+# ADR 0008: TRACE Model API, Provider Selection, Endpoint Security and Cost Containment
 
 - **Status:** Accepted
 - **Date:** 2026-07-13

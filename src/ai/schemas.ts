@@ -4,9 +4,7 @@
 // Validates structure, types, ranges, and required fields.
 
 import type {
-  TraceAnswerInput, TraceEditorialInput, TracePredictionInput,
-  TraceAnswerDraft, TraceEditorialDraft, TracePredictionCandidate,
-  EvidenceExcerpt, TraceTaskInput,
+  EvidenceExcerpt,
 } from "./provider";
 
 // ============================================================

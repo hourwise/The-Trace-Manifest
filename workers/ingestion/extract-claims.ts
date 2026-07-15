@@ -387,7 +387,7 @@ export async function runClaimExtraction(
      LIMIT 500`
   ).all<FeedItem & { source_tier: string; source_treatment: string }>();
 
-  if (!results || results.length === 0) {
+  if (results.length === 0) {
     return { processed: 0, claimsExtracted: 0, evidenceCreated: 0 };
   }
 
@@ -545,7 +545,7 @@ export async function detectClaimConflicts(
      HAVING COUNT(*) >= 2`
   ).all<{ cluster_id: number; claim_count: number }>();
 
-  if (!results || results.length === 0) {
+  if (clusters.length === 0) {
     return { conflictsDetected: 0 };
   }
 

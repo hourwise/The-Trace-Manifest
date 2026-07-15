@@ -59,5 +59,7 @@ Do not reapply `ALTER TABLE` migrations blindly. Record applied migrations per e
 - [Stabilisation matrix](docs/audit/stabilisation-matrix.md)
 - [Roadmap](ROADMAP.md)
 - [Architecture decisions](docs/adr/README.md)
+- [Revised launch scope](<docs/The Trace Manifest — Revised Launch.md>)
+- [Evidence-linked knowledge base build plan](docs/the_trace_manifest_evidence_linked_knowledge_base_build_plan.md)
 
 Canonical public origin: `https://thetracemanifest.com`. The `.uk` domain is a redirect-only domain and is not an API origin.

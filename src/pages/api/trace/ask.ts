@@ -1,5 +1,5 @@
 import type { APIRoute } from "astro";
-import { buildConfig, type TraceAIEnvironment } from "../../../ai/config";
+import { buildConfig } from "../../../ai/config";
 import { askTrace, hashPrivateIdentifier, type TraceAIRuntimeEnvironment } from "../../../ai/trace-model-gateway";
 import { retrievePublishedEvidence } from "../../../lib/server/ask-evidence";
 import { corsHeaders, isAllowedOrigin, type OriginPolicyEnvironment } from "../../../security/origin-policy";

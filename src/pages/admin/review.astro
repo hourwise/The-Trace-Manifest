@@ -204,7 +204,7 @@ try {
       }
 
       // Helper: typed getElementById
-      function $<T extends HTMLElement>(id: string): T | null {
+      function $<T>(id: string): T | null {
         return document.getElementById(id) as T | null;
       }
 
@@ -357,7 +357,7 @@ try {
           });
 
           if (!res.ok) {
-            const err: { error?: string; requestId?: string } = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+            const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` })) as { error?: string; requestId?: string };
             const requestReference = err.requestId ? ` (request ${err.requestId})` : "";
             throw new Error(`${err.error || `HTTP ${res.status}`}${requestReference}`);
           }
@@ -484,9 +484,10 @@ try {
               const timestamp = document.createElement("span");
               timestamp.className = "meta";
               timestamp.textContent = ` — ${new Date().toLocaleTimeString()}`;
-              line.append(link, timestamp);
+              line.appendChild(link);
+              line.appendChild(timestamp);
               if (recent.textContent?.trim() === "—") recent.replaceChildren(line);
-              else recent.prepend(line);
+              else recent.insertBefore(line, recent.firstChild);
             }
           }
         } catch (e) {

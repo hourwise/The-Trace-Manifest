@@ -11,7 +11,6 @@ import type {
 import {
   validateAnswerDraft, validateEditorialDraft, validatePredictionCandidate,
   validateCitations, isTruncated,
-  type ValidationResult, type CitationCheckResult,
 } from "./schemas";
 
 // ============================================================

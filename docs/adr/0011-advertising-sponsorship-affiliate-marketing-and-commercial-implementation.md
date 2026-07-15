@@ -3,10 +3,10 @@
 - **Status:** Accepted
 - **Date:** 14 July 2026
 - **Decision owners:** The Trace Manifest maintainers
-- **Applies to:** Advertising, direct sponsorship, newsletter sponsorship, affiliate links, commercial pages, enquiries, analytics and editorial disclosures
+- **Applies to:** Advertising, direct sponsorship, newsletter sponsorship, affiliate links, commercial pages, curated discovery products, TRACE Guides, enquiries, analytics and editorial disclosures
 - **Extends:** ADR 0005 Commercial Independence and `docs/product/monetisation.md`
-- **Related decisions:** ADR 0004 Human Review Boundary; ADR 0008 TRACE Model API; ADR 0010 Expanded Editorial Scope
-- **Review trigger:** Before enabling an ad network, behavioural advertising, sponsored editorial, automatic affiliate-link insertion, paid rankings, user profiling, or commercial access to account or conversation data
+- **Related decisions:** ADR 0004 Human Review Boundary; ADR 0008 TRACE Model API; ADR 0010 Expanded Editorial Scope; ADR 0013 TRACE Guides
+- **Review trigger:** Before enabling an ad network, behavioural advertising, sponsored editorial, automatic affiliate-link insertion, paid rankings or inclusion in App Radar/Open Source Radar, user profiling, or commercial access to account or conversation data
 
 ## 1. Context
 
@@ -45,6 +45,7 @@ Initial commercial methods will not include:
 - ads inside evidence or citation components;
 - paid evidence ratings;
 - paid rankings;
+- paid inclusion in ordinary App Radar, Open Source Radar, Spotlight or TRACE Guide results;
 - automatic affiliate-link rewriting across editorial copy;
 - advertiser control of editorial conclusions;
 - undisclosed sponsored content;
@@ -211,7 +212,7 @@ Do not place advertising:
 - in a way that obscures the destination;
 - through notifications without separate permission.
 
-Commercial prompts must not be injected into the model evidence packet.
+Commercial prompts must not be injected into the model evidence packet. Ordinary stories, guides, app profiles, repository profiles and Spotlight records must not be converted into sponsored content types.
 
 ## 8. Sponsored content
 
@@ -242,6 +243,7 @@ Affiliate links may appear in:
 - `TRACE Selects`;
 - `Tools & Offers`;
 - original buying guides;
+- original technical guides with generic requirements and non-affiliate alternatives;
 - original comparisons;
 - clearly identified commercial sections;
 - occasional editorial text where genuinely relevant and individually disclosed.
@@ -260,6 +262,8 @@ Do not:
 - publish thin merchant-description pages;
 - copy retailer or manufacturer text as the substance of a page;
 - imply independent testing that did not occur.
+
+Commission must not influence inclusion, ranking, evidence status or technical instructions in App Radar, Open Source Radar, Spotlight or TRACE Guides.
 
 ### 9.3 Disclosure
 
@@ -873,6 +877,8 @@ Update:
 - `ROADMAP.md`;
 - master build plan;
 - admin roles documentation.
+
+The repository does not yet version the privacy notice, cookie notice, terms, newsletter policy or dedicated admin-role documentation. They are required launch artefacts before any commercial feature is enabled.
 
 ## 29. External references checked
 

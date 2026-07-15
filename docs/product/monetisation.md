@@ -89,3 +89,11 @@ Indicative price: £40–£100/month
 - No hidden native advertising.
 - No pay-to-remove-negative-findings.
 - No paid benchmark manipulation.
+
+## ADR 0011 implementation boundary
+
+Commercial activity remains a later, separately enabled workstream. Until its required controls are implemented, TRACE must not enable behavioural or cross-site tracking, paid editorial inclusion, paid rankings, automatic affiliate-link rewriting, or advertising inside Ask TRACE, evidence, citation, correction, or confidence components.
+
+App Radar, Open Source Radar, Spotlight and TRACE Guides may not sell normal editorial inclusion. Any permitted affiliate material must deliver original value, name the relationship before the link, retain non-affiliate alternatives, and never alter technical instructions, evidence status, or ranking.
+
+See [ADR 0011](../adr/0011-advertising-sponsorship-affiliate-marketing-and-commercial-implementation.md) and the [editorial independence policy](../trust/editorial-independence.md).

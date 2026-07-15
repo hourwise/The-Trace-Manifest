@@ -35,6 +35,17 @@ Initial coverage will focus on fields directly connected to the project owner's 
 
 The knowledge base must share evidence, entities, claims, and change events with the existing ingestion and intelligence pipeline. News should be capable of proposing updates to relevant reference pages, but publication must remain governed by evidence thresholds and review rules.
 
+### 1.1 Governing decisions and launch sequencing
+
+This plan is constrained by the canonical ADRs and the revised launch scope. It must not introduce a parallel content or retrieval system that bypasses them.
+
+- [ADR 0012](adr/0012-durable-controls-access-admin-and-publication-boundaries.md) supplies the durable publication, audit, identity, evidence-eligibility and Ask TRACE controls on which every live knowledge feature depends.
+- [ADR 0009](adr/0009-governed-social-media-signal-intake-linked-source-discovery-and-outbound-linking.md) permits social material only as governed discovery. A social post cannot create or corroborate a knowledge claim; a linked source must be separately admitted with its own provenance.
+- [ADR 0010](adr/0010-expanded-editorial-scope-curated-products-and-governed-auto-publication.md) governs future verticals, curated products and automatic-publication gates. The [revised launch scope](<The Trace Manifest — Revised Launch.md>) keeps the first public release focused on AI & Agents and manual approval.
+- [ADR 0013](adr/0013-trace-guides-lab-authorship-verification-and-ask-trace-knowledge-integration.md) governs practical guides and TRACE Lab records. Their section-level retrieval must preserve external sources, verification level, version and freshness; they are curated secondary knowledge, not circular evidence.
+- [ADR 0011](adr/0011-advertising-sponsorship-affiliate-marketing-and-commercial-implementation.md) prevents commercial values from influencing claims, evidence, rankings, recommendations or retrieval.
+- [ADR 0014](adr/0014-context-preserving-sharing-versioned-snapshots-and-social-preview-integrity.md) governs later public sharing. Canonical pages need correction-aware metadata from the start; public snapshots and shareable Ask records require their own bounded publication workflow.
+
 ---
 
 ## 2. Why This Is a Build Plan Rather Than Only an ADR

@@ -51,6 +51,12 @@ Sponsored material must:
 - Avoid imitating independent editorial analysis
 - Link to this policy
 
+Ordinary stories, evidence records, Guides, App Radar profiles, Open Source Radar profiles and Spotlight records are not sponsored content. Paid inclusion, evidence-rating influence, ranking influence, and commercial prompts in Ask TRACE retrieval are prohibited.
+
+## Operational controls
+
+Commercial relationships, placements, approvals, changes, disclosures and complaints must be auditable. Commercial values and conversion targets must remain unavailable to ranking, evidence, confidence and model-retrieval services. See [ADR 0011](../adr/0011-advertising-sponsorship-affiliate-marketing-and-commercial-implementation.md).
+
 ## Corrections
 
 Commercial partners have the same right to submit corrections as any other source. Correction requests must be assessed against evidence, not commercial status.

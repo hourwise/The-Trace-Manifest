@@ -96,5 +96,5 @@ assert(multiResult.itemTypes.some(t => t.type === "model_release"), "model_relea
 console.log(`\n========================================`);
 console.log(`  PASSED: ${passed}  FAILED: ${failed}`);
 console.log(`========================================\n`);
-if (failures.length > 0) { failures.forEach(f => console.log(f)); process.exit(1); }
+if (failures.length > 0) { failures.forEach(f => console.log(f)); throw new Error(`${failed} ingestion test${failed === 1 ? "" : "s"} failed.`); }
 else { console.log("All tests passed.\n"); }

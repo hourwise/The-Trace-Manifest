@@ -242,6 +242,8 @@ They should **not** automatically corroborate one another when they all repeat t
 7. Selected YouTube channels and podcasts
 8. User-submitted tips
 
+Social posts are discovery signals, not proof. A reviewer must record provenance and create a separately evaluated source candidate for each linked article, paper, official document, repository, release or advisory that may enter the evidence pipeline. Do not automatically follow every link or use engagement as corroboration. See [ADR 0009](../adr/0009-governed-social-media-signal-intake-linked-source-discovery-and-outbound-linking.md).
+
 ### Reddit monitoring (manual only, per Reddit policy)
 
 Monitor but do not scrape:

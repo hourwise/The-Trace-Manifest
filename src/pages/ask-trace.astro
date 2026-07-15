@@ -79,11 +79,11 @@ const suggestions = [
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ question }),
       });
-      const data = await response.json();
+      const data: unknown = await response.json();
       status.style.display = "none";
       if (!response.ok) {
         error.style.display = "block";
-        error.textContent = data.message ?? data.error ?? "Ask TRACE is unavailable.";
+        error.textContent = errorMessage(data);
         return;
       }
       renderAnswer(data);
@@ -122,7 +122,7 @@ const suggestions = [
     if (!Array.isArray(values) || values.length === 0) return [];
     const title = document.createElement("h2"); title.textContent = heading; title.style.fontSize = ".95rem";
     const list = document.createElement("ul");
-    values.forEach((value) => { const item = document.createElement("li"); item.textContent = String(value); list.append(item); });
+    values.forEach((value) => { const item = document.createElement("li"); item.textContent = String(value); list.appendChild(item); });
     return [title, list];
   }
   function renderList(sectionId: string, listId: string, values: unknown): void {
@@ -135,10 +135,19 @@ const suggestions = [
   function citationNode(citation: any): HTMLLIElement {
     const item = document.createElement("li");
     const url = safeUrl(citation.sourceUrl);
-    if (url) { const link = document.createElement("a"); link.href = url; link.rel = "noopener noreferrer"; link.textContent = citation.sourceName ?? citation.sourceId; item.append(link); }
+    if (url) { const link = document.createElement("a"); link.href = url; link.rel = "noopener noreferrer"; link.textContent = citation.sourceName ?? citation.sourceId; item.appendChild(link); }
     else item.textContent = citation.sourceName ?? citation.sourceId;
-    item.append(` — ${citation.sourceClassification ?? "Published TRACE evidence"}`);
+    item.appendChild(document.createTextNode(` — ${citation.sourceClassification ?? "Published TRACE evidence"}`));
     return item;
+  }
+  function errorMessage(value: unknown): string {
+    if (!value || typeof value !== "object") return "Ask TRACE is unavailable.";
+    const data = value as { message?: unknown; error?: unknown };
+    return typeof data.message === "string"
+      ? data.message
+      : typeof data.error === "string"
+        ? data.error
+        : "Ask TRACE is unavailable.";
   }
   function safeUrl(value: unknown): string | null {
     if (typeof value !== "string") return null;

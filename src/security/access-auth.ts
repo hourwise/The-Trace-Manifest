@@ -24,14 +24,24 @@ interface AccessClaims {
 }
 
 interface JwtHeader { alg?: string; kid?: string }
-interface AccessJwks { keys?: JsonWebKey[] }
+interface AccessJwk extends JsonWebKey { kid?: string }
+interface AccessJwks { keys?: AccessJwk[] }
 
 let cachedKeys: { issuer: string; expiresAt: number; keys: Map<string, CryptoKey> } | null = null;
 
-function decodeBase64Url(value: string): Uint8Array {
+function decodeBase64Url(value: string): ArrayBuffer {
   const base64 = value.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(value.length / 4) * 4, "=");
   const binary = atob(base64);
-  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
+  return bytes.buffer;
+}
+
+function encodeText(value: string): ArrayBuffer {
+  const encoded = new TextEncoder().encode(value);
+  const bytes = new Uint8Array(encoded.byteLength);
+  bytes.set(encoded);
+  return bytes.buffer;
 }
 
 function parseJsonPart<T>(value: string): T | null {
@@ -102,7 +112,7 @@ export async function authenticateAccessRequest(
       "RSASSA-PKCS1-v1_5",
       key,
       decodeBase64Url(parts[2]),
-      new TextEncoder().encode(`${parts[0]}.${parts[1]}`),
+      encodeText(`${parts[0]}.${parts[1]}`),
     )) return null;
   } catch {
     return null;

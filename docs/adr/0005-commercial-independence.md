@@ -11,6 +11,8 @@ The same AI vendors and providers covered by the platform may become advertisers
 
 Commercial relationships must remain structurally separate from evidence ratings, rankings, and editorial conclusions.
 
+ADR 0011 defines the enforceable commercial, disclosure, placement, audit and affiliate controls that implement this decision.
+
 ## Rules
 
 - Advertising inventory is managed independently from editorial scoring.
