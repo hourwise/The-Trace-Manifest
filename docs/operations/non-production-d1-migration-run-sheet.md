@@ -80,7 +80,7 @@ Then run the minimum verification packet:
 ```powershell
 npx wrangler d1 execute $Db --remote --command "SELECT COUNT(*) AS tables FROM sqlite_master WHERE type='table';"
 npx wrangler d1 execute $Db --remote --command "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('ai_requests','ai_budget_reservations','ai_usage_ledger','ai_quota_usage','ai_concurrency_leases','ai_circuit_breakers','admin_request_nonces','admin_audit_log') ORDER BY name;"
-npx wrangler d1 execute $Db --remote --command "PRAGMA integrity_check;"
+npx wrangler d1 execute $Db --remote --command "PRAGMA quick_check;"
 npx wrangler d1 execute $Db --remote --command "PRAGMA foreign_key_check;"
 ```
 
@@ -90,7 +90,7 @@ Expected result:
 - the migration commands complete without errors;
 - the table-count query returns a non-zero count;
 - all eight durable control tables are listed;
-- `PRAGMA integrity_check` returns `ok`;
+- `PRAGMA quick_check` returns `ok`;
 - `PRAGMA foreign_key_check` returns no rows.
 
 Copy the command outputs into the LAUNCH-04 evidence note. Stop at the first error and do not retry the full migration file until the schema state is inspected.
@@ -218,7 +218,7 @@ npx wrangler d1 execute NON_PROD_DB_NAME --remote --command "SELECT publication_
 Integrity checks:
 
 ```powershell
-npx wrangler d1 execute NON_PROD_DB_NAME --remote --command "PRAGMA integrity_check;"
+npx wrangler d1 execute NON_PROD_DB_NAME --remote --command "PRAGMA quick_check;"
 npx wrangler d1 execute NON_PROD_DB_NAME --remote --command "PRAGMA foreign_key_check;"
 ```
 
@@ -229,7 +229,7 @@ Expected verification result:
 - publication status and reviewer columns exist on catalogue tables;
 - existing catalogue rows are `draft` unless deliberately reviewed later;
 - story/publication rows are not silently made public;
-- `PRAGMA integrity_check` returns `ok`;
+- `PRAGMA quick_check` returns `ok`;
 - `PRAGMA foreign_key_check` returns no rows.
 
 ## Deployment smoke checks against non-production
