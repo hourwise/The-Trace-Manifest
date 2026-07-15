@@ -2556,12 +2556,13 @@ These tasks apply the mandatory contract in Section 2.10. Complete only one task
 
 | Task ID | One bounded outcome | Completion evidence |
 |---|---|---|
-| LAUNCH-01 | Produce a repository-state and launch-gap audit against ADR 0012 and the revised launch scope. | Current branch, status, migrations, bindings, feature flags, tests and content counts are evidenced; no code change. |
-| LAUNCH-02 | Run the clean local validation gate without fixing unrelated failures. | Typecheck, tests, migration validation, security checks and build results are recorded exactly. |
-| LAUNCH-03 | Prepare the non-production migration run sheet. | Backup, migration order, verification queries, rollback limits and human approval point are documented; no migration applied. |
-| LAUNCH-04 | Apply and verify migrations in non-production only after explicit approval. | Backup exists; applied migrations are recorded; schema and failure-path checks pass. |
-| LAUNCH-05 | Audit Cloudflare Access, bindings, origins and role allowlists without exposing secrets. | Missing or placeholder configuration is listed; no plaintext secret is printed or committed. |
-| LAUNCH-06 | Verify anonymous, reader and publisher route boundaries. | Allowed and denied cases, audit events and replay protection are demonstrated in non-production. |
+| LAUNCH-01 | Produce a repository-state and launch-gap audit against ADR 0012 and the revised launch scope. | **Complete with launch-blocking findings:** `docs/audit/launch-01-repository-state-and-launch-gap-audit.md` records branch, migrations, bindings, fail-closed feature controls, content boundaries, local results and unverified remote state. No remote action was taken. |
+| LAUNCH-02 | Run the clean local validation gate without fixing unrelated failures. | **Complete with a release blocker:** Node 24.12.0 `npm ci` and `npm run ci` passed on 15 July 2026; the separately required production dependency audit found three high-severity findings. Exact status is in `TESTING.md` and the LAUNCH-01 audit. |
+| LAUNCH-03 | Prepare the non-production migration run sheet. | **Prepared and reviewed:** `docs/operations/non-production-d1-migration-run-sheet.md`. It documents backup, migration order, verification queries, rollback limits and human approval; no remote migration has been applied. |
+| LAUNCH-04 | Apply and verify migrations in non-production only after explicit approval. | Use the LAUNCH-03 run sheet. Backup exists; applied migrations are recorded; schema and failure-path checks pass. Stop before production scheduling. |
+| LAUNCH-05 | Audit Cloudflare Access, bindings, origins and role allowlists without exposing secrets. | **Complete with launch-blocking findings:** `docs/audit/launch-05-cloudflare-configuration-audit.md`. Missing configuration is recorded without plaintext secrets. Continue with LAUNCH-05R. |
+| LAUNCH-05R | Repair the Access, D1 binding and Pages-to-Worker control plane only after explicit operator approval. | Follow `docs/operations/cloudflare-control-plane-repair-run-sheet.md`; preserve secret confidentiality, do not remove the legacy secret first, and capture only redacted evidence. |
+| LAUNCH-06 | Verify anonymous, reader and publisher route boundaries. | Requires LAUNCH-05R completion. Allowed and denied cases, audit events and replay protection are demonstrated in non-production. |
 | LAUNCH-07 | Recheck provider model IDs, pricing, retention, terms and account spend controls. | Dated primary-source review and required configuration changes are proposed; public AI remains disabled. |
 | LAUNCH-08 | Run the authenticated Ask TRACE evaluation set. | Citation, insufficient-evidence, disagreement, quota, timeout, cost and fail-closed cases meet the approved thresholds. |
 | STORY-01 | Publish one representative story through the real review workflow. | Sources, claims, evidence state, reviewer identity/time, correction path and public rendering are verified. |
@@ -2578,6 +2579,20 @@ These tasks apply the mandatory contract in Section 2.10. Complete only one task
 | LAUNCH-10 | Produce the final launch-readiness report without enabling launch. | Every gate links to evidence; failures and skipped checks remain blocking; human launch approval is explicit. |
 
 After any task, report the exact next task ID but do not begin it automatically. A task may be repeated only where its row explicitly permits repetition, such as STORY-02.
+
+### 20.2 Launch evidence and run-sheet register
+
+| Item | Current documented state | Next permitted action |
+|---|---|---|
+| Deployment rules | `DEPLOYMENT.md` now links the migration rehearsal and control-plane repair run sheets. AI flags remain off. | Use it as the top-level deployment checklist; do not treat it as authorisation to deploy. |
+| LAUNCH-01 repository audit | Complete with blockers: production dependency audit has three high findings; remote content counts and Pages-side bindings are not locally evidenced. | Plan a reviewed dependency upgrade; do not infer remote state. |
+| LAUNCH-02 local validation | CI passed on 15 July 2026 under Node 24.12.0; production dependency audit failed its high-severity gate. | Retest after the reviewed dependency remediation. |
+| LAUNCH-03 migration rehearsal | Prepared and reviewed; the preview D1 database is documented as empty. | LAUNCH-04 requires explicit human approval before any remote D1 command. |
+| LAUNCH-05 configuration audit | Complete with blockers: no Access application, missing Pages/Worker internal HMAC configuration, missing role configuration, and no evidenced preview bindings. | LAUNCH-05R using the control-plane repair run sheet. |
+| LAUNCH-05R repair | Run sheet prepared; no repair action is evidenced yet. | An authorised operator performs the dashboard changes and returns only the redacted evidence packet. |
+| LAUNCH-06 boundary tests | Not started. | Run only after LAUNCH-05R, using a non-production environment and keeping AI disabled. |
+
+The records above are evidence of documentation and audit work, not proof of deployed security controls. A lower-capability model must preserve this distinction in every progress report.
 
 ---
 

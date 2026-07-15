@@ -344,7 +344,7 @@ TRACE Guides and TRACE Lab records are eligible Ask TRACE retrieval sources.
 
 They are curated secondary knowledge, not replacements for underlying sources.
 
-Public sharing of a Guide, TRACE Lab record or Ask TRACE answer is governed by ADR 0014. Private Ask TRACE conversations are not directly public or shareable; any public answer must be regenerated as a bounded record against the current eligible corpus.
+Public sharing of a Guide, TRACE Lab record or Ask TRACE answer is governed by ADR 0014. Private Ask TRACE conversations are not directly public or shareable; any public answer must be stripped of personal conversation context and regenerated as a bounded record against the current eligible corpus.
 
 ```ts
 type TraceKnowledgeRole =

@@ -20,6 +20,7 @@ function filesUnder(directory) {
 
 const files = ["src", "workers", "scripts"].flatMap((directory) => filesUnder(join(root, directory)));
 const sources = new Map(files.map((file) => [relative(root, file).replaceAll("\\", "/"), readFileSync(file, "utf8")]));
+const isRuntimeSource = (path) => path.startsWith("src/") || path.startsWith("workers/");
 
 function forbid(pattern, message, predicate = () => true) {
   for (const [path, source] of sources) {
@@ -28,9 +29,9 @@ function forbid(pattern, message, predicate = () => true) {
   }
 }
 
-forbid(/api\.deepseek\.com/i, "direct provider URL outside the server adapter", (path) => path !== "src/ai/providers/deepseek.ts");
-forbid(/DeepSeekProvider/, "provider adapter imported outside the model gateway", (path) => !["src/ai/providers/deepseek.ts", "src/ai/trace-model-gateway.ts"].includes(path));
-forbid(/ADMIN_API_TOKEN|MASTER_ADMIN_TOKEN|X-Session-Id/i, "retired authentication or quota-bypass contract");
+forbid(/api\.deepseek\.com/i, "direct provider URL outside the server adapter", (path) => isRuntimeSource(path) && path !== "src/ai/providers/deepseek.ts");
+forbid(/DeepSeekProvider/, "provider adapter imported outside the model gateway", (path) => isRuntimeSource(path) && !["src/ai/providers/deepseek.ts", "src/ai/trace-model-gateway.ts"].includes(path));
+forbid(/ADMIN_API_TOKEN|MASTER_ADMIN_TOKEN|X-Session-Id/i, "retired authentication or quota-bypass contract", isRuntimeSource);
 forbid(/sessionStorage|localStorage/i, "browser persistence is forbidden in admin or AI paths", (path) => path.startsWith("src/pages/admin") || path.startsWith("src/pages/api"));
 forbid(/Access-Control-Allow-Origin["']?\s*[:=]\s*["']\*/i, "wildcard CORS policy");
 forbid(/sk-[A-Za-z0-9_-]{20,}/, "provider-shaped plaintext secret in the working tree");

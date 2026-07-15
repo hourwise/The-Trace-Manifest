@@ -42,4 +42,6 @@ npm run build
 
 ## Current validation status
 
-The laptop run on 14 July 2026 was intentionally stopped before a clean dependency install and full test/build run. Treat all executable checks as pending until rerun on the desktop. `git diff --check` passed during the source pass, but it is not a substitute for CI.
+Desktop validation completed on 15 July 2026 with Node 24.12.0. After `npm ci`, `npm run ci` passed: whitespace validation, Astro and Worker typecheck (0 errors, 0 warnings, 0 hints), 45 ingestion tests, stabilisation tests, migration validation, security checks, production build, and Cloudflare route/gateway verification. The build retained a non-blocking warning that `getStaticPaths()` is ignored for the dynamic server route `src/pages/knowledge/[slug].astro`.
+
+`npm run audit:production` also completed on 15 July 2026 but failed its required high-severity threshold: three high-severity production dependency findings remain in the Astro/Cloudflare dependency chain. The offered automatic fix is a breaking upgrade. Treat that result as a release blocker until a deliberate upgrade and full repeat validation are complete; do not use `npm audit fix --force` as an unreviewed remediation.
