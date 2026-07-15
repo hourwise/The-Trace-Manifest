@@ -21,6 +21,8 @@ For an existing database, take a backup/export first and confirm which migration
 
 The migration defaults catalogue records to `draft`; it does not silently publish extracted rows.
 
+Use `docs/operations/non-production-d1-migration-run-sheet.md` for the non-production migration rehearsal. It documents the backup/export, schema inspection, migration order, verification queries, rollback limits, and human approval stop before any production scheduling.
+
 ## 3. Pages configuration
 
 Configure the D1 `DB` binding and the canonical variables from `docs/configuration/environment-variables.md`. Add secrets with the Cloudflare secret facility, not `wrangler.toml`.
@@ -32,6 +34,8 @@ Keep `TRACE_AI_PUBLIC_ENABLED=false`, `TRACE_AI_EDITORIAL_ENABLED=false`, and `T
 Create a Cloudflare Access application covering `/admin*` and `/api/admin/*`. Set its audience and team domain on Pages, then configure explicit reader and publisher email allowlists.
 
 Set the same 32-byte-or-longer `TRACE_INTERNAL_SERVICE_SECRET` on Pages and the ingestion Worker. Configure `TRACE_INGESTION_WORKER_URL` as an HTTPS origin with no path or credentials. The Worker accepts no browser bearer token and no CORS admin flow.
+
+Use `docs/operations/cloudflare-control-plane-repair-run-sheet.md` when repairing or rechecking the Pages bindings, Access application, role allowlists, and signed Pages-to-Worker secret setup. It records the safe order of work and the evidence that may be pasted back without exposing secrets.
 
 ## 5. Domains
 
