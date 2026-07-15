@@ -1,11 +1,12 @@
 # The Trace Manifest — Evidence-Linked Knowledge Base Build Plan
 
-**Status:** Proposed  
+**Status:** Active planning document; implementation partial
 **Document type:** Additional build plan with embedded architectural decision  
 **Project:** The Trace Manifest  
 **Owner:** PCGsoft / hourwise  
 **Date:** 12 July 2026  
-**Suggested location:** `docs/product/evidence-linked-knowledge-base-build-plan.md`
+**Last reconciled:** 15 July 2026 against ADR 0009–0014 and the revised launch scope
+**Canonical location:** `docs/the_trace_manifest_evidence_linked_knowledge_base_build_plan.md`
 
 ---
 
@@ -1024,7 +1025,145 @@ A page may be automatically flagged for review when:
 
 ---
 
-## 17. Phase Plan
+## 17. Mandatory Execution Protocol and Atomic Phase Plan
+
+This section is written so that a lower-capability model can complete one bounded task at a time. Its rules are **mandatory acceptance criteria**, not suggestions. An executor must explicitly apply them in code, data, tests and documentation. Merely mentioning an ADR or saying that a rule was considered is not compliance.
+
+### 17.1 Rule precedence
+
+For every task, apply rules in this order:
+
+1. security, privacy, legal, rights and secret-protection prohibitions;
+2. the specific accepted ADR governing the feature;
+3. ADR 0012 durable-control, authentication, audit and publication boundaries;
+4. the focused sequencing in `docs/The Trace Manifest — Revised Launch.md`;
+5. this build plan and the master build plan;
+6. local implementation convenience.
+
+If two requirements appear to conflict, use the more restrictive behaviour and stop for human review. Do not silently choose the easier interpretation. A build-plan sentence cannot weaken an ADR.
+
+### 17.2 Mandatory rules for every work unit
+
+The executor **MUST**:
+
+1. read the task, the named ADRs and the files it will change before editing;
+2. restate the applicable `MUST`, `MUST NOT`, review gate and failure behaviour in its task note;
+3. inspect the current implementation and tests instead of assuming the plan describes current code;
+4. change only one task ID at a time;
+5. preserve user changes and avoid unrelated refactors;
+6. fail closed when identity, evidence, publication state, audit storage or configuration is missing;
+7. add or update tests that demonstrate each applicable rule;
+8. run the task's required checks and record their actual output;
+9. inspect the final diff for scope, secrets, unsafe URLs, unreviewed publication paths and accidental generated files;
+10. update a status marker only when repository evidence proves the exit criterion;
+11. stop after the selected task and hand back the result; do not start the next task automatically;
+12. obtain explicit human authority before deployment, production migration, secret changes, destructive data operations or enabling a public feature.
+
+The executor **MUST NOT**:
+
+- invent schemas, routes, environment variables, source rights or deployment state;
+- treat model output, a social post, a Guide, a previous Ask answer or commercial data as independent primary evidence;
+- expose drafts, unreviewed records, private conversations or internal identifiers publicly;
+- weaken validation, authentication, evidence gates, quotas, audit or correction history to make a test pass;
+- add automatic publication, automatic social posting, public contributions, monetisation or public snapshots before their deferred gate is explicitly opened;
+- mark a phase complete because files, placeholders or routes merely exist.
+
+### 17.3 Required task note
+
+Before editing, create this note in the working response or implementation issue. It does not need to be committed unless the task asks for it.
+
+```text
+Task ID:
+Single outcome:
+Allowed files:
+Files explicitly out of scope:
+Governing ADRs and exact rules:
+Current repository evidence inspected:
+Failure/rollback behaviour:
+Tests to run:
+Human approval required for:
+```
+
+After editing, report:
+
+```text
+Changed:
+Rules applied and where:
+Tests run and results:
+Remaining risks or deferred work:
+Next eligible task ID (not started):
+```
+
+### 17.4 Atomic task queue
+
+Execute tasks in order unless a human explicitly selects an independent later task. Each row is a separate work unit and should normally be a separate commit.
+
+| Task ID | One bounded outcome | Mandatory proof before completion |
+|---|---|---|
+| GOV-01 | Read ADR 0009–0014, the revised launch scope and this section; produce the task note for the next task. | Note names exact rules, allowed files, tests and stop conditions. No code changes. |
+| AUDIT-01 | Inventory current knowledge routes, data records, statuses, schemas, tests and deployment claims. | Evidence-backed gap list; no status is inferred from filenames or placeholders. |
+| KB1-01 | Define and test the static knowledge-page metadata contract. | Schema rejects missing slug, version, review state, source metadata and invalid status. |
+| KB1-02 | Make `/knowledge` list only eligible published records. | Draft fixtures are excluded; empty state is truthful; rendering test passes. |
+| KB1-03 | Make `/knowledge/[slug]` fail closed for missing or ineligible records. | Published page renders; draft and unknown slugs return the intended non-public response. |
+| KB1-04 | Build evidence, revision and last-reviewed UI for one page. | Source ownership, evidence state, page version and freshness are visible and accessible. |
+| KB1-05 | Complete three cornerstone pages without filler. | Every material claim has eligible evidence; no invented or circular citations; human review recorded. |
+| KB1-06 | Add canonical, sitemap and `noindex` controls. | Drafts/placeholders are absent from sitemap and search indexing; canonical tests pass. |
+| KB2-01 | Add one forward-only migration for knowledge entities, pages and revisions. | Migration validation passes; constraints and indexes are documented; no production apply. |
+| KB2-02 | Add claim-to-page and claim-to-evidence relations. | Referential-integrity tests reject orphaned or invalid relationships. |
+| KB2-03 | Implement typed read queries for eligible current revisions. | Queries fail closed and exclude draft, superseded or unreviewed data by default. |
+| KB2-04 | Implement an idempotent static-record importer. | Re-running does not duplicate entities, pages, claims or revisions. |
+| KB2-05 | Enforce immutable published revisions and append-only corrections. | Tests prove a published revision cannot be silently overwritten. |
+| KB3-01 | Define the knowledge admin reader/publisher role matrix under ADR 0012. | Unauthenticated and reader mutation tests fail; publisher actions are attributable. |
+| KB3-02 | Build the draft/review list and read-only revision comparison. | Only authorised operators can view admin data; public routes remain unaffected. |
+| KB3-03 | Add one bounded draft-edit mutation. | Input is validated, authorised and audited; published content is not mutated. |
+| KB3-04 | Add evidence attachment/removal with provenance validation. | Unknown, ineligible or mismatched evidence is rejected and audited. |
+| KB3-05 | Add review and publication transition gates. | Reviewer identity/time, complete content, eligible evidence and revision state are required. |
+| KB3-06 | Add correction, supersession and withdrawal transitions. | Prior public history remains accessible where policy permits; current status updates safely. |
+| KB4-01 | Link feed entities to knowledge pages as non-public candidates. | Link creation is idempotent and cannot alter published knowledge content. |
+| KB4-02 | Create auditable knowledge-change proposals from eligible intelligence. | Proposal records input, algorithm version and reason; it cannot self-approve. |
+| KB4-03 | Add proposal accept/reject review actions. | Publisher approval is required; rejection remains auditable; correction rules apply. |
+| KB4-04 | Implement ADR 0009 social-link separation. | Social post and linked material have separate provenance; engagement never raises evidence confidence. |
+| KB5-01 | Index only current, eligible page sections and underlying evidence. | Draft, withdrawn and superseded-current content is excluded or clearly qualified. |
+| KB5-02 | Implement deterministic retrieval ranking and source-role labels. | Ranking cannot read popularity, commission or commercial relationship values. |
+| KB5-03 | Add ADR 0013 Guide/TRACE Lab section retrieval. | Answer cites the Guide section and underlying eligible sources; verification and freshness are retained. |
+| KB5-04 | Add anti-circular-evidence and private-context tests. | Previous Ask answers never become evidence; private conversations never enter public retrieval. |
+| KB5-05 | Add safe stale, conflicting and insufficient-evidence responses. | Tests prove the system does not regenerate around a failed evidence gate. |
+| KB6-01 | Add structured metadata to one complete canonical page. | Metadata matches visible content, current version and correction state. |
+| KB6-02 | Add one exact-question alias to an existing strong page. | Alias canonicalises correctly and does not create duplicate or thin indexed content. |
+| KB6-03 | Build one bounded evidence-based micro-tool. | Limitations are visible; result is not called certification; input is validated and bounded. |
+| KB7-01 | Write the contribution threat, moderation and provenance contract. | Human approval explicitly required before any endpoint or UI work. |
+| KB7-02 | Add a source/correction suggestion endpoint only after KB7-01 approval. | Rate limit, validation, audit and no-direct-publication tests pass. |
+| XADR-01 | Add ADR 0010 vertical fields and feature flags without exposing routes. | Initial launch remains AI & Agents only; flags default off; no empty routes are indexed. |
+| XADR-02 | Add a governed automatic-publication pilot only after explicit human approval. | Every ADR 0010 source, evidence, content, risk, cap, rollback and audit gate has a test. |
+| XADR-03 | Add ADR 0011 commercial foundations only after launch stability. | Commercial data is structurally inaccessible to evidence, confidence, ranking and retrieval. |
+| XADR-04 | Add ADR 0014 correction-aware share metadata before snapshots. | Shared score/status includes readable context, version/date and current correction state. |
+| XADR-05 | Add public snapshots or public Ask sharing only after explicit human approval. | Private context is stripped; record is re-grounded, reviewed, versioned and independently publishable. |
+
+### 17.5 Required check selection
+
+Run the smallest relevant checks during development, then the full applicable gate before marking the task complete:
+
+- TypeScript or Astro change: `npm run typecheck`;
+- unit/integration behaviour: `npm test` plus the focused test file where available;
+- migration: `npm run test:migrations`;
+- security, authentication, secrets or public boundary: `npm run test:security`;
+- routing or rendered output: `npm run build`;
+- every task: `git diff --check` and an explicit final diff review.
+
+A failing check blocks completion. A skipped check must be reported with the concrete reason and cannot be described as passing.
+
+### 17.6 ADR-to-task application map
+
+| ADR | Rules that must be visibly applied | Atomic tasks |
+|---|---|---|
+| ADR 0009 | Social signals are discovery only; linked sources have separate provenance; no automatic link following or social auto-publication. | KB4-04, XADR-02 |
+| ADR 0010 | New verticals are feature-gated; automatic publication is deterministic, capped, auditable and deferred at launch. | XADR-01, XADR-02 |
+| ADR 0011 | Commercial data cannot affect evidence, ranking, retrieval or conclusions; paid material is distinct and disclosed. | KB5-02, XADR-03 |
+| ADR 0012 | Durable state, verified Access identity, role enforcement, audit, fail-closed publication and grounded Ask are mandatory. | KB2-01–KB3-06, KB5-01–KB5-05 |
+| ADR 0013 | Guides have named authorship, verification, safe commands, version/freshness data, underlying sources and no circular retrieval. | KB1-04, KB1-05, KB5-03, KB5-04 |
+| ADR 0014 | Shares retain context, date/version and corrections; private Ask is never directly shared; snapshots are deferred. | XADR-04, XADR-05 |
+
+The phase summaries below describe intent and dependencies. The atomic task queue above is the authoritative implementation order for model-executed work.
 
 ### Phase KB-0 — Documentation and decision lock
 

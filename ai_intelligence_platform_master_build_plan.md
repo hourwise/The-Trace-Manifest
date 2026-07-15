@@ -1,6 +1,6 @@
 ﻿# AI Intelligence Platform — Master Build Plan
 
-**Status:** Implementation in progress — stabilisation controls are present in the repository; desktop CI and deployment verification remain pending as of 14 July 2026
+**Status:** Implementation in progress — ADR 0009–0014 and launch sequencing reconciled on 15 July 2026; stabilisation controls are present in the repository, while deployment verification remains pending
 **Document purpose:** Define the product, architecture, MVP, roadmap, monetisation, governance, and required documentation from the beginning.  
 **Product name:** The Trace Manifest  
 **Editorial identity:** T.R.A.C.E. — Traceable Research, Analysis, Context and Evidence  
@@ -193,6 +193,38 @@ These governance rules apply to all model-assisted features (Ask TRACE, TRACE An
 **Trust boundary:**
 - The model may summarise, compare, draft analysis, identify uncertainty, and propose editorial wording.
 - The model may not: invent evidence, access unrestricted web search, alter source trust classifications, approve its own citations, calculate final confidence, publish autonomously, modify the corrections ledger, call arbitrary URLs, execute code, or write directly to production data.
+
+---
+
+### 2.10 Mandatory ADR execution contract
+
+The accepted ADRs are enforceable build constraints. Their `MUST`, `MUST NOT`, review gates, failure behaviour and deferred boundaries must be explicitly implemented and tested. Referring to an ADR in a comment, plan or completion message does not prove compliance.
+
+Every model-executed task must:
+
+1. select exactly one atomic task ID from Section 20.1 of this plan or Section 17 of `docs/the_trace_manifest_evidence_linked_knowledge_base_build_plan.md`;
+2. read the governing ADRs and `docs/The Trace Manifest — Revised Launch.md` before editing;
+3. state the allowed files, out-of-scope files, exact rules, tests and stop conditions;
+4. inspect current repository evidence and correct stale plan claims before relying on them;
+5. implement the narrowest change that satisfies the selected task;
+6. prove each applicable rule with tests or a verifiable repository check;
+7. fail closed when evidence, identity, audit, publication state or configuration is unavailable;
+8. stop after the selected task and report the next eligible task without starting it.
+
+The executor must stop for human direction if rules conflict or if work requires production migration, deployment, destructive data changes, secrets, public enablement, a new external integration, or a deferred feature gate. The more restrictive rule applies until the conflict is resolved.
+
+### 2.11 ADR 0009–0014 implementation map
+
+| ADR | Build consequence | Sequence |
+|---|---|---|
+| ADR 0009 | Social posts remain governed discovery signals; linked material becomes a separate source candidate with its own provenance. | Administrator-only at launch; no social auto-publication. |
+| ADR 0010 | New verticals, Spotlight, App Radar, Open Source Radar and automatic publication require feature flags and deterministic gates. | Schema preparation may proceed; public expansion and automatic publication are deferred. |
+| ADR 0011 | Commercial relationships and values are isolated from evidence, confidence, ranking, retrieval and conclusions. | Policy foundation only at launch; commercial activation follows stability and explicit approval. |
+| ADR 0012 | Durable D1 controls, verified Access roles, audit, publication eligibility and grounded Ask are launch prerequisites. | Verify migration and deployment before public AI or expanded publication. |
+| ADR 0013 | Guides and TRACE Lab require named ownership, verification, command safety, versions, freshness and underlying sources. | First expansion; publish six complete reviewed Guides before prominent navigation. |
+| ADR 0014 | Sharing retains context, version/date and corrections; private Ask conversations are never directly public. | Add correction-aware metadata first; snapshots, public Ask sharing and social automation are deferred. |
+
+The revised launch scope controls delivery order: launch AI & Agents with manual editorial approval first, then Guides, then separately approved expansion. Later ADRs do not authorise their features to bypass that sequence.
 
 ---
 
@@ -1264,9 +1296,9 @@ Built and deployed:
 
 ---
 
-## Phase 3B — Evidence-Linked Knowledge Base  ✅ COMPLETED 13 July 2026
+## Phase 3B — Evidence-Linked Knowledge Base — PARTIALLY IMPLEMENTED
 
-**Status:** Complete — 16 pages published, 5 with full standard-contract content  
+**Status:** Partial — 16 static records exist, but only 5 are marked published; draft stubs, durable editorial workflow, claim-level storage, revision enforcement and deployment verification remain incomplete. File or route existence is not completion.
 **Dependency:** Phase 3 (Curation and Trust) is complete. The knowledge base consumes classified items, clustered stories, extracted entities, claims, and evidence relationships from the pipeline.
 
 ### Purpose
@@ -1855,6 +1887,8 @@ Build:
 
 ## Phase 7 — Monetisation Expansion
 
+**Governing decision:** ADR 0011. This phase is deferred until launch stability and explicit approval. Commercial values must remain structurally inaccessible to evidence, confidence, ranking and retrieval code. Ad networks, behavioural tracking, paid editorial inclusion and automatic affiliate insertion require separate review and are not implied by this phase heading.
+
 Build:
 
 - Direct sponsorship manager
@@ -2287,23 +2321,24 @@ When APIs exist:
 
 ## 14.9 ADRs
 
-Create an ADR folder immediately:
+The canonical accepted set is indexed in `docs/adr/README.md`:
 
-- `docs/adr/0001-record-architecture-decisions.md`
-- `docs/adr/0002-frontend-framework.md`
-- `docs/adr/0003-database-choice.md`
-- `docs/adr/0004-source-ingestion-policy.md`
-- `docs/adr/0005-trust-scoring-model.md`
-- `docs/adr/0006-human-review-boundary.md`
-- `docs/adr/0007-reddit-and-social-content.md`
-- `docs/adr/0008-search-and-retrieval.md`
-- `docs/adr/0009-ai-model-selection.md`
-- `docs/adr/0010-monetisation-independence.md`
-- `docs/adr/0011-correction-ledger.md`
-- `docs/adr/0012-authentication-and-accounts.md`
-- `docs/adr/0013-hosting-and-deployment.md`
-- `docs/adr/0014-public-api.md`
-- `docs/adr/0015-data-retention.md`
+- ADR 0001 — Record architecture decisions;
+- ADR 0002 — Product name and domains;
+- ADR 0003 — Initial technical direction;
+- ADR 0004 — Human review boundary;
+- ADR 0005 — Commercial independence;
+- ADR 0006 — Database validation and migration triggers;
+- ADR 0007 — Early Ask validation (historical implementation);
+- ADR 0008 — Model API, provider security and cost containment;
+- ADR 0009 — Governed social signals and linked-source discovery;
+- ADR 0010 — Editorial scope, curated products and governed automatic publication;
+- ADR 0011 — Advertising, sponsorship and affiliate implementation;
+- ADR 0012 — Durable controls, Access administration and publication boundaries;
+- ADR 0013 — TRACE Guides, TRACE Lab and Ask knowledge integration;
+- ADR 0014 — Context-preserving sharing, snapshots and preview integrity.
+
+Do not reuse an existing number or create a differently titled parallel record. Amend the index and all affected plans whenever a new ADR is accepted or renumbered.
 
 ---
 
@@ -2464,21 +2499,19 @@ Earlier naming exploration included themes around signal/intelligence (SignalAtl
 
 The most sensible first release should include:
 
-1. Astro public site
-2. Curated feed
-3. Daily briefing
-4. Source registry
-5. Basic evidence labels
-6. Model pages
-7. Benchmark pages
-8. GitHub radar
-9. Research feed
-10. Citation-grounded ask box
-11. Manual review queue
-12. Corrections ledger
-13. Newsletter signup
-14. Supporter option
-15. Affiliate and sponsor disclosure foundations
+1. Server-rendered Astro site with truthful empty states.
+2. Durable D1 publication, quota, budget, idempotency, audit and correction controls under ADR 0012.
+3. A small approved high-signal AI & Agents source registry.
+4. Verified ingestion, deduplication, clustering, evidence classification and failure reporting.
+5. Manual review and attributable publication workflow.
+6. Fifteen to twenty source-backed AI & Agents stories or briefings.
+7. Public feed, story, methodology, source-policy, corrections and about pages.
+8. Citation-grounded one-off Ask TRACE with safe insufficient-evidence responses, disabled until launch gates pass.
+9. Administrator-only social discovery under ADR 0009.
+10. Basic consent-based newsletter signup.
+11. Six complete, reviewed TRACE Guides as the first expansion under ADR 0013.
+
+Do not require broad technology verticals, automatic publication, Spotlight, App Radar, full Open Source Radar, commercial activation, public snapshots, public Ask sharing or automated social posting for the first release.
 
 Recommended hosting:
 
@@ -2500,7 +2533,7 @@ Recommended development principle:
 2. ~~Check domain, trademark, GitHub, and social availability~~ → Domains registered (`thetracemanifest.com`, `.uk`); trademark, GitHub org, and social handles in progress
 3. ~~Create repository~~ → **Done.** `github.com/hourwise/The-Trace-Manifest`
 4. ~~Add all Phase 0 documentation~~ → **Done.** 20 docs across 7 directories
-5. ~~Record initial ADRs~~ → **Done.** 7 ADRs (0001–0007) all accepted
+5. ~~Record and reconcile architecture decisions~~ → **Done.** Canonical ADR set 0001–0014 indexed in `docs/adr/README.md`
 6. ~~Finalise source list~~ → **Done.** 65 named sources across 6 sections in `docs/sources/source-registry.md`
 7. ~~Define trust labels~~ → **Done.** Evidence label system (6 states) implemented in Phase 1 shell
 8. ~~Define MVP data model~~ → **Done.** Entity list and provenance rules in `docs/architecture/initial-data-model.md`
@@ -2511,6 +2544,40 @@ Recommended development principle:
 13. Add daily briefing generation → **Reviewed publication and D1-backed rendering implemented;** live scheduling/content verification remains pending
 14. Add citation-grounded Ask prototype → **Grounded MVP implemented at `/ask-trace`, disabled by default;** the former curated mock-answer routes now redirect and no longer present fixtures as live answers
 15. Add supporter and newsletter foundations
+16. Verify every ADR 0012 migration, Access, origin, audit, publication and Ask TRACE deployment gate in a non-production environment
+17. Seed and review 15–20 source-backed AI & Agents stories without invented history or filler
+18. Complete and review six TRACE Guides under ADR 0013 before exposing prominent Guide navigation
+19. Add administrator-only social discovery with separate linked-source provenance under ADR 0009
+20. Keep ADR 0010 expansion, ADR 0011 commercial activation and ADR 0014 public sharing features disabled until their explicit gates are approved
+
+### 20.1 Atomic launch task queue for lower-capability models
+
+These tasks apply the mandatory contract in Section 2.10. Complete only one task ID per work unit. The ordering states dependency; it does not grant authority to deploy, migrate production, change secrets or enable a public feature.
+
+| Task ID | One bounded outcome | Completion evidence |
+|---|---|---|
+| LAUNCH-01 | Produce a repository-state and launch-gap audit against ADR 0012 and the revised launch scope. | Current branch, status, migrations, bindings, feature flags, tests and content counts are evidenced; no code change. |
+| LAUNCH-02 | Run the clean local validation gate without fixing unrelated failures. | Typecheck, tests, migration validation, security checks and build results are recorded exactly. |
+| LAUNCH-03 | Prepare the non-production migration run sheet. | Backup, migration order, verification queries, rollback limits and human approval point are documented; no migration applied. |
+| LAUNCH-04 | Apply and verify migrations in non-production only after explicit approval. | Backup exists; applied migrations are recorded; schema and failure-path checks pass. |
+| LAUNCH-05 | Audit Cloudflare Access, bindings, origins and role allowlists without exposing secrets. | Missing or placeholder configuration is listed; no plaintext secret is printed or committed. |
+| LAUNCH-06 | Verify anonymous, reader and publisher route boundaries. | Allowed and denied cases, audit events and replay protection are demonstrated in non-production. |
+| LAUNCH-07 | Recheck provider model IDs, pricing, retention, terms and account spend controls. | Dated primary-source review and required configuration changes are proposed; public AI remains disabled. |
+| LAUNCH-08 | Run the authenticated Ask TRACE evaluation set. | Citation, insufficient-evidence, disagreement, quota, timeout, cost and fail-closed cases meet the approved thresholds. |
+| STORY-01 | Publish one representative story through the real review workflow. | Sources, claims, evidence state, reviewer identity/time, correction path and public rendering are verified. |
+| STORY-02 | Repeat STORY-01 for one additional high-signal story. | One independently reviewed record; do not bulk-generate or fabricate history. Repeat this task one story at a time until the 15–20 target is reached. |
+| SOCIAL-01 | Implement or verify administrator-only social intake under ADR 0009. | Social post and linked source are separate; provenance, review and rejection behaviour are tested. |
+| GUIDE-01 | Implement or verify the ADR 0013 Guide metadata, authorship, verification and freshness contract. | Invalid/missing fields fail; no Guide is auto-published. |
+| GUIDE-02 | Complete and review “Install Node.js and npm on Windows.” | Commands, versions, safety notes and underlying sources are verified. |
+| GUIDE-03 | Complete and review “Git and GitHub for Beginners.” | Destructive/conflict guidance, tested steps and sources are verified. |
+| GUIDE-04 | Complete and review “Deploy a Static Website to Cloudflare Pages.” | Current platform steps, cost/security notes and sources are verified. |
+| GUIDE-05 | Complete and review “Run a Local AI Model with Ollama.” | Hardware/version limits, security notes, tested steps and sources are verified. |
+| GUIDE-06 | Complete and review “Install and Audit an MCP Server Safely.” | Permission, credential, prompt-injection and removal guidance is verified. |
+| GUIDE-07 | Complete and review “Secure a New VPS.” | Lockout, firewall, SSH, update, backup and rollback warnings are verified. |
+| LAUNCH-09 | Verify sitemap, navigation, search and `noindex` launch boundaries. | Empty/deferred sections are hidden, excluded or noindexed; canonical routes pass. |
+| LAUNCH-10 | Produce the final launch-readiness report without enabling launch. | Every gate links to evidence; failures and skipped checks remain blocking; human launch approval is explicit. |
+
+After any task, report the exact next task ID but do not begin it automatically. A task may be repeated only where its row explicitly permits repetition, such as STORY-02.
 
 ---
 
