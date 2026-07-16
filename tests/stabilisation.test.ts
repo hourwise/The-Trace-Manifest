@@ -6,6 +6,8 @@ import { validateAnswerDraft, validateAskTraceInput } from "../src/ai/schemas";
 import { validateAnswerOutput } from "../src/ai/validation";
 import { calculateDeterministicConfidence } from "../src/lib/server/ask-evidence";
 import { isAnswerEligibleEvidence, PUBLIC_ASK_TASK_POLICY, TRACE_POLICY_VERSION } from "../src/ai/task-policy";
+import { GUIDE_CONTRACT_VERSION, guideFreshness, isGuideEligibleForProceduralRetrieval, validateGuideCommand, validateGuideMetadata } from "../src/guides/contract";
+import { nodeWindowsVerificationCommands } from "../src/guides/drafts/install-node-js-and-npm-on-windows";
 import { validateAskBody } from "../src/pages/api/trace/ask";
 import { handleTriageRequest } from "../src/pages/api/admin/ai-triage";
 import { signInternalRequest, verifyInternalRequestSignature } from "../src/security/internal-signature";
@@ -241,6 +243,40 @@ async function boundaryTests(): Promise<void> {
   assert.equal(isAnswerEligibleEvidence({ ...evidence[0], sourceKind: "trace_story", sourceRole: "internal_synthesis", independentEvidenceWeight: 0 }), false, "TRACE stories are context, not independent evidence");
   assert.equal(isAnswerEligibleEvidence({ ...evidence[0], admissionState: "quarantined" }), false, "unadmitted evidence cannot answer Ask TRACE");
   assert.equal(isAnswerEligibleEvidence({ ...evidence[0], freshnessState: "stale" }), false, "stale evidence cannot answer Ask TRACE");
+  const guide = {
+    id: "guide-node-windows", slug: "install-node-js-windows", title: "Install Node.js on Windows",
+    category: "development-tools" as const, difficulty: "beginner" as const, verificationStatus: "fully-tested" as const,
+    version: 1, testedOperatingSystems: ["Windows 11"], testedVersions: { "Node.js": "22.0.0" },
+    authorUserId: "phil-geran", reviewedByUserId: "phil-geran", reviewedAt: "2026-07-16T12:00:00Z",
+    destructiveStepsPresent: false, networkExposurePresent: false, credentialsRequired: false,
+    rootOrAdministratorAccessRequired: true, downloadsExecutableCode: true,
+    commands: [{
+      command: "node --version", operatingSystem: "Windows 11", shell: "PowerShell", workingDirectory: "Any directory",
+      requiresAdministrator: false, writesOrDeletes: false, opensNetworkPort: false, downloadsExecutableCode: false,
+      variablesToReplace: [], expectedOutput: "A Node.js version.", rollback: "None; this command is read-only.",
+    }],
+    sourceRelationships: [{
+      sourceReference: "https://nodejs.org/en/download", sourceKind: "external_primary" as const,
+      relationship: "instruction-source" as const, supportsSections: ["Installation"], lastCheckedAt: "2026-07-16T12:00:00Z",
+    }],
+    publicationStatus: "draft" as const, publicationMode: "manual_only" as const,
+    lastVerifiedAt: "2026-07-16T12:00:00Z", reviewDueAt: "2026-08-16T12:00:00Z",
+  };
+  assert.equal(GUIDE_CONTRACT_VERSION, "adr-0013-2026-07-16.1");
+  assert.equal(validateGuideMetadata(guide).valid, true, "complete guide metadata is review-ready");
+  assert.equal(nodeWindowsVerificationCommands.every((command) => validateGuideCommand(command).valid), true,
+    "GUIDE-02 records safety metadata for every reader command");
+  assert.equal(validateGuideCommand({ ...nodeWindowsVerificationCommands[0], rollback: "" }).valid, false,
+    "Guide commands require a rollback or explicit no-op rollback statement");
+  assert.equal(validateGuideMetadata({ ...guide, authorUserId: "" }).valid, false, "guides require named accountable authorship");
+  assert.equal(validateGuideMetadata({ ...guide, publicationMode: "automatic" }).valid, false, "guides cannot opt into auto-publication");
+  const publishedGuide = {
+    ...guide, publicationStatus: "published" as const, publicationApprovedByUserId: "phil-geran",
+    publicationApprovedAt: "2026-07-16T13:00:00Z", publishedAt: "2026-07-16T13:00:00Z",
+  };
+  assert.equal(isGuideEligibleForProceduralRetrieval(publishedGuide, Date.parse("2026-07-17T00:00:00Z")), true);
+  assert.equal(guideFreshness({ ...publishedGuide, verificationStatus: "outdated" }, Date.parse("2026-07-17T00:00:00Z")), "outdated");
+  assert.equal(isGuideEligibleForProceduralRetrieval({ ...publishedGuide, verificationStatus: "outdated" }, Date.parse("2026-07-17T00:00:00Z")), false, "outdated guides are excluded from procedural retrieval");
   assert.equal(validateAskBody({ question: "  useful   question  " }).valid, true);
   assert.equal(validateAskBody({ question: "valid", extra: true }).valid, false);
   assert.equal(validateAskTraceInput({
