@@ -5,11 +5,16 @@ pages_build_output_dir = "dist"
 
 [[d1_databases]]
 binding = "DB"
-database_name = "trace-manifest-db"
-database_id = "1625036a-ffe2-4103-bf9d-086bae150561"
+database_name = "trace-manifest-db-preview"
+database_id = "f312f662-2252-4005-8103-1a40d546e16b"
 
 [env.production]
 name = "the-trace-manifest"
+
+[[env.production.d1_databases]]
+binding = "DB"
+database_name = "trace-manifest-db"
+database_id = "1625036a-ffe2-4103-bf9d-086bae150561"
 
 [env.production.vars]
 TRACE_ENVIRONMENT = "production"

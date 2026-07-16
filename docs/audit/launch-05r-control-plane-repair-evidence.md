@@ -30,9 +30,10 @@ The initial PowerShell random-generator call was incompatible with the local she
 1. The currently authenticated Cloudflare CLI credential does not include `Access: Apps and Policies` permission. Manual dashboard configuration was required and the CLI still cannot independently inspect those resources.
 2. The Pages `TRACE_ADMIN_READERS` and `TRACE_ADMIN_PUBLISHERS` allowlists are not yet evidenced. They must each contain the approved operator in the Pages production environment, without recording the private address in this repository.
 3. The Access applications currently permit all configured identity providers unless the operator restricts each application's Login methods to One-time PIN. That restriction and any chosen session duration need redacted evidence.
-4. The checked Pages source configuration has a production D1 binding, but the dashboard/deployed binding and a preview binding are not yet evidenced. A fresh deployment is required for new Pages secrets or bindings to take effect.
-5. No preview Pages/Worker control plane has been configured. Do not point preview traffic at the production D1 database.
-6. Access role, signed proxy, replay, audit-row, and non-production mutation tests have not run; they belong to LAUNCH-06 after the remaining repair is complete.
+4. A read-only production D1 inspection on 16 July 2026 found a partial schema: the publication fields are present, but all ADR 0012 durable-control tables and the stabilisation outcome columns are absent. No production write was performed. Production backup, migration and verification remain a separate explicit approval.
+5. The earlier Wrangler configuration put `DB` only at the top level while using a named production environment. Cloudflare bindings are non-inheritable, so the deployed production environment did not receive the binding. The tracked repair moves preview `DB` to the top level and adds an explicit `[[env.production.d1_databases]]` production binding; it requires a fresh Pages deployment.
+6. No preview Pages/Worker control plane has been fully verified. The corrected top-level Pages configuration targets the preview D1 database and must not point preview traffic at the production database.
+7. Access role, signed proxy, replay, audit-row, and non-production mutation tests have not run; they belong to LAUNCH-06 after the remaining repair is complete.
 
 ## Required next authority and safe continuation
 
@@ -40,6 +41,7 @@ Complete the following in the Cloudflare dashboard and return only the redacted 
 
 - restrict each Access application's Login methods to One-time PIN and retain the narrow Allow policy with no broad bypass;
 - configure the Pages reader and publisher allowlists with the approved operator;
-- confirm production and preview Pages `DB` bindings, followed by a fresh deployment.
+- deploy the corrected production/preview Pages D1 binding configuration and confirm it from the running Pages Functions;
+- obtain separate explicit authority for a production D1 backup, stabilisation-only migration and verification.
 
 This record does not authorise public AI, production migration, legacy-secret removal, or administrative mutation tests.

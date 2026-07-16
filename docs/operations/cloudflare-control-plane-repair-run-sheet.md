@@ -39,6 +39,8 @@ Database: trace-manifest-db
 Database ID: 1625036a-ffe2-4103-bf9d-086bae150561
 ```
 
+When Pages configuration is managed by `wrangler.toml`, bindings are non-inheritable. Define the production binding under `[[env.production.d1_databases]]`; keep the top-level `[[d1_databases]]` binding pointed at the preview database for preview deployments. Do not try to override these bindings in the dashboard.
+
 Preview/staging binding to add or confirm, if using preview functions:
 
 ```text
