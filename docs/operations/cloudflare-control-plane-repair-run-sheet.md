@@ -92,7 +92,7 @@ Add or confirm these secrets:
 
 ```text
 TRACE_INTERNAL_SERVICE_SECRET=<same locally generated value used on the Worker>
-CF_ACCESS_AUD=<Cloudflare Access Application Audience AUD tag>
+CF_ACCESS_AUD=<comma-separated Cloudflare Access Application Audience AUD tags>
 ```
 
 Optional / conditional secrets:
@@ -160,7 +160,7 @@ Cloudflare dashboard path:
 Zero Trust -> Access controls -> Applications -> Add an application -> Self-hosted
 ```
 
-Create one self-hosted application for the production admin surface:
+Create Access coverage for the production admin surface:
 
 ```text
 Suggested name: The Trace Manifest Admin
@@ -173,11 +173,13 @@ Policies: at least one Allow policy for intended operators; no broad public bypa
 
 Cloudflare Access applications are deny-by-default: a user must match an Allow policy before access is granted.
 
-After saving the application:
+Prefer one self-hosted application with both destinations. If the dashboard configuration only exposes one destination per application, create two path-specific applications with the same narrow Allow policy. Both forms are supported by the Pages verifier.
+
+After saving the application or applications:
 
 1. Go to the Access application configuration.
-2. Copy the Application Audience (AUD) tag from Additional settings.
-3. Store it as the encrypted Pages secret `CF_ACCESS_AUD`.
+2. Copy each Application Audience (AUD) tag from Additional settings.
+3. Store one or both values as the encrypted Pages secret `CF_ACCESS_AUD`, comma-separated with no other values.
 4. Store the team domain host as the plaintext Pages variable `CF_ACCESS_TEAM_DOMAIN`.
 
 The code expects the team domain host only, for example:

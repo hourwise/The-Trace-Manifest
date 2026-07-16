@@ -15,7 +15,7 @@ All values are server-side. No variable in this contract may use a browser/publi
 | Name | Required | Purpose |
 |---|---|---|
 | `CF_ACCESS_TEAM_DOMAIN` | For admin | Host such as `team.cloudflareaccess.com`; no scheme/path. |
-| `CF_ACCESS_AUD` | For admin | Access application audience; store as a secret. |
+| `CF_ACCESS_AUD` | For admin | Comma-separated allowlist of one or more Access application audiences; store as a secret. Each value must exactly match an application that protects an admin route. |
 | `TRACE_ADMIN_READERS` | For admin reads | Comma-separated lower-case email allowlist. |
 | `TRACE_ADMIN_PUBLISHERS` | For mutations | Comma-separated lower-case email allowlist. Publisher wins if listed in both. |
 | `TRACE_INGESTION_WORKER_URL` | For proxy | HTTPS Worker origin only; no path or credentials. |

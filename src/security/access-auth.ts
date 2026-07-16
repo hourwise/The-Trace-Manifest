@@ -63,8 +63,13 @@ function configuredMembers(value: string | undefined): Set<string> {
   return new Set((value ?? "").split(",").map((entry) => entry.trim().toLowerCase()).filter(Boolean));
 }
 
-function audienceMatches(claim: string | string[] | undefined, expected: string): boolean {
-  return Array.isArray(claim) ? claim.includes(expected) : claim === expected;
+function configuredAudiences(value: string | undefined): Set<string> {
+  return new Set((value ?? "").split(",").map((entry) => entry.trim()).filter(Boolean));
+}
+
+function audienceMatches(claim: string | string[] | undefined, expected: Set<string>): boolean {
+  const values = Array.isArray(claim) ? claim : claim ? [claim] : [];
+  return values.some((value) => expected.has(value));
 }
 
 async function loadKeys(issuer: string): Promise<Map<string, CryptoKey>> {
@@ -97,9 +102,9 @@ export async function authenticateAccessRequest(
   env: AccessEnvironment,
 ): Promise<OperatorIdentity | null> {
   const issuer = configuredIssuer(env.CF_ACCESS_TEAM_DOMAIN);
-  const audience = env.CF_ACCESS_AUD?.trim();
+  const audiences = configuredAudiences(env.CF_ACCESS_AUD);
   const token = request.headers.get("Cf-Access-Jwt-Assertion")?.trim();
-  if (!issuer || !audience || !token) return null;
+  if (!issuer || audiences.size === 0 || !token) return null;
   const parts = token.split(".");
   if (parts.length !== 3) return null;
 
@@ -121,7 +126,7 @@ export async function authenticateAccessRequest(
   const now = Math.floor(Date.now() / 1000);
   if (
     claims.iss !== issuer
-    || !audienceMatches(claims.aud, audience)
+    || !audienceMatches(claims.aud, audiences)
     || typeof claims.exp !== "number"
     || claims.exp <= now
     || (typeof claims.nbf === "number" && claims.nbf > now + 30)

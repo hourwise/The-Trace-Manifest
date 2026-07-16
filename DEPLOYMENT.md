@@ -31,7 +31,7 @@ Keep `TRACE_AI_PUBLIC_ENABLED=false`, `TRACE_AI_EDITORIAL_ENABLED=false`, and `T
 
 ## 4. Access and Worker configuration
 
-Create a Cloudflare Access application covering `/admin*` and `/api/admin/*`. Set its audience and team domain on Pages, then configure explicit reader and publisher email allowlists.
+Create Cloudflare Access application coverage for `/admin*` and `/api/admin/*`. Use one application with both destinations when the dashboard permits it; otherwise use two path-specific applications with the same narrow Allow policy and place both application audiences in the comma-separated `CF_ACCESS_AUD` Pages secret. Set the team domain on Pages, then configure explicit reader and publisher email allowlists.
 
 Set the same 32-byte-or-longer `TRACE_INTERNAL_SERVICE_SECRET` on Pages and the ingestion Worker. Configure `TRACE_INGESTION_WORKER_URL` as an HTTPS origin with no path or credentials. The Worker accepts no browser bearer token and no CORS admin flow.
 

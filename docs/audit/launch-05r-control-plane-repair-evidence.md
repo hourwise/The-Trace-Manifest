@@ -1,6 +1,6 @@
 # LAUNCH-05R Control-Plane Repair Evidence
 
-Status: partially completed on 15 July 2026. The shared internal HMAC secret is configured on the production Pages project and ingestion Worker. Cloudflare Access, its audience configuration, Pages deployment/binding verification, and preview control-plane work remain blocked.
+Status: partially completed on 15 July 2026. The shared internal HMAC secret is configured on the production Pages project and ingestion Worker. Cloudflare Access is configured manually in the dashboard for both admin path scopes, and the Access team domain plus a two-audience allowlist are configured as encrypted Pages secrets. Pages role allowlists, a fresh Pages deployment/binding verification, and preview control-plane work remain blocked.
 
 Task: LAUNCH-05R - Repair the Access, D1 binding and Pages-to-Worker control plane only after explicit operator approval.
 
@@ -16,6 +16,9 @@ Task: LAUNCH-05R - Repair the Access, D1 binding and Pages-to-Worker control pla
   - Pages project `the-trace-manifest`, production environment;
   - Worker `trace-manifest-ingestion`.
 - Secret-name verification confirms the shared secret is present on both components. No value was printed, stored in this repository, or placed in a command argument.
+- The operator manually configured two narrow, path-specific self-hosted Access applications: one for `/admin*` and one for `/api/admin/*`. Both use the same narrow Allow policy. A safe unauthenticated live check confirmed that the `/admin` route is intercepted by Cloudflare Access before it reaches Pages.
+- The two distinct Access audiences were recovered from the protected-route redirects without displaying their values. Their comma-separated allowlist was stored as the encrypted Pages `CF_ACCESS_AUD` secret. The associated Access team-domain host was stored as the encrypted Pages `CF_ACCESS_TEAM_DOMAIN` secret.
+- Pages secret-name verification confirms `CF_ACCESS_AUD`, `CF_ACCESS_TEAM_DOMAIN`, and `TRACE_INTERNAL_SERVICE_SECRET` are present. Secret values are not retained in this record.
 - The pre-existing `ADMIN_API_TOKEN` remains on both components. It has not been removed before Access and HMAC validation, as the repair run sheet requires.
 
 ## Safety correction during secret setup
@@ -24,19 +27,19 @@ The initial PowerShell random-generator call was incompatible with the local she
 
 ## Remaining blockers
 
-1. The currently authenticated Cloudflare CLI credential does not include `Access: Apps and Policies` permission. It cannot inspect or create the Access application, policy, team domain, or audience configuration.
-2. No Access application, `CF_ACCESS_TEAM_DOMAIN`, or `CF_ACCESS_AUD` secret is evidenced. The admin surface must remain fail-closed until they exist.
-3. The checked Pages source configuration has a production D1 binding, but the dashboard/deployed binding and a preview binding are not yet evidenced. A fresh deployment is required for a new Pages binding or source configuration to take effect.
-4. No preview Pages/Worker control plane has been configured. Do not point preview traffic at the production D1 database.
-5. Access role, signed proxy, replay, audit-row, and non-production mutation tests have not run; they belong to LAUNCH-06 after the remaining repair is complete.
+1. The currently authenticated Cloudflare CLI credential does not include `Access: Apps and Policies` permission. Manual dashboard configuration was required and the CLI still cannot independently inspect those resources.
+2. The Pages `TRACE_ADMIN_READERS` and `TRACE_ADMIN_PUBLISHERS` allowlists are not yet evidenced. They must each contain the approved operator in the Pages production environment, without recording the private address in this repository.
+3. The Access applications currently permit all configured identity providers unless the operator restricts each application's Login methods to One-time PIN. That restriction and any chosen session duration need redacted evidence.
+4. The checked Pages source configuration has a production D1 binding, but the dashboard/deployed binding and a preview binding are not yet evidenced. A fresh deployment is required for new Pages secrets or bindings to take effect.
+5. No preview Pages/Worker control plane has been configured. Do not point preview traffic at the production D1 database.
+6. Access role, signed proxy, replay, audit-row, and non-production mutation tests have not run; they belong to LAUNCH-06 after the remaining repair is complete.
 
 ## Required next authority and safe continuation
 
-Create or provide a Cloudflare API token with `Access: Apps and Policies Write` for the account, or configure the following in the Zero Trust dashboard and return only the redacted evidence packet from the repair run sheet:
+Complete the following in the Cloudflare dashboard and return only the redacted evidence packet from the repair run sheet:
 
-- a self-hosted Access application for `thetracemanifest.com` covering `/admin*` and `/api/admin/*`;
-- one narrow One-time-PIN Allow policy for the approved operator, with no broad bypass;
-- the Access team-domain host and application audience value, stored as `CF_ACCESS_TEAM_DOMAIN` and encrypted `CF_ACCESS_AUD` respectively;
-- a confirmed production and preview Pages `DB` binding, followed by a fresh deployment.
+- restrict each Access application's Login methods to One-time PIN and retain the narrow Allow policy with no broad bypass;
+- configure the Pages reader and publisher allowlists with the approved operator;
+- confirm production and preview Pages `DB` bindings, followed by a fresh deployment.
 
 This record does not authorise public AI, production migration, legacy-secret removal, or administrative mutation tests.
