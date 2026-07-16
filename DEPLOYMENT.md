@@ -16,10 +16,11 @@ For a new D1 database apply, in order:
 1. `db/schema.sql`
 2. `db/migration-5e-publication.sql`
 3. `db/migration-stabilisation-security.sql`
+4. `db/migration-0015-editorial-desk.sql`
 
 For an existing database, take a backup/export first and confirm which migrations are already recorded. The stabilisation migration contains one-time `ALTER TABLE` statements and must not be blindly replayed. Apply it to a non-production database, run the migration tests and smoke queries, then schedule the production change.
 
-The migration defaults catalogue records to `draft`; it does not silently publish extracted rows.
+The migration defaults catalogue records to `draft`; it does not silently publish extracted rows. The TRACE Desk migration records private editorial candidates and controlled discovery sources only. It does not fetch candidate URLs, admit evidence, or publish content.
 
 Use `docs/operations/non-production-d1-migration-run-sheet.md` for the non-production migration rehearsal. It documents the backup/export, schema inspection, migration order, verification queries, rollback limits, and human approval stop before any production scheduling.
 

@@ -1,0 +1,126 @@
+---
+import BaseLayout from "../../layouts/BaseLayout.astro";
+---
+
+<BaseLayout title="TRACE Desk" description="Governed editorial intake for The Trace Manifest.">
+  <div class="container" style="max-width:900px;">
+    <h1>TRACE Desk</h1>
+    <p class="meta">Record a URL, social post, lead, or additional evidence. Intake is private and audit-recorded; it does not fetch the URL, create evidence, or publish a story.</p>
+    <p class="meta" style="margin:0.75rem 0 2rem;"><a href="/admin">Admin home</a> · <a href="/admin/review">Review queue</a> · <a href="/admin/sources">Sources</a></p>
+
+    <section class="card">
+      <h2 style="font-size:1.25rem;">New editorial candidate</h2>
+      <form id="candidate-form" style="display:grid;gap:1rem;margin-top:1rem;">
+        <label>Intake type
+          <select name="intakeType" id="intake-type">
+            <option value="manual_url">Article or document URL</option>
+            <option value="social_url">Social post URL</option>
+            <option value="lead">Editorial lead or tip</option>
+            <option value="additional_evidence">Additional evidence URL</option>
+          </select>
+        </label>
+        <label id="url-label">URL
+          <input name="url" type="url" maxlength="2048" placeholder="https://…" />
+        </label>
+        <label>Lead or editorial note
+          <textarea name="lead" rows="5" maxlength="8000" placeholder="Why this matters, source context, or a summary for the reviewer."></textarea>
+        </label>
+        <div class="grid grid--3" style="gap:1rem;">
+          <label>Section
+            <select name="section"><option value="">Unclassified</option><option value="ai-agents">AI &amp; Agents</option></select>
+          </label>
+          <label>Urgency
+            <select name="urgency"><option value="normal">Normal</option><option value="high">High</option><option value="breaking">Breaking</option><option value="low">Low</option></select>
+          </label>
+          <label>Source language
+            <input name="sourceLanguage" maxlength="35" placeholder="e.g. en, zh-CN" />
+          </label>
+        </div>
+        <p class="meta">Only publishers can submit. Any later retrieval remains server-side and must pass source admission, safe-fetch, clustering, evidence, and human-review controls.</p>
+        <div><button type="submit">Record candidate</button> <span id="form-status" class="meta" aria-live="polite"></span></div>
+      </form>
+    </section>
+
+    <section class="card" style="margin-top:2rem;">
+      <h2 style="font-size:1.25rem;">Recent candidates</h2>
+      <p id="queue-status" class="meta">Loading private queue…</p>
+      <div id="candidate-list" style="display:grid;gap:0.75rem;"></div>
+    </section>
+  </div>
+
+  <script is:inline>
+    const form = document.querySelector("#candidate-form");
+    const status = document.querySelector("#form-status");
+    const queueStatus = document.querySelector("#queue-status");
+    const list = document.querySelector("#candidate-list");
+    const intakeType = document.querySelector("#intake-type");
+    const urlLabel = document.querySelector("#url-label");
+
+    function escapeText(value) {
+      const node = document.createElement("span");
+      node.textContent = value;
+      return node.innerHTML;
+    }
+
+    function updateIntakeHelp() {
+      const urlRequired = intakeType.value !== "lead";
+      const urlInput = urlLabel.querySelector("input");
+      if (urlInput) urlInput.required = urlRequired;
+      if (urlLabel.firstChild) urlLabel.firstChild.textContent = urlRequired ? "URL" : "URL (optional)";
+    }
+
+    function renderCandidates(candidates) {
+      list.innerHTML = "";
+      if (!candidates.length) {
+        list.textContent = "No editorial candidates have been recorded yet.";
+        return;
+      }
+      for (const candidate of candidates) {
+        const item = document.createElement("article");
+        item.className = "card";
+        item.style.margin = "0";
+        const source = candidate.submitted_url
+          ? `<a href="${escapeText(candidate.submitted_url)}" rel="noreferrer">${escapeText(candidate.submitted_url)}</a>`
+          : escapeText(candidate.lead_text || "Untitled lead");
+        item.innerHTML = `<div style="display:flex;justify-content:space-between;gap:1rem;align-items:baseline;"><strong>${escapeText(candidate.intake_type.replaceAll("_", " "))}</strong><span class="meta">${escapeText(candidate.state)}</span></div><p style="margin:0.5rem 0;word-break:break-word;">${source}</p><p class="meta" style="margin:0;">${escapeText(candidate.section_slug || "Unclassified")} · ${escapeText(candidate.urgency)}${candidate.source_language ? ` · ${escapeText(candidate.source_language)}` : ""} · ${new Date(candidate.created_at + "Z").toLocaleString()}</p>`;
+        list.append(item);
+      }
+    }
+
+    async function loadCandidates() {
+      queueStatus.textContent = "Loading private queue…";
+      try {
+        const response = await fetch("/api/admin/candidates", { credentials: "same-origin", headers: { Accept: "application/json" } });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || "Unable to load candidates.");
+        renderCandidates(payload);
+        queueStatus.textContent = "Latest 50 candidates. New records remain unreviewed.";
+      } catch (error) {
+        queueStatus.textContent = error instanceof Error ? error.message : "Unable to load candidates.";
+      }
+    }
+
+    intakeType.addEventListener("change", updateIntakeHelp);
+    updateIntakeHelp();
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const values = new FormData(form);
+      const payload = Object.fromEntries([...values.entries()].filter(([, value]) => typeof value === "string" && value.trim()));
+      status.textContent = "Recording…";
+      try {
+        const response = await fetch("/api/admin/candidates", {
+          method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify(payload),
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || "Candidate was not recorded.");
+        form.reset();
+        updateIntakeHelp();
+        status.textContent = result.message;
+        await loadCandidates();
+      } catch (error) {
+        status.textContent = error instanceof Error ? error.message : "Candidate was not recorded.";
+      }
+    });
+    void loadCandidates();
+  </script>
+</BaseLayout>

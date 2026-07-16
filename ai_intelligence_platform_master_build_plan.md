@@ -1,6 +1,6 @@
 ﻿# AI Intelligence Platform — Master Build Plan
 
-**Status:** Implementation in progress — ADR 0009–0014 and launch sequencing reconciled on 15 July 2026; stabilisation controls are present in the repository, while deployment verification remains pending
+**Status:** Implementation in progress — ADR 0009–0018 and launch sequencing reconciled on 16 July 2026; stabilisation controls are present in the repository, while deployment verification remains pending
 **Document purpose:** Define the product, architecture, MVP, roadmap, monetisation, governance, and required documentation from the beginning.  
 **Product name:** The Trace Manifest  
 **Editorial identity:** T.R.A.C.E. — Traceable Research, Analysis, Context and Evidence  
@@ -213,7 +213,7 @@ Every model-executed task must:
 
 The executor must stop for human direction if rules conflict or if work requires production migration, deployment, destructive data changes, secrets, public enablement, a new external integration, or a deferred feature gate. The more restrictive rule applies until the conflict is resolved.
 
-### 2.11 ADR 0009–0014 implementation map
+### 2.11 ADR 0009–0018 implementation map
 
 | ADR | Build consequence | Sequence |
 |---|---|---|
@@ -223,6 +223,10 @@ The executor must stop for human direction if rules conflict or if work requires
 | ADR 0012 | Durable D1 controls, verified Access roles, audit, publication eligibility and grounded Ask are launch prerequisites. | Verify migration and deployment before public AI or expanded publication. |
 | ADR 0013 | Guides and TRACE Lab require named ownership, verification, command safety, versions, freshness and underlying sources. | First expansion; publish six complete reviewed Guides before prominent navigation. |
 | ADR 0014 | Sharing retains context, version/date and corrections; private Ask conversations are never directly public. | Add correction-aware metadata first; snapshots, public Ask sharing and social automation are deferred. |
+| ADR 0015 | TRACE Desk unifies automated and manual intake under one source, evidence, audit, and human-review lifecycle. | Pre-launch: apply the Desk migration, verify publisher-only candidate intake, and activate only parser-verified discovery feeds. |
+| ADR 0016 | Ask TRACE retrieves approved knowledge first and uses only bounded, admitted research when allowed. TRACE publications are context, not corroboration. | Implement after the launch-control gates; no unrestricted browser/search or automatic knowledge promotion. |
+| ADR 0017 | Knowledge Builder turns governed questions and research into reviewable, expiring knowledge and Guides. | Implement as atomic, auditable work; public knowledge requires visible sources, freshness, and crawl controls. |
+| ADR 0018 | Original-language evidence remains canonical; translations are derived, reviewable representations. | Add language/provenance fields before foreign-language activation; bilingual publishing is deferred. |
 
 The revised launch scope controls delivery order: launch AI & Agents with manual editorial approval first, then Guides, then separately approved expansion. Later ADRs do not authorise their features to bypass that sequence.
 
@@ -2568,6 +2572,12 @@ These tasks apply the mandatory contract in Section 2.10. Complete only one task
 | STORY-01 | Publish one representative story through the real review workflow. | Sources, claims, evidence state, reviewer identity/time, correction path and public rendering are verified. |
 | STORY-02 | Repeat STORY-01 for one additional high-signal story. | One independently reviewed record; do not bulk-generate or fabricate history. Repeat this task one story at a time until the 15–20 target is reached. |
 | SOCIAL-01 | Implement or verify administrator-only social intake under ADR 0009. | Social post and linked source are separate; provenance, review and rejection behaviour are tested. |
+| DESK-01 | Apply `migration-0015-editorial-desk.sql` in non-production and verify the taxonomy and nine discovery-source records. | **Complete:** `docs/audit/desk-01-worker-and-non-production-migration-evidence.md` records backup discipline, successful preview migration, table/taxonomy/source verification, and the explicit absence of a production D1 change. |
+| DESK-02 | Verify TRACE Desk route boundaries and manual candidate intake. | Anonymous and reader POSTs fail; publisher POST creates an audited `new` candidate; no browser-side fetch or public publication occurs. |
+| DESK-03 | Run each active discovery feed through the real RSS parser and record health. | Successful feeds are healthy; rejected/restricted feeds are disabled or quarantined; no feed is treated as corroboration solely because it parsed. |
+| ASK-01 | Define the ADR 0016 task policy and source-role schema. | TRACE-originated records have zero independent-evidence weight; unadmitted or stale material cannot become an answer. |
+| KNOW-01 | Add the ADR 0017 question-gap and knowledge-document migration only. | Forward-only migration passes; no public route or model generation is enabled. |
+| LANG-01 | Add ADR 0018 source-language and translation-provenance fields only. | Original and translation hashes are distinct; a translation cannot be counted as another source. |
 | GUIDE-01 | Implement or verify the ADR 0013 Guide metadata, authorship, verification and freshness contract. | Invalid/missing fields fail; no Guide is auto-published. |
 | GUIDE-02 | Complete and review “Install Node.js and npm on Windows.” | Commands, versions, safety notes and underlying sources are verified. |
 | GUIDE-03 | Complete and review “Git and GitHub for Beginners.” | Destructive/conflict guidance, tested steps and sources are verified. |

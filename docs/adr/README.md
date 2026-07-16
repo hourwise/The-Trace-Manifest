@@ -16,6 +16,10 @@
 | [0012](0012-durable-controls-access-admin-and-publication-boundaries.md) | Accepted; rollout pending | Durable controls, Access administration, and publication gates. |
 | [0013](0013-trace-guides-lab-authorship-verification-and-ask-trace-knowledge-integration.md) | Accepted | Guides, TRACE Lab, authorship, verification, and Ask knowledge retrieval. |
 | [0014](0014-context-preserving-sharing-versioned-snapshots-and-social-preview-integrity.md) | Accepted | Context-preserving sharing, snapshots, and social-preview integrity. |
+| [0015](0015-unified-editorial-intake-trace-desk-and-multi-section-taxonomy.md) | Accepted; repository foundation implemented, rollout pending | Unified editorial intake, TRACE Desk, and controlled taxonomy. |
+| [0016](0016-governed-ask-trace-research-source-admission-and-knowledge-promotion.md) | Accepted | Governed Ask TRACE research, source admission, and knowledge promotion. |
+| [0017](0017-trace-knowledge-builder-question-gap-queue-and-knowledge-document-lifecycle.md) | Accepted | Knowledge Builder, question gaps, approval, expiry, and knowledge-to-guide lifecycle. |
+| [0018](0018-multilingual-source-ingestion-translation-provenance-and-bilingual-publication.md) | Accepted | Multilingual source ingestion, translation provenance, and later bilingual publication. |
 
 ADR status describes the decision, not proof that production deployment or acceptance tests have completed.
 
@@ -27,3 +31,6 @@ ADR status describes the decision, not proof that production deployment or accep
 - ADR 0012 is launch-critical: its migration, Access, audit, publication and Ask TRACE controls require deployment verification before public AI is enabled.
 - ADR 0013 is the first planned content expansion. Guides require named ownership, verification, freshness monitoring and six reviewed launch-ready records before a prominent public route.
 - ADR 0014 is a later enhancement. It requires canonical correction-aware metadata first; public snapshots, public Ask sharing and automated social posting are not launch features.
+- ADR 0015 is pre-launch work: TRACE Desk intake must remain publisher-only, audited, source-governed, and unable to publish automatically. Its initial migration and queue must be applied and tested before operational use.
+- ADR 0016 and ADR 0017 define the next governed Ask TRACE and Knowledge Builder increments. They do not permit unrestricted research, unreviewed knowledge promotion, or public Guide publication without supporting source and freshness controls.
+- ADR 0018 is a foundation requirement for foreign-language intake. Translation storage and review are planned before multilingual publication; a translation is never independent evidence.

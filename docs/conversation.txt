@@ -1,0 +1,777 @@
+Today 3:43 PM
+https://mcp.liqiwa.com/feed.xml 
+Worked for 59s
+
+This is a strong source batch, but I would not register all of them the same way. It contains primary sources, established reporting, analyst newsletters, aggregators and discovery feeds. TRACE should preserve those distinctions rather than treating every RSS item as equivalent evidence.
+
+Add immediately
+Source	TRACE role	Suggested tier	Notes
+Google AI Blog	Primary/vendor announcements	A	Excellent for Google, Gemini, DeepMind and product announcements. Claims remain vendor-reported until independently checked.
+The Verge AI feed	General AI reporting	B	Useful for launches, policy, industry disputes and breaking stories.
+MIT Technology Review	Independent analysis/reporting	B	Strong for deeper context, science, policy and long-term significance.
+Ars Technica	Technical and policy reporting	B	Good technical depth and useful independent corroboration.
+TechCrunch	Breaking business/product discovery	B	Strong for funding, launches and company news, but often should lead TRACE toward a primary source.
+Import AI	Expert analysis	B	Particularly useful for research, policy and strategic context.
+Pragmatic Engineer	Engineering-industry analysis	B	Valuable for developer tools, infrastructure, employment and software-industry implications.
+Stratechery	Strategic/business analysis	B	High-value commentary, but analysis rather than neutral primary evidence.
+ByteByteGo	Technical explainers and infrastructure	B/C	Useful for context and guides; less likely to be the originating source of breaking AI news.
+MCP Radar	MCP discovery	C	As discussed: lead generation, followed by direct GitHub verification.
+
+Google’s feed should be recorded as an official vendor source, not simply “trusted Tier A means confirmed.” It can prove what Google announced, but not necessarily that all performance or superiority claims are independently established.
+
+Add as discovery feeds
+Source	TRACE role	Suggested tier	Treatment
+Product Hunt	New-product discovery	C	Useful for finding launches; never sufficient by itself for quality or adoption claims.
+TLDR AI	Aggregated discovery	C	Good headline radar; TRACE should follow links to original reporting and primary sources.
+Ben’s Bites	AI discovery/newsletter	C/B	Useful editorial signal, but verify important claims elsewhere.
+MarkTechPost	Research and release discovery	C	Often surfaces papers and model releases quickly, but TRACE should inspect the original paper, repository or announcement.
+Unidentified Beehiiv feed	Unknown until identified	Quarantine	Do not admit until its publisher, ownership and content focus are known.
+Windflash RSS Sources	Source-directory/discovery tool	C or internal utility	Potentially useful for finding feeds, but it is not itself evidence for the stories listed.
+
+MarkTechPost is especially useful for speed, but I would not use it as independent corroboration where it is largely paraphrasing a paper or vendor release. Its value is often:
+
+MarkTechPost item
+→ locate original paper/model/repository
+→ inspect primary material
+→ seek independent analysis
+Do not use bare homepages as feed records
+
+These entries need a specific feed, endpoint or adapter rather than the root domain:
+
+https://huggingface.co
+https://techcrunch.com
+https://technologyreview.com
+https://arstechnica.com
+
+For Hugging Face, the root homepage is particularly unsuitable because it mixes models, datasets, Spaces, organisations and trending activity. TRACE should eventually have separate Hugging Face source types:
+
+official Hugging Face blog;
+model publication or update events;
+organisation-specific model releases;
+trending models as a discovery signal;
+model cards as primary evidence;
+daily papers or research material;
+security notices.
+
+A model card is primary evidence for what its publisher claims, while trending status is merely a popularity signal.
+
+One feed appears invalid
+
+The Ben’s Bites URL you supplied currently appears to return a not-found response:
+
+https://bensbites.beehiiv.com/feed
+
+That may be an old endpoint, a changed Beehiiv domain or a feed requiring a different generated RSS address. It should remain pending_verification rather than being added blindly. The TLDR endpoint also rejected the generic fetch check, which may mean it requires a normal feed-reader user agent or has access controls; the Worker should test it directly before admission.
+
+Several valid XML feeds could not be rendered by the browsing tool despite returning an HTTP success response, so those should be tested using TRACE’s actual RSS parser rather than judged from browser rendering alone.
+
+Suggested registry classification
+Tier A — official/primary
+- Google AI Blog
+- Hugging Face official announcements
+- Hugging Face model cards and organisation releases
+Tier B — independent reporting or specialist analysis
+- The Verge AI
+- MIT Technology Review
+- Ars Technica
+- TechCrunch
+- Import AI
+- Pragmatic Engineer
+- Stratechery
+- ByteByteGo
+Tier C — discovery and aggregation
+- MarkTechPost
+- Product Hunt
+- TLDR AI
+- Ben's Bites
+- MCP Radar
+- Windflash source directory
+- social and community feeds
+
+The exact tier could differ by content type. For example, an original investigation from TechCrunch is independent Tier B evidence, while a short article merely repeating a press release is effectively a discovery route to Tier A vendor material.
+
+Recommended ingestion cadence
+Google AI Blog                 every 30–60 minutes
+The Verge AI                   every 30–60 minutes
+TechCrunch                     every 30–60 minutes
+Ars Technica                   every 1–2 hours
+MIT Technology Review          every 2–3 hours
+MarkTechPost                   every 1–2 hours
+Product Hunt                   every 3–6 hours
+TLDR AI                        every 3–6 hours
+Import AI                      every 6–12 hours
+Ben’s Bites                    every 6–12 hours
+Pragmatic Engineer             every 6–12 hours
+ByteByteGo                     every 6–12 hours
+Stratechery                    every 6–12 hours
+MCP Radar                      daily
+
+There is little value polling weekly newsletters every 30 minutes.
+
+The larger concern: newsletter overlap
+
+Several of these sources frequently summarise stories already published elsewhere:
+
+Ben’s Bites
+TLDR AI
+Import AI
+ByteByteGo
+the unidentified Beehiiv feed
+potentially Windflash
+
+TRACE must prevent five newsletters covering the same announcement from appearing to be five independent confirmations. The cluster should recognise citation lineage where possible:
+
+Official announcement
+├── Tech publication report
+├── Newsletter summary
+├── Newsletter summary
+└── Product Hunt listing
+
+That is not four independent sources. It may be one primary claim, one independent report and several derivative summaries.
+
+My recommended action
+
+Add this batch, but in three stages:
+
+Immediately activate Google AI, The Verge AI, MarkTechPost, ByteByteGo, Product Hunt, Import AI, Pragmatic Engineer, Stratechery and MCP Radar where their feeds parse successfully.
+Find canonical RSS endpoints or build adapters for Hugging Face, TechCrunch, MIT Technology Review and Ars Technica.
+Quarantine pending verification Ben’s Bites, TLDR’s restricted endpoint, the unidentified Beehiiv feed and Windflash until their identity, parser compatibility and source role are confirmed.
+
+This expands TRACE nicely from official announcements into independent reporting, technical context, strategic analysis and early discovery—without confusing popularity, aggregation or vendor claims with verified evidence. Yes, they should overlap by default, but they are not identical.
+
+The clean model is:
+
+Knowledge entry = the structured, retrievable evidence-backed answer used internally by Ask TRACE.
+TRACE Guide = the longer, publicly readable editorial presentation built on top of one or more approved knowledge entries.
+
+So choosing Publish as Guide should normally do both:
+
+Approve underlying knowledge
+        +
+Create or update public TRACE Guide
+
+The guide should not become a second disconnected copy of the facts.
+
+Recommended approval choices
+Approve as Knowledge
+
+Makes the structured answer available to Ask TRACE, but does not necessarily create a public page.
+
+Best for:
+
+narrow FAQs;
+factual definitions;
+product capability questions;
+supporting information;
+questions that are useful in conversation but too small for a full guide.
+Publish as Guide
+
+Approves the underlying knowledge and creates or updates a public guide.
+
+Best for:
+
+high-demand questions;
+SEO-worthy subjects;
+detailed explainers;
+comparisons;
+questions needing several sections and context.
+
+The resulting relationship should be:
+
+Approved knowledge records
+        ↓
+TRACE Guide
+        ↓
+Public readers
+
+Approved knowledge records
+        ↓
+Ask TRACE
+        ↓
+Conversational answers
+Approve temporarily
+
+Makes the knowledge retrievable for a short, explicit period, but does not automatically publish a durable guide.
+
+This suits current model recommendations, pricing comparisons and rapidly changing product capabilities.
+
+Publish guide only
+
+I would not normally allow this. A public TRACE Guide should be grounded in approved knowledge. An exceptional editorial article can exist without becoming general Ask TRACE knowledge, but that would be an editorial story or analysis—not a knowledge guide.
+
+Updating later
+
+A guide may draw from several knowledge entries:
+
+Guide: Choosing an AI coding model
+
+├─ Best closed coding models
+├─ Best open-weight coding models
+├─ Local hardware requirements
+├─ Pricing and API availability
+├─ IDE integrations
+└─ Benchmark methodology
+
+When one entry changes, TRACE should mark only the affected guide sections as stale and propose an update. It should not regenerate and overwrite the entire guide automatically.
+
+I’ll encode this relationship explicitly in ADR 0016.Yes—absolutely, but with an important distinction:
+
+Published TRACE articles should be part of the knowledge retrieval corpus, but they should not automatically be treated as independent primary evidence.
+
+The ideal hierarchy is:
+
+Original sources and evidence
+        ↓
+Approved TRACE knowledge
+        ↓
+Published TRACE stories and guides
+        ↓
+Ask TRACE answer
+How published stories help
+
+TRACE articles are useful because they already contain:
+
+the event summary;
+TRACE commentary;
+evidence status;
+source links;
+corrections;
+related context;
+section and topic classification;
+publication and update dates.
+
+This means Ask TRACE can retrieve a relevant story quickly instead of reconstructing everything from raw sources every time.
+
+For example:
+
+“What happened with Apple and OpenAI?”
+
+Ask TRACE could find the published TRACE article, use its structured claims and commentary, and cite both the TRACE article and the original sources behind it.
+
+Avoid circular evidence
+
+The danger would be:
+
+External source
+→ TRACE article
+→ new TRACE knowledge document
+→ cites TRACE article as proof
+
+That creates an illusion of additional corroboration. TRACE would be citing itself for a conclusion originally derived from one external source.
+
+The system should therefore recognise:
+
+TRACE article = synthesis / secondary internal source
+Underlying source bundle = actual evidence
+
+When a story is used to generate knowledge, the Knowledge Builder should automatically inherit its:
+
+claim-to-source mappings;
+original URLs;
+source tiers;
+evidence statuses;
+conflicts;
+correction history.
+
+It should not merely feed the public prose back into the model.
+
+Recommended retrieval order
+
+Ask TRACE should search:
+
+Approved knowledge entries.
+Published TRACE Guides.
+Published and current TRACE stories.
+Structured claims and evidence behind those publications.
+Controlled external research when the above are insufficient or stale.
+
+A current approved knowledge entry should normally outrank a news article. A TRACE story may describe what happened on a particular date, while a knowledge entry may incorporate later changes.
+
+Source labels
+
+Internally, use distinct source types:
+
+trace_knowledge
+trace_guide
+trace_story
+trace_brief
+trace_correction
+external_primary
+external_independent
+external_vendor
+external_community
+
+A TRACE story should have something like:
+
+source_role: internal_synthesis
+independent_evidence_weight: 0
+retrieval_value: high
+context_value: high
+
+That prevents three TRACE stories based on the same company announcement from being miscounted as three confirmations.
+
+Corrections and supersession
+
+Only current publications should be used normally.
+
+If a story has been corrected, withdrawn or superseded:
+
+the corrected version should replace it in normal retrieval;
+the old version should remain available for audit;
+the correction ledger should be attached;
+Ask TRACE should not repeat the original error;
+linked knowledge and guides should be marked for review.
+Add this to ADR 0016
+
+ADR 0016 already says knowledge documents may link to related TRACE stories and guides, but this deserves a stronger explicit rule:
+
+Published TRACE stories, briefs and guides form part of the internal retrieval corpus. They are treated as internal synthesis and context, not as independent corroborating evidence. Knowledge generation must resolve and inherit their underlying admitted sources, claims, evidence states, corrections and freshness metadata.
+
+That gives you the best of both worlds: TRACE benefits from its previous editorial work, while still showing where the information originally came from.
+
+How about foreign language articles, we could provide in original language, with an English title and summary. Or offer to translate with a caveat that trace translate might make mistakes (although using deepseek, it should translate Mandarin or Cantonese well.....)
+
+Yes—this would strengthen TRACE considerably, especially for Chinese, German, French, Japanese, Korean and other technology ecosystems where important news may appear before English-language coverage.
+
+The safest model is:
+
+Original source remains canonical
+        ↓
+TRACE stores original-language text
+        ↓
+TRACE creates English metadata and summary
+        ↓
+Optional full translation
+        ↓
+Evidence analysis uses both original and translated forms
+Recommended public presentation
+
+For a foreign-language article, the story page could show:
+
+English headline
+A concise TRACE translation or editorial headline.
+
+Original headline
+原始标题 / Originaltitel / Titre original
+
+TRACE summary in English
+A short explanation of what the source reports.
+
+Then:
+
+[Read original source]
+[Show TRACE translation]
+
+The default public page does not need to reproduce the whole source article. It can provide TRACE’s summary and analysis, with an optional translation of legally and technically permissible excerpts or material.
+
+Translation labels
+
+Every translation should be clearly labelled:
+
+Translated by TRACE using automated translation. Meaning may be imperfect, particularly for technical, legal, idiomatic or ambiguous language. Refer to the original source for authoritative wording.
+
+I would avoid a broad warning that makes the feature sound unreliable. A concise label is enough:
+
+TRACE machine translation
+Not independently verified
+
+Or, after editorial review:
+
+TRACE translation
+Editor reviewed
+Do not replace the original text
+
+The database should preserve:
+
+source language;
+original title;
+original excerpt or admitted text;
+original URL;
+translated English title;
+translated English summary;
+optional full translation;
+detected language;
+translation model and version;
+translation timestamp;
+editor-review state;
+content hash of the original;
+content hash of the translation.
+
+That allows future retranslation when models improve without losing the original evidence.
+
+Translation statuses
+
+Use explicit states:
+
+not_required
+detected
+translated_unreviewed
+translated_editor_reviewed
+translation_disputed
+translation_failed
+
+For high-impact material, translated_unreviewed should not be enough for strong publication conclusions.
+
+Different standards by story risk
+Routine product news
+
+For something like a Chinese company announcing a model release:
+
+automatic English title;
+automatic summary;
+original source retained;
+vendor-reported evidence status;
+normal editorial check.
+Technical claims
+
+For benchmark results, licences, API restrictions or model specifications:
+
+translate the relevant passage;
+preserve the original quotation;
+check terminology against documentation, repository or model card;
+ideally corroborate with another source.
+Legal, regulatory or security reporting
+
+For lawsuits, legislation, court documents, vulnerabilities or accusations:
+
+automated translation may assist discovery;
+important wording must receive enhanced review;
+TRACE should avoid presenting legal nuances as definitive unless independently verified;
+ADR 0004 human review remains mandatory.
+Language-aware evidence
+
+TRACE should distinguish between:
+
+source_language: zh-CN
+source_type: official_vendor
+translation_status: translated_unreviewed
+
+and:
+
+source_language: en
+source_type: independent_reporting
+
+The translated version is not a second source. It is another representation of the same source.
+
+This is crucial for avoiding false corroboration:
+
+Chinese announcement
++ English TRACE translation
+≠ two independent confirmations
+Better than translating only after publication
+
+Translation should happen during ingestion and analysis:
+
+Fetch source
+→ detect language
+→ preserve original
+→ translate title and summary
+→ extract claims from original and translation
+→ match against English and foreign-language clusters
+→ find corroboration
+→ draft TRACE story
+
+This lets TRACE recognise that a Mandarin announcement and a later English article concern the same event.
+
+Search and discovery
+
+Foreign-language research should still pass through ADR 0015:
+
+enabled sections;
+allowed topics;
+approved or quarantined sources;
+controlled search queries;
+safe retrieval;
+source admission;
+evidence analysis.
+
+TRACE could maintain language-specific source registries:
+
+Chinese AI sources
+German AI sources
+French technology sources
+Japanese robotics sources
+Korean semiconductor sources
+
+Each source should have ownership, reputation, source tier and correction history—just like English sources.
+
+Translation model choice
+
+DeepSeek may be useful for Chinese-language material, particularly where the source concerns AI or technical subjects, but TRACE should not treat any model as universally reliable. Translation quality varies with:
+
+simplified versus traditional Chinese;
+Mandarin versus Cantonese phrasing;
+technical terminology;
+legal wording;
+slang and idioms;
+tables and benchmark labels;
+truncated RSS excerpts.
+
+The platform should therefore remain provider-neutral and allow selected languages or content classes to use different translation models later.
+
+Admin experience
+
+In TRACE Desk, a foreign-language candidate could show:
+
+Language: Chinese
+Original title: …
+English title: …
+Translation: Automated — not reviewed
+Sources: 1 official, 1 independent English report
+
+Actions:
+
+[View original]
+[View translation]
+[Edit translation]
+[Mark reviewed]
+[Retranslate]
+[Publish]
+
+A split view would be useful on desktop:
+
+Original text | TRACE translation
+
+On mobile, use tabs.
+
+Public-language expansion later
+
+Initially, publish the main TRACE article in English while retaining original-language source material.
+
+Later, the same architecture could support:
+
+full TRACE site translations;
+language-specific summaries;
+bilingual guides;
+Ask TRACE responses in the user’s language;
+local-language feeds.
+
+The distinction should remain:
+
+source translation: translating evidence into English;
+publication translation: translating TRACE’s own approved work into another language.
+
+TRACE’s own published translation should be generated from the approved English canonical version, not regenerated independently from raw sources, or versions may diverge.
+
+Architectural placement
+
+This touches several existing decisions:
+
+ADR 0014: multilingual intake and Desk review
+ADR 0015: foreign-language research and source admission
+ADR 0016: multilingual knowledge documents and retrieval
+
+It is significant enough for a dedicated future ADR:
+
+ADR 0017 — Multilingual Source Ingestion, Translation Provenance, and Bilingual Publication
+
+The core rule should be:
+
+Original-language evidence remains canonical. Automated translations are derived representations with explicit provenance, review state and uncertainty; they must never be counted as independent sources.
+
+Need to ensure that all knowledge base and how to s are Google searchable with the credits and sources for seo and ai scraping
+
+Yes. That should be a firm requirement for both approved knowledge entries and TRACE Guides.
+
+Every approved item should become a public, crawlable page unless it is deliberately marked internal-only. The page should be useful to three audiences simultaneously:
+
+human readers;
+traditional search engines;
+AI retrieval and citation systems.
+Public knowledge pages
+
+Use stable canonical URLs such as:
+
+/knowledge/what-is-mcp
+/knowledge/best-closed-ai-coding-model
+/guides/choosing-an-ai-coding-model
+
+Each page should be server-rendered or otherwise expose complete HTML without requiring client-side interaction to reveal the main answer, sources, dates, and attribution.
+
+Required page structure
+
+Every knowledge page should include:
+
+Question or title
+Direct answer
+Detailed explanation
+How TRACE assessed it
+Evidence and sources
+Important limitations
+What remains uncertain
+Last reviewed
+Next review or expiry
+Author/editor credit
+TRACE methodology and evidence status
+Related stories, guides, and knowledge
+
+This is good for readers and also gives crawlers a clear semantic structure.
+
+Credits and source attribution
+
+Each page should visibly state:
+
+Prepared by TRACE
+Reviewed by [editor name or TRACE Editorial]
+Published by The Trace Manifest
+Last reviewed: [date]
+
+Sources should not be hidden behind a generic “references” count. Show:
+
+source title;
+publisher;
+publication date;
+source type;
+direct link;
+whether it is primary, independent, vendor or community evidence;
+which claim it supports where practical.
+
+TRACE’s own published stories may be listed as related synthesis, but the underlying external evidence should remain visible.
+
+Structured data
+
+Use structured data where it genuinely matches the page.
+
+Likely types include:
+
+Article or TechArticle for guides and substantial knowledge pages;
+FAQPage only where the page is genuinely a visible FAQ;
+BreadcrumbList;
+Organization;
+Person for named reviewers;
+WebPage;
+Dataset where TRACE later publishes structured benchmark or directory data.
+
+I would not build around HowTo rich results as the primary strategy. Google can change or restrict which rich-result types it displays, so the underlying accessible HTML matters more than chasing a particular search feature.
+
+The structured data should expose:
+
+headline;
+description;
+author;
+publisher;
+date published;
+date modified;
+canonical URL;
+section;
+keywords/topics;
+citations where supported;
+language;
+image;
+breadcrumb position.
+Indexing requirements
+
+Every approved public page should have:
+
+HTTP 200;
+self-referencing canonical URL;
+no noindex;
+no accidental authentication requirement;
+inclusion in the XML sitemap;
+internal links from topic, section and guide pages;
+meaningful title and meta description;
+Open Graph metadata;
+stable slug;
+dateModified updated when evidence changes;
+correct language metadata;
+crawlable source and related-content links.
+
+Sitemaps help search engines discover and revisit pages, while canonical URLs help consolidate duplicate or alternate versions. Search Console should be used to monitor indexing and errors.
+
+AI-readable content
+
+There is no dependable magic “AI scraping” tag that guarantees inclusion in AI answers.
+
+The best practical approach is:
+
+publish complete semantic HTML;
+use short direct-answer sections;
+use clear headings;
+make claims and citations explicit;
+expose original dates and update dates;
+avoid burying key text in JavaScript widgets;
+use consistent entity names;
+provide public source links;
+maintain stable URLs;
+provide RSS or Atom feeds;
+provide machine-readable JSON where appropriate;
+permit only the crawlers you deliberately choose to permit.
+
+Being crawlable does not guarantee an AI system will quote or cite the page. Different AI search systems choose different sources, and visibility can vary between ordinary search and generative answers. Recent research also suggests that generative search source selection differs materially from ordinary search results.
+
+robots.txt and crawler policy
+
+TRACE should explicitly decide its policy for:
+
+Googlebot;
+Bingbot;
+Google-Extended;
+GPTBot;
+OAI-SearchBot;
+ClaudeBot;
+PerplexityBot;
+other recognised AI crawlers.
+
+Search indexing, AI search retrieval, and model training are not necessarily the same activity. The site should not accidentally block normal indexing while trying to control training use.
+
+This needs to be configurable rather than hard-coded, because publisher controls and crawler behaviour are evolving.
+
+Original-language pages
+
+For multilingual knowledge, use distinct URLs and hreflang, for example:
+
+/en/knowledge/what-is-mcp
+/de/knowledge/was-ist-mcp
+/zh/knowledge/what-is-mcp
+
+Each translated page should identify:
+
+canonical language version;
+translation status;
+whether it was machine translated;
+review state;
+original source language.
+
+Avoid placing several full language versions on one canonical URL.
+
+Internal-only versus public knowledge
+
+Not every approved internal record needs a public page.
+
+Use an explicit visibility field:
+
+internal
+public_knowledge
+public_guide
+embargoed
+retired
+
+Examples that may remain internal:
+
+source-risk notes;
+thin supporting facts;
+incomplete comparison records;
+provider credentials or operational details;
+quarantined evidence;
+duplicate canonical questions.
+
+But normal approved FAQs, explainers, comparisons and how-tos should be public and indexable by default.
+
+Recommended ADR 0016 addition
+
+Add this rule:
+
+Approved public knowledge entries and TRACE Guides must be published as stable, crawlable, canonical HTML pages containing visible authorship, editorial review, evidence status, source credits, publication and modification dates, limitations, and related knowledge. They must be included in public sitemaps and internal navigation and expose appropriate structured metadata. Public crawlability does not imply automatic permission for every form of AI training; crawler and reuse policies must be configured separately.
+
+This also deserves a build requirement:
+
+Public knowledge publishing
+SEO metadata
+structured data
+sitemap generation
+canonical and hreflang handling
+source-credit rendering
+AI-crawler policy
+Search Console monitoring
+
+That turns the knowledge base into both Ask TRACE’s internal evidence layer and a growing public search asset.

@@ -9,11 +9,13 @@ const MAX_BODY_BYTES = 64 * 1024;
 const READ_ROUTES = new Set([
   "sources", "sources/health", "jobs", "cron-runs", "corrections",
   "published-stories", "clusters", "cluster-sources",
+  "candidates",
 ]);
 const PUBLISH_ROUTES = new Set([
   "ingest", "classify", "dedup", "cluster", "extract-claims", "detect-conflicts",
   "correct", "seed-models", "extract-model-data", "publish-story", "withdraw-story",
   "publish-briefing", "archive-cluster",
+  "candidates",
 ]);
 
 interface ProxyEnvironment {
@@ -50,7 +52,7 @@ async function auditDenial(
 
 function authorisedRoute(path: string, method: string, role: OperatorRole): boolean {
   if (!/^[a-z0-9/-]+$/.test(path)) return false;
-  if (method === "GET") return READ_ROUTES.has(path);
+  if (method === "GET") return READ_ROUTES.has(path) && (path !== "candidates" || role === "publisher");
   if (method === "POST") return role === "publisher" && PUBLISH_ROUTES.has(path);
   return false;
 }

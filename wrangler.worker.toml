@@ -17,9 +17,9 @@ bucket_name = "trace-manifest-raw"
 [triggers]
 crons = [
   "*/30 * * * *",
-  "0 */3 * * *",
   "0 6 * * *",
   "0 9 * * *",
+  "0 12 * * *",
   "0 18 * * *"
 ]
 

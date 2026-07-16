@@ -18,6 +18,8 @@ Status labels describe repository evidence, not assumed deployment state.
 | Accounts and personalisation | Planned | Separate identity/privacy ADR and threat model required. |
 | Monetisation expansion | Planned | Implement ADR 0011's audit, disclosure and editorial-firewall controls before enabling commercial features. |
 | Context-preserving sharing | Planned | Implement ADR 0014's canonical, correction-aware sharing before public snapshots or social automation. |
+| TRACE Desk and discovery intake | Pre-launch foundation implemented | Apply and verify ADR 0015's candidate migration and parser health checks; manual intake remains publisher-only and non-publishing. |
+| Governed research, Knowledge Builder and multilingual provenance | Planned | Deliver ADR 0016–0018 in bounded migrations after launch-control verification; no unrestricted research, unreviewed knowledge, or bilingual publication. |
 
 ## Immediate sequence
 

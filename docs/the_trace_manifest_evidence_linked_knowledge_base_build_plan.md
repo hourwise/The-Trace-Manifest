@@ -8,6 +8,8 @@
 **Last reconciled:** 15 July 2026 against ADR 0009–0014 and the revised launch scope
 **Canonical location:** `docs/the_trace_manifest_evidence_linked_knowledge_base_build_plan.md`
 
+**ADR reconciliation note (16 July 2026):** ADR 0015 governs TRACE Desk intake; ADR 0016 requires knowledge-first, bounded research and treats TRACE publications as internal synthesis rather than independent corroboration; ADR 0017 governs question gaps, Knowledge Builder, approval, expiry and public evidence pages; ADR 0018 makes original-language evidence canonical and translations derived, auditable representations. Their rules are binding implementation requirements.
+
 ---
 
 ## 1. Decision Summary
@@ -46,6 +48,10 @@ This plan is constrained by the canonical ADRs and the revised launch scope. It 
 - [ADR 0013](adr/0013-trace-guides-lab-authorship-verification-and-ask-trace-knowledge-integration.md) governs practical guides and TRACE Lab records. Their section-level retrieval must preserve external sources, verification level, version and freshness; they are curated secondary knowledge, not circular evidence.
 - [ADR 0011](adr/0011-advertising-sponsorship-affiliate-marketing-and-commercial-implementation.md) prevents commercial values from influencing claims, evidence, rankings, recommendations or retrieval.
 - [ADR 0014](adr/0014-context-preserving-sharing-versioned-snapshots-and-social-preview-integrity.md) governs later public sharing. Canonical pages need correction-aware metadata from the start; public snapshots and shareable Ask records require their own bounded publication workflow.
+- [ADR 0015](adr/0015-unified-editorial-intake-trace-desk-and-multi-section-taxonomy.md) defines governed TRACE Desk intake and the controlled section taxonomy. Manual candidates are neither evidence nor publication.
+- [ADR 0016](adr/0016-governed-ask-trace-research-source-admission-and-knowledge-promotion.md) requires knowledge-first retrieval, bounded source admission, and treats TRACE publications as internal synthesis rather than independent corroboration.
+- [ADR 0017](adr/0017-trace-knowledge-builder-question-gap-queue-and-knowledge-document-lifecycle.md) defines question gaps, Knowledge Builder, approval/expiry, and public knowledge-page requirements.
+- [ADR 0018](adr/0018-multilingual-source-ingestion-translation-provenance-and-bilingual-publication.md) makes original-language evidence canonical and translations derived, auditable representations.
 
 ---
 

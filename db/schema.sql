@@ -34,6 +34,66 @@ CREATE INDEX IF NOT EXISTS idx_sources_health ON sources(health_status);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_sources_name ON sources(name);
 
 -- ============================================================
+-- TRACE Desk editorial intake and controlled taxonomy
+-- ============================================================
+CREATE TABLE IF NOT EXISTS editorial_sections (
+  slug TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  public_enabled BOOLEAN NOT NULL DEFAULT 0,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS editorial_topics (
+  slug TEXT PRIMARY KEY,
+  section_slug TEXT NOT NULL REFERENCES editorial_sections(slug),
+  name TEXT NOT NULL,
+  public_enabled BOOLEAN NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_editorial_topics_section ON editorial_topics(section_slug, public_enabled);
+
+CREATE TABLE IF NOT EXISTS editorial_candidates (
+  id TEXT PRIMARY KEY,
+  intake_type TEXT NOT NULL CHECK(intake_type IN ('manual_url','social_url','lead','additional_evidence')),
+  submitted_url TEXT,
+  lead_text TEXT,
+  source_hash TEXT NOT NULL,
+  state TEXT NOT NULL DEFAULT 'new' CHECK(state IN ('new','enriching','researching','drafting','draft_ready','needs_review','held','published','archived','rejected','withdrawn','superseded','failed')),
+  section_slug TEXT REFERENCES editorial_sections(slug),
+  topic_slug TEXT REFERENCES editorial_topics(slug),
+  story_format TEXT,
+  urgency TEXT NOT NULL DEFAULT 'normal' CHECK(urgency IN ('low','normal','high','breaking')),
+  development_status TEXT NOT NULL DEFAULT 'developing' CHECK(development_status IN ('developing','current','historical')),
+  source_language TEXT,
+  classification_confidence REAL,
+  created_by TEXT NOT NULL,
+  reviewed_by TEXT,
+  reviewed_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_editorial_candidates_state_created ON editorial_candidates(state, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_editorial_candidates_source_hash ON editorial_candidates(source_hash, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS editorial_candidate_evidence (
+  id TEXT PRIMARY KEY,
+  candidate_id TEXT NOT NULL REFERENCES editorial_candidates(id),
+  evidence_url TEXT NOT NULL,
+  evidence_hash TEXT NOT NULL,
+  evidence_type TEXT NOT NULL CHECK(evidence_type IN ('primary','independent','vendor','community','trace_internal')),
+  created_by TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(candidate_id, evidence_hash)
+);
+
+CREATE INDEX IF NOT EXISTS idx_editorial_evidence_candidate ON editorial_candidate_evidence(candidate_id, created_at DESC);
+
+-- ============================================================
 -- Source policies (one-to-one with sources, or defaults)
 -- ============================================================
 CREATE TABLE IF NOT EXISTS source_policies (

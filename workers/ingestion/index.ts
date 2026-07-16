@@ -32,12 +32,14 @@ interface InternalOperator { email: string; role: OperatorRole; requestId: strin
 const READ_ADMIN_ROUTES = new Set([
   "/admin/sources", "/admin/sources/health", "/admin/jobs", "/admin/cron-runs",
   "/admin/corrections", "/admin/published-stories", "/admin/clusters", "/admin/cluster-sources",
+  "/admin/candidates",
 ]);
 const WRITE_ADMIN_ROUTES = new Set([
   "/admin/ingest", "/admin/classify", "/admin/dedup", "/admin/cluster",
   "/admin/extract-claims", "/admin/detect-conflicts", "/admin/correct",
   "/admin/seed-models", "/admin/extract-model-data", "/admin/publish-story",
   "/admin/withdraw-story", "/admin/publish-briefing", "/admin/archive-cluster",
+  "/admin/candidates",
 ]);
 const MAX_ADMIN_BODY_BYTES = 64 * 1024;
 
@@ -81,7 +83,7 @@ async function authenticateInternalRequest(request: Request, env: Env, body: str
 }
 
 function routeAllowed(path: string, method: string, role: OperatorRole): boolean {
-  if (method === "GET") return READ_ADMIN_ROUTES.has(path);
+  if (method === "GET") return READ_ADMIN_ROUTES.has(path) && (path !== "/admin/candidates" || role === "publisher");
   return method === "POST" && role === "publisher" && WRITE_ADMIN_ROUTES.has(path);
 }
 
@@ -132,11 +134,13 @@ export default {
         case "*/30 * * * *":
           ingestionSummary = await ingestTier(env, ctx, "A", "fetch");
           break;
-        case "0 */3 * * *":
-          ingestionSummary = await ingestTier(env, ctx, "A", "fetch");
-          break;
         case "0 6 * * *":
           ingestionSummary = await ingestTier(env, ctx, "B", "fetch");
+          break;
+        case "0 12 * * *":
+          // Tier C is a low-frequency discovery pass. Its items remain discovery
+          // signals and cannot independently establish evidence or publication.
+          ingestionSummary = await ingestTier(env, ctx, "C", "fetch");
           break;
         case "0 9 * * *":
           await runClassificationPipeline(env);
@@ -218,13 +222,15 @@ export default {
 };
 
 function adminTargetId(url: URL, body: string): string | null {
-  const queryTarget = url.searchParams.get("clusterId") ?? url.searchParams.get("sourceId") ?? url.searchParams.get("claimId");
+  const queryTarget = url.searchParams.get("clusterId") ?? url.searchParams.get("sourceId") ?? url.searchParams.get("claimId") ?? url.searchParams.get("candidateId");
   if (queryTarget && /^\d+$/.test(queryTarget)) return queryTarget;
   if (!body) return null;
   try {
     const parsed = JSON.parse(body) as Record<string, unknown>;
-    const value = parsed.clusterId ?? parsed.sourceId ?? parsed.claimId;
-    return typeof value === "number" && Number.isInteger(value) && value > 0 ? String(value) : null;
+    const value = parsed.candidateId ?? parsed.clusterId ?? parsed.sourceId ?? parsed.claimId;
+    return typeof value === "string" && /^[0-9a-f-]{36}$/i.test(value)
+      ? value
+      : typeof value === "number" && Number.isInteger(value) && value > 0 ? String(value) : null;
   } catch {
     return null;
   }
@@ -609,6 +615,10 @@ async function handleAdminRoute(
       return handleClusterSources(request, env);
     case "/admin/archive-cluster":
       return handleArchiveCluster(request, env);
+    case "/admin/candidates":
+      return request.method === "GET"
+        ? handleCandidateList(env)
+        : handleCandidateIntake(request, env, operator);
     default:
       return Response.json({ error: "Not found" }, { status: 404 });
   }
@@ -648,6 +658,87 @@ function optionalHttpUrl(value: unknown): value is string | null | undefined {
     return (url.protocol === "https:" || url.protocol === "http:") && !url.username && !url.password;
   } catch {
     return false;
+  }
+}
+
+function supportedIntakeType(value: unknown): value is "manual_url" | "social_url" | "lead" | "additional_evidence" {
+  return value === "manual_url" || value === "social_url" || value === "lead" || value === "additional_evidence";
+}
+
+function supportedUrgency(value: unknown): boolean {
+  return value === undefined || value === "low" || value === "normal" || value === "high" || value === "breaking";
+}
+
+function supportedDevelopmentStatus(value: unknown): boolean {
+  return value === undefined || value === "developing" || value === "current" || value === "historical";
+}
+
+async function handleCandidateIntake(request: Request, env: Env, operator: InternalOperator): Promise<Response> {
+  const body = await readAdminObject(request, [
+    "intakeType", "url", "lead", "section", "topic", "storyFormat", "urgency", "developmentStatus", "sourceLanguage",
+  ]);
+  if (!body || !supportedIntakeType(body.intakeType)) {
+    return Response.json({ error: "A supported intakeType is required." }, { status: 400 });
+  }
+  if (!optionalHttpUrl(body.url) || !optionalText(body.lead, 8_000) || !optionalText(body.section, 80)
+    || !optionalText(body.topic, 80) || !optionalText(body.storyFormat, 80) || !optionalText(body.sourceLanguage, 35)
+    || !supportedUrgency(body.urgency) || !supportedDevelopmentStatus(body.developmentStatus)) {
+    return Response.json({ error: "Candidate fields are invalid." }, { status: 400 });
+  }
+
+  const intakeType = body.intakeType;
+  const submittedUrl = typeof body.url === "string" && body.url.trim() ? body.url.trim() : null;
+  const leadText = typeof body.lead === "string" && body.lead.trim() ? body.lead.trim() : null;
+  if ((intakeType === "manual_url" || intakeType === "social_url" || intakeType === "additional_evidence") && !submittedUrl) {
+    return Response.json({ error: "This intake type requires an HTTPS or HTTP URL." }, { status: 400 });
+  }
+  if (intakeType === "lead" && !leadText) return Response.json({ error: "A lead requires text." }, { status: 400 });
+  if (!submittedUrl && !leadText) return Response.json({ error: "Provide a URL or lead text." }, { status: 400 });
+
+  const section = typeof body.section === "string" && body.section.trim() ? body.section.trim() : null;
+  const topic = typeof body.topic === "string" && body.topic.trim() ? body.topic.trim() : null;
+  if (section) {
+    const found = await env.DB.prepare("SELECT 1 FROM editorial_sections WHERE slug = ?").bind(section).first();
+    if (!found) return Response.json({ error: "Unknown editorial section." }, { status: 400 });
+  }
+  if (topic) {
+    const found = await env.DB.prepare("SELECT 1 FROM editorial_topics WHERE slug = ?").bind(topic).first();
+    if (!found) return Response.json({ error: "Unknown editorial topic." }, { status: 400 });
+  }
+
+  const id = crypto.randomUUID();
+  const sourceHash = await hashValue(`${intakeType}\n${submittedUrl ?? ""}\n${leadText ?? ""}`);
+  try {
+    await env.DB.prepare(`
+      INSERT INTO editorial_candidates
+        (id, intake_type, submitted_url, lead_text, source_hash, section_slug, topic_slug, story_format, urgency, development_status, source_language, created_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      id, intakeType, submittedUrl, leadText, sourceHash, section, topic,
+      typeof body.storyFormat === "string" && body.storyFormat.trim() ? body.storyFormat.trim() : null,
+      typeof body.urgency === "string" ? body.urgency : "normal",
+      typeof body.developmentStatus === "string" ? body.developmentStatus : "developing",
+      typeof body.sourceLanguage === "string" && body.sourceLanguage.trim() ? body.sourceLanguage.trim() : null,
+      operator.email,
+    ).run();
+  } catch {
+    return Response.json({ error: "TRACE Desk is unavailable until its migration is applied." }, { status: 503 });
+  }
+  return Response.json({ id, state: "new", message: "Candidate recorded. It has not been fetched, researched, or published." }, { status: 201 });
+}
+
+async function handleCandidateList(env: Env): Promise<Response> {
+  try {
+    const { results } = await env.DB.prepare(`
+      SELECT id, intake_type, submitted_url, lead_text, state, section_slug, topic_slug, urgency,
+             development_status, source_language, created_by, created_at, updated_at
+      FROM editorial_candidates
+      ORDER BY created_at DESC
+      LIMIT 50
+    `).all();
+    return Response.json(results ?? []);
+  } catch {
+    return Response.json({ error: "TRACE Desk is unavailable until its migration is applied." }, { status: 503 });
   }
 }
 

@@ -4,6 +4,12 @@
 **Date:** 12 July 2026  
 **Source count:** ~65 sources across three operational tiers
 
+## Launch discovery expansion (ADR 0015)
+
+After `migration-0015-editorial-desk.sql` is applied, TRACE may activate Google AI Blog (A/60 minutes), The Verge AI (B/60 minutes), MarkTechPost (C/120 minutes), ByteByteGo (B/12 hours), Product Hunt (C/6 hours), The Pragmatic Engineer (B/12 hours), Stratechery (B/12 hours), and MCP Radar (C/daily). Each has a concrete feed endpoint in the migration; the existing Worker parser must mark it healthy before it is relied on. Import AI is recorded but remains inactive until its restricted endpoint passes the same verification.
+
+All of these records are discovery or context inputs, never automatic publication authority. Citation lineage is mandatory: an official announcement, reporting on it, and derivative newsletters or product listings cannot be counted as separate corroboration.
+
 Phase 2 should not begin with 100 equally weighted feeds. The launch registry is divided into three tiers:
 
 - **Tier A:** Poll frequently; eligible for automatic ingestion

@@ -61,5 +61,12 @@ Do not reapply `ALTER TABLE` migrations blindly. Record applied migrations per e
 - [Architecture decisions](docs/adr/README.md)
 - [Revised launch scope](<docs/The Trace Manifest — Revised Launch.md>)
 - [Evidence-linked knowledge base build plan](docs/the_trace_manifest_evidence_linked_knowledge_base_build_plan.md)
+- [TRACE Desk and discovery-feed migration](db/migration-0015-editorial-desk.sql)
 
 Canonical public origin: `https://thetracemanifest.com`. The `.uk` domain is a redirect-only domain and is not an API origin.
+
+## Next governed launch increments
+
+- Apply and verify the TRACE Desk migration before using `/admin/desk`; it records private manual candidates but does not fetch, research, or publish them.
+- Apply the launch discovery-source registry from the same migration, then check source health before relying on any feed. Discovery and analysis sources remain subject to source admission and human review.
+- Implement ADR 0016–0018 in bounded steps: controlled Ask research and knowledge promotion, Knowledge Builder with expiry and public evidence pages, then multilingual provenance and bilingual publication. The rules in each ADR are mandatory implementation constraints, not optional product notes.
