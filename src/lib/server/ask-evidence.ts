@@ -1,4 +1,7 @@
 import type { EvidenceExcerpt } from "../../ai/provider";
+import {
+  freshnessStateFor, independentEvidenceWeightFor, isAnswerEligibleEvidence, sourceRoleFor, type TraceSourceKind,
+} from "../../ai/task-policy";
 
 interface EvidenceRow {
   source_id: number;
@@ -53,6 +56,14 @@ function safeHttpUrl(value: string): string | undefined {
   }
 }
 
+function sourceKindFor(row: EvidenceRow): TraceSourceKind {
+  const treatment = row.source_treatment.toLowerCase();
+  if (treatment.includes("vendor") || treatment.includes("official")) return "external_vendor";
+  if (row.source_tier === "A") return "external_primary";
+  if (row.source_tier === "B") return "external_independent";
+  return "external_community";
+}
+
 export async function retrievePublishedEvidence(
   db: D1Database,
   question: string,
@@ -93,6 +104,7 @@ export async function retrievePublishedEvidence(
   `).bind(...searchTerms.map(likeTerm), boundedLimit).all<EvidenceRow>();
 
   return result.results.map((row) => {
+    const sourceKind = sourceKindFor(row);
     const excerpt = cleanEvidenceText(row.content_excerpt ?? "", 700);
     const text = [
       `Published claim: ${cleanEvidenceText(row.claim_text, 700)}`,
@@ -102,6 +114,11 @@ export async function retrievePublishedEvidence(
     ].filter(Boolean).join("\n");
     return {
       sourceId: `source:${row.source_id}`,
+      sourceKind,
+      sourceRole: sourceRoleFor(sourceKind),
+      admissionState: "admitted",
+      freshnessState: freshnessStateFor(row.observed_at),
+      independentEvidenceWeight: independentEvidenceWeightFor(sourceKind),
       claimId: `claim:${row.claim_id}`,
       text,
       sourceClassification: `Tier ${row.source_tier}; ${row.source_treatment}`,
@@ -125,14 +142,16 @@ export interface DeterministicConfidence {
 }
 
 export function calculateDeterministicConfidence(evidence: EvidenceExcerpt[]): DeterministicConfidence {
-  const uniqueSources = new Set(evidence.map((item) => item.sourceId));
-  const tierA = evidence.filter((item) => item.sourceClassification.startsWith("Tier A")).length;
-  const strong = evidence.filter((item) => /very_strong|strong/i.test(item.trustNotes ?? "")).length;
-  const disputed = evidence.filter((item) => item.isDisputed || item.relationship === "contradicts").length;
-  const dates = evidence.map((item) => item.observedAt).filter((value): value is string => Boolean(value)).sort();
+  const eligibleEvidence = evidence.filter(isAnswerEligibleEvidence);
+  const uniqueSources = new Set(eligibleEvidence.map((item) => item.sourceId));
+  const independentSources = new Set(eligibleEvidence.filter((item) => item.independentEvidenceWeight === 1).map((item) => item.sourceId));
+  const primary = eligibleEvidence.filter((item) => item.sourceKind === "external_primary").length;
+  const strong = eligibleEvidence.filter((item) => /very_strong|strong/i.test(item.trustNotes ?? "")).length;
+  const disputed = eligibleEvidence.filter((item) => item.isDisputed || item.relationship === "contradicts").length;
+  const dates = eligibleEvidence.map((item) => item.observedAt).filter((value): value is string => Boolean(value)).sort();
   const freshestObservedAt = dates.at(-1) ?? null;
 
-  if (evidence.length === 0 || uniqueSources.size === 0) {
+  if (eligibleEvidence.length === 0 || uniqueSources.size === 0) {
     return {
       label: "insufficient_evidence",
       score: 0,
@@ -142,7 +161,7 @@ export function calculateDeterministicConfidence(evidence: EvidenceExcerpt[]): D
     };
   }
 
-  let score = 15 + Math.min(uniqueSources.size, 4) * 15 + Math.min(tierA, 2) * 10 + Math.min(strong, 3) * 5;
+  let score = 15 + Math.min(uniqueSources.size, 4) * 15 + Math.min(primary, 2) * 10 + Math.min(strong, 3) * 5;
   score -= disputed * 18;
   if (freshestObservedAt) {
     const ageDays = (Date.now() - new Date(freshestObservedAt).getTime()) / 86_400_000;
@@ -151,11 +170,11 @@ export function calculateDeterministicConfidence(evidence: EvidenceExcerpt[]): D
   }
   score = Math.max(0, Math.min(100, Math.round(score)));
 
-  const adequate = uniqueSources.size >= 2 || (tierA >= 1 && strong >= 1);
+  const adequate = independentSources.size >= 2 || (primary >= 1 && strong >= 1);
   const label = !adequate ? "insufficient_evidence" : score >= 75 ? "high" : score >= 50 ? "medium" : "low";
   const reasons = [
     `${uniqueSources.size} distinct published source${uniqueSources.size === 1 ? "" : "s"}.`,
-    `${tierA} Tier A excerpt${tierA === 1 ? "" : "s"} and ${strong} strong evidence record${strong === 1 ? "" : "s"}.`,
+    `${independentSources.size} independent source${independentSources.size === 1 ? "" : "s"}, ${primary} primary excerpt${primary === 1 ? "" : "s"}, and ${strong} strong evidence record${strong === 1 ? "" : "s"}.`,
   ];
   if (disputed > 0) reasons.push(`${disputed} supplied record${disputed === 1 ? " is" : "s are"} disputed or contradictory.`);
   if (!adequate) reasons.push("TRACE requires corroboration or one strong Tier A record before model generation.");

@@ -50,6 +50,9 @@ export class SQLiteD1 {
     this.sqlite.exec(readFileSync("db/schema.sql", "utf8"));
     this.sqlite.exec(readFileSync("db/migration-5e-publication.sql", "utf8"));
     this.sqlite.exec(readFileSync("db/migration-stabilisation-security.sql", "utf8"));
+    this.sqlite.exec(readFileSync("db/migration-0015-editorial-desk.sql", "utf8"));
+    this.sqlite.exec(readFileSync("db/migration-0016-knowledge-builder-foundation.sql", "utf8"));
+    this.sqlite.exec(readFileSync("db/migration-0017-multilingual-source-provenance.sql", "utf8"));
   }
 
   prepare(query: string): SQLiteD1Statement {

@@ -2,6 +2,10 @@
 // Phase 5: Provider-neutral model gateway types per ADR-0008.
 // All application code calls this interface — never provider-specific logic directly.
 
+import type {
+  TraceAdmissionState, TraceFreshnessState, TraceSourceKind, TraceSourceRole,
+} from "./task-policy";
+
 // ============================================================
 // Task types
 // ============================================================
@@ -56,6 +60,12 @@ export type TraceTaskInput =
 
 export interface EvidenceExcerpt {
   sourceId: string;
+  /** ADR 0016 provenance fields; TRACE synthesis is context, never independent proof. */
+  sourceKind: TraceSourceKind;
+  sourceRole: TraceSourceRole;
+  admissionState: TraceAdmissionState;
+  freshnessState: TraceFreshnessState;
+  independentEvidenceWeight: 0 | 1;
   claimId?: string;
   text: string;
   sourceClassification: string;

@@ -91,7 +91,7 @@ async function readBoundedText(response: Response, maximumBytes: number): Promis
   return new TextDecoder().decode(bytes);
 }
 
-function parseRSSXML(xml: string): Array<{
+export function parseRSSXML(xml: string): Array<{
   external_id: string | null;
   url: string;
   title: string;
@@ -103,12 +103,11 @@ function parseRSSXML(xml: string): Array<{
 }> {
   const items: ReturnType<typeof parseRSSXML> = [];
 
-  // Split by <item and </item> to handle any attribute variations
-  // Works for: <item>, <item rdf:about="...">, <item xmlns="...">
-  const parts = xml.split(/<item[\s>]/i);
+  // Split by RSS <item> or Atom <entry> elements, including attributes.
+  const parts = xml.split(/<(?:item|entry)[\s>]/i);
   
   for (let i = 1; i < parts.length; i++) {
-    const endIdx = parts[i].lastIndexOf("</item>");
+    const endIdx = Math.max(parts[i].lastIndexOf("</item>"), parts[i].lastIndexOf("</entry>"));
     if (endIdx === -1) continue;
     
     const block = parts[i].substring(0, endIdx);

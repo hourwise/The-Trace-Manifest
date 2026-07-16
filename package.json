@@ -14,6 +14,7 @@
     "typecheck": "astro check && tsc --noEmit -p workers/tsconfig.json",
     "test": "tsx workers/ingestion/__tests__/run-tests.ts && tsx tests/stabilisation.test.ts",
     "test:security": "node scripts/security-check.mjs",
+    "test:discovery-feeds": "tsx scripts/check-discovery-feeds.ts",
     "test:migrations": "node scripts/validate-migrations.mjs",
     "test:diff": "node scripts/diff-check.mjs",
     "audit:production": "npm audit --omit=dev --audit-level=high",

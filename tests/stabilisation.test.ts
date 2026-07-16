@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { DurableAIGovernance } from "../src/ai/durable-governance";
 import { askTrace } from "../src/ai/trace-model-gateway";
 import { validateAnswerDraft, validateAskTraceInput } from "../src/ai/schemas";
 import { validateAnswerOutput } from "../src/ai/validation";
 import { calculateDeterministicConfidence } from "../src/lib/server/ask-evidence";
+import { isAnswerEligibleEvidence, PUBLIC_ASK_TASK_POLICY, TRACE_POLICY_VERSION } from "../src/ai/task-policy";
 import { validateAskBody } from "../src/pages/api/trace/ask";
 import { handleTriageRequest } from "../src/pages/api/admin/ai-triage";
 import { signInternalRequest, verifyInternalRequestSignature } from "../src/security/internal-signature";
@@ -57,8 +59,14 @@ async function governanceTests(): Promise<void> {
 }
 
 const evidence: EvidenceExcerpt[] = [
-  { sourceId: "source-1", claimId: "claim-1", text: "Evidence one", sourceClassification: "Tier A; primary", trustNotes: "Evidence quality: strong", observedAt: "2026-07-13T10:00:00Z" },
-  { sourceId: "source-2", claimId: "claim-2", text: "Evidence two", sourceClassification: "Tier B; independent", trustNotes: "Evidence quality: strong", observedAt: "2026-07-14T10:00:00Z" },
+  {
+    sourceId: "source-1", sourceKind: "external_primary", sourceRole: "evidence", admissionState: "admitted", freshnessState: "current", independentEvidenceWeight: 1,
+    claimId: "claim-1", text: "Evidence one", sourceClassification: "Tier A; primary", trustNotes: "Evidence quality: strong", observedAt: "2026-07-13T10:00:00Z",
+  },
+  {
+    sourceId: "source-2", sourceKind: "external_independent", sourceRole: "evidence", admissionState: "admitted", freshnessState: "current", independentEvidenceWeight: 1,
+    claimId: "claim-2", text: "Evidence two", sourceClassification: "Tier B; independent", trustNotes: "Evidence quality: strong", observedAt: "2026-07-14T10:00:00Z",
+  },
 ];
 
 async function gatewayTests(): Promise<void> {
@@ -90,6 +98,14 @@ async function gatewayTests(): Promise<void> {
       requestId: "ask-one", idempotencyKeyHash: "same-action", visitorHash: "visitor",
       questionHash: "question", question: "What does the evidence support?", evidenceExcerpts: evidence,
     };
+    const staleOnly = await askTrace(env, {
+      ...context,
+      requestId: "ask-stale", idempotencyKeyHash: "stale-action", questionHash: "stale-question",
+      evidenceExcerpts: [{ ...evidence[0], freshnessState: "stale" }],
+    });
+    assert.equal(staleOnly.status, "ok");
+    assert.equal(staleOnly.payload?.nonAnswer, true, "stale evidence fails closed before a model call");
+    assert.equal(providerCalls, 0, "ineligible evidence cannot invoke the model");
     const [owner, duplicate] = await Promise.all([
       askTrace(env, context),
       askTrace(env, { ...context, requestId: "ask-two" }),
@@ -112,10 +128,10 @@ async function publicationAndIngestionTests(): Promise<void> {
   try {
     database.sqlite.exec(`
       INSERT INTO sources (id, name, url, section, tier, treatment, ingestion_type) VALUES
-        (1, 'Eligible source', 'https://example.com/feed', 'A', 'A', 'primary', 'rss'),
-        (2, 'Unsupported source', 'https://example.com/unsupported', 'B', 'B', 'context', 'manual');
+        (101, 'Eligible source', 'https://example.com/feed', 'A', 'A', 'primary', 'rss'),
+        (102, 'Unsupported source', 'https://example.com/unsupported', 'B', 'B', 'context', 'manual');
       INSERT INTO feed_items (id, source_id, url, url_hash, title, ingestion_status)
-        VALUES (1, 1, 'https://example.com/item', 'hash-1', 'Stored evidence', 'clustered');
+        VALUES (1, 101, 'https://example.com/item', 'hash-1', 'Stored evidence', 'clustered');
       INSERT INTO story_clusters (id, title, evidence_status, publication_status)
         VALUES (1, 'Unverified story', 'unverified', 'review'),
                (2, 'Reviewed supported story', 'strongly_supported', 'review');
@@ -136,7 +152,7 @@ async function publicationAndIngestionTests(): Promise<void> {
     const canonical = JSON.parse(briefing.briefing!.content_json)[0];
     assert.equal(canonical.headline, "Reviewed supported story", "briefing public fields come from the database");
 
-    const body = JSON.stringify({ sourceId: 2 });
+    const body = JSON.stringify({ sourceId: 102 });
     const timestamp = String(Date.now());
     const nonce = crypto.randomUUID();
     const identity = { operator: "publisher@example.com", role: "publisher" as const, timestamp, nonce };
@@ -149,7 +165,7 @@ async function publicationAndIngestionTests(): Promise<void> {
       },
     }), env, { waitUntil() {}, passThroughOnException() {}, props: {} } as unknown as ExecutionContext);
     assert.equal(response.status, 422, "an unsupported connector is not reported as successful");
-    const job = await database.prepare("SELECT result_status, items_skipped FROM ingestion_jobs WHERE source_id = 2").first<{ result_status: string; items_skipped: number }>();
+    const job = await database.prepare("SELECT result_status, items_skipped FROM ingestion_jobs WHERE source_id = 102").first<{ result_status: string; items_skipped: number }>();
     assert.equal(job?.result_status, "unsupported");
     assert.equal(job?.items_skipped, 1);
   } finally {
@@ -157,7 +173,74 @@ async function publicationAndIngestionTests(): Promise<void> {
   }
 }
 
+async function deskBoundaryTests(): Promise<void> {
+  const database = new SQLiteD1();
+  const secret = "d".repeat(32);
+  const env = { DB: database.asD1(), RAW_STORE: {} as R2Bucket, TRACE_INTERNAL_SERVICE_SECRET: secret };
+  const context = { waitUntil() {}, passThroughOnException() {}, props: {} } as unknown as ExecutionContext;
+
+  const request = async (
+    role: "reader" | "publisher",
+    method: "GET" | "POST",
+    path: string,
+    body = "",
+  ): Promise<Response> => {
+    const timestamp = String(Date.now());
+    const nonce = crypto.randomUUID();
+    const identity = { operator: `${role}@example.com`, role, timestamp, nonce };
+    const signature = await signInternalRequest(secret, method, path, body, identity);
+    return worker.fetch(new Request(`https://worker.example${path}`, {
+      method,
+      body: method === "GET" ? undefined : body,
+      headers: {
+        "Content-Type": "application/json", "X-Trace-Internal-Version": "v1",
+        "X-Trace-Operator": identity.operator, "X-Trace-Role": identity.role,
+        "X-Trace-Timestamp": timestamp, "X-Trace-Nonce": nonce, "X-Trace-Signature": signature,
+      },
+    }), env, context);
+  };
+
+  try {
+    database.sqlite.exec(readFileSync("db/migration-0015-editorial-desk.sql", "utf8"));
+
+    const anonymous = await worker.fetch(new Request("https://worker.example/admin/candidates", {
+      method: "POST", body: JSON.stringify({ intakeType: "lead", lead: "Unauthenticated intake" }),
+    }), env, context);
+    assert.equal(anonymous.status, 401, "unsigned candidate intake is rejected");
+
+    const candidateBody = JSON.stringify({ intakeType: "lead", lead: "A governed candidate for Desk boundary testing." });
+    assert.equal((await request("reader", "GET", "/admin/candidates")).status, 403, "readers cannot view the Desk queue");
+    assert.equal((await request("reader", "POST", "/admin/candidates", candidateBody)).status, 403, "readers cannot create candidates");
+    assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM editorial_candidates").first<{ count: number }>())?.count, 0);
+
+    const created = await request("publisher", "POST", "/admin/candidates", candidateBody);
+    assert.equal(created.status, 201, "a publisher can record a new candidate");
+    assert.deepEqual(await created.json(), {
+      id: (await database.prepare("SELECT id FROM editorial_candidates LIMIT 1").first<{ id: string }>())?.id,
+      state: "new",
+      message: "Candidate recorded. It has not been fetched, researched, or published.",
+    });
+    const stored = await database.prepare("SELECT state, lead_text, created_by FROM editorial_candidates").first<{
+      state: string; lead_text: string; created_by: string;
+    }>();
+    assert.deepEqual({ ...stored }, {
+      state: "new", lead_text: "A governed candidate for Desk boundary testing.", created_by: "publisher@example.com",
+    }, "candidate intake remains an unpublished, attributable queue record");
+    const queue = await request("publisher", "GET", "/admin/candidates");
+    assert.equal(queue.status, 200, "publishers can view the Desk queue");
+    assert.equal((await queue.json() as Array<{ state: string }>)[0]?.state, "new");
+  } finally {
+    database.close();
+  }
+}
+
 async function boundaryTests(): Promise<void> {
+  assert.equal(TRACE_POLICY_VERSION, "adr-0016-2026-07-16.1");
+  assert.equal(PUBLIC_ASK_TASK_POLICY.section, "ai-agents");
+  assert.equal(PUBLIC_ASK_TASK_POLICY.researchPermitted, false, "ASK-01 does not grant live research");
+  assert.equal(isAnswerEligibleEvidence({ ...evidence[0], sourceKind: "trace_story", sourceRole: "internal_synthesis", independentEvidenceWeight: 0 }), false, "TRACE stories are context, not independent evidence");
+  assert.equal(isAnswerEligibleEvidence({ ...evidence[0], admissionState: "quarantined" }), false, "unadmitted evidence cannot answer Ask TRACE");
+  assert.equal(isAnswerEligibleEvidence({ ...evidence[0], freshnessState: "stale" }), false, "stale evidence cannot answer Ask TRACE");
   assert.equal(validateAskBody({ question: "  useful   question  " }).valid, true);
   assert.equal(validateAskBody({ question: "valid", extra: true }).valid, false);
   assert.equal(validateAskTraceInput({
@@ -205,4 +288,5 @@ await boundaryTests();
 await governanceTests();
 await gatewayTests();
 await publicationAndIngestionTests();
+await deskBoundaryTests();
 console.log("Stabilisation tests passed.");

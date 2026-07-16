@@ -2,6 +2,7 @@
 // Tests pure functions from classify module. Run: npm test
 
 import { classifyFeedItem } from "../classify";
+import { parseRSSXML } from "../fetchers/rss";
 import { CLASSIFICATION_FIXTURES, IDEMPOTENCY_ITEM } from "./golden-fixtures";
 
 let passed = 0;
@@ -92,6 +93,13 @@ const multiResult = classifyFeedItem({
 console.log(`  types: ${multiResult.itemTypes.map(t => `${t.type}(${t.score})`).join(", ")}`);
 assert(multiResult.itemTypes.length >= 1, "multiple item types detected");
 assert(multiResult.itemTypes.some(t => t.type === "model_release"), "model_release found");
+
+console.log("\n=== RSS and Atom Parser Tests ===\n");
+const atomItems = parseRSSXML(`<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom">
+  <entry><id>atom-1</id><title>Atom discovery item</title><link rel="alternate" href="https://example.com/atom-1"/><updated>2026-07-16T12:00:00Z</updated><summary>Atom summary</summary></entry>
+</feed>`);
+assert(atomItems.length === 1, "Atom entries are parsed");
+assert(atomItems[0]?.url === "https://example.com/atom-1", "Atom link href is retained");
 
 console.log(`\n========================================`);
 console.log(`  PASSED: ${passed}  FAILED: ${failed}`);

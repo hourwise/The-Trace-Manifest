@@ -6,6 +6,10 @@
 import type {
   EvidenceExcerpt,
 } from "./provider";
+import {
+  independentEvidenceWeightFor, isKnownAdmissionState, isKnownFreshnessState,
+  isKnownSourceKind, sourceRoleFor,
+} from "./task-policy";
 
 // ============================================================
 // Validation result
@@ -60,10 +64,16 @@ export function validateEvidenceExcerpt(v: unknown): v is EvidenceExcerpt {
   if (!v || typeof v !== "object" || Array.isArray(v)) return false;
   const e = v as Record<string, unknown>;
   return hasOnlyKeys(e, [
-    "sourceId", "claimId", "text", "sourceClassification", "sourceName", "sourceUrl",
+    "sourceId", "sourceKind", "sourceRole", "admissionState", "freshnessState", "independentEvidenceWeight",
+    "claimId", "text", "sourceClassification", "sourceName", "sourceUrl",
     "observedAt", "publishedAt", "trustNotes", "relationship", "isDisputed",
   ])
     && isString(e.sourceId, 128)
+    && isKnownSourceKind(e.sourceKind)
+    && e.sourceRole === sourceRoleFor(e.sourceKind)
+    && isKnownAdmissionState(e.admissionState)
+    && isKnownFreshnessState(e.freshnessState)
+    && e.independentEvidenceWeight === independentEvidenceWeightFor(e.sourceKind)
     && isOptionalString(e.claimId, 128)
     && isString(e.text, 8_000)
     && isString(e.sourceClassification, 300)

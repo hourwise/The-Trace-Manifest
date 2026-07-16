@@ -8,6 +8,8 @@
 
 After `migration-0015-editorial-desk.sql` is applied, TRACE may activate Google AI Blog (A/60 minutes), The Verge AI (B/60 minutes), MarkTechPost (C/120 minutes), ByteByteGo (B/12 hours), Product Hunt (C/6 hours), The Pragmatic Engineer (B/12 hours), Stratechery (B/12 hours), and MCP Radar (C/daily). Each has a concrete feed endpoint in the migration; the existing Worker parser must mark it healthy before it is relied on. Import AI is recorded but remains inactive until its restricted endpoint passes the same verification.
 
+**16 July 2026 verification:** the eight active launch feeds were parsed through the production RSS/Atom parser against their live endpoints and recorded as `healthy` in `trace-manifest-db-preview`. The Verge AI and Product Hunt required Atom `<entry>` support, which is now covered by a parser fixture and deployed to the Worker. Import AI remains disabled. See [`docs/audit/desk-03-discovery-feed-health-evidence.md`](../audit/desk-03-discovery-feed-health-evidence.md).
+
 All of these records are discovery or context inputs, never automatic publication authority. Citation lineage is mandatory: an official announcement, reporting on it, and derivative newsletters or product listings cannot be counted as separate corroboration.
 
 Phase 2 should not begin with 100 equally weighted feeds. The launch registry is divided into three tiers:

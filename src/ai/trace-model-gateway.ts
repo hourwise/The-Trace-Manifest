@@ -15,6 +15,7 @@ import {
   calculateDeterministicConfidence,
   type DeterministicConfidence,
 } from "../lib/server/ask-evidence";
+import { isAnswerEligibleEvidence } from "./task-policy";
 
 export type TraceAIRuntimeEnvironment = TraceAIEnvironment & { DB?: D1Database };
 
@@ -261,32 +262,42 @@ export async function askTrace(env: TraceAIRuntimeEnvironment, context: AskTrace
     };
   }
 
-  const input = {
+  const originalInput = {
     taskType: "ask_trace" as const,
     question: context.question,
     evidenceExcerpts: context.evidenceExcerpts,
     maxOutputTokens: config.maxOutputTokens,
   };
-  const inputValidation = validateTaskInput(input, "ask_trace");
+  const inputValidation = validateTaskInput(originalInput, "ask_trace");
   if (!inputValidation.valid) {
     await governance.reject(context.requestId, "Request validation failed.");
     return { status: "error", requestId: context.requestId, message: "Request validation failed." };
   }
   await governance.validate(context.requestId);
 
-  const confidence = calculateDeterministicConfidence(context.evidenceExcerpts);
+  const eligibleEvidence = context.evidenceExcerpts.filter(isAnswerEligibleEvidence);
+  const excludedEvidence = context.evidenceExcerpts.length - eligibleEvidence.length;
+  const confidence = calculateDeterministicConfidence(eligibleEvidence);
   if (confidence.label === "insufficient_evidence") {
-    const payload = safeNonAnswer(context.requestId, confidence, "Eligible evidence did not meet the minimum corroboration policy.");
+    const payload = safeNonAnswer(
+      context.requestId,
+      confidence,
+      excludedEvidence > 0
+        ? `${excludedEvidence} supplied record${excludedEvidence === 1 ? " was" : "s were"} excluded because it was not admitted, current external evidence.`
+        : "Eligible evidence did not meet the minimum corroboration policy.",
+    );
     await governance.completeWithoutModel(context.requestId, payload);
     return { status: "ok", requestId: context.requestId, payload };
   }
+
+  const input = { ...originalInput, evidenceExcerpts: eligibleEvidence };
 
   if (await governance.anyCircuitOpen(["global_kill", "public_ask", "provider_deepseek", "model_flash", "daily_budget", "monthly_budget", "balance", "auth_error"])) {
     await governance.reject(context.requestId, "Ask TRACE is temporarily unavailable.", "circuit_open");
     return { status: "temporarily_unavailable", requestId: context.requestId, message: "Ask TRACE is temporarily unavailable." };
   }
 
-  const inputTokens = Math.min(config.maxInputTokens, estimateTokens(context.question + context.evidenceExcerpts.map((item) => item.text).join("\n")));
+  const inputTokens = Math.min(config.maxInputTokens, estimateTokens(context.question + eligibleEvidence.map((item) => item.text).join("\n")));
   const estimatedMicrousd = dollarsToMicrousd(estimatedCost(config, config.publicModel, inputTokens, config.maxOutputTokens));
   const reservation = await governance.reserve(context.requestId, "ask_trace", estimatedMicrousd, durableConfig(config, env, "ask_trace"));
   if (!reservation) {
@@ -304,7 +315,7 @@ export async function askTrace(env: TraceAIRuntimeEnvironment, context: AskTrace
     const generation = await provider.generateAnswer(input);
     const validation = validateAnswerOutput(generation.output, input.evidenceExcerpts, input.maxOutputTokens);
     const payload = validation.passed
-      ? answerPayload(context.requestId, generation.output, context.evidenceExcerpts, confidence)
+      ? answerPayload(context.requestId, generation.output, eligibleEvidence, confidence)
       : safeNonAnswer(context.requestId, confidence, "The generated draft failed citation or structure validation.");
     const settlement = usageSettlement(
       config, config.publicModel, generation.usage, inputTokens, input.maxOutputTokens,
