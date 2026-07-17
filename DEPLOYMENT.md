@@ -24,6 +24,8 @@ The migration defaults catalogue records to `draft`; it does not silently publis
 
 Use `docs/operations/non-production-d1-migration-run-sheet.md` for the non-production migration rehearsal. It documents the backup/export, schema inspection, migration order, verification queries, rollback limits, and human approval stop before any production scheduling.
 
+Use `docs/operations/production-stabilisation-release-plan.md` for the later production decision. It is a review-only, approval-gated plan for the already partially migrated production D1 database; it must not be treated as a permission to run production commands.
+
 ## 3. Pages configuration
 
 Configure the D1 `DB` binding and the canonical variables from `docs/configuration/environment-variables.md`. Add secrets with the Cloudflare secret facility, not `wrangler.toml`.
