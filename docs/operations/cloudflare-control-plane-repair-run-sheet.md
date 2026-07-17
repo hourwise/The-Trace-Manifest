@@ -112,7 +112,9 @@ Run this in a local PowerShell window that you control. It copies the generated 
 
 ```powershell
 $bytes = New-Object byte[] 32
-[System.Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
+$rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+$rng.GetBytes($bytes)
+$rng.Dispose()
 $secret = [Convert]::ToBase64String($bytes)
 Set-Clipboard -Value $secret
 Write-Host "TRACE_INTERNAL_SERVICE_SECRET copied to clipboard. Paste it into Cloudflare Pages and Worker secrets. Do not paste it into chat or commit it."
