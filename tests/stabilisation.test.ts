@@ -228,6 +228,34 @@ async function deskBoundaryTests(): Promise<void> {
     assert.deepEqual({ ...stored }, {
       state: "new", lead_text: "A governed candidate for Desk boundary testing.", created_by: "publisher@example.com",
     }, "candidate intake remains an unpublished, attributable queue record");
+    assert.equal(
+      (await database.prepare("SELECT COUNT(*) AS count FROM admin_audit_log WHERE action = '/admin/candidates' AND outcome = 'succeeded'").first<{ count: number }>())?.count,
+      1,
+      "a successful 201 candidate intake is recorded as succeeded",
+    );
+
+    const replayBody = JSON.stringify({ intakeType: "lead", lead: "A replay-protected candidate request." });
+    const replayTimestamp = String(Date.now());
+    const replayNonce = crypto.randomUUID();
+    const replayIdentity = { operator: "publisher@example.com", role: "publisher" as const, timestamp: replayTimestamp, nonce: replayNonce };
+    const replaySignature = await signInternalRequest(secret, "POST", "/admin/candidates", replayBody, replayIdentity);
+    const replayRequest = () => new Request("https://worker.example/admin/candidates", {
+      method: "POST",
+      body: replayBody,
+      headers: {
+        "Content-Type": "application/json", "X-Trace-Internal-Version": "v1",
+        "X-Trace-Operator": replayIdentity.operator, "X-Trace-Role": replayIdentity.role,
+        "X-Trace-Timestamp": replayIdentity.timestamp, "X-Trace-Nonce": replayIdentity.nonce,
+        "X-Trace-Signature": replaySignature,
+      },
+    });
+    assert.equal((await worker.fetch(replayRequest(), env, context)).status, 201, "the first signed request is accepted");
+    assert.equal((await worker.fetch(replayRequest(), env, context)).status, 401, "a replayed signed request is rejected");
+    assert.equal(
+      (await database.prepare("SELECT COUNT(*) AS count FROM editorial_candidates").first<{ count: number }>())?.count,
+      2,
+      "a replay cannot create a second candidate",
+    );
     const queue = await request("publisher", "GET", "/admin/candidates");
     assert.equal(queue.status, 200, "publishers can view the Desk queue");
     assert.equal((await queue.json() as Array<{ state: string }>)[0]?.state, "new");

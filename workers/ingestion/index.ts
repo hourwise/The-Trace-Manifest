@@ -206,7 +206,7 @@ export default {
         response = Response.json({ error: "Admin action failed." }, { status: 500 });
       }
       try {
-        await recordAdminAuditWithRetry(env.DB, operator, path, targetId, response.status === 200 ? "succeeded" : "failed");
+        await recordAdminAuditWithRetry(env.DB, operator, path, targetId, response.ok ? "succeeded" : "failed");
       } catch {
         console.error(JSON.stringify({ message: "Admin outcome audit failed", requestId: operator.requestId, action: path }));
         return Response.json({ error: "The action completed but its outcome audit could not be confirmed." }, { status: 503 });

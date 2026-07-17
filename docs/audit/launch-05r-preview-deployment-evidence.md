@@ -43,6 +43,13 @@ The first direct deployment URL requests returned a transient `404`; the cache-b
 - The authenticated `/admin/sources`, `/admin/jobs`, and `/admin/review` views loaded from the Preview environment. Sources displayed the Preview registry and the Job and Review views displayed honest empty states; no synthetic operational records were introduced.
 - A publisher submitted one harmless manual candidate through `/admin/desk`. The success response stated that it had not been fetched, researched, or published. A read-only query to `trace-manifest-db-preview` confirmed the newest record is a `manual_url` candidate in `new` state; it made zero writes. This validates the Access role check, Pages-to-Worker signed proxy, and Preview D1 write path.
 
+## Audit outcome repair — 17 July 2026
+
+- A redacted, read-only query of the Preview `admin_audit_log` confirmed that the publisher candidate route emitted audit rows. It also exposed a classification defect: a successful candidate `POST` returns HTTP `201 Created`, while the Worker formerly classified only HTTP `200` as `succeeded`.
+- The Worker now classifies every successful HTTP response (`response.ok`, including `201`) as `succeeded`. The stabilisation test proves this outcome and proves a second use of the exact same signed request is rejected with `401` before it can create another candidate.
+- `npm test` passed with 47 Worker checks and the stabilisation suite; `npm run typecheck` passed with no diagnostics. A Preview-only dry run then deployed Worker version `5a30388e-f0ea-4e31-b24e-150211a942e6` to `trace-manifest-ingestion-preview`.
+- One further harmless browser Desk submission is required to verify the deployed Worker records its successful `201` outcome as `succeeded` in the remote Preview audit log. No production request is needed or authorised.
+
 ## Preview Worker deployment
 
 - Worker: `trace-manifest-ingestion-preview`
@@ -59,8 +66,8 @@ The Worker and Pages Preview use a distinct pairing secret. Its value is not ret
 
 - no production D1 backup, migration, query, or write;
 - no production Access, Pages secret, Worker secret, or role-allowlist assertion is made from these Preview checks;
-- no signed-request replay test or audit-log assertion has run;
+- the initial Preview audit query found and the Preview deployment repaired the `201` success-classification defect; one redacted live recheck remains;
 - no ingestion, source fetch, research, evidence creation, or publication was triggered; and
 - no removal of the legacy secret.
 
-The next bounded control-plane work is LAUNCH-06: demonstrate the remaining allowed and denied reader/publisher cases, replay protection, and audit behaviour in Preview only. Production migration and production smoke tests remain separate explicit approvals.
+The active bounded control-plane work remains LAUNCH-05R: perform the final harmless live audit-outcome recheck in Preview only. After that evidence is recorded, LAUNCH-06 can demonstrate the remaining allowed and denied reader/publisher cases and audit behaviour. Production migration and production smoke tests remain separate explicit approvals.
