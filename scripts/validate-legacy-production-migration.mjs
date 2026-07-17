@@ -68,6 +68,18 @@ try {
       corrected_by TEXT NOT NULL,
       corrected_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+    CREATE TABLE ingestion_jobs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      job_type TEXT NOT NULL,
+      status TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE TABLE cron_runs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      cron_expression TEXT NOT NULL,
+      status TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `);
   db.exec(`
     INSERT INTO story_clusters (id) VALUES (1);
@@ -79,6 +91,7 @@ try {
   `);
 
   db.exec(readFileSync("db/migration-production-legacy-claims-compatibility.sql", "utf8"));
+  db.exec(readFileSync("db/migration-production-legacy-catalogue-compatibility.sql", "utf8"));
 
   requireColumns("claims", [
     "feed_item_id", "claim_class", "claim_domain", "evidence_quality", "confidence_score",
@@ -88,6 +101,11 @@ try {
   requireColumns("claim_conflicts", ["severity"]);
   requireColumns("corrections", ["correction_type", "previous_evidence_status", "updated_evidence_status", "published"]);
   requireColumns("pipeline_stages", ["feed_item_id", "stage", "algorithm_version", "status"]);
+  for (const table of ["models", "model_versions", "providers", "provider_models", "pricing_history", "benchmarks", "benchmark_runs"]) {
+    if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(table)) {
+      throw new Error(`Missing legacy catalogue repair table: ${table}`);
+    }
+  }
 
   const legacyClaim = db.prepare("SELECT claim_class, evidence_quality, is_disputed, is_corrected, extraction_method, extraction_version, updated_at FROM claims WHERE id = 1").get();
   if (
@@ -118,6 +136,13 @@ try {
     VALUES (1, 1, 'Current claim', 'factual', 'official_vendor_claim', 'product', 'standard',
       'moderate', 0.75, 'rule_based', 'test-v1', datetime('now'))
   `).run();
+
+  // The repaired legacy shape must now satisfy the prerequisites of the
+  // existing stabilisation migration.
+  db.exec(readFileSync("db/migration-stabilisation-security.sql", "utf8"));
+  requireColumns("models", ["publication_status", "reviewed_by", "reviewed_at"]);
+  requireColumns("ingestion_jobs", ["result_status", "items_rejected", "items_skipped", "outcome_detail"]);
+  requireColumns("cron_runs", ["items_failed", "items_rejected", "items_skipped", "outcome_detail"]);
   const currentClaimId = db.prepare("SELECT id FROM claims WHERE claim_text = 'Current claim'").get().id;
   db.prepare(`
     INSERT INTO claim_evidence

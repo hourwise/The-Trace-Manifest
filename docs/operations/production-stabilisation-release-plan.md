@@ -1,6 +1,6 @@
-# Production Stabilisation Release Plan (Review Only)
+# Production Stabilisation Release Plan
 
-**Status:** Approved maintenance execution in progress; forward-repair path added after live schema inspection on 17 July 2026.
+**Status:** Production D1 migration completed on 17 July 2026; application deployment and no-write smoke checks remain pending.
 
 **Scope:** The remaining production work in LAUNCH-05R: preserve the existing D1 data, apply only confirmed missing durable-control and TRACE Desk schema changes, deploy the already tested control-plane code from `main`, and perform read-only or fail-closed smoke checks.
 
@@ -80,7 +80,7 @@ Use the output from section 4 before choosing a migration. Do not choose from as
 | Observed production state | Permitted action | Stop condition |
 |---|---|---|
 | Publication schema is present; all ADR 0012 durable-control tables and stabilisation outcome columns are absent; `editorial_candidates` is absent. | Apply `db/migration-stabilisation-security.sql` once, then `db/migration-0015-editorial-desk.sql` once. | Any statement error or a column/table already partially present in an unexpected combination. |
-| The specific legacy production shape found on 17 July 2026: `claims.claim_type` and `claim_evidence.evidence_type` remain required legacy columns; modern claims/evidence, correction, conflict and pipeline fields are absent; publication fields are present. | Apply the reviewed `db/migration-production-legacy-claims-compatibility.sql` once, then `db/migration-stabilisation-security.sql` once, then `db/migration-0015-editorial-desk.sql` once. | Any column differs from this observed shape, any statement fails, or a migration targets an unapproved database. |
+| The specific legacy production shape found on 17 July 2026: `claims.claim_type` and `claim_evidence.evidence_type` remain required legacy columns; modern claims/evidence, correction, conflict, pipeline and catalogue tables are absent; publication fields are present. | Apply the reviewed `db/migration-production-legacy-claims-compatibility.sql` once, then `db/migration-production-legacy-catalogue-compatibility.sql` once, then `db/migration-stabilisation-security.sql` once, then `db/migration-0015-editorial-desk.sql` once. | Any column differs from this observed shape, any statement fails, or a migration targets an unapproved database. |
 | Every durable-control table and stabilisation column is present, but `editorial_candidates` is absent. | Do not replay stabilisation; apply only `db/migration-0015-editorial-desk.sql` once. | The Desk migration reports an existing object or constraint conflict. |
 | Durable controls and TRACE Desk schema are already complete. | Do not apply SQL; move to verification and deployment review. | Any expected table or column differs materially from the reviewed schema. |
 | Any other mix, including unknown tables, partially applied `ALTER TABLE` results, or a missing base table. | Stop and produce a schema-diff note. A forward repair migration must be reviewed before any production write. | Always stop. |
@@ -96,6 +96,7 @@ $Db = "trace-manifest-db"
 
 # Run only if selected by the section 5 decision gate.
 npx wrangler d1 execute $Db --remote --file=db/migration-production-legacy-claims-compatibility.sql
+npx wrangler d1 execute $Db --remote --file=db/migration-production-legacy-catalogue-compatibility.sql
 npx wrangler d1 execute $Db --remote --file=db/migration-stabilisation-security.sql
 npx wrangler d1 execute $Db --remote --file=db/migration-0015-editorial-desk.sql
 ```
