@@ -39,12 +39,11 @@ The first direct deployment URL requests returned a transient `404`; the cache-b
 The current preview does not yet have a complete authenticated control plane:
 
 1. Configure a preview-specific Cloudflare Access application or Preview Access restriction before inviting an operator to sign in. Do not expose an authenticated admin test surface publicly.
-2. Add the required preview Pages variables and secrets through the dashboard, without copying production secrets into Git:
+2. The checked-in top-level Pages configuration now supplies these non-secret Preview values: `TRACE_ENVIRONMENT=preview`, the stable preview branch origin, the preview Worker origin, and all AI flags set to `false`. A fresh preview deployment must apply them. Add the remaining Pages variables and secrets through the dashboard, without copying production secrets into Git:
    - `CF_ACCESS_TEAM_DOMAIN`;
    - `CF_ACCESS_AUD` for the preview Access application;
    - `TRACE_ADMIN_READERS` and `TRACE_ADMIN_PUBLISHERS` for the approved operator;
-   - `TRACE_INTERNAL_SERVICE_SECRET`; and
-   - a preview-only `TRACE_INGESTION_WORKER_URL`.
+   - `TRACE_INTERNAL_SERVICE_SECRET`.
 3. Pair Pages to the already deployed preview Worker. It is bound to `trace-manifest-db-preview` and `trace-manifest-raw-preview`, has every AI flag set to `false`, and has no cron trigger. Generate and set a distinct `TRACE_INTERNAL_SERVICE_SECRET` on both Pages Preview and that Worker; then set Pages Preview `TRACE_INGESTION_WORKER_URL` to the preview Worker origin. Do not use a production secret or origin.
 4. After those controls are present, run LAUNCH-06 only with the safe reader/publisher boundary cases. Keep all AI flags disabled and do not run a production mutation.
 
