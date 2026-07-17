@@ -8,30 +8,30 @@ export const prerender = false;
 ---
 
 <BaseLayout title="Admin" description="The Trace Manifest administration dashboard.">
-  <div class="container">
+  <div class="wrap">
     <h1>Admin</h1>
     <p class="meta" style="margin-bottom:2rem;">
       Authenticated operations for source health, ingestion outcomes, and editorial review. Values in each view are read
       from the bound database; unavailable data is reported as unavailable.
     </p>
 
-    <div class="grid grid--3">
-      <a href="/admin/desk" class="card" style="text-decoration:none;color:inherit;">
+    <div class="grid-3">
+      <a href="/admin/desk" class="card card-hover" style="text-decoration:none;color:inherit;">
         <h2 style="font-size:1.15rem;">TRACE Desk</h2>
         <p class="meta">Record governed editorial candidates from article URLs, social links, leads, and additional evidence.</p>
         <p style="color:var(--color-accent);">Open Desk &rarr;</p>
       </a>
-      <a href="/admin/sources" class="card" style="text-decoration:none;color:inherit;">
+      <a href="/admin/sources" class="card card-hover" style="text-decoration:none;color:inherit;">
         <h2 style="font-size:1.15rem;">Sources</h2>
         <p class="meta">Inspect configured sources, real health state, connector support, and last successful ingestion.</p>
         <p style="color:var(--color-accent);">View sources &rarr;</p>
       </a>
-      <a href="/admin/jobs" class="card" style="text-decoration:none;color:inherit;">
+      <a href="/admin/jobs" class="card card-hover" style="text-decoration:none;color:inherit;">
         <h2 style="font-size:1.15rem;">Ingestion jobs</h2>
         <p class="meta">Inspect scheduled and manual outcomes, counts, and sanitised failure details.</p>
         <p style="color:var(--color-accent);">View jobs &rarr;</p>
       </a>
-      <a href="/admin/review" class="card" style="text-decoration:none;color:inherit;">
+      <a href="/admin/review" class="card card-hover" style="text-decoration:none;color:inherit;">
         <h2 style="font-size:1.15rem;">Review queue</h2>
         <p class="meta">Review eligible clusters and apply publisher-only publication or archive decisions.</p>
         <p style="color:var(--color-accent);">Open queue &rarr;</p>

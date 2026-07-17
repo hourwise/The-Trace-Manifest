@@ -3,14 +3,14 @@ import BaseLayout from "../../layouts/BaseLayout.astro";
 ---
 
 <BaseLayout title="TRACE Desk" description="Governed editorial intake for The Trace Manifest.">
-  <div class="container" style="max-width:900px;">
+  <div class="wrap" style="max-width:900px;">
     <h1>TRACE Desk</h1>
     <p class="meta">Record a URL, social post, lead, or additional evidence. Intake is private and audit-recorded; it does not fetch the URL, create evidence, or publish a story.</p>
     <p class="meta" style="margin:0.75rem 0 2rem;"><a href="/admin">Admin home</a> · <a href="/admin/review">Review queue</a> · <a href="/admin/sources">Sources</a></p>
 
     <section class="card">
       <h2 style="font-size:1.25rem;">New editorial candidate</h2>
-      <form id="candidate-form" style="display:grid;gap:1rem;margin-top:1rem;">
+      <form id="candidate-form" class="desk-form" style="display:grid;gap:1rem;margin-top:1rem;">
         <label>Intake type
           <select name="intakeType" id="intake-type">
             <option value="manual_url">Article or document URL</option>
@@ -37,7 +37,7 @@ import BaseLayout from "../../layouts/BaseLayout.astro";
           </label>
         </div>
         <p class="meta">Only publishers can submit. Any later retrieval remains server-side and must pass source admission, safe-fetch, clustering, evidence, and human-review controls.</p>
-        <div><button type="submit">Record candidate</button> <span id="form-status" class="meta" aria-live="polite"></span></div>
+        <div><button type="submit" class="btn btn-primary">Record candidate</button> <span id="form-status" class="meta" aria-live="polite"></span></div>
       </form>
     </section>
 
@@ -47,6 +47,30 @@ import BaseLayout from "../../layouts/BaseLayout.astro";
       <div id="candidate-list" style="display:grid;gap:0.75rem;"></div>
     </section>
   </div>
+
+  <style>
+    .desk-form label {
+      display: grid;
+      gap: 0.35rem;
+      font-size: 0.875rem;
+      font-weight: 600;
+    }
+
+    .desk-form input,
+    .desk-form select,
+    .desk-form textarea {
+      width: 100%;
+      padding: 0.6rem 0.7rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--bg);
+    }
+
+    .desk-form textarea {
+      min-height: 8rem;
+      resize: vertical;
+    }
+  </style>
 
   <script is:inline>
     const form = document.querySelector("#candidate-form");
