@@ -48,7 +48,7 @@ The first direct deployment URL requests returned a transient `404`; the cache-b
 - A redacted, read-only query of the Preview `admin_audit_log` confirmed that the publisher candidate route emitted audit rows. It also exposed a classification defect: a successful candidate `POST` returns HTTP `201 Created`, while the Worker formerly classified only HTTP `200` as `succeeded`.
 - The Worker now classifies every successful HTTP response (`response.ok`, including `201`) as `succeeded`. The stabilisation test proves this outcome and proves a second use of the exact same signed request is rejected with `401` before it can create another candidate.
 - `npm test` passed with 47 Worker checks and the stabilisation suite; `npm run typecheck` passed with no diagnostics. A Preview-only dry run then deployed Worker version `5a30388e-f0ea-4e31-b24e-150211a942e6` to `trace-manifest-ingestion-preview`.
-- One further harmless browser Desk submission is required to verify the deployed Worker records its successful `201` outcome as `succeeded` in the remote Preview audit log. No production request is needed or authorised.
+- The approved operator then submitted one further harmless Preview Desk candidate. A second redacted, read-only audit query returned only the expected publisher `allowed` and `succeeded` outcomes for the current candidate-route requests, with no erroneous `failed` outcome. The query made zero writes. This completes the safe Preview audit-outcome recheck; no production request was needed or authorised.
 
 ## Preview Worker deployment
 
@@ -66,8 +66,8 @@ The Worker and Pages Preview use a distinct pairing secret. Its value is not ret
 
 - no production D1 backup, migration, query, or write;
 - no production Access, Pages secret, Worker secret, or role-allowlist assertion is made from these Preview checks;
-- the initial Preview audit query found and the Preview deployment repaired the `201` success-classification defect; one redacted live recheck remains;
+- the initial Preview audit query found and the Preview deployment repaired the `201` success-classification defect; the redacted live recheck passed;
 - no ingestion, source fetch, research, evidence creation, or publication was triggered; and
 - no removal of the legacy secret.
 
-The active bounded control-plane work remains LAUNCH-05R: perform the final harmless live audit-outcome recheck in Preview only. After that evidence is recorded, LAUNCH-06 can demonstrate the remaining allowed and denied reader/publisher cases and audit behaviour. Production migration and production smoke tests remain separate explicit approvals.
+The safe non-production LAUNCH-05R control-plane evidence is complete. Production migration and production smoke tests remain separate explicit approvals. After the production prerequisite is explicitly approved and completed, LAUNCH-06 can demonstrate the remaining allowed and denied reader/publisher cases and audit behaviour in Preview only.

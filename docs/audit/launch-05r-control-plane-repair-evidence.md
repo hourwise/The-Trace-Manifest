@@ -21,7 +21,7 @@ Task: LAUNCH-05R - Repair the Access, D1 binding and Pages-to-Worker control pla
 - Pages secret-name verification confirms `CF_ACCESS_AUD`, `CF_ACCESS_TEAM_DOMAIN`, and `TRACE_INTERNAL_SERVICE_SECRET` are present. Secret values are not retained in this record.
 - The pre-existing `ADMIN_API_TOKEN` remains on both components. It has not been removed before Access and HMAC validation, as the repair run sheet requires.
 - In Preview, the Cloudflare Access-protected Pages deployment successfully loaded the Sources, Jobs, Review, and Desk admin views for the approved operator. A harmless publisher-only Desk submission returned the explicit no-fetch/no-publication response. A subsequent read-only query of `trace-manifest-db-preview` confirmed its newest candidate remains in `new` state. This verifies the Preview role mapping, distinct Pages-to-Worker HMAC pairing, and Preview D1 write path without recording identities, URLs, candidate identifiers, or secret values.
-- A redacted Preview audit-log query found that the initial successful Desk `POST` was also marked `failed`, because HTTP `201 Created` was not previously treated as a successful audit outcome. The Worker now uses HTTP success semantics for audit classification, and a local regression test rejects a repeated signed nonce. The correction is deployed only to `trace-manifest-ingestion-preview`; one further harmless Preview browser submission must confirm the remote `succeeded` audit row.
+- A redacted Preview audit-log query found that the initial successful Desk `POST` was also marked `failed`, because HTTP `201 Created` was not previously treated as a successful audit outcome. The Worker now uses HTTP success semantics for audit classification, and a local regression test rejects a repeated signed nonce. The correction is deployed only to `trace-manifest-ingestion-preview`; a further harmless Preview browser submission was then recorded as `allowed` and `succeeded` with no erroneous `failed` outcome.
 
 ## Safety correction during secret setup
 
@@ -35,7 +35,7 @@ The initial PowerShell random-generator call was incompatible with the local she
 4. A read-only production D1 inspection on 16 July 2026 found a partial schema: the publication fields are present, but all ADR 0012 durable-control tables and the stabilisation outcome columns are absent. No production write was performed. Production backup, migration and verification remain a separate explicit approval.
 5. The earlier Wrangler configuration put `DB` only at the top level while using a named production environment. Cloudflare bindings are non-inheritable, so the deployed production environment did not receive the binding. The tracked repair moves preview `DB` to the top level and adds an explicit `[[env.production.d1_databases]]` production binding; it requires a fresh Pages deployment.
 6. The Preview Pages/Worker control plane has been verified only for the safe publisher candidate route. The corrected top-level Pages configuration targets the Preview D1 database and must not point Preview traffic at the production database.
-7. One final Preview audit-row recheck remains for the deployed `201` outcome correction. Remaining allowed/denied Access-role cases and broader audit verification belong to LAUNCH-06. No production mutation test has run.
+7. Remaining allowed/denied Access-role cases and broader audit verification belong to LAUNCH-06. No production mutation test has run.
 
 ## Required next authority and safe continuation
 
