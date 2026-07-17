@@ -16,6 +16,27 @@ import type {
 // ============================================================
 const ALGORITHM_VERSION = "rule-extraction-v1";
 
+function legacyClaimTypeFor(domain: ClaimDomain): "factual" | "benchmark" | "pricing" | "security" | "licence" | "capability" | "regulatory" | "other" {
+  switch (domain) {
+    case "benchmark": return "benchmark";
+    case "pricing": return "pricing";
+    case "security": return "security";
+    case "licence": return "licence";
+    case "regulation": return "regulatory";
+    case "model_capability": return "capability";
+    case "model_release":
+    case "research":
+    case "product":
+    case "funding":
+    case "hardware": return "factual";
+    case "general": return "other";
+  }
+}
+
+function hasLegacyConstraint(error: unknown, table: "claims" | "claim_evidence", column: string): boolean {
+  return error instanceof Error && error.message.includes(`NOT NULL constraint failed: ${table}.${column}`);
+}
+
 // ============================================================
 // Claim extraction rule sets
 // Each rule: { domain, claimClass, patterns, severity, evidenceWeight }
@@ -446,37 +467,73 @@ export async function runClaimExtraction(
     for (const claim of claims) {
       try {
         // Insert the claim
-        const { meta } = await db.prepare(
-          `INSERT INTO claims
-           (cluster_id, feed_item_id, claim_text, claim_class, claim_domain,
-            severity, evidence_quality, confidence_score, extraction_method, extraction_version)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'rule_based', ?)`
-        ).bind(
-          clusterId,
-          item.id,
-          claim.claimText,
-          claim.claimClass,
-          claim.claimDomain,
-          claim.severity,
-          claim.evidenceQuality,
-          claim.confidenceScore,
-          ALGORITHM_VERSION,
-        ).run();
+        let meta: D1Meta;
+        try {
+          ({ meta } = await db.prepare(
+            `INSERT INTO claims
+             (cluster_id, feed_item_id, claim_text, claim_class, claim_domain,
+              severity, evidence_quality, confidence_score, extraction_method, extraction_version, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'rule_based', ?, datetime('now'))`
+          ).bind(
+            clusterId,
+            item.id,
+            claim.claimText,
+            claim.claimClass,
+            claim.claimDomain,
+            claim.severity,
+            claim.evidenceQuality,
+            claim.confidenceScore,
+            ALGORITHM_VERSION,
+          ).run());
+        } catch (error) {
+          if (!hasLegacyConstraint(error, "claims", "claim_type")) throw error;
+          ({ meta } = await db.prepare(
+            `INSERT INTO claims
+             (cluster_id, feed_item_id, claim_text, claim_type, claim_class, claim_domain,
+              severity, evidence_quality, confidence_score, extraction_method, extraction_version, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'rule_based', ?, datetime('now'))`
+          ).bind(
+            clusterId,
+            item.id,
+            claim.claimText,
+            legacyClaimTypeFor(claim.claimDomain),
+            claim.claimClass,
+            claim.claimDomain,
+            claim.severity,
+            claim.evidenceQuality,
+            claim.confidenceScore,
+            ALGORITHM_VERSION,
+          ).run());
+        }
 
         const claimId = meta.last_row_id;
         claimsExtracted++;
 
         // Create initial evidence record — the source item itself is evidence
-        await db.prepare(
-          `INSERT INTO claim_evidence
-           (claim_id, feed_item_id, relationship, evidence_summary, source_tier, is_primary_source)
-           VALUES (?, ?, 'reports', ?, ?, 1)`
-        ).bind(
-          claimId,
-          item.id,
-          `Original source: ${claim.supportingPhrase}`,
-          row.source_tier ?? "C",
-        ).run();
+        try {
+          await db.prepare(
+            `INSERT INTO claim_evidence
+             (claim_id, feed_item_id, relationship, evidence_summary, source_tier, is_primary_source)
+             VALUES (?, ?, 'reports', ?, ?, 1)`
+          ).bind(
+            claimId,
+            item.id,
+            `Original source: ${claim.supportingPhrase}`,
+            row.source_tier ?? "C",
+          ).run();
+        } catch (error) {
+          if (!hasLegacyConstraint(error, "claim_evidence", "evidence_type")) throw error;
+          await db.prepare(
+            `INSERT INTO claim_evidence
+             (claim_id, feed_item_id, evidence_type, relationship, evidence_summary, source_tier, is_primary_source)
+             VALUES (?, ?, 'source', 'reports', ?, ?, 1)`
+          ).bind(
+            claimId,
+            item.id,
+            `Original source: ${claim.supportingPhrase}`,
+            row.source_tier ?? "C",
+          ).run();
+        }
 
         evidenceCreated++;
       } catch {

@@ -34,7 +34,10 @@ forbid(/DeepSeekProvider/, "provider adapter imported outside the model gateway"
 forbid(/ADMIN_API_TOKEN|MASTER_ADMIN_TOKEN|X-Session-Id/i, "retired authentication or quota-bypass contract", isRuntimeSource);
 forbid(/sessionStorage|localStorage/i, "browser persistence is forbidden in admin or AI paths", (path) => path.startsWith("src/pages/admin") || path.startsWith("src/pages/api"));
 forbid(/Access-Control-Allow-Origin["']?\s*[:=]\s*["']\*/i, "wildcard CORS policy");
-forbid(/sk-[A-Za-z0-9_-]{20,}/, "provider-shaped plaintext secret in the working tree");
+// A provider key may be delimited by punctuation or whitespace, but must not be
+// inferred from an ordinary word or filename such as "desk-03-...".
+const providerSecretPattern = /(?<![A-Za-z0-9_-])sk-[A-Za-z0-9_-]{20,}/;
+forbid(providerSecretPattern, "provider-shaped plaintext secret in the working tree");
 
 for (const retired of ["src/ai/budget-policy.ts", "src/ai/circuit-breaker.ts", "src/ai/usage-ledger.ts"]) {
   if (existsSync(join(root, retired))) failures.push(`retired in-memory enforcement file still exists: ${retired}`);
@@ -55,7 +58,7 @@ try {
     cwd: root, encoding: "utf8", maxBuffer: 64 * 1024 * 1024,
   });
   const secretPatterns = [
-    /sk-[A-Za-z0-9_-]{32,}/,
+    /(?<![A-Za-z0-9_-])sk-[A-Za-z0-9_-]{32,}/,
     /gh[pousr]_[A-Za-z0-9]{36,}/,
     /AKIA[0-9A-Z]{16}/,
     /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/,

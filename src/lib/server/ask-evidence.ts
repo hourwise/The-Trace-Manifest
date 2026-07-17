@@ -95,6 +95,7 @@ export async function retrievePublishedEvidence(
       AND sc.evidence_status NOT IN ('unverified','outdated','superseded')
       AND fi.ingestion_status = 'published'
       AND c.is_corrected = 0
+      AND c.claim_class <> 'legacy_unclassified'
       AND (${predicates})
     ORDER BY c.is_disputed ASC,
       CASE s.tier WHEN 'A' THEN 0 WHEN 'B' THEN 1 ELSE 2 END,

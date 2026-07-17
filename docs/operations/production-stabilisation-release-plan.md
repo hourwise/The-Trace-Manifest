@@ -1,6 +1,6 @@
 # Production Stabilisation Release Plan (Review Only)
 
-**Status:** Draft for human review. This document authorises nothing.
+**Status:** Approved maintenance execution in progress; forward-repair path added after live schema inspection on 17 July 2026.
 
 **Scope:** The remaining production work in LAUNCH-05R: preserve the existing D1 data, apply only confirmed missing durable-control and TRACE Desk schema changes, deploy the already tested control-plane code from `main`, and perform read-only or fail-closed smoke checks.
 
@@ -8,7 +8,7 @@
 
 ## 1. Why this requires a dedicated plan
 
-The production D1 inspection on 16 July 2026 found publication fields but not the ADR 0012 durable-control tables or the stabilisation outcome columns. It is therefore an **existing, partially migrated database**. Running `schema.sql`, `migration-5e-publication.sql`, or any full migration bundle blindly is prohibited.
+The production D1 inspection on 16 July 2026 found publication fields but not the ADR 0012 durable-control tables or the stabilisation outcome columns. A further approved inspection on 17 July found an older `claims`/`claim_evidence` compatibility layer beneath those publication fields. It is therefore an **existing, partially migrated database**. Running `schema.sql`, `migration-5e-publication.sql`, or any full migration bundle blindly is prohibited.
 
 The isolated Preview environment has now proved the following without touching production:
 
@@ -80,6 +80,7 @@ Use the output from section 4 before choosing a migration. Do not choose from as
 | Observed production state | Permitted action | Stop condition |
 |---|---|---|
 | Publication schema is present; all ADR 0012 durable-control tables and stabilisation outcome columns are absent; `editorial_candidates` is absent. | Apply `db/migration-stabilisation-security.sql` once, then `db/migration-0015-editorial-desk.sql` once. | Any statement error or a column/table already partially present in an unexpected combination. |
+| The specific legacy production shape found on 17 July 2026: `claims.claim_type` and `claim_evidence.evidence_type` remain required legacy columns; modern claims/evidence, correction, conflict and pipeline fields are absent; publication fields are present. | Apply the reviewed `db/migration-production-legacy-claims-compatibility.sql` once, then `db/migration-stabilisation-security.sql` once, then `db/migration-0015-editorial-desk.sql` once. | Any column differs from this observed shape, any statement fails, or a migration targets an unapproved database. |
 | Every durable-control table and stabilisation column is present, but `editorial_candidates` is absent. | Do not replay stabilisation; apply only `db/migration-0015-editorial-desk.sql` once. | The Desk migration reports an existing object or constraint conflict. |
 | Durable controls and TRACE Desk schema are already complete. | Do not apply SQL; move to verification and deployment review. | Any expected table or column differs materially from the reviewed schema. |
 | Any other mix, including unknown tables, partially applied `ALTER TABLE` results, or a missing base table. | Stop and produce a schema-diff note. A forward repair migration must be reviewed before any production write. | Always stop. |
@@ -94,11 +95,14 @@ After the decision gate selects a path, execute one file at a time and stop afte
 $Db = "trace-manifest-db"
 
 # Run only if selected by the section 5 decision gate.
+npx wrangler d1 execute $Db --remote --file=db/migration-production-legacy-claims-compatibility.sql
 npx wrangler d1 execute $Db --remote --file=db/migration-stabilisation-security.sql
 npx wrangler d1 execute $Db --remote --file=db/migration-0015-editorial-desk.sql
 ```
 
 Never rerun an entire file to “see whether it works.” Do not apply `schema.sql` to this existing database. Do not apply the deferred knowledge or language migrations in this work item.
+
+The legacy forward repair preserves historical claim/evidence rows, assigns them `legacy_unclassified`/`unrated` metadata, and keeps corrections non-public. Ask TRACE excludes those legacy-unclassified claims. The Worker retains a narrow write fallback only for the two remaining legacy NOT NULL columns, so modern and Preview schemas continue to use their normal query shapes.
 
 ## 7. Database verification gate
 

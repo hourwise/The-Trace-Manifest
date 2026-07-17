@@ -15,7 +15,7 @@
     "test": "tsx workers/ingestion/__tests__/run-tests.ts && tsx tests/stabilisation.test.ts",
     "test:security": "node scripts/security-check.mjs",
     "test:discovery-feeds": "tsx scripts/check-discovery-feeds.ts",
-    "test:migrations": "node scripts/validate-migrations.mjs",
+    "test:migrations": "node scripts/validate-migrations.mjs && node scripts/validate-legacy-production-migration.mjs",
     "test:diff": "node scripts/diff-check.mjs",
     "audit:production": "npm audit --omit=dev --audit-level=high",
     "ci": "npm run test:diff && npm run typecheck && npm test && npm run test:migrations && npm run test:security && npm run build"
