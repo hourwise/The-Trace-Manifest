@@ -45,13 +45,25 @@ The current preview does not yet have a complete authenticated control plane:
    - `TRACE_ADMIN_READERS` and `TRACE_ADMIN_PUBLISHERS` for the approved operator;
    - `TRACE_INTERNAL_SERVICE_SECRET`; and
    - a preview-only `TRACE_INGESTION_WORKER_URL`.
-3. Deploy a separate preview ingestion Worker bound to `trace-manifest-db-preview`; it must not use production D1 or inherit production cron triggers. A separate preview R2 decision is required before enabling any ingestion route.
+3. Pair Pages to the already deployed preview Worker. It is bound to `trace-manifest-db-preview` and `trace-manifest-raw-preview`, has every AI flag set to `false`, and has no cron trigger. Generate and set a distinct `TRACE_INTERNAL_SERVICE_SECRET` on both Pages Preview and that Worker; then set Pages Preview `TRACE_INGESTION_WORKER_URL` to the preview Worker origin. Do not use a production secret or origin.
 4. After those controls are present, run LAUNCH-06 only with the safe reader/publisher boundary cases. Keep all AI flags disabled and do not run a production mutation.
+
+## Preview Worker deployment
+
+- Worker: `trace-manifest-ingestion-preview`
+- Version: `0e5f0dce-1b86-43ab-98e9-501b0232f31a`
+- Origin: `https://trace-manifest-ingestion-preview.philgeran.workers.dev`
+- D1 binding: `trace-manifest-db-preview`
+- R2 binding: `trace-manifest-raw-preview` (new, empty, preview-only bucket)
+- Scheduled triggers: none
+- AI feature flags: all `false`
+
+The Worker intentionally has no `TRACE_INTERNAL_SERVICE_SECRET` until the operator generates a distinct preview secret and places the same value in both the Worker and Pages Preview environment. It cannot successfully receive a signed Pages-to-Worker request before that pairing exists.
 
 ## Explicitly not done
 
 - no production D1 backup, migration, query, or write;
-- no Worker deployment or preview Worker creation;
+- no Pages Preview variable or secret change, including no preview HMAC pairing;
 - no Access policy or Pages variable/secret change;
 - no authenticated request;
 - no publisher mutation, replay test, audit-log query, ingestion, or publication; and
