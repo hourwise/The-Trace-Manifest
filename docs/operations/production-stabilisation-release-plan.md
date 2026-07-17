@@ -1,6 +1,6 @@
 # Production Stabilisation Release Plan
 
-**Status:** Production D1 migration completed on 17 July 2026; application deployment and no-write smoke checks remain pending.
+**Status:** Production D1 migration, Pages/Worker deployment, and anonymous no-write smoke checks completed on 17 July 2026. The separate authenticated publisher-browser check remains open for the named operator.
 
 **Scope:** The remaining production work in LAUNCH-05R: preserve the existing D1 data, apply only confirmed missing durable-control and TRACE Desk schema changes, deploy the already tested control-plane code from `main`, and perform read-only or fail-closed smoke checks.
 
@@ -130,11 +130,11 @@ Only after the database verification gate passes:
 4. From the same `main` checkout, validate then deploy the production Worker:
 
    ```powershell
-   npx wrangler deploy --config wrangler.worker.toml --dry-run
-   npx wrangler deploy --config wrangler.worker.toml
+   npx wrangler deploy --config wrangler.worker.toml --keep-vars --env= --dry-run
+   npx wrangler deploy --config wrangler.worker.toml --keep-vars --env=
    ```
 
-   Compare the dry-run bindings and cron schedule to the approved production configuration before the second command. Stop if it targets Preview resources or proposes an unexpected binding change.
+   `--env=` explicitly selects the top-level production configuration in this multi-environment file, and `--keep-vars` preserves any dashboard-managed Worker variables. Compare the dry-run bindings and cron schedule to the approved production configuration before the second command. Stop if it targets Preview resources or proposes an unexpected binding change.
 
 5. Run no-write smoke checks:
    - anonymous private-browser requests to `/admin` and `/api/admin/*` are intercepted by Cloudflare Access or fail closed;

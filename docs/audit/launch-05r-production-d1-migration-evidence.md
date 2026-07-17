@@ -48,4 +48,4 @@ The forward repairs are additive. Historical claims are retained with `legacy_un
 
 ## Scheduler and deployment boundary
 
-Existing historical cron-run rows were recorded as `running` without completion timestamps, so they cannot prove scheduler completion. No ingestion was triggered by this maintenance activity. Pages and Worker code remain undeployed from the release branch; the next task is a separately controlled merge/deployment and no-write smoke check.
+Existing historical cron-run rows were recorded as `running` without completion timestamps, so they cannot prove scheduler completion. No ingestion was triggered by this maintenance activity. The subsequent controlled deployment and anonymous smoke checks are recorded separately in [LAUNCH-05R Production Deployment Evidence](launch-05r-production-deployment-evidence.md).
