@@ -1,5 +1,10 @@
 ---
 import BaseLayout from "../../layouts/BaseLayout.astro";
+
+// The admin home is Access-authenticated by middleware and must execute at
+// request time. Without this marker Astro omits the route from the Pages
+// server bundle, producing a 404 before the security boundary can run.
+export const prerender = false;
 ---
 
 <BaseLayout title="Admin" description="The Trace Manifest administration dashboard.">
