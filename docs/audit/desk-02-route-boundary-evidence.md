@@ -1,6 +1,6 @@
 # TRACE Desk 02 — route-boundary evidence
 
-**Date:** 16 July 2026  
+**Date:** 16–17 July 2026
 **Scope:** `DESK-02` from the master build plan
 
 ## Evidence collected
@@ -16,10 +16,15 @@
   - the created record is not fetched, researched, or published, and the publisher can list it.
 - `npm run typecheck` completed with no diagnostics.
 
-## Deliberate limit
+## Authenticated Preview verification — 17 July 2026
 
-There is no current Cloudflare Pages preview deployment with the migrated preview D1 binding. The production D1 has not received `migration-0015-editorial-desk.sql`, by design. Therefore an authenticated live publisher submission has **not** been attempted: it would correctly return the migration-unavailable response and would not be meaningful evidence.
+- The approved operator opened the Cloudflare Access-protected Preview TRACE Desk and submitted one harmless manual URL candidate.
+- The Desk returned: `Candidate recorded. It has not been fetched, researched, or published.`
+- A read-only Wrangler query against `trace-manifest-db-preview` confirmed the newest `editorial_candidates` record is a `manual_url` candidate in `new` state, with normal urgency. The query returned zero writes. The candidate URL, operator identity, and identifier are deliberately not retained in this evidence file.
+- A successful browser submission proves the allowed publisher flow crossed the intended boundaries: Cloudflare Access session and Pages role mapping, same-origin POST, signed and nonce-protected Pages-to-Worker proxy, then the isolated Preview Worker and Preview D1. It does not prove any production boundary.
 
-## Completion step
+## Completion and limits
 
-Create or use an Access-protected non-production Pages deployment that binds to `trace-manifest-db-preview`, then perform one publisher submission and confirm that the saved candidate is `new` and remains absent from public routes. Apply the production migration only after an explicit backup-and-approval step.
+**DESK-02 is complete in non-production.** The route and role checks, publisher-only manual intake, attributable `new` state, and no-fetch/no-publication behaviour are now evidenced in the isolated Preview environment.
+
+This task did not fetch the submitted URL, create evidence, run ingestion, research a source, alter a public route, or publish a story. The production D1 has not received `migration-0015-editorial-desk.sql`; any production migration remains subject to a separate backup and explicit approval.

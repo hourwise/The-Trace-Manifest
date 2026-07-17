@@ -1,15 +1,15 @@
 # LAUNCH-05R — Preview deployment evidence
 
 **Date:** 17 July 2026  
-**Scope:** Non-production Pages deployment and anonymous fail-closed checks only  
+**Scope:** Isolated non-production Pages, Worker, and D1 control-plane checks only
 **Production impact:** None
 
 ## Deployment
 
 - Temporary branch: `launch-05r-preview`
-- Source commit: `f09f638` (`Fix dynamic admin home route`), based on production commit `a34afbb`
-- Pages deployment ID: `304ead44-633e-4bf4-bc5e-2d90a1b26112`
-- Deployment URL: `https://304ead44.the-trace-manifest.pages.dev`
+- Initial source commit: `f09f638` (`Fix dynamic admin home route`), based on production commit `a34afbb`
+- Initial Pages deployment ID: `304ead44-633e-4bf4-bc5e-2d90a1b26112`
+- Stable Preview branch URL: `https://launch-05r-preview.the-trace-manifest.pages.dev`
 - Environment: Preview
 - Status: Active
 
@@ -19,7 +19,7 @@ The branch exists solely to create a non-production Pages deployment. It has not
 
 `wrangler.toml` declares the top-level Pages `DB` binding as the non-production database `trace-manifest-db-preview`. Its named production environment separately binds `DB` to `trace-manifest-db`.
 
-This evidence does **not** prove a successful preview D1 query: anonymous requests are rejected before an authenticated request can reach an admin data route.
+The initial anonymous checks did not prove a successful Preview D1 query: anonymous requests are rejected before they can reach an admin data route. The later authenticated checks below provide that proof without changing production.
 
 ## Anonymous checks
 
@@ -34,18 +34,14 @@ The admin page response also included `Cache-Control: no-store`. This demonstrat
 
 The first direct deployment URL requests returned a transient `404`; the cache-bypassed checks above reached the deployed Pages Function and are the authoritative result.
 
-## Remaining preview controls
+## Authenticated Preview controls and checks — 17 July 2026
 
-The current preview does not yet have a complete authenticated control plane:
-
-1. Configure a preview-specific Cloudflare Access application or Preview Access restriction before inviting an operator to sign in. Do not expose an authenticated admin test surface publicly.
-2. The checked-in top-level Pages configuration now supplies these non-secret Preview values: `TRACE_ENVIRONMENT=preview`, the stable preview branch origin, the preview Worker origin, and all AI flags set to `false`. A fresh preview deployment must apply them. Add the remaining Pages variables and secrets through the dashboard, without copying production secrets into Git:
-   - `CF_ACCESS_TEAM_DOMAIN`;
-   - `CF_ACCESS_AUD` for the preview Access application;
-   - `TRACE_ADMIN_READERS` and `TRACE_ADMIN_PUBLISHERS` for the approved operator;
-   - `TRACE_INTERNAL_SERVICE_SECRET`.
-3. Pair Pages to the already deployed preview Worker. It is bound to `trace-manifest-db-preview` and `trace-manifest-raw-preview`, has every AI flag set to `false`, and has no cron trigger. Generate and set a distinct `TRACE_INTERNAL_SERVICE_SECRET` on both Pages Preview and that Worker; then set Pages Preview `TRACE_INGESTION_WORKER_URL` to the preview Worker origin. Do not use a production secret or origin.
-4. After those controls are present, run LAUNCH-06 only with the safe reader/publisher boundary cases. Keep all AI flags disabled and do not run a production mutation.
+- Cloudflare Access protects the stable Preview branch URL. An approved operator authenticated with the configured Access session and reached `/admin`; a fresh private browsing session must still require Access authentication.
+- The Preview Pages environment contains redacted `CF_ACCESS_AUD` and `TRACE_INTERNAL_SERVICE_SECRET` secrets, plus `CF_ACCESS_TEAM_DOMAIN`, reader, and publisher allowlists for the approved operator. Values and identity details are not recorded here.
+- The checked-in Pages Preview configuration supplies `TRACE_ENVIRONMENT=preview`, the stable Preview origin, the Preview Worker origin, and all AI flags set to `false`.
+- The Preview Worker has a separately generated `TRACE_INTERNAL_SERVICE_SECRET`; secret-name verification confirmed it is stored as a Worker secret. The successful publisher submission below proves the Pages and Worker secrets are paired for this route without disclosing their value.
+- The authenticated `/admin/sources`, `/admin/jobs`, and `/admin/review` views loaded from the Preview environment. Sources displayed the Preview registry and the Job and Review views displayed honest empty states; no synthetic operational records were introduced.
+- A publisher submitted one harmless manual candidate through `/admin/desk`. The success response stated that it had not been fetched, researched, or published. A read-only query to `trace-manifest-db-preview` confirmed the newest record is a `manual_url` candidate in `new` state; it made zero writes. This validates the Access role check, Pages-to-Worker signed proxy, and Preview D1 write path.
 
 ## Preview Worker deployment
 
@@ -57,13 +53,14 @@ The current preview does not yet have a complete authenticated control plane:
 - Scheduled triggers: none
 - AI feature flags: all `false`
 
-The Worker intentionally has no `TRACE_INTERNAL_SERVICE_SECRET` until the operator generates a distinct preview secret and places the same value in both the Worker and Pages Preview environment. It cannot successfully receive a signed Pages-to-Worker request before that pairing exists.
+The Worker and Pages Preview use a distinct pairing secret. Its value is not retained in this repository.
 
-## Explicitly not done
+## Remaining checks and explicit limits
 
 - no production D1 backup, migration, query, or write;
-- no Pages Preview variable or secret change, including no preview HMAC pairing;
-- no Access policy or Pages variable/secret change;
-- no authenticated request;
-- no publisher mutation, replay test, audit-log query, ingestion, or publication; and
+- no production Access, Pages secret, Worker secret, or role-allowlist assertion is made from these Preview checks;
+- no signed-request replay test or audit-log assertion has run;
+- no ingestion, source fetch, research, evidence creation, or publication was triggered; and
 - no removal of the legacy secret.
+
+The next bounded control-plane work is LAUNCH-06: demonstrate the remaining allowed and denied reader/publisher cases, replay protection, and audit behaviour in Preview only. Production migration and production smoke tests remain separate explicit approvals.

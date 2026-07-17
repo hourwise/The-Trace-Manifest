@@ -1,6 +1,6 @@
 # LAUNCH-05R Control-Plane Repair Evidence
 
-Status: partially completed on 15 July 2026. The shared internal HMAC secret is configured on the production Pages project and ingestion Worker. Cloudflare Access is configured manually in the dashboard for both admin path scopes, and the Access team domain plus a two-audience allowlist are configured as encrypted Pages secrets. Pages role allowlists, a fresh Pages deployment/binding verification, and preview control-plane work remain blocked.
+Status: partially completed on 15–17 July 2026. The shared internal HMAC secret is configured on the production Pages project and ingestion Worker. Cloudflare Access is configured manually in the dashboard for both admin path scopes, and the Access team domain plus a two-audience allowlist are configured as encrypted Pages secrets. The isolated Preview control plane is now verified for safe authenticated administration and one publisher-only Desk submission; production role allowlists, production migration, replay/audit checks, and production smoke tests remain blocked.
 
 Task: LAUNCH-05R - Repair the Access, D1 binding and Pages-to-Worker control plane only after explicit operator approval.
 
@@ -20,6 +20,7 @@ Task: LAUNCH-05R - Repair the Access, D1 binding and Pages-to-Worker control pla
 - The two distinct Access audiences were recovered from the protected-route redirects without displaying their values. Their comma-separated allowlist was stored as the encrypted Pages `CF_ACCESS_AUD` secret. The associated Access team-domain host was stored as the encrypted Pages `CF_ACCESS_TEAM_DOMAIN` secret.
 - Pages secret-name verification confirms `CF_ACCESS_AUD`, `CF_ACCESS_TEAM_DOMAIN`, and `TRACE_INTERNAL_SERVICE_SECRET` are present. Secret values are not retained in this record.
 - The pre-existing `ADMIN_API_TOKEN` remains on both components. It has not been removed before Access and HMAC validation, as the repair run sheet requires.
+- In Preview, the Cloudflare Access-protected Pages deployment successfully loaded the Sources, Jobs, Review, and Desk admin views for the approved operator. A harmless publisher-only Desk submission returned the explicit no-fetch/no-publication response. A subsequent read-only query of `trace-manifest-db-preview` confirmed its newest candidate remains in `new` state. This verifies the Preview role mapping, distinct Pages-to-Worker HMAC pairing, and Preview D1 write path without recording identities, URLs, candidate identifiers, or secret values.
 
 ## Safety correction during secret setup
 
@@ -32,8 +33,8 @@ The initial PowerShell random-generator call was incompatible with the local she
 3. The Access applications currently permit all configured identity providers unless the operator restricts each application's Login methods to One-time PIN. That restriction and any chosen session duration need redacted evidence.
 4. A read-only production D1 inspection on 16 July 2026 found a partial schema: the publication fields are present, but all ADR 0012 durable-control tables and the stabilisation outcome columns are absent. No production write was performed. Production backup, migration and verification remain a separate explicit approval.
 5. The earlier Wrangler configuration put `DB` only at the top level while using a named production environment. Cloudflare bindings are non-inheritable, so the deployed production environment did not receive the binding. The tracked repair moves preview `DB` to the top level and adds an explicit `[[env.production.d1_databases]]` production binding; it requires a fresh Pages deployment.
-6. No preview Pages/Worker control plane has been fully verified. The corrected top-level Pages configuration targets the preview D1 database and must not point preview traffic at the production database.
-7. Access role, signed proxy, replay, audit-row, and non-production mutation tests have not run; they belong to LAUNCH-06 after the remaining repair is complete.
+6. The Preview Pages/Worker control plane has been verified only for the safe publisher candidate route. The corrected top-level Pages configuration targets the Preview D1 database and must not point Preview traffic at the production database.
+7. Remaining allowed/denied Access-role cases, signed-request replay handling, and audit-row verification belong to LAUNCH-06. No production mutation test has run.
 
 ## Required next authority and safe continuation
 
@@ -41,7 +42,7 @@ Complete the following in the Cloudflare dashboard and return only the redacted 
 
 - restrict each Access application's Login methods to One-time PIN and retain the narrow Allow policy with no broad bypass;
 - configure the Pages reader and publisher allowlists with the approved operator;
-- deploy the corrected production/preview Pages D1 binding configuration and confirm it from the running Pages Functions;
+- run the remaining Preview-only LAUNCH-06 role, replay, and audit checks; do not change production as part of that task;
 - obtain separate explicit authority for a production D1 backup, stabilisation-only migration and verification.
 
 This record does not authorise public AI, production migration, legacy-secret removal, or administrative mutation tests.
