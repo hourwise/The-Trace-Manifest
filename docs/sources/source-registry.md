@@ -67,9 +67,9 @@ These are important, but ingestion may require GitHub releases, Hugging Face org
 
 | # | Source | Preferred ingestion |
 | -: | --- | --- |
-| 31 | DeepSeek GitHub organisation | Releases and repository activity |
+| 31 | DeepSeek V3 GitHub releases | Official DeepSeek V3 releases only; organisation-wide repository activity needs a future connector |
 | 32 | DeepSeek Hugging Face organisation | New and updated model cards |
-| 33 | Qwen GitHub organisation | Releases and changelogs |
+| 33 | Qwen Code GitHub releases | Official Qwen Code releases and changelogs; model-card coverage remains with the Qwen Hugging Face source |
 | 34 | Qwen Hugging Face organisation | Models and model cards |
 | 35 | Alibaba Cloud Qwen announcements | Official release posts |
 | 36 | Zhipu AI/GLM GitHub | Releases |

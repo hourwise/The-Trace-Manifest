@@ -76,8 +76,8 @@ VALUES
 -- Section B: Chinese and open-weight ecosystems (Tier A/B)
 INSERT OR IGNORE INTO sources (name, url, section, tier, treatment, cadence_minutes, ingestion_type)
 VALUES
-  ('GitHub — DeepSeek', 'https://github.com/deepseek-ai', 'B', 'A', 'primary-technical', 180, 'github_api'),
-  ('GitHub — QwenLM (Qwen)', 'https://github.com/QwenLM', 'B', 'A', 'primary-technical', 180, 'github_api'),
+  ('GitHub — DeepSeek V3', 'https://github.com/deepseek-ai/DeepSeek-V3', 'B', 'A', 'primary-technical', 180, 'github_api'),
+  ('GitHub — Qwen Code', 'https://github.com/QwenLM/qwen-code', 'B', 'A', 'primary-technical', 180, 'github_api'),
   ('AI21 Labs Blog', 'https://www.ai21.com/blog', 'B', 'B', 'vendor-reported', 360, 'rss');
 
 -- Section C additions: Research and benchmark sources (Tier B)
