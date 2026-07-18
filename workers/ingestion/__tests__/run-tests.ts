@@ -2,7 +2,7 @@
 // Tests pure functions from classify module. Run: npm test
 
 import { classifyFeedItem } from "../classify";
-import { parseRSSXML } from "../fetchers/rss";
+import { fetchRSS, parseRSSXML, readBoundedText } from "../fetchers/rss";
 import { CLASSIFICATION_FIXTURES, IDEMPOTENCY_ITEM } from "./golden-fixtures";
 
 let passed = 0;
@@ -100,6 +100,36 @@ const atomItems = parseRSSXML(`<?xml version="1.0"?><feed xmlns="http://www.w3.o
 </feed>`);
 assert(atomItems.length === 1, "Atom entries are parsed");
 assert(atomItems[0]?.url === "https://example.com/atom-1", "Atom link href is retained");
+
+const stalledResponse = new Response(new ReadableStream<Uint8Array>({
+  start() {
+    // Deliberately leave the stream open to simulate a source that sends headers but no body.
+  },
+}));
+let stalledReadError = "";
+try {
+  await readBoundedText(stalledResponse, 1_024, 10);
+} catch (error) {
+  stalledReadError = error instanceof Error ? error.message : String(error);
+}
+assert(stalledReadError === "RSS response body read timed out.", "stalled RSS bodies time out");
+
+const originalFetch = globalThis.fetch;
+const oversizedFeed = `<?xml version="1.0"?><rss><channel>${Array.from({ length: 101 }, (_, index) =>
+  `<item><guid>${index}</guid><title>Entry ${index}</title><link>https://example.com/${index}</link></item>`,
+).join("")}</channel></rss>`;
+try {
+  globalThis.fetch = async () => new Response(oversizedFeed, {
+    headers: { "Content-Type": "application/rss+xml" },
+  });
+  const limitedItems = await fetchRSS({
+    url: "https://example.com/feed",
+    feed_url: null,
+  } as any);
+  assert(limitedItems.length === 100, "RSS fetches are capped at the newest 100 entries");
+} finally {
+  globalThis.fetch = originalFetch;
+}
 
 console.log(`\n========================================`);
 console.log(`  PASSED: ${passed}  FAILED: ${failed}`);

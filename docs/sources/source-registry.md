@@ -49,7 +49,7 @@ These form the backbone of the feed.
 | 19 | Cohere Blog | Models, enterprise AI and research | 3 hours | Vendor-reported |
 | 20 | Cohere documentation | Models, endpoints and pricing changes | Daily | Primary technical |
 | 21 | NVIDIA Technical Blog — Generative AI | Inference, hardware, agents and model optimisation | 3 hours | Primary/vendor |
-| 22 | NVIDIA AI Blog | Product and ecosystem announcements | 3 hours | Vendor-reported |
+| 22 | NVIDIA Deep Learning Blog | Product and ecosystem deep-learning announcements | 3 hours | Vendor-reported |
 | 23 | Hugging Face Blog | Models, libraries, leaderboards and research | 2 hours | Mixed primary |
 | 24 | Hugging Face model trending feed | Fast-moving open-weight releases | 1–3 hours | Discovery until verified |
 | 25 | AWS Machine Learning Blog | Bedrock, models and deployment tooling | 3 hours | Primary/vendor |

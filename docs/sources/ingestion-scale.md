@@ -27,3 +27,7 @@
 - Regulation: daily
 - Model/provider records: weekly or after relevant releases
 - Static methodology: monthly
+
+## Feed batch guardrail
+
+- RSS and Atom ingestion processes at most the newest 100 valid entries from a source in one run. This keeps a historical feed from consuming the Worker request window; later scheduled runs still collect newly published entries.

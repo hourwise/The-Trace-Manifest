@@ -4,7 +4,7 @@
 -- Section A: Official Model Providers (Tier A)
 INSERT OR IGNORE INTO sources (name, url, feed_url, section, tier, treatment, cadence_minutes, ingestion_type)
 VALUES
-  ('OpenAI News', 'https://openai.com/news/', NULL, 'A', 'A', 'vendor-reported', 60, 'rss'),
+  ('OpenAI News', 'https://openai.com/news/', 'https://openai.com/news/rss.xml', 'A', 'A', 'vendor-reported', 60, 'rss'),
   ('OpenAI API Changelog', 'https://platform.openai.com/docs/changelog', NULL, 'A', 'A', 'primary-technical', 180, 'page_diff'),
   ('OpenAI Model Documentation', 'https://platform.openai.com/docs/models', NULL, 'A', 'A', 'primary-technical', 1440, 'page_diff'),
   ('Anthropic Newsroom', 'https://www.anthropic.com/news', NULL, 'A', 'A', 'vendor-reported', 60, 'rss'),
@@ -16,7 +16,7 @@ VALUES
   ('Google Cloud AI Blog', 'https://cloud.google.com/blog/products/ai-machine-learning', NULL, 'A', 'A', 'primary-vendor', 180, 'rss'),
   ('Meta AI Blog', 'https://ai.meta.com/blog/', NULL, 'A', 'A', 'vendor-reported', 120, 'rss'),
   ('Meta AI Research', 'https://ai.meta.com/research/', NULL, 'A', 'A', 'primary-research', 360, 'rss'),
-  ('Microsoft AI Blog', 'https://news.microsoft.com/source/topics/ai/', NULL, 'A', 'A', 'vendor-reported', 180, 'rss'),
+  ('Microsoft AI Blog', 'https://news.microsoft.com/source/topics/ai/', 'https://news.microsoft.com/source/topics/ai/feed/', 'A', 'A', 'vendor-reported', 180, 'rss'),
   ('Mistral News', 'https://mistral.ai/news/', NULL, 'A', 'A', 'vendor-reported', 90, 'rss'),
   ('Cohere Blog', 'https://cohere.com/blog', NULL, 'A', 'A', 'vendor-reported', 180, 'rss'),
   ('NVIDIA Technical Blog — GenAI', 'https://developer.nvidia.com/blog/category/generative-ai/', 'https://developer.nvidia.com/blog/category/generative-ai/feed/', 'A', 'A', 'primary-vendor', 180, 'rss'),
@@ -66,7 +66,7 @@ VALUES
   ('Gemini API Release Notes', 'https://ai.google.dev/gemini-api/docs/changelog', NULL, 'A', 'A', 'primary-technical', 180, 'manual'),
   ('Azure AI Foundry Updates', 'https://azure.microsoft.com/en-us/blog/topics/ai-machine-learning/', NULL, 'A', 'A', 'primary-technical', 180, 'rss'),
   ('GitHub Blog — AI & Copilot', 'https://github.blog/category/ai/', 'https://github.blog/ai-and-ml/feed/', 'A', 'A', 'primary-vendor', 180, 'rss'),
-  ('NVIDIA AI Blog', 'https://blogs.nvidia.com/blog/category/ai/', NULL, 'A', 'A', 'vendor-reported', 180, 'rss'),
+  ('NVIDIA Deep Learning Blog', 'https://blogs.nvidia.com/blog/category/enterprise/deep-learning/', 'https://blogs.nvidia.com/blog/category/deep-learning/feed/', 'A', 'A', 'vendor-reported', 180, 'rss'),
   ('AWS AI/ML What''s New', 'https://aws.amazon.com/new/?whats-new-content-all.sort-by=item.additionalFields.postDateTime&whats-new-content-all.sort-order=desc&awsf.whats-new-ml=*all', NULL, 'A', 'A', 'primary-technical', 180, 'manual'),
   ('Hugging Face Trending Models', 'https://huggingface.co/models?sort=trending', NULL, 'A', 'A', 'discovery', 120, 'manual'),
   ('xAI Blog', 'https://x.ai/blog', NULL, 'A', 'A', 'vendor-reported', 180, 'rss'),

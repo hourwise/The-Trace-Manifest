@@ -1,6 +1,9 @@
 // RSS feed fetcher
 import type { Source, RSSItem } from "../types";
 
+const RESPONSE_TIMEOUT_MS = 30_000;
+const MAX_ITEMS_PER_FEED_FETCH = 100;
+
 export async function fetchRSS(source: Source): Promise<Array<{
   external_id: string | null;
   url: string;
@@ -26,8 +29,10 @@ export async function fetchRSS(source: Source): Promise<Array<{
       throw new Error("RSS response content type is not eligible for ingestion.");
     }
 
-    const text = await readBoundedText(response, 2 * 1024 * 1024);
-    return parseRSSXML(text);
+    const text = await readBoundedText(response, 2 * 1024 * 1024, RESPONSE_TIMEOUT_MS);
+    // Syndication feeds are ordered newest-first. A bounded batch keeps one
+    // unusually large historical feed from exhausting the Worker/D1 request window.
+    return parseRSSXML(text).slice(0, MAX_ITEMS_PER_FEED_FETCH);
   } catch (error: unknown) { throw error; }
 }
 
@@ -37,7 +42,7 @@ async function fetchWithSafeRedirects(initialUrl: string): Promise<Response> {
     const response = await fetch(currentUrl, {
       headers: { "User-Agent": "TheTraceManifest/0.1 (RSS Ingestion Bot; +https://thetracemanifest.com)" },
       redirect: "manual",
-      signal: AbortSignal.timeout(30_000),
+      signal: AbortSignal.timeout(RESPONSE_TIMEOUT_MS),
     });
     if (![301, 302, 303, 307, 308].includes(response.status)) return response;
     const location = response.headers.get("Location");
@@ -65,22 +70,33 @@ function safeRemoteUrl(value: string): boolean {
   }
 }
 
-async function readBoundedText(response: Response, maximumBytes: number): Promise<string> {
+export async function readBoundedText(
+  response: Response,
+  maximumBytes: number,
+  readTimeoutMs = RESPONSE_TIMEOUT_MS,
+): Promise<string> {
   const declared = Number(response.headers.get("Content-Length") ?? "0");
   if (Number.isFinite(declared) && declared > maximumBytes) throw new Error("RSS response exceeds the ingestion limit.");
   if (!response.body) return "";
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > maximumBytes) {
-      await reader.cancel();
-      throw new Error("RSS response exceeds the ingestion limit.");
+  try {
+    while (true) {
+      const { done, value } = await readNextChunk(reader, readTimeoutMs);
+      if (done) break;
+      total += value.byteLength;
+      if (total > maximumBytes) {
+        await reader.cancel();
+        throw new Error("RSS response exceeds the ingestion limit.");
+      }
+      chunks.push(value);
     }
-    chunks.push(value);
+  } catch (error) {
+    await reader.cancel().catch(() => undefined);
+    throw error;
+  } finally {
+    reader.releaseLock();
   }
   const bytes = new Uint8Array(total);
   let offset = 0;
@@ -89,6 +105,25 @@ async function readBoundedText(response: Response, maximumBytes: number): Promis
     offset += chunk.byteLength;
   }
   return new TextDecoder().decode(bytes);
+}
+
+function readNextChunk(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  timeoutMs: number,
+): Promise<ReadableStreamReadResult<Uint8Array>> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error("RSS response body read timed out.")), timeoutMs);
+    reader.read().then(
+      (result) => {
+        clearTimeout(timeout);
+        resolve(result);
+      },
+      (error) => {
+        clearTimeout(timeout);
+        reject(error);
+      },
+    );
+  });
 }
 
 export function parseRSSXML(xml: string): Array<{
