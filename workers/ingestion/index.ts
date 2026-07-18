@@ -412,7 +412,7 @@ async function processSource(env: Env, source: Source, jobType: string) {
 
     // Update source health
     await env.DB.prepare(
-      "UPDATE sources SET last_fetched_at = datetime('now'), last_success_at = datetime('now'), consecutive_failures = 0, health_status = 'healthy' WHERE id = ?"
+      "UPDATE sources SET last_fetched_at = datetime('now'), last_success_at = datetime('now'), last_error_at = NULL, last_error_message = NULL, consecutive_failures = 0, health_status = 'healthy' WHERE id = ?"
     ).bind(source.id).run();
 
     const resultStatus = rejected > 0 ? "succeeded_with_rejections" : "succeeded";
