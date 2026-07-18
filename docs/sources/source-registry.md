@@ -20,6 +20,10 @@ Phase 2 should not begin with 100 equally weighted feeds. The launch registry is
 
 The first registry favours official sources, research repositories, and dependable APIs.
 
+### Connector admission status (SOURCE-06)
+
+As at 18 July 2026, Anthropic Newsroom and Research, Google Developers AI and Cloud AI, Meta AI Blog and Research, Mistral, Cohere, Stability AI, IBM Research AI, xAI, Groq, AI21, and MarkTechPost have no RSS or Atom endpoint that currently passes the production Worker parser. They remain source records, but are classified as `page_diff` and displayed as **unsupported** until a safe page-diff connector exists. They must not produce recurring RSS failure jobs and they cannot be treated as ingested evidence in the meantime. MarkTechPost's previously recorded `/feed/` endpoint now serves `text/html` to the Worker; this is a current endpoint change, not a parser exception.
+
 ---
 
 ## Section A — Official Model Providers and Product Sources
@@ -42,7 +46,7 @@ These form the backbone of the feed.
 | 12 | Meta AI Blog | Model, research and product announcements | 2 hours | Vendor-reported |
 | 13 | Meta AI Research | Papers, datasets and research artefacts | 6 hours | Primary research |
 | 14 | Microsoft AI Blog | Copilot, models and company AI announcements | 3 hours | Vendor-reported |
-| 15 | Azure AI/Foundry updates | Hosted models, features, pricing and availability | 3 hours | Primary technical |
+| 15 | Azure Blog | Azure AI/Foundry, platform and technical updates; classification keeps only the relevant material | 3 hours | Primary technical |
 | 16 | GitHub Blog — AI and Copilot | Copilot and developer-platform changes | 3 hours | Primary/vendor |
 | 17 | Mistral News | Models, Le Chat, Vibe and platform releases | 1–2 hours | Vendor-reported |
 | 18 | Mistral documentation/changelog | API, model and pricing changes | 3 hours | Primary technical |
@@ -56,7 +60,7 @@ These form the backbone of the feed.
 | 26 | AWS "What's New" for AI/ML | Bedrock model and service changes | 3 hours | Primary technical |
 | 27 | Apple Machine Learning Research | Apple models and research | 12 hours | Primary research |
 | 28 | IBM Research AI | Research and enterprise AI | 12 hours | Primary research |
-| 29 | Databricks AI Blog | Mosaic, inference, evaluation and data tooling | 6 hours | Primary/vendor |
+| 29 | Databricks Release Notes | Official platform, model, data and integration release notes | 6 hours | Primary technical |
 | 30 | Stability AI News | Image, audio and open-model releases | 3 hours | Vendor-reported |
 
 ---

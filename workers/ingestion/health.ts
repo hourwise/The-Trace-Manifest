@@ -2,58 +2,43 @@
 import type { Source } from "./types";
 import type { Env } from "./index";
 
+const DAILY_SCHEDULE_WINDOW_MINUTES = 25 * 60;
+
+/**
+ * The ingestion outcome is the authoritative source-health signal. The daily
+ * health task only detects a source which has missed its expected scheduler
+ * window; probing a publisher's landing page produces false failures when it
+ * redirects or rejects HEAD requests.
+ */
+export function sourceHealthWindowMinutes(source: Pick<Source, "tier" | "cadence_minutes">): number {
+  // Tier B and C ingestion is scheduled once per day, regardless of a source's
+  // preferred cadence. Allow one complete daily window plus an hour of grace.
+  const schedulerWindow = source.tier === "A" ? 0 : DAILY_SCHEDULE_WINDOW_MINUTES;
+  return Math.max(source.cadence_minutes * 2, schedulerWindow);
+}
+
+export function isSourceStale(
+  source: Pick<Source, "tier" | "cadence_minutes" | "last_fetched_at">,
+  now = Date.now(),
+): boolean {
+  if (!source.last_fetched_at) return false;
+
+  // D1's datetime('now') is UTC and omits the timezone suffix.
+  const fetchedAt = Date.parse(`${source.last_fetched_at.replace(" ", "T")}Z`);
+  if (!Number.isFinite(fetchedAt)) return false;
+
+  return now - fetchedAt > sourceHealthWindowMinutes(source) * 60_000;
+}
+
 export async function checkSourceHealth(env: Env, source: Source): Promise<void> {
-  if (!safeRemoteUrl(source.url)) {
-    await markDegraded(env.DB, source.id, "Source URL is not eligible for remote health checks.");
-    return;
-  }
-  // Check if the source URL is still reachable
-  try {
-    const response = await fetch(source.url, {
-      method: "HEAD",
-      headers: { "User-Agent": "TheTraceManifest/0.1 (Health Check)" },
-      redirect: "manual",
-      signal: AbortSignal.timeout(15000),
-    });
+  if (!isSourceStale(source)) return;
 
-    if (!response.ok) {
-      await markDegraded(env.DB, source.id, `HTTP ${response.status}`);
-    }
-  } catch {
-    await markDegraded(env.DB, source.id, "Source health request failed.");
-  }
-
-  // Check for stale sources (not fetched in > 2x cadence)
-  if (source.last_fetched_at) {
-    const lastFetch = new Date(source.last_fetched_at);
-    const maxAge = source.cadence_minutes * 2 * 60 * 1000; // 2x cadence in ms
-    if (Date.now() - lastFetch.getTime() > maxAge) {
-      await env.DB.prepare(
-        "UPDATE sources SET health_status = 'degraded' WHERE id = ? AND health_status = 'healthy'"
-      ).bind(source.id).run();
-    }
-  }
-}
-
-function safeRemoteUrl(value: string): boolean {
-  try {
-    const url = new URL(value);
-    const host = url.hostname.toLowerCase();
-    const private172 = host.match(/^172\.(\d{1,3})\./);
-    return (url.protocol === "https:" || url.protocol === "http:")
-      && !url.username && !url.password && (!url.port || url.port === "80" || url.port === "443")
-      && !host.includes(":") && host !== "localhost" && !host.endsWith(".local")
-      && !/^(127\.|10\.|169\.254\.|192\.168\.|0\.)/.test(host)
-      && !(private172 && Number(private172[1]) >= 16 && Number(private172[1]) <= 31);
-  } catch {
-    return false;
-  }
-}
-
-async function markDegraded(db: D1Database, sourceId: number, reason: string): Promise<void> {
-  await db.prepare(
-    "UPDATE sources SET health_status = CASE WHEN consecutive_failures >= 3 THEN 'failing' ELSE 'degraded' END, last_error_at = datetime('now'), last_error_message = ? WHERE id = ?"
-  ).bind(reason, sourceId).run();
+  await env.DB.prepare(
+    `UPDATE sources
+     SET health_status = 'degraded', last_error_at = datetime('now'),
+         last_error_message = 'No ingestion attempt completed within the expected scheduler window.'
+     WHERE id = ? AND health_status = 'healthy'`
+  ).bind(source.id).run();
 }
 
 export async function disableFailingSource(db: D1Database, sourceId: number): Promise<void> {

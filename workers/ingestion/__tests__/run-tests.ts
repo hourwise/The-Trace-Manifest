@@ -3,6 +3,7 @@
 
 import { classifyFeedItem } from "../classify";
 import { fetchRSS, parseRSSXML, readBoundedText } from "../fetchers/rss";
+import { isSourceStale, sourceHealthWindowMinutes } from "../health";
 import { CLASSIFICATION_FIXTURES, IDEMPOTENCY_ITEM } from "./golden-fixtures";
 
 let passed = 0;
@@ -101,6 +102,11 @@ const atomItems = parseRSSXML(`<?xml version="1.0"?><feed xmlns="http://www.w3.o
 assert(atomItems.length === 1, "Atom entries are parsed");
 assert(atomItems[0]?.url === "https://example.com/atom-1", "Atom link href is retained");
 
+const cdataItems = parseRSSXML(`<?xml version="1.0"?><rss><channel>
+  <item><guid>cdata-1</guid><title><![CDATA[Release <em>note</em>]]></title><link>https://example.com/cdata-1</link></item>
+</channel></rss>`);
+assert(cdataItems[0]?.title === "Release note", "CDATA and markup are removed from RSS titles");
+
 const stalledResponse = new Response(new ReadableStream<Uint8Array>({
   start() {
     // Deliberately leave the stream open to simulate a source that sends headers but no body.
@@ -126,10 +132,34 @@ try {
     url: "https://example.com/feed",
     feed_url: null,
   } as any);
-  assert(limitedItems.length === 100, "RSS fetches are capped at the newest 100 entries");
+assert(limitedItems.length === 100, "RSS fetches are capped at the newest 100 entries");
 } finally {
   globalThis.fetch = originalFetch;
 }
+
+console.log("\n=== Source Health Tests ===\n");
+
+const tierBSource = {
+  tier: "B" as const,
+  cadence_minutes: 360,
+  last_fetched_at: "2026-07-18 06:00:00",
+};
+assert(sourceHealthWindowMinutes(tierBSource) === 1_500,
+  "Tier B sources use the daily scheduler window when it exceeds source cadence");
+assert(!isSourceStale(tierBSource, Date.parse("2026-07-18T18:00:00Z")),
+  "a Tier B source fetched at the daily run is not marked stale at the health run");
+assert(isSourceStale(tierBSource, Date.parse("2026-07-19T08:00:01Z")),
+  "a Tier B source is marked stale after its daily scheduler window is missed");
+
+const tierASource = {
+  tier: "A" as const,
+  cadence_minutes: 60,
+  last_fetched_at: "2026-07-18 17:00:00",
+};
+assert(sourceHealthWindowMinutes(tierASource) === 120,
+  "Tier A source health continues to use twice the configured cadence");
+assert(!isSourceStale({ ...tierASource, last_fetched_at: null }),
+  "a source without an ingestion attempt remains unknown rather than stale");
 
 console.log(`\n========================================`);
 console.log(`  PASSED: ${passed}  FAILED: ${failed}`);

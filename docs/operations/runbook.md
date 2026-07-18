@@ -24,7 +24,7 @@ Remove the user from Access and role allowlists, rotate the internal signing sec
 
 ## Ingestion degradation
 
-Use the jobs and sources admin views. `unsupported` means no connector implementation exists; disable or implement it rather than treating it as healthy. For failures, inspect redacted source health details, test the parser against a saved fixture, and confirm no job is recorded as succeeded before storage completes.
+Use the jobs and sources admin views. `unsupported` means no connector implementation exists; disable or implement it rather than treating it as healthy. If no RSS or Atom endpoint passes the production parser, move the source to `page_diff` or `manual`; do not leave it generating recurring RSS failures. A successful ingestion outcome is the authoritative health signal: the daily health task only detects missed scheduler windows and does not probe publisher landing pages, because redirects and blocked `HEAD` requests are not ingestion failures. For failures, inspect redacted source health details, test the parser against a saved fixture, and confirm no job is recorded as succeeded before storage completes.
 
 ## Publication error
 

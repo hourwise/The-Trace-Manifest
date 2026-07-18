@@ -187,7 +187,8 @@ function stripHTML(html: string): string {
 }
 
 function decodeHTML(html: string): string {
-  return html
+  const cdataUnwrapped = html.replace(/^<!\[CDATA\[([\s\S]*)\]\]>$/i, "$1");
+  return stripHTML(cdataUnwrapped)
     .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
