@@ -35,6 +35,11 @@ TRACE_AI_EDITORIAL_ENABLED = "true"
 TRACE_AI_SCHEDULED_ENABLED = "false"
 TRACE_AI_GLOBAL_KILL_SWITCH = "false"
 TRACE_INGESTION_WORKER_URL = "https://trace-manifest-ingestion.philgeran.workers.dev"
+TRACE_AI_FLASH_INPUT_USD_PER_MILLION = "1"
+TRACE_AI_FLASH_OUTPUT_USD_PER_MILLION = "5"
+TRACE_AI_PRO_INPUT_USD_PER_MILLION = "2"
+TRACE_AI_PRO_OUTPUT_USD_PER_MILLION = "10"
+TRACE_AI_EDITORIAL_DAILY_BUDGET_USD = "0.50"
 
 # Server-only secrets configured with `wrangler pages secret put`:
 # DEEPSEEK_API_KEY (only when a governed AI path is intentionally enabled)
