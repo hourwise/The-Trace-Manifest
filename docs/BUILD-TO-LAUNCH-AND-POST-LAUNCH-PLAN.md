@@ -1,7 +1,7 @@
 # Build-to-launch and post-launch plan
 
 **Audience:** a lower-capability implementation model or a tired human operator  
-**Current baseline:** commit `21978bf` is on `main` and `origin/main`; source-health and feed-admission changes are committed.  
+**Current baseline:** commit `cc22b63` is on `main` and `origin/main`; source-health, feed-admission, and this hand-off plan are committed.  
 **Purpose:** execute the remaining launch work in small, verifiable steps, then deliver the accepted ADR features in a safe order.
 
 ## Rules that must be followed exactly
