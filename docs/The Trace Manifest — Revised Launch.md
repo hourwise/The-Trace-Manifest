@@ -1,5 +1,7 @@
 # The Trace Manifest — Revised Launch Scope
 
+The executable hand-off sequence is in the [Build-to-launch and post-launch plan](BUILD-TO-LAUNCH-AND-POST-LAUNCH-PLAN.md). Follow its rules explicitly; it is the lower-model implementation checklist for this launch scope and the accepted ADR roadmap.
+
 ## Launch principle
 
 TRACE will launch as a **focused, populated AI and agents intelligence platform**, not as a broad technology site with unfinished or empty sections.
