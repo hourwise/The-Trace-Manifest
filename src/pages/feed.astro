@@ -106,26 +106,7 @@ try {
       </div>
     )}
 
-    <!-- ADR 0009: Approved social signals -->
-    {socialSignals.length > 0 && (
-      <section style="margin-bottom:2rem;">
-        <h2 style="font-size:1rem;margin-bottom:0.75rem;">Community Signals</h2>
-        {socialSignals.map((sig) => (
-          <SocialSignalCard
-            platform={sig.platform}
-            traceSummary={sig.trace_summary ?? ""}
-            authorDisplayName={sig.author_display_name}
-            authorHandle={sig.author_handle}
-            canonicalUrl={sig.canonical_url}
-            corroborationStatus={sig.corroboration_status}
-            evidenceStatus={sig.evidence_status}
-            linkedSourceCount={JSON.parse(sig.linked_source_ids || "[]").length}
-          />
-        ))}
-      </section>
-    )}
-
-    <!-- Feed items -->
+    <!-- Feed items — chronological, reviewed stories -->
     {stories.length > 0 && (
       <div style="display:flex;flex-direction:column;gap:1rem;">
         {stories.map(story => (
@@ -154,6 +135,28 @@ try {
       <p class="meta" style="text-align:center;margin-top:2rem;">
         Showing {stories.length} published {topic ? `"${topicLabel(topic)}" ` : ""}stories. Stories are reviewed before publication. <a href="/methodology">See methodology &rarr;</a>
       </p>
+    )}
+
+    <!-- ADR 0009: Community Signals — unverified social posts, below the chronological feed -->
+    {socialSignals.length > 0 && (
+      <section style="margin-top:3rem;padding-top:2rem;border-top:2px solid var(--color-border);">
+        <h2 style="font-size:1.1rem;margin-bottom:0.5rem;">Community Signals</h2>
+        <p class="meta" style="margin-bottom:1rem;font-size:0.85rem;">
+          Unverified posts from social media. These are discovery leads, not evidence. They have not been reviewed and may be inaccurate.
+        </p>
+        {socialSignals.map((sig) => (
+          <SocialSignalCard
+            platform={sig.platform}
+            traceSummary={sig.trace_summary ?? ""}
+            authorDisplayName={sig.author_display_name}
+            authorHandle={sig.author_handle}
+            canonicalUrl={sig.canonical_url}
+            corroborationStatus={sig.corroboration_status}
+            evidenceStatus={sig.evidence_status}
+            linkedSourceCount={JSON.parse(sig.linked_source_ids || "[]").length}
+          />
+        ))}
+      </section>
     )}
   </div>
 </BaseLayout>
