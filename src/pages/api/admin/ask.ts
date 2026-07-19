@@ -37,6 +37,25 @@ export const POST: APIRoute = async ({ request, locals }) => {
   if (!env.DB) return Response.json({ error: "Database unavailable." }, { status: 503 });
 
   const evidence = await retrievePublishedEvidence(env.DB, question, config.maxEvidenceExcerpts);
+  if (evidence.length === 0) {
+    return Response.json({
+      answer: "No published evidence matches your question. Try broader terms, or publish relevant stories first via the Review queue.",
+      keyPoints: [],
+      claims: [],
+      citations: [],
+      confidence: "insufficient_evidence",
+      confidenceScore: 0,
+      confidenceReasons: ["No published evidence matched the question terms."],
+      freshestObservedAt: null,
+      hasMaterialDisagreement: false,
+      disagreements: [],
+      caveats: ["The knowledge base has no published stories with claims matching these search terms."],
+      whatCouldChange: "Publishing relevant stories with extracted claims would make an answer possible.",
+      requestId: `admin_ask_${crypto.randomUUID()}`,
+      nonAnswer: true,
+    }, { headers: { "Cache-Control": "no-store" } });
+  }
+
   const requestId = `admin_ask_${crypto.randomUUID()}`;
   const secret = env.TRACE_INTERNAL_SERVICE_SECRET ?? "admin-research";
   const visitorSecret = env.TRACE_VISITOR_HASH_SECRET ?? secret;
