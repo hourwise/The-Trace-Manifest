@@ -332,16 +332,31 @@ try {
           if (aiBtn) aiBtn.disabled = aiBtn.dataset.aiEnabled !== "true" || currentSources.length === 0;
 
           count.textContent = `(${sources.length} source${sources.length !== 1 ? "s" : ""})`;
-          list.innerHTML = sources.map((s, i) => `
-            <div style="padding:0.5rem 0;border-bottom:1px solid var(--border);${i === sources.length - 1 ? "border-bottom:none;" : ""}">
-              <div style="display:flex;gap:0.5rem;align-items:baseline;flex-wrap:wrap;">
-                <span class="badge badge-sm" style="font-size:0.65rem;">Tier ${escapeHTML(s.sourceTier)}</span>
-                <span class="meta" style="font-size:0.7rem;">${escapeHTML(s.sourceName)}</span>
+          if (sources.length > 0) {
+            list.innerHTML = sources.map((s, i) => `
+              <div style="padding:0.5rem 0;border-bottom:1px solid var(--border);${i === sources.length - 1 ? "border-bottom:none;" : ""}">
+                <div style="display:flex;gap:0.5rem;align-items:baseline;flex-wrap:wrap;">
+                  <span class="badge badge-sm" style="font-size:0.65rem;">Tier ${escapeHTML(s.sourceTier)}</span>
+                  <span class="meta" style="font-size:0.7rem;">${escapeHTML(s.sourceName)}</span>
+                </div>
+                <a href="${escapeHTML(safeExternalUrl(s.url))}" target="_blank" rel="noopener" style="font-size:0.85rem;font-weight:550;display:block;margin-top:0.2rem;">${escapeHTML(s.title)}</a>
+                ${s.excerpt ? `<p class="meta" style="font-size:0.75rem;margin-top:0.15rem;line-height:1.4;">${escapeHTML(s.excerpt.slice(0, 300))}${s.excerpt.length > 300 ? "…" : ""}</p>` : ""}
               </div>
-              <a href="${escapeHTML(safeExternalUrl(s.url))}" target="_blank" rel="noopener" style="font-size:0.85rem;font-weight:550;display:block;margin-top:0.2rem;">${escapeHTML(s.title)}</a>
-              ${s.excerpt ? `<p class="meta" style="font-size:0.75rem;margin-top:0.15rem;line-height:1.4;">${escapeHTML(s.excerpt.slice(0, 300))}${s.excerpt.length > 300 ? "…" : ""}</p>` : ""}
-            </div>
-          `).join("");
+            `).join("");
+          } else {
+            // No feed sources — fall back to the cluster's own summary/headline for AI analysis
+            const summaryEl = $<HTMLTextAreaElement>("pub-summary");
+            const headlineEl = $<HTMLInputElement>("pub-headline");
+            const summary = summaryEl?.value?.trim();
+            const headline = headlineEl?.value?.trim() || (select.options[select.selectedIndex]?.textContent ?? "Untitled");
+            if (summary && summary.length >= 20) {
+              currentSources = [{ title: headline, excerpt: summary }];
+              if (aiBtn) aiBtn.disabled = aiBtn.dataset.aiEnabled !== "true";
+              list.innerHTML = `<div class="card" style="padding:0.75rem;background:color-mix(in oklch, var(--accent) 6%, transparent);"><p class="meta" style="font-size:0.8rem;">No feed sources — AI will analyze the editorial summary below.</p></div>`;
+            } else {
+              list.innerHTML = `<div class="card" style="padding:0.75rem;"><p class="meta" style="font-size:0.8rem;">No source material available. Write a summary (min 20 chars) to enable AI analysis, or publish manually.</p></div>`;
+            }
+          }
         } catch (e) {
           list.innerHTML = '<p class="meta" style="color:var(--ev-disputed);">Failed to load source material.</p>';
           console.error(e);
