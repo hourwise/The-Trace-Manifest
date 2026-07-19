@@ -532,8 +532,8 @@ export async function runClaimExtraction(
         try {
           await db.prepare(
             `INSERT INTO claim_evidence
-             (claim_id, feed_item_id, relationship, evidence_summary, source_tier, is_primary_source)
-             VALUES (?, ?, 'reports', ?, ?, 1)`
+             (claim_id, feed_item_id, evidence_type, relationship, evidence_summary, source_tier, is_primary_source)
+             VALUES (?, ?, 'source', 'reports', ?, ?, 1)`
           ).bind(
             claimId,
             item.id,
@@ -541,11 +541,12 @@ export async function runClaimExtraction(
             row.source_tier ?? "C",
           ).run();
         } catch (error) {
+          // Fallback for schema without evidence_type column
           if (!hasLegacyConstraint(error, "claim_evidence", "evidence_type")) throw error;
           await db.prepare(
             `INSERT INTO claim_evidence
-             (claim_id, feed_item_id, evidence_type, relationship, evidence_summary, source_tier, is_primary_source)
-             VALUES (?, ?, 'source', 'reports', ?, ?, 1)`
+             (claim_id, feed_item_id, relationship, evidence_summary, source_tier, is_primary_source)
+             VALUES (?, ?, 'reports', ?, ?, 1)`
           ).bind(
             claimId,
             item.id,
