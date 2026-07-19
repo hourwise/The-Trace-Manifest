@@ -8,7 +8,7 @@ export const prerender = false;
 async function proxyToWorker(request: Request, env: any): Promise<Response> {
   const identity = await authenticateAccessRequest(request, env);
   if (!identity) return Response.json({ error: "Unauthorized" }, { status: 401 });
-  if (identity.role !== "publisher") return Response.json({ error: "Forbidden" }, { status: 403 });
+  if (identity.role !== "publisher") return Response.json({ error: "Forbidden", _role: identity.role, _email: identity.email }, { status: 403 });
 
   if (request.method === "POST" && !sameOriginRequest(request, env)) {
     return Response.json({ error: "Origin rejected" }, { status: 403 });
