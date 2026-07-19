@@ -348,7 +348,7 @@ try {
             const summaryEl = $<HTMLTextAreaElement>("pub-summary");
             const headlineEl = $<HTMLInputElement>("pub-headline");
             const summary = summaryEl?.value?.trim();
-            const headline = headlineEl?.value?.trim() || (select.options[select.selectedIndex]?.textContent ?? "Untitled");
+            const headline = headlineEl?.value?.trim() || (this.options[this.selectedIndex]?.textContent ?? "Untitled");
             if (summary && summary.length >= 20) {
               currentSources = [{ title: headline, excerpt: summary }];
               if (aiBtn) aiBtn.disabled = aiBtn.dataset.aiEnabled !== "true";
