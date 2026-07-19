@@ -5,7 +5,7 @@ topics:
   - model-routing
   - model-selection
   - cost-optimisation
-knowledge_type: guide
+knowledge_type: how_to
 evidence_status: vendor_reported
 valid_from: 2026-07-19
 review_after: 2026-10-19
