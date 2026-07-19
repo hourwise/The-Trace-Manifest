@@ -36,7 +36,8 @@ if (Astro.request.method === "POST") {
     const candidateId = parseInt((formData.get("candidate_id") as string) ?? "0");
     const newState = (formData.get("state") as string) ?? "";
     try {
-      if (!candidateId || candidateId < 1 || !VALID_STATES.includes(newState as any)) throw new Error("Invalid request.");
+      if (!candidateId || candidateId < 1) throw new Error(`Invalid candidate ID: ${formData.get("candidate_id")}`);
+      if (!VALID_STATES.includes(newState as any)) throw new Error(`Invalid state: "${newState}"`);
       const current = await db.prepare("SELECT state FROM editorial_candidates WHERE id=?").bind(candidateId).first<{state:string}>();
       if (!current) throw new Error("Candidate not found.");
       if (!TRANSITIONS[current.state]?.includes(newState)) throw new Error(`Cannot move from ${current.state} to ${newState}.`);
