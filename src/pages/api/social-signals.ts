@@ -1,6 +1,6 @@
 import type { APIRoute } from "astro";
-import { authenticateAccessRequest } from "../../../security/access-auth";
-import { signInternalRequest } from "../../../security/internal-signature";
+import { authenticateAccessRequest } from "../../security/access-auth";
+import { signInternalRequest } from "../../security/internal-signature";
 
 export const prerender = false;
 
