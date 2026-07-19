@@ -33,29 +33,29 @@ if (Astro.request.method === "POST") {
   const db = Astro.locals.runtime.env.DB;
 
   if (action === "transition") {
-    const id = parseInt((formData.get("id") as string) ?? "0");
+    const candidateId = parseInt((formData.get("candidate_id") as string) ?? "0");
     const newState = (formData.get("state") as string) ?? "";
     try {
-      if (!id || !VALID_STATES.includes(newState as any)) throw new Error("Invalid request.");
-      const current = await db.prepare("SELECT state FROM editorial_candidates WHERE id=?").bind(id).first<{state:string}>();
+      if (!candidateId || candidateId < 1 || !VALID_STATES.includes(newState as any)) throw new Error("Invalid request.");
+      const current = await db.prepare("SELECT state FROM editorial_candidates WHERE id=?").bind(candidateId).first<{state:string}>();
       if (!current) throw new Error("Candidate not found.");
       if (!TRANSITIONS[current.state]?.includes(newState)) throw new Error(`Cannot move from ${current.state} to ${newState}.`);
-      await db.prepare("UPDATE editorial_candidates SET state=?, updated_at=datetime('now') WHERE id=?").bind(newState, id).run();
-      actionMessage = `Candidate #${id} → ${newState}.`;
+      await db.prepare("UPDATE editorial_candidates SET state=?, updated_at=datetime('now') WHERE id=?").bind(newState, candidateId).run();
+      actionMessage = `Candidate #${candidateId} → ${newState}.`;
     } catch (e: any) { actionError = e.message || "Transition failed."; }
   } else if (action === "promote") {
-    const id = parseInt((formData.get("id") as string) ?? "0");
+    const candidateId = parseInt((formData.get("candidate_id") as string) ?? "0");
     try {
-      if (!id) throw new Error("Invalid candidate ID.");
-      const candidate = await db.prepare("SELECT * FROM editorial_candidates WHERE id=? AND state='needs_review'").bind(id).first<CandidateRow>();
+      if (!candidateId || candidateId < 1) throw new Error("Invalid candidate ID.");
+      const candidate = await db.prepare("SELECT * FROM editorial_candidates WHERE id=? AND state='needs_review'").bind(candidateId).first<CandidateRow>();
       if (!candidate) throw new Error("Candidate must be in 'needs_review' state to promote.");
       const headline = candidate.lead_text?.slice(0, 150) ?? candidate.submitted_url ?? "Untitled";
-      const result = await db.prepare(`
+      await db.prepare(`
         INSERT INTO story_clusters (title, canonical_url, topic, evidence_status, publication_status, needs_human_review, created_at, updated_at)
         VALUES (?, ?, ?, 'unverified', 'draft', 1, datetime('now'), datetime('now'))
       `).bind(headline, candidate.submitted_url, candidate.topic_slug ?? "general").run();
-      await db.prepare("UPDATE editorial_candidates SET state='published', updated_at=datetime('now') WHERE id=?").bind(id).run();
-      actionMessage = `Candidate #${id} promoted to story cluster.`;
+      await db.prepare("UPDATE editorial_candidates SET state='published', updated_at=datetime('now') WHERE id=?").bind(candidateId).run();
+      actionMessage = `Candidate #${candidateId} promoted to story cluster.`;
     } catch (e: any) { actionError = e.message || "Promotion failed."; }
   } else {
     try {
@@ -150,7 +150,7 @@ const STATE_LABELS: Record<string, string> = { new:"New", drafting:"Drafting", d
                   {nextStates.map((ns) => (
                     <form method="POST" style="margin:0;">
                       <input type="hidden" name="_action" value="transition" />
-                      <input type="hidden" name="id" value={String(c.id)} />
+                      <input type="hidden" name="candidate_id" value={String(c.id)} />
                       <input type="hidden" name="state" value={ns} />
                       <button type="submit" class="btn btn-secondary" style="font-size:0.65rem;padding:0.15rem 0.4rem;width:100%;">
                         {ns === "published" ? "✓ Publish" : ns === "rejected" ? "✗ Reject" : `→ ${STATE_LABELS[ns] ?? ns}`}
@@ -160,7 +160,7 @@ const STATE_LABELS: Record<string, string> = { new:"New", drafting:"Drafting", d
                   {isPromotable && (
                     <form method="POST" style="margin:0;">
                       <input type="hidden" name="_action" value="promote" />
-                      <input type="hidden" name="id" value={String(c.id)} />
+                      <input type="hidden" name="candidate_id" value={String(c.id)} />
                       <button type="submit" class="btn btn-primary" style="font-size:0.65rem;padding:0.15rem 0.4rem;width:100%;">↑ Promote to Story</button>
                     </form>
                   )}
