@@ -53,7 +53,7 @@ if (Astro.request.method === "POST") {
       const headline = candidate.lead_text?.slice(0, 150) ?? candidate.submitted_url ?? "Untitled";
       await db.prepare(`
         INSERT INTO story_clusters (title, canonical_url, topic, evidence_status, publication_status, needs_human_review, created_at, updated_at)
-        VALUES (?, ?, ?, 'unverified', 'draft', 1, datetime('now'), datetime('now'))
+        VALUES (?, ?, ?, 'vendor_reported', 'draft', 1, datetime('now'), datetime('now'))
       `).bind(headline, candidate.submitted_url, candidate.topic_slug ?? "general").run();
       await db.prepare("UPDATE editorial_candidates SET state='published', updated_at=datetime('now') WHERE id=?").bind(candidateId).run();
       actionMessage = `Candidate promoted to story cluster.`;
