@@ -37,10 +37,10 @@ let socialSignals: Array<{
 try {
   const db = Astro.locals.runtime.env.DB;
   const result = await db.prepare(`
-    SELECT id, platform, canonical_url, trace_summary, author_display_name,
-           author_handle, corroboration_status, evidence_status, linked_source_ids
+    SELECT id, platform, canonical_url, COALESCE(trace_summary, submission_reason) as trace_summary,
+           author_display_name, author_handle, corroboration_status, evidence_status, linked_source_ids
     FROM social_signals
-    WHERE review_status = 'approved' AND trace_summary IS NOT NULL
+    WHERE review_status = 'approved'
     ORDER BY reviewed_at DESC LIMIT 10
   `).all();
   socialSignals = (result.results ?? []) as typeof socialSignals;
