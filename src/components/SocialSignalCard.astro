@@ -11,7 +11,7 @@ export interface SocialCardProps {
   linkedSourceCount: number;
 }
 
-const { platform, traceSummary, authorDisplayName, authorHandle, canonicalUrl, corroborationStatus, evidenceStatus, linkedSourceCount } = Astro.props;
+const { platform, traceSummary, authorDisplayName, authorHandle, canonicalUrl, corroborationStatus, evidenceStatus: _evidenceStatus, linkedSourceCount } = Astro.props;
 
 const platformLabel: Record<string, string> = {
   reddit: "Reddit", x: "X", bluesky: "Bluesky", mastodon: "Mastodon",

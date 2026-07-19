@@ -22,7 +22,6 @@ if (Astro.request.method === "POST") {
   const formData = await Astro.request.formData();
   const action = (formData.get("_action") as string) ?? "submit";
   const db = Astro.locals.runtime.env.DB;
-  const operator = Astro.locals.operator;
 
   if (action === "approve" || action === "reject") {
     // Approve or reject an existing signal

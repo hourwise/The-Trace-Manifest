@@ -59,7 +59,7 @@ export const prerender = false;
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ question }),
       });
-      const data = await res.json();
+      const data: Record<string, any> = await res.json();
 
       if (!res.ok) {
         content.innerHTML = `<div class="card" style="border-left:3px solid var(--ev-disputed);"><p style="color:var(--ev-disputed);">${escapeHTML(data.error || data.message || "Ask TRACE is unavailable.")}</p></div>`;
