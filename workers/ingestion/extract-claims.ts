@@ -481,12 +481,32 @@ export async function runClaimExtraction(
       continue;
     }
 
-    // Store claims and evidence in a transaction-like batch
+    // Store claims and evidence
     for (const claim of claims) {
       try {
-        // Insert the claim
+        // Insert the claim (schema requires claim_type)
         let meta: D1Meta;
         try {
+          ({ meta } = await db.prepare(
+            `INSERT INTO claims
+             (cluster_id, feed_item_id, claim_text, claim_type, claim_class, claim_domain,
+              severity, evidence_quality, confidence_score, extraction_method, extraction_version, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'rule_based', ?, datetime('now'))`
+          ).bind(
+            effectiveClusterId,
+            item.id,
+            claim.claimText,
+            legacyClaimTypeFor(claim.claimDomain),
+            claim.claimClass,
+            claim.claimDomain,
+            claim.severity,
+            claim.evidenceQuality,
+            claim.confidenceScore,
+            ALGORITHM_VERSION,
+          ).run());
+        } catch (error) {
+          // Fallback for schema without claim_type column
+          if (!hasLegacyConstraint(error, "claims", "claim_type")) throw error;
           ({ meta } = await db.prepare(
             `INSERT INTO claims
              (cluster_id, feed_item_id, claim_text, claim_class, claim_domain,
@@ -496,25 +516,6 @@ export async function runClaimExtraction(
             effectiveClusterId,
             item.id,
             claim.claimText,
-            claim.claimClass,
-            claim.claimDomain,
-            claim.severity,
-            claim.evidenceQuality,
-            claim.confidenceScore,
-            ALGORITHM_VERSION,
-          ).run());
-        } catch (error) {
-          if (!hasLegacyConstraint(error, "claims", "claim_type")) throw error;
-          ({ meta } = await db.prepare(
-            `INSERT INTO claims
-             (cluster_id, feed_item_id, claim_text, claim_type, claim_class, claim_domain,
-              severity, evidence_quality, confidence_score, extraction_method, extraction_version, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'rule_based', ?, datetime('now'))`
-          ).bind(
-            effectiveClusterId,
-            item.id,
-            claim.claimText,
-            legacyClaimTypeFor(claim.claimDomain),
             claim.claimClass,
             claim.claimDomain,
             claim.severity,
@@ -554,8 +555,10 @@ export async function runClaimExtraction(
         }
 
         evidenceCreated++;
-      } catch {
-        console.error(`Claim extraction failed for item ${item.id}.`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        await recordPipelineStage(db, item.id, "claim_extracted", "failed",
+          `Claim insert failed: ${msg.substring(0, 200)}`);
       }
     }
 

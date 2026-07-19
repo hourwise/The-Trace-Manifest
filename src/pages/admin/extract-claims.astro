@@ -7,11 +7,16 @@ import { runClaimExtraction, extractClaimsFromItem } from "../../../workers/inge
 
 export const prerender = false;
 
-interface DebugSample { id: number; title: string; summary: string | null; text: string; textLen: number; claimCount: number; claims: string[]; sourceTier: string; }
+interface DebugSample { id: number; title: string; rawText: string; normalizedText: string; textLen: number; claimCount: number; claims: string[]; sourceTier: string; }
 
 let result: { processed: number; claimsExtracted: number; evidenceCreated: number } | null = null;
 let error: string | null = null;
 let debugSamples: DebugSample[] = [];
+
+// Normalise helper — must match extract-claims.ts exactly
+function normaliseText(text: string): string {
+  return text.replace(/<[^>]*>/g, "").replace(/\s+/g, " ").replace(/&#?[a-z0-9]+;/gi, "").trim();
+}
 
 if (Astro.request.method === "POST") {
   try {
@@ -27,17 +32,18 @@ if (Astro.request.method === "POST") {
          LIMIT 3`
       ).all<{ id: number; title: string; summary: string | null; content_excerpt: string | null; source_tier: string; source_treatment: string }>();
       for (const row of sampleRows.results) {
-        const text = [row.title, row.summary ?? "", row.content_excerpt ?? ""].join(". ");
-        const claims = extractClaimsFromItem(
-          row as any,
-          row.source_tier ?? "C",
-          row.source_treatment ?? "",
+        const rawText = [row.title, row.summary ?? "", row.content_excerpt ?? ""].join(". ");
+        const normText = normaliseText(rawText);
+        // Claims from raw text (like diagnostic)
+        const rawClaims = extractClaimsFromItem(
+          row as any, row.source_tier ?? "C", row.source_treatment ?? "",
         );
         debugSamples.push({
-          id: row.id, title: row.title, summary: row.summary,
-          text: text.substring(0, 300), textLen: text.length,
-          claimCount: claims.length,
-          claims: claims.slice(0, 3).map((c: any) => c.claimText?.substring(0, 100)),
+          id: row.id, title: row.title,
+          rawText: rawText.substring(0, 300), normalizedText: normText.substring(0, 300),
+          textLen: normText.length,
+          claimCount: rawClaims.length,
+          claims: rawClaims.slice(0, 3).map((c: any) => c.claimText?.substring(0, 100)),
           sourceTier: row.source_tier ?? "C",
         });
       }
@@ -74,9 +80,12 @@ if (Astro.request.method === "POST") {
         {debugSamples.map((s) => (
           <div style="margin-bottom:1rem;padding-bottom:0.75rem;border-bottom:1px solid var(--border-light);">
             <p style="font-weight:600;font-size:0.85rem;">#{s.id} — {s.title} <span class="badge badge-sm">Tier {s.sourceTier}</span></p>
-            <p class="meta" style="font-size:0.7rem;margin-bottom:0.25rem;">Text length: {s.textLen} chars · Claims found: <strong>{s.claimCount}</strong></p>
-            <details><summary style="font-size:0.7rem;cursor:pointer;">Show text (first 300 chars)</summary>
-              <pre style="font-size:0.65rem;white-space:pre-wrap;word-break:break-word;background:var(--bg-muted);padding:0.5rem;margin-top:0.25rem;max-height:120px;overflow-y:auto;">{s.text}</pre>
+            <p class="meta" style="font-size:0.7rem;margin-bottom:0.25rem;">Normalized length: {s.textLen} chars · Claims found: <strong>{s.claimCount}</strong></p>
+            <details><summary style="font-size:0.7rem;cursor:pointer;">Raw text (first 300 chars)</summary>
+              <pre style="font-size:0.65rem;white-space:pre-wrap;word-break:break-word;background:var(--bg-muted);padding:0.5rem;margin-top:0.25rem;max-height:120px;overflow-y:auto;">{s.rawText}</pre>
+            </details>
+            <details><summary style="font-size:0.7rem;cursor:pointer;">Normalized text (first 300 chars)</summary>
+              <pre style="font-size:0.65rem;white-space:pre-wrap;word-break:break-word;background:var(--bg-muted);padding:0.5rem;margin-top:0.25rem;max-height:120px;overflow-y:auto;">{s.normalizedText}</pre>
             </details>
             {s.claimCount > 0 && (
               <details><summary style="font-size:0.7rem;cursor:pointer;">Show claims</summary>
