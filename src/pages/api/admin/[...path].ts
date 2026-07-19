@@ -1,5 +1,5 @@
 import type { APIRoute } from "astro";
-import { authenticateAccessRequest, type OperatorIdentity, type OperatorRole } from "../../../security/access-auth";
+import { authenticateAccessRequest, type OperatorRole } from "../../../security/access-auth";
 import { sameOriginRequest } from "../../../security/origin-policy";
 import { signInternalRequest } from "../../../security/internal-signature";
 
@@ -106,9 +106,8 @@ export async function handleAdminProxyRequest(
   request: Request,
   path: string,
   env: ProxyEnvironment,
-  preAuthenticatedIdentity?: OperatorIdentity,
 ): Promise<Response> {
-  const identity = preAuthenticatedIdentity ?? await authenticateAccessRequest(request, env);
+  const identity = await authenticateAccessRequest(request, env);
   if (!identity) return Response.json({ error: "Unauthorized" }, { status: 401 });
 
   if (request.method === "POST" && !sameOriginRequest(request, env)) {
@@ -170,7 +169,7 @@ export async function handleAdminProxyRequest(
 }
 
 const route: APIRoute = async ({ request, params, locals }) => {
-  return handleAdminProxyRequest(request, params.path ?? "", locals.runtime.env, locals.operator as OperatorIdentity | undefined);
+  return handleAdminProxyRequest(request, params.path ?? "", locals.runtime.env);
 };
 
 export const GET = route;
