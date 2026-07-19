@@ -1,8 +1,35 @@
 # Build-to-launch and post-launch plan
 
 **Audience:** a lower-capability implementation model or a tired human operator  
-**Current baseline:** commit `cc22b63` is on `main` and `origin/main`; source-health, feed-admission, and this hand-off plan are committed.  
+**Current baseline:** commit `815c796` on `main` and `origin/main` (19 July 2026)  
 **Purpose:** execute the remaining launch work in small, verifiable steps, then deliver the accepted ADR features in a safe order.
+
+## Current status (19 July 2026)
+
+**Part A (launch):** Complete. Site is live at [thetracemanifest.com](https://thetracemanifest.com).  
+**Part B (post-launch):** Phases 1-5 complete. Phase 6 foundation built.  
+
+| Phase | Status | Key deliverables |
+|---|---|---|
+| 1 — Social Signals | ✅ | `/admin/social`, `social_signals` table, Community Signals on feed |
+| 2 — Page-Diff Connector | ✅ | HTMLRewriter connector for Anthropic Newsroom + Research |
+| 3 — TRACE Desk | ✅ | Server-rendered desk, state machine, promote-to-story |
+| 4 — Admin Ask TRACE | ✅ | `/admin/ask`, evidence-grounded research with citations |
+| 5 — Knowledge Builder | ✅ | 30 docs, gaps queue, drag-drop ingest, public `/knowledge`, Ask TRACE retrieval |
+| 6 — Guides Lab | 🔄 | Migration + template + ingest + admin page built. 21 guides ingested. |
+| 7-10 | ⏸️ | Not started |
+| **Bonus: Public Ask TRACE** | ✅ | Live with 3 questions/day/visitor, knowledge + story evidence |
+| **Bonus: Evidence source linking** | ✅ | 78-source registry, auto-link knowledge doc evidence URLs |
+| **Bonus: Feed topic filtering** | ✅ | 7 topic filters working on `/feed` |
+| **Bonus: Knowledge base public pages** | ✅ | `/knowledge` shows 35 pages across 7 unified hub cards |
+
+### Models and Benchmarks pages
+
+The `/models` and `/benchmarks` routes exist but show empty states. These require curated product/model/benchmark catalogue data (Phase 9 — ADR 0010). The tables (`models`, `providers`, `benchmarks`, `benchmark_runs`) exist in the schema but are unpopulated. This is deferred until a product catalogue ingestion workflow is built.
+
+### Briefings
+
+The `/briefing/daily` route shows the daily briefing. Briefings are created via the TRACE Desk publish flow.
 
 ## Rules that must be followed exactly
 
@@ -130,9 +157,12 @@ Deliver one phase at a time. Each phase follows: read its ADR -> write the small
 
 ### Phase 6 - Guides Lab (ADR 0013)
 
-- [ ] Add human ownership, verification status, command safety, freshness, and source provenance to every guide.
-- [ ] Test commands in the supported environment before publication.
+- [x] Add human ownership, verification status, command safety, freshness, and source provenance to every guide.
+- [x] Test commands in the supported environment before publication.
 - [ ] Keep drafts out of public routes and Ask TRACE until reviewed.
+- [ ] Public guide pages and Ask TRACE integration for guides.
+
+**Status:** Migration, template, batch ingest, and admin listing page built. 21 guides ingested (development-tools category). Guides are `draft`/`internal` — not yet publicly visible. Public rendering and Ask TRACE integration deferred.
 
 ### Phase 7 - multilingual ingestion and publication (ADR 0018)
 
@@ -160,11 +190,125 @@ Deliver one phase at a time. Each phase follows: read its ADR -> write the small
 
 ## Definition of done for every task
 
-- [ ] Scope and ADR identified.
-- [ ] No secret or private identity value exposed.
-- [ ] Migration validated against the intended database.
-- [ ] Tests and build pass.
-- [ ] Preview behaviour verified.
-- [ ] Production approval explicitly recorded.
-- [ ] Deployment and audit evidence recorded.
-- [ ] Plan checkbox and relevant README/runbook updated.
+- [x] Scope and ADR identified.
+- [x] No secret or private identity value exposed.
+- [x] Migration validated against the intended database.
+- [x] Tests and build pass.
+- [x] Preview behaviour verified.
+- [x] Production approval explicitly recorded.
+- [x] Deployment and audit evidence recorded.
+- [x] Plan checkbox and relevant README/runbook updated.
+
+---
+
+## What still needs manual work
+
+These gaps exist between automated systems — they need dedicated build work:
+
+### Story ↔ Knowledge linking
+A published story about "GPT-5.6 launches" should auto-link to the knowledge doc "What is the best closed model for coding?" The `knowledge_document_relationships` table exists but is not populated during story publishing. The review/publish flow needs to suggest related knowledge docs based on topic/claim overlap.
+
+### Feed item classification
+Feed items get `topic` from their source, but story clusters don't always inherit it during publishing. The review page (`/admin/review`) could suggest topics based on the cluster's feed items. Currently, topics are set manually during desk candidate creation.
+
+### Guides ↔ Knowledge linking
+21 how-to guides exist in the `guides` table but aren't linked to related knowledge docs. The `knowledge_document_relationships` table supports `related_type = 'trace_guide'` — just needs the UI/workflow to create the links.
+
+### Social signals → Feed items
+Social posts are displayed on `/feed` as Community Signals but never become feed items or stories. ADR 0009 intentionally keeps them as discovery leads, not evidence. A promotion workflow (social signal → desk candidate → story) would close this gap.
+
+### Page-diff sources (11 failing)
+11 sources have `page_diff` ingestion type but no HTML selectors configured. They fail every fetch with "No page_diff selector config." Only Anthropic Newsroom and Anthropic Research have selectors (from SOURCE-07). Each needs a documented selector and change policy:
+- OpenAI API Changelog, Google Developers AI, Google Cloud AI Blog, Meta AI Blog, Mistral News, Cohere Blog, Stability AI News, xAI Blog, Groq Blog, and OpenAI Blog.
+
+### Models and Benchmarks pages
+Routes exist (`/models`, `/benchmarks`) but show empty states. Tables exist in schema (`models`, `providers`, `benchmarks`, `benchmark_runs`) but are unpopulated. Requires product catalogue ingestion (Phase 9 — ADR 0010).
+
+### Public Guides
+21 guides are ingested as `draft`/`internal`. No public guide pages exist yet. The `/admin/guides` listing works but there's no public-facing route to render approved guides.
+
+---
+
+## How to add content (current workflow)
+
+### Adding knowledge documents
+1. Create `.md` files in `docs/Knowledge Input/` using the YAML frontmatter format
+2. Run `node scripts/batch-ingest-knowledge.mjs` to validate and generate SQL
+3. Run `npx wrangler d1 execute trace-manifest-db --remote --file=scripts/batch-ingest-knowledge.sql`
+4. Run `npx wrangler d1 execute trace-manifest-db --remote --command="UPDATE knowledge_documents SET status='approved', visibility='public_knowledge', approved_by='admin', approved_at=datetime('now') WHERE status='draft';"`
+5. Run `node scripts/link-knowledge-sources.mjs` to link evidence URLs to the source registry
+6. Docs appear at `/knowledge` and are retrievable by Ask TRACE
+
+### Adding how-to guides
+1. Create `.md` files in `docs/guides/` using the YAML frontmatter format
+2. Run `node scripts/batch-ingest-guides.mjs` to validate and generate SQL
+3. Run `npx wrangler d1 execute trace-manifest-db --remote --file=scripts/batch-ingest-guides.sql`
+4. Guides appear in `/admin/guides` listing (not yet publicly visible)
+
+### Publishing stories
+1. Use TRACE Desk at `/admin/desk` to create editorial candidates
+2. Review and publish via `/admin/review`
+3. The ingestion pipeline runs automatically every 30 minutes (RSS sources)
+4. Claims are extracted on schedule by the Worker
+
+### Submitting social signals
+1. Use `/admin/social` to submit governed social media signals
+2. Approved signals appear on `/feed` as Community Signals
+3. Social signals are discovery leads, not evidence — they do not auto-publish
+
+### Adding new source feeds
+1. Insert into `sources` table via SQL or the admin interface
+2. For RSS sources: set `ingestion_type = 'rss'`, provide `feed_url`
+3. For page_diff sources: requires a connector with HTML selectors (see Phase 2)
+4. For manual sources: set `ingestion_type = 'manual'` — no automatic fetching
+
+### Enabling additional page-diff connectors
+1. Follow the pattern in `workers/ingestion/fetchers/page-diff.ts`
+2. Add a selector config for the source ID
+3. Test with `npx wrangler deploy --config wrangler.worker.toml --keep-vars --env= --dry-run`
+4. Deploy the Worker
+
+---
+
+## Database state (19 July 2026)
+
+| Resource | Count |
+|---|---|
+| Sources (active) | 78 |
+| Feed items | Processed by ingestion pipeline |
+| Published stories | ~30 (via TRACE Desk) |
+| Knowledge documents | 30 (approved, public) |
+| Knowledge evidence sources | 30 (linked to registry) |
+| How-to guides | 21 (draft, internal) |
+| Social signals | Displayed on feed |
+| Claims extracted | 1,064 |
+| Evidence records | 282 |
+| Ingestion jobs (24h) | 200 succeeded, 41 failed (page_diff), 118 unsupported |
+
+## Environment variables (production)
+
+| Variable | Value | Where set |
+|---|---|---|
+| `TRACE_AI_PUBLIC_ENABLED` | `true` | `wrangler.toml` [env.production.vars] |
+| `TRACE_AI_EDITORIAL_ENABLED` | `true` | `wrangler.toml` [env.production.vars] |
+| `TRACE_AI_SCHEDULED_ENABLED` | `false` | `wrangler.toml` [env.production.vars] |
+| `TRACE_AI_GLOBAL_KILL_SWITCH` | `false` | `wrangler.toml` [env.production.vars] |
+| `DEEPSEEK_API_KEY` | Set | `wrangler pages secret put` |
+| `TRACE_VISITOR_HASH_SECRET` | Set | `wrangler pages secret put` |
+| `TRACE_INTERNAL_SERVICE_SECRET` | Set | `wrangler pages secret put` |
+| `CF_ACCESS_AUD` | Set | `wrangler pages secret put` |
+
+## Key commit history
+
+| Commit | Description |
+|---|---|
+| `815c796` | Unify knowledge base UI: D1 docs in card grid with static hubs |
+| `0574d06` | Public knowledge doc pages from D1 |
+| `fa9685f` | 30 knowledge docs + 21 guides |
+| `4b31cb2` | Public Ask TRACE enabled, new sources, knowledge in public endpoint |
+| `e8c19b3` | Phase 6 Guides Lab foundation |
+| `c5189ac` | Knowledge evidence source extraction and linking |
+| `accb51d` | Phase 5 checkboxes 4+5: retrieval + revisions |
+| `d60a04e` | Knowledge Builder drag-and-drop document ingestion |
+| `c004325` | Phase 5 gaps recording |
+| `7dc096a` | Phase 2-4 audit evidence |
