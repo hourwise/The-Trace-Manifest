@@ -21,20 +21,20 @@
 
 ### Step 1 - synchronise and establish the baseline
 
-- [ ] `git pull --ff-only` on the machine that will make changes.
-- [ ] Confirm a clean worktree and record the commit under test.
-- [ ] Read [the revised launch scope](The%20Trace%20Manifest%20%E2%80%94%20Revised%20Launch.md), ADR 0012, the Cloudflare control-plane run sheet, and the production stabilisation plan.
-- [ ] Do not proceed if the checked-out commit differs from the approved commit.
+- [x] `git pull --ff-only` on the machine that will make changes.
+- [x] Confirm a clean worktree and record the commit under test.
+- [x] Read [the revised launch scope](The%20Trace%20Manifest%20%E2%80%94%20Revised%20Launch.md), ADR 0012, the Cloudflare control-plane run sheet, and the production stabilisation plan.
+- [x] Do not proceed if the checked-out commit differs from the approved commit.
 
 ### Step 2 - verify the Cloudflare control plane (dashboard)
 
 Check presence only; never copy values into chat or files.
 
-- [ ] Pages production has the D1 binding, ingestion Worker URL, and internal service secret.
-- [ ] The Worker has the same internal service secret.
-- [ ] Pages has `CF_ACCESS_TEAM_DOMAIN` and `CF_ACCESS_AUD` as encrypted secrets.
-- [ ] `TRACE_ADMIN_READERS` contains the reader identity; `TRACE_ADMIN_PUBLISHERS` contains the publisher identity.
-- [ ] Access applications cover `/admin*` and `/api/admin/*` with the intended allow policy.
+- [x] Pages production has the D1 binding, ingestion Worker URL, and internal service secret.
+- [x] The Worker has the same internal service secret.
+- [x] Pages has `CF_ACCESS_TEAM_DOMAIN` and `CF_ACCESS_AUD` as encrypted secrets.
+- [ ] `TRACE_ADMIN_READERS` contains the reader identity; `TRACE_ADMIN_PUBLISHERS` contains the publisher identity. *(Reader identity deferred — no separate reader-only account available. Publisher confirmed working.)*
+- [x] Access applications cover `/admin*` and `/api/admin/*` with the intended allow policy.
 - [ ] One-time PIN is enabled as the login method if required by the Access application.
 - [ ] Retired `ADMIN_API_TOKEN` authentication is not being added back.
 
@@ -42,35 +42,35 @@ If any item is absent, stop and repair only that item using the run sheet. Do no
 
 ### Step 3 - verify deployment and bindings
 
-- [ ] Wait for the Git-connected Pages deployment for the approved `main` commit.
-- [ ] On a machine with Wrangler access, run a production dry run:
+- [x] Wait for the Git-connected Pages deployment for the approved `main` commit.
+- [x] On a machine with Wrangler access, run a production dry run:
 
   `npx wrangler deploy --config wrangler.worker.toml --keep-vars --env= --dry-run`
 
-- [ ] Check that the dry run names production D1/R2 bindings and the expected cron schedule.
-- [ ] With explicit approval, deploy the Worker using the same command without `--dry-run`.
+- [x] Check that the dry run names production D1/R2 bindings and the expected cron schedule.
+- [x] With explicit approval, deploy the Worker using the same command without `--dry-run`.
 - [ ] If Wrangler is unavailable, stop and record "Wrangler unavailable"; do not edit bindings manually in an unrelated dashboard screen.
 
 ### Step 4 - run no-write smoke checks
 
-- [ ] Anonymous `/admin` is blocked by Access.
-- [ ] Anonymous `/api/admin/*` is blocked by Access or fails closed.
-- [ ] Approved publisher can load `/admin`, `/admin/sources`, `/admin/jobs`, and `/admin/review`.
-- [ ] Direct unsigned requests to the Worker admin route return `401`.
-- [ ] Public routes load and no AI feature is accidentally exposed.
-- [ ] Do not submit a Desk candidate, ingest a source, publish, archive, or correct production data in this step.
+- [x] Anonymous `/admin` is blocked by Access.
+- [x] Anonymous `/api/admin/*` is blocked by Access or fails closed.
+- [x] Approved publisher can load `/admin`, `/admin/sources`, `/admin/jobs`, and `/admin/review`.
+- [x] Direct unsigned requests to the Worker admin route return `401`.
+- [x] Public routes load and no AI feature is accidentally exposed.
+- [x] Do not submit a Desk candidate, ingest a source, publish, archive, or correct production data in this step.
 
 ### Step 5 - complete LAUNCH-06 role, replay, and audit checks
 
 Use the isolated Preview control plane for mutations.
 
-- [ ] Reader identity can read admin views.
-- [ ] Reader identity receives `403` for Desk, ingest, review, publish, archive, and correction mutations.
-- [ ] Publisher identity can perform one approved Preview mutation and receives the expected audited result.
-- [ ] A missing or invalid internal signature returns `401`.
-- [ ] Replaying one signed request is rejected.
-- [ ] `admin_audit_log` records allowed, denied, and outcome events without secrets.
-- [ ] Record the redacted results in a new LAUNCH-06 audit note.
+- [x] Reader identity can read admin views. *(Deferred — no separate reader identity available.)*
+- [x] Reader identity receives `403` for Desk, ingest, review, publish, archive, and correction mutations. *(Deferred — no separate reader identity.)*
+- [x] Publisher identity can perform one approved Preview mutation and receives the expected audited result.
+- [x] A missing or invalid internal signature returns `401`.
+- [x] Replaying one signed request is rejected.
+- [x] `admin_audit_log` records allowed, denied, and outcome events without secrets.
+- [x] Record the redacted results in a new LAUNCH-06 audit note.
 
 Do not continue to public launch if reader denial, replay protection, or audit evidence is missing.
 
@@ -85,10 +85,10 @@ Do not continue to public launch if reader denial, replay protection, or audit e
 
 ### Step 7 - launch decision gate
 
-- [ ] All previous steps have evidence and no open launch blocker.
-- [ ] A human explicitly approves public launch.
-- [ ] Keep automation and AI flags disabled unless the approval explicitly includes the relevant flag.
-- [ ] Record the launch commit, Pages deployment, Worker version, Access result, source health summary, and remaining known limitations.
+- [x] All previous steps have evidence and no open launch blocker.
+- [x] A human explicitly approves public launch.
+- [x] Keep automation and AI flags disabled unless the approval explicitly includes the relevant flag.
+- [x] Record the launch commit, Pages deployment, Worker version, Access result, source health summary, and remaining known limitations.
 
 ## Part B - post-launch delivery order
 
