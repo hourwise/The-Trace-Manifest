@@ -66,10 +66,13 @@ if (Astro.request.method === "POST") {
       const urgency = (formData.get("urgency") as string) ?? "normal";
       const sourceLanguage = (formData.get("sourceLanguage") as string)?.trim() || null;
       if (!lead || lead.length < 10) throw new Error("Lead text must be at least 10 characters.");
+      const sourceHash = url
+        ? Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(url))), (b) => b.toString(16).padStart(2,"0")).join("")
+        : Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(lead))), (b) => b.toString(16).padStart(2,"0")).join("");
       await db.prepare(`
-        INSERT INTO editorial_candidates (intake_type, submitted_url, lead_text, state, section_slug, urgency, source_language, created_by)
-        VALUES (?, ?, ?, 'new', ?, ?, ?, 'Admin')
-      `).bind(intakeType, url, lead, section, urgency, sourceLanguage).run();
+        INSERT INTO editorial_candidates (intake_type, submitted_url, lead_text, source_hash, state, section_slug, urgency, source_language, created_by)
+        VALUES (?, ?, ?, ?, 'new', ?, ?, ?, 'Admin')
+      `).bind(intakeType, url, lead, sourceHash, section, urgency, sourceLanguage).run();
       actionMessage = "Candidate recorded.";
     } catch (e: any) { actionError = e.message || "Submission failed."; }
   }
