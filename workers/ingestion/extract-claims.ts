@@ -379,6 +379,14 @@ export function extractClaimsFromItem(
         if (rawClaim.length < 25) continue;
         // Skip matches that are just titles (too generic)
         if (rawClaim.length < 40 && rawClaim === item.title.trim()) continue;
+        // Skip claims that are just URLs, file paths, or download links
+        if (/^(https?:\/\/|ftp:\/\/|\/.*\/.*\.(tar|gz|zip|dmg|exe|pkg|bin|sha256|asc))/.test(rawClaim)) continue;
+        if (/^[\w./-]+\/(?:releases|download|bin)\//.test(rawClaim)) continue;
+        // Skip claims that are just version numbers or build identifiers
+        if (/^(b\d{4,6}|v?\d+\.\d+\.\d+(-rc\.?\d+)?|[\d.]+\.\d+)$/.test(rawClaim)) continue;
+        // Skip claims dominated by non-alphabetic characters (URLs, paths, JSON fragments)
+        const alphaRatio = (rawClaim.match(/[a-zA-Z]/g) ?? []).length / rawClaim.length;
+        if (alphaRatio < 0.4) continue;
 
         const claimText = truncateToSentence(rawClaim, 500);
         const { quality, score } = scoreEvidenceQuality(
