@@ -4,7 +4,7 @@ import BaseLayout from "../../layouts/BaseLayout.astro";
 export const prerender = false;
 
 interface CandidateRow {
-  id: number; intake_type: string; submitted_url: string | null;
+  id: string; intake_type: string; submitted_url: string | null;
   lead_text: string | null; state: string; section_slug: string | null;
   topic_slug: string | null; urgency: string; development_status: string | null;
   source_language: string | null; created_by: string; created_at: string;
@@ -33,21 +33,21 @@ if (Astro.request.method === "POST") {
   const db = Astro.locals.runtime.env.DB;
 
   if (action === "transition") {
-    const candidateId = parseInt((formData.get("candidate_id") as string) ?? "0");
+    const candidateId = (formData.get("candidate_id") as string)?.trim() ?? "";
     const newState = (formData.get("state") as string) ?? "";
     try {
-      if (!candidateId || candidateId < 1) throw new Error(`Invalid candidate ID: ${formData.get("candidate_id")}`);
+      if (!candidateId || !/^[a-f0-9-]{36}$/i.test(candidateId)) throw new Error(`Invalid candidate ID: ${candidateId || "empty"}`);
       if (!VALID_STATES.includes(newState as any)) throw new Error(`Invalid state: "${newState}"`);
       const current = await db.prepare("SELECT state FROM editorial_candidates WHERE id=?").bind(candidateId).first<{state:string}>();
       if (!current) throw new Error("Candidate not found.");
       if (!TRANSITIONS[current.state]?.includes(newState)) throw new Error(`Cannot move from ${current.state} to ${newState}.`);
       await db.prepare("UPDATE editorial_candidates SET state=?, updated_at=datetime('now') WHERE id=?").bind(newState, candidateId).run();
-      actionMessage = `Candidate #${candidateId} → ${newState}.`;
+      actionMessage = `Candidate → ${newState}.`;
     } catch (e: any) { actionError = e.message || "Transition failed."; }
   } else if (action === "promote") {
-    const candidateId = parseInt((formData.get("candidate_id") as string) ?? "0");
+    const candidateId = (formData.get("candidate_id") as string)?.trim() ?? "";
     try {
-      if (!candidateId || candidateId < 1) throw new Error("Invalid candidate ID.");
+      if (!candidateId) throw new Error("Invalid candidate ID.");
       const candidate = await db.prepare("SELECT * FROM editorial_candidates WHERE id=? AND state='needs_review'").bind(candidateId).first<CandidateRow>();
       if (!candidate) throw new Error("Candidate must be in 'needs_review' state to promote.");
       const headline = candidate.lead_text?.slice(0, 150) ?? candidate.submitted_url ?? "Untitled";
@@ -56,7 +56,7 @@ if (Astro.request.method === "POST") {
         VALUES (?, ?, ?, 'unverified', 'draft', 1, datetime('now'), datetime('now'))
       `).bind(headline, candidate.submitted_url, candidate.topic_slug ?? "general").run();
       await db.prepare("UPDATE editorial_candidates SET state='published', updated_at=datetime('now') WHERE id=?").bind(candidateId).run();
-      actionMessage = `Candidate #${candidateId} promoted to story cluster.`;
+      actionMessage = `Candidate promoted to story cluster.`;
     } catch (e: any) { actionError = e.message || "Promotion failed."; }
   } else {
     try {
@@ -70,10 +70,11 @@ if (Astro.request.method === "POST") {
       const sourceHash = url
         ? Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(url))), (b) => b.toString(16).padStart(2,"0")).join("")
         : Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(lead))), (b) => b.toString(16).padStart(2,"0")).join("");
+      const candidateId = crypto.randomUUID();
       await db.prepare(`
-        INSERT INTO editorial_candidates (intake_type, submitted_url, lead_text, source_hash, state, section_slug, urgency, source_language, created_by)
-        VALUES (?, ?, ?, ?, 'new', ?, ?, ?, 'Admin')
-      `).bind(intakeType, url, lead, sourceHash, section, urgency, sourceLanguage).run();
+        INSERT INTO editorial_candidates (id, intake_type, submitted_url, lead_text, source_hash, state, section_slug, urgency, source_language, created_by)
+        VALUES (?, ?, ?, ?, ?, 'new', ?, ?, ?, 'Admin')
+      `).bind(candidateId, intakeType, url, lead, sourceHash, section, urgency, sourceLanguage).run();
       actionMessage = "Candidate recorded.";
     } catch (e: any) { actionError = e.message || "Submission failed."; }
   }
