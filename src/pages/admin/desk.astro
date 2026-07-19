@@ -1,150 +1,179 @@
 ---
 import BaseLayout from "../../layouts/BaseLayout.astro";
+
+export const prerender = false;
+
+interface CandidateRow {
+  id: number; intake_type: string; submitted_url: string | null;
+  lead_text: string | null; state: string; section_slug: string | null;
+  topic_slug: string | null; urgency: string; development_status: string | null;
+  source_language: string | null; created_by: string; created_at: string;
+  updated_at: string;
+}
+
+let candidates: CandidateRow[] = [];
+let loadError: string | null = null;
+let actionMessage: string | null = null;
+let actionError: string | null = null;
+
+const VALID_STATES = ["new","drafting","draft_ready","needs_review","published","rejected","archived"] as const;
+const TRANSITIONS: Record<string, string[]> = {
+  new: ["drafting","rejected"],
+  drafting: ["draft_ready","rejected"],
+  draft_ready: ["needs_review","drafting","rejected"],
+  needs_review: ["published","draft_ready","rejected"],
+  published: ["archived"],
+  rejected: ["new"],
+  archived: [],
+};
+
+if (Astro.request.method === "POST") {
+  const formData = await Astro.request.formData();
+  const action = (formData.get("_action") as string) ?? "submit";
+  const db = Astro.locals.runtime.env.DB;
+
+  if (action === "transition") {
+    const id = parseInt((formData.get("id") as string) ?? "0");
+    const newState = (formData.get("state") as string) ?? "";
+    try {
+      if (!id || !VALID_STATES.includes(newState as any)) throw new Error("Invalid request.");
+      const current = await db.prepare("SELECT state FROM editorial_candidates WHERE id=?").bind(id).first<{state:string}>();
+      if (!current) throw new Error("Candidate not found.");
+      if (!TRANSITIONS[current.state]?.includes(newState)) throw new Error(`Cannot move from ${current.state} to ${newState}.`);
+      await db.prepare("UPDATE editorial_candidates SET state=?, updated_at=datetime('now') WHERE id=?").bind(newState, id).run();
+      actionMessage = `Candidate #${id} → ${newState}.`;
+    } catch (e: any) { actionError = e.message || "Transition failed."; }
+  } else if (action === "promote") {
+    const id = parseInt((formData.get("id") as string) ?? "0");
+    try {
+      if (!id) throw new Error("Invalid candidate ID.");
+      const candidate = await db.prepare("SELECT * FROM editorial_candidates WHERE id=? AND state='needs_review'").bind(id).first<CandidateRow>();
+      if (!candidate) throw new Error("Candidate must be in 'needs_review' state to promote.");
+      const headline = candidate.lead_text?.slice(0, 150) ?? candidate.submitted_url ?? "Untitled";
+      const result = await db.prepare(`
+        INSERT INTO story_clusters (title, canonical_url, topic, evidence_status, publication_status, needs_human_review, created_at, updated_at)
+        VALUES (?, ?, ?, 'unverified', 'draft', 1, datetime('now'), datetime('now'))
+      `).bind(headline, candidate.submitted_url, candidate.topic_slug ?? "general").run();
+      await db.prepare("UPDATE editorial_candidates SET state='published', updated_at=datetime('now') WHERE id=?").bind(id).run();
+      actionMessage = `Candidate #${id} promoted to story cluster.`;
+    } catch (e: any) { actionError = e.message || "Promotion failed."; }
+  } else {
+    try {
+      const intakeType = (formData.get("intakeType") as string) ?? "manual_url";
+      const url = (formData.get("url") as string)?.trim() || null;
+      const lead = (formData.get("lead") as string)?.trim() || "";
+      const section = (formData.get("section") as string)?.trim() || null;
+      const urgency = (formData.get("urgency") as string) ?? "normal";
+      const sourceLanguage = (formData.get("sourceLanguage") as string)?.trim() || null;
+      if (!lead || lead.length < 10) throw new Error("Lead text must be at least 10 characters.");
+      await db.prepare(`
+        INSERT INTO editorial_candidates (intake_type, submitted_url, lead_text, state, section_slug, urgency, source_language, created_by)
+        VALUES (?, ?, ?, 'new', ?, ?, ?, 'Admin')
+      `).bind(intakeType, url, lead, section, urgency, sourceLanguage).run();
+      actionMessage = "Candidate recorded.";
+    } catch (e: any) { actionError = e.message || "Submission failed."; }
+  }
+}
+
+try {
+  const db = Astro.locals.runtime.env.DB;
+  const result = await db.prepare(`
+    SELECT id, intake_type, submitted_url, lead_text, state, section_slug, topic_slug, urgency, development_status, source_language, created_by, created_at, updated_at
+    FROM editorial_candidates ORDER BY created_at DESC LIMIT 50
+  `).all<CandidateRow>();
+  candidates = result.results ?? [];
+} catch { loadError = "TRACE Desk is unavailable."; }
+
+const STATE_LABELS: Record<string, string> = { new:"New", drafting:"Drafting", draft_ready:"Draft ready", needs_review:"Needs review", published:"Published", rejected:"Rejected", archived:"Archived" };
 ---
 
 <BaseLayout title="TRACE Desk" description="Governed editorial intake for The Trace Manifest.">
   <div class="wrap" style="max-width:900px;">
     <h1>TRACE Desk</h1>
-    <p class="meta">Record a URL, social post, lead, or additional evidence. Intake is private and audit-recorded; it does not fetch the URL, create evidence, or publish a story.</p>
-    <p class="meta" style="margin:0.75rem 0 2rem;"><a href="/admin">Admin home</a> · <a href="/admin/review">Review queue</a> · <a href="/admin/sources">Sources</a></p>
+    <p class="meta" style="margin:0.75rem 0 2rem;">
+      <a href="/admin">Admin home</a> · <a href="/admin/review">Review queue</a> · <a href="/admin/social">Social signals</a>
+    </p>
+    {actionMessage && <div class="card" style="margin-bottom:1rem;background:color-mix(in oklch, var(--ev-confirmed) 10%, transparent);border-left:3px solid var(--ev-confirmed);"><p style="margin:0;">{actionMessage}</p></div>}
+    {actionError && <div class="card" style="margin-bottom:1rem;background:color-mix(in oklch, var(--ev-disputed) 10%, transparent);border-left:3px solid var(--ev-disputed);"><p style="margin:0;color:var(--ev-disputed);">{actionError}</p></div>}
 
     <section class="card">
       <h2 style="font-size:1.25rem;">New editorial candidate</h2>
-      <form id="candidate-form" class="desk-form" style="display:grid;gap:1rem;margin-top:1rem;">
+      <form method="POST" class="desk-form" style="display:grid;gap:1rem;margin-top:1rem;">
         <label>Intake type
-          <select name="intakeType" id="intake-type">
+          <select name="intakeType">
             <option value="manual_url">Article or document URL</option>
             <option value="social_url">Social post URL</option>
             <option value="lead">Editorial lead or tip</option>
             <option value="additional_evidence">Additional evidence URL</option>
           </select>
         </label>
-        <label id="url-label">URL
+        <label>URL
           <input name="url" type="url" maxlength="2048" placeholder="https://…" />
         </label>
         <label>Lead or editorial note
-          <textarea name="lead" rows="5" maxlength="8000" placeholder="Why this matters, source context, or a summary for the reviewer."></textarea>
+          <textarea name="lead" rows="5" maxlength="8000" placeholder="Why this matters, source context, or a summary."></textarea>
         </label>
         <div class="grid grid--3" style="gap:1rem;">
-          <label>Section
-            <select name="section"><option value="">Unclassified</option><option value="ai-agents">AI &amp; Agents</option></select>
-          </label>
-          <label>Urgency
-            <select name="urgency"><option value="normal">Normal</option><option value="high">High</option><option value="breaking">Breaking</option><option value="low">Low</option></select>
-          </label>
-          <label>Source language
-            <input name="sourceLanguage" maxlength="35" placeholder="e.g. en, zh-CN" />
-          </label>
+          <label>Section <select name="section"><option value="">Unclassified</option><option value="ai-agents">AI &amp; Agents</option></select></label>
+          <label>Urgency <select name="urgency"><option value="normal">Normal</option><option value="high">High</option><option value="breaking">Breaking</option><option value="low">Low</option></select></label>
+          <label>Source language <input name="sourceLanguage" maxlength="35" placeholder="e.g. en, zh-CN" /></label>
         </div>
-        <p class="meta">Only publishers can submit. Any later retrieval remains server-side and must pass source admission, safe-fetch, clustering, evidence, and human-review controls.</p>
-        <div><button type="submit" class="btn btn-primary">Record candidate</button> <span id="form-status" class="meta" aria-live="polite"></span></div>
+        <div><button type="submit" class="btn btn-primary">Record candidate</button></div>
       </form>
     </section>
 
     <section class="card" style="margin-top:2rem;">
-      <h2 style="font-size:1.25rem;">Recent candidates</h2>
-      <p id="queue-status" class="meta">Loading private queue…</p>
-      <div id="candidate-list" style="display:grid;gap:0.75rem;"></div>
+      <h2 style="font-size:1.25rem;">Candidate Queue</h2>
+      {loadError ? <p class="meta" style="color:var(--ev-disputed);">{loadError}</p> :
+       candidates.length === 0 ? <p class="meta">No candidates yet.</p> :
+       <div style="display:grid;gap:0.75rem;">
+        {candidates.map((c) => {
+          const nextStates = TRANSITIONS[c.state] ?? [];
+          const isPromotable = c.state === "needs_review";
+          return (
+            <div class="card" style="padding:0.75rem 1rem;">
+              <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;flex-wrap:wrap;">
+                <div style="flex:1;min-width:0;">
+                  <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;margin-bottom:0.35rem;">
+                    <span class="badge badge-sm">{c.intake_type?.replace(/_/g, " ")}</span>
+                    <span class="badge badge-sm" style="background:var(--surface-1);">{STATE_LABELS[c.state] ?? c.state}</span>
+                    {c.urgency !== "normal" && <span class="badge badge-sm" style="background:var(--surface-1);">{c.urgency}</span>}
+                  </div>
+                  {c.submitted_url ? <a href={c.submitted_url} target="_blank" rel="noreferrer" style="font-size:0.85rem;word-break:break-all;">{c.submitted_url}</a> : null}
+                  <p style="margin:0.35rem 0;font-size:0.85rem;">{c.lead_text?.slice(0, 300)}{(c.lead_text?.length ?? 0) > 300 ? "…" : ""}</p>
+                  <p class="meta" style="font-size:0.7rem;">{c.section_slug || "Unclassified"} · {c.created_at ? new Date(c.created_at + "Z").toLocaleString("en-GB") : "—"}</p>
+                </div>
+                <div style="display:flex;flex-direction:column;gap:0.3rem;min-width:100px;">
+                  {nextStates.map((ns) => (
+                    <form method="POST" style="margin:0;">
+                      <input type="hidden" name="_action" value="transition" />
+                      <input type="hidden" name="id" value={String(c.id)} />
+                      <input type="hidden" name="state" value={ns} />
+                      <button type="submit" class="btn btn-secondary" style="font-size:0.65rem;padding:0.15rem 0.4rem;width:100%;">
+                        {ns === "published" ? "✓ Publish" : ns === "rejected" ? "✗ Reject" : `→ ${STATE_LABELS[ns] ?? ns}`}
+                      </button>
+                    </form>
+                  ))}
+                  {isPromotable && (
+                    <form method="POST" style="margin:0;">
+                      <input type="hidden" name="_action" value="promote" />
+                      <input type="hidden" name="id" value={String(c.id)} />
+                      <button type="submit" class="btn btn-primary" style="font-size:0.65rem;padding:0.15rem 0.4rem;width:100%;">↑ Promote to Story</button>
+                    </form>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+       </div>
+      }
     </section>
   </div>
-
-  <style>
-    .desk-form label {
-      display: grid;
-      gap: 0.35rem;
-      font-size: 0.875rem;
-      font-weight: 600;
-    }
-
-    .desk-form input,
-    .desk-form select,
-    .desk-form textarea {
-      width: 100%;
-      padding: 0.6rem 0.7rem;
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      background: var(--bg);
-    }
-
-    .desk-form textarea {
-      min-height: 8rem;
-      resize: vertical;
-    }
-  </style>
-
-  <script is:inline>
-    const form = document.querySelector("#candidate-form");
-    const status = document.querySelector("#form-status");
-    const queueStatus = document.querySelector("#queue-status");
-    const list = document.querySelector("#candidate-list");
-    const intakeType = document.querySelector("#intake-type");
-    const urlLabel = document.querySelector("#url-label");
-
-    function escapeText(value) {
-      const node = document.createElement("span");
-      node.textContent = value;
-      return node.innerHTML;
-    }
-
-    function updateIntakeHelp() {
-      const urlRequired = intakeType.value !== "lead";
-      const urlInput = urlLabel.querySelector("input");
-      if (urlInput) urlInput.required = urlRequired;
-      if (urlLabel.firstChild) urlLabel.firstChild.textContent = urlRequired ? "URL" : "URL (optional)";
-    }
-
-    function renderCandidates(candidates) {
-      list.innerHTML = "";
-      if (!candidates.length) {
-        list.textContent = "No editorial candidates have been recorded yet.";
-        return;
-      }
-      for (const candidate of candidates) {
-        const item = document.createElement("article");
-        item.className = "card";
-        item.style.margin = "0";
-        const source = candidate.submitted_url
-          ? `<a href="${escapeText(candidate.submitted_url)}" rel="noreferrer">${escapeText(candidate.submitted_url)}</a>`
-          : escapeText(candidate.lead_text || "Untitled lead");
-        item.innerHTML = `<div style="display:flex;justify-content:space-between;gap:1rem;align-items:baseline;"><strong>${escapeText(candidate.intake_type.replaceAll("_", " "))}</strong><span class="meta">${escapeText(candidate.state)}</span></div><p style="margin:0.5rem 0;word-break:break-word;">${source}</p><p class="meta" style="margin:0;">${escapeText(candidate.section_slug || "Unclassified")} · ${escapeText(candidate.urgency)}${candidate.source_language ? ` · ${escapeText(candidate.source_language)}` : ""} · ${new Date(candidate.created_at + "Z").toLocaleString()}</p>`;
-        list.append(item);
-      }
-    }
-
-    async function loadCandidates() {
-      queueStatus.textContent = "Loading private queue…";
-      try {
-        const response = await fetch("/api/admin/candidates", { credentials: "same-origin", headers: { Accept: "application/json" } });
-        const payload = await response.json();
-        if (!response.ok) throw new Error(payload.error || "Unable to load candidates.");
-        renderCandidates(payload);
-        queueStatus.textContent = "Latest 50 candidates. New records remain unreviewed.";
-      } catch (error) {
-        queueStatus.textContent = error instanceof Error ? error.message : "Unable to load candidates.";
-      }
-    }
-
-    intakeType.addEventListener("change", updateIntakeHelp);
-    updateIntakeHelp();
-    form.addEventListener("submit", async (event) => {
-      event.preventDefault();
-      const values = new FormData(form);
-      const payload = Object.fromEntries([...values.entries()].filter(([, value]) => typeof value === "string" && value.trim()));
-      status.textContent = "Recording…";
-      try {
-        const response = await fetch("/api/admin/candidates", {
-          method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify(payload),
-        });
-        const result = await response.json();
-        if (!response.ok) throw new Error(result.error || "Candidate was not recorded.");
-        form.reset();
-        updateIntakeHelp();
-        status.textContent = result.message;
-        await loadCandidates();
-      } catch (error) {
-        status.textContent = error instanceof Error ? error.message : "Candidate was not recorded.";
-      }
-    });
-    void loadCandidates();
-  </script>
 </BaseLayout>
+
+<style>
+  .desk-form label { display: grid; gap: 0.35rem; font-size: 0.875rem; font-weight: 600; }
+  .desk-form input, .desk-form select, .desk-form textarea { width: 100%; padding: 0.6rem 0.7rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); }
+  .desk-form textarea { min-height: 8rem; resize: vertical; }
+</style>
