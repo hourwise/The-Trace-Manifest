@@ -4,80 +4,120 @@
 DELETE FROM knowledge_document_sources WHERE knowledge_document_id = 'knowledge-what-is-the-best-closed-model-for-coding-c9db4df8';
 INSERT OR IGNORE INTO knowledge_document_sources
       (id, knowledge_document_id, source_reference, claim_reference, source_kind, source_role, admission_state, freshness_state, independent_evidence_weight, relationship)
-      VALUES ('9d1c9451-520a-4112-ae6e-60e36774483f', 'knowledge-what-is-the-best-closed-model-for-coding-c9db4df8', 'https://openai.com/index/gpt-5-6/', 'source:1', 'external_independent', 'evidence', 'admitted', 'current', 1, 'supports');
+      VALUES ('90a47e90-628a-48fc-ad07-1e3b728b5af3', 'knowledge-what-is-the-best-closed-model-for-coding-c9db4df8', 'https://openai.com/index/gpt-5-6/', 'source:1', 'external_independent', 'evidence', 'admitted', 'current', 1, 'supports');
 DELETE FROM knowledge_document_sources WHERE knowledge_document_id = 'knowledge-what-is-the-best-open-weight-model-for-coding-afeb0e13';
 INSERT OR IGNORE INTO knowledge_document_sources
       (id, knowledge_document_id, source_reference, claim_reference, source_kind, source_role, admission_state, freshness_state, independent_evidence_weight, relationship)
-      VALUES ('dc4f597a-74c2-4c03-8bb5-02abfc6417a3', 'knowledge-what-is-the-best-open-weight-model-for-coding-afeb0e13', 'https://z.ai/blog/glm-5.2', 'source:118', 'external_vendor', 'reported_claim', 'admitted', 'current', 0, 'supports');
+      VALUES ('a405e5f1-a852-46a8-a1fd-4529ffeb5511', 'knowledge-what-is-the-best-open-weight-model-for-coding-afeb0e13', 'https://z.ai/blog/glm-5.2', 'source:118', 'external_vendor', 'reported_claim', 'admitted', 'current', 0, 'supports');
 DELETE FROM knowledge_document_sources WHERE knowledge_document_id = 'knowledge-what-is-the-best-value-coding-model-available-through-an-api-b8444095';
 INSERT OR IGNORE INTO knowledge_document_sources
       (id, knowledge_document_id, source_reference, claim_reference, source_kind, source_role, admission_state, freshness_state, independent_evidence_weight, relationship)
-      VALUES ('3a71c6a9-c100-4ad7-beb7-9c6e88afb9b6', 'knowledge-what-is-the-best-value-coding-model-available-through-an-api-b8444095', 'https://developers.openai.com/api/docs/models', 'source:1', 'external_independent', 'evidence', 'admitted', 'current', 1, 'supports');
+      VALUES ('9215e80a-fa3d-4680-8c1a-9f9584e4f904', 'knowledge-what-is-the-best-value-coding-model-available-through-an-api-b8444095', 'https://developers.openai.com/api/docs/models', 'source:1', 'external_independent', 'evidence', 'admitted', 'current', 1, 'supports');
 DELETE FROM knowledge_document_sources WHERE knowledge_document_id = 'knowledge-what-is-the-best-ai-model-for-coding-with-a-very-large-codebase-386857a7';
 INSERT OR IGNORE INTO knowledge_document_sources
       (id, knowledge_document_id, source_reference, claim_reference, source_kind, source_role, admission_state, freshness_state, independent_evidence_weight, relationship)
-      VALUES ('55e24105-ef62-4d4a-b996-975faeb3034b', 'knowledge-what-is-the-best-ai-model-for-coding-with-a-very-large-codebase-386857a7', 'https://developers.openai.com/api/docs/models/gpt-5.6-sol', 'source:1', 'external_independent', 'evidence', 'admitted', 'current', 1, 'supports');
+      VALUES ('14b4529b-fd3c-4fa5-90cc-fe5032c917c4', 'knowledge-what-is-the-best-ai-model-for-coding-with-a-very-large-codebase-386857a7', 'https://developers.openai.com/api/docs/models/gpt-5.6-sol', 'source:1', 'external_independent', 'evidence', 'admitted', 'current', 1, 'supports');
 DELETE FROM knowledge_document_sources WHERE knowledge_document_id = 'knowledge-which-benchmark-should-be-trusted-when-comparing-ai-coding-models-e9fe7acd';
 INSERT OR IGNORE INTO knowledge_document_sources
       (id, knowledge_document_id, source_reference, claim_reference, source_kind, source_role, admission_state, freshness_state, independent_evidence_weight, relationship)
-      VALUES ('9fbd4126-9f7e-473b-9b68-8f2d1e52c363', 'knowledge-which-benchmark-should-be-trusted-when-comparing-ai-coding-models-e9fe7acd', 'https://openai.com/index/why-we-no-longer-evaluate-swe-bench-verified/', 'source:1', 'external_independent', 'evidence', 'admitted', 'current', 1, 'supports');
+      VALUES ('abe722e4-df71-4054-beac-651332a87e5b', 'knowledge-which-benchmark-should-be-trusted-when-comparing-ai-coding-models-e9fe7acd', 'https://openai.com/index/why-we-no-longer-evaluate-swe-bench-verified/', 'source:1', 'external_independent', 'evidence', 'admitted', 'current', 1, 'supports');
 DELETE FROM knowledge_document_sources WHERE knowledge_document_id = 'knowledge-what-is-the-difference-between-an-ai-coding-assistant-and-an-ai-coding-agent-cc953823';
 INSERT OR IGNORE INTO knowledge_document_sources
       (id, knowledge_document_id, source_reference, claim_reference, source_kind, source_role, admission_state, freshness_state, independent_evidence_weight, relationship)
-      VALUES ('c0bda850-7c81-459d-8543-646a98df4f49', 'knowledge-what-is-the-difference-between-an-ai-coding-assistant-and-an-ai-coding-agent-cc953823', 'https://openai.com/index/introducing-codex/', 'source:1', 'external_independent', 'evidence', 'admitted', 'current', 1, 'supports');
+      VALUES ('2fbe2906-16f1-46e5-a432-860789882233', 'knowledge-what-is-the-difference-between-an-ai-coding-assistant-and-an-ai-coding-agent-cc953823', 'https://openai.com/index/introducing-codex/', 'source:1', 'external_independent', 'evidence', 'admitted', 'current', 1, 'supports');
 DELETE FROM knowledge_document_sources WHERE knowledge_document_id = 'knowledge-what-is-the-model-context-protocol-and-when-should-it-be-used-c93ef1b9';
 INSERT OR IGNORE INTO knowledge_document_sources
       (id, knowledge_document_id, source_reference, claim_reference, source_kind, source_role, admission_state, freshness_state, independent_evidence_weight, relationship)
-      VALUES ('0f7b75fc-b502-4329-977c-684858521eaf', 'knowledge-what-is-the-model-context-protocol-and-when-should-it-be-used-c93ef1b9', 'https://modelcontextprotocol.io/docs/learn/architecture', 'source:115', 'external_independent', 'evidence', 'admitted', 'current', 1, 'supports');
+      VALUES ('525c9a2e-e870-4668-b379-9ec433a5f0bc', 'knowledge-what-is-the-model-context-protocol-and-when-should-it-be-used-c93ef1b9', 'https://modelcontextprotocol.io/docs/learn/architecture', 'source:115', 'external_independent', 'evidence', 'admitted', 'current', 1, 'supports');
 DELETE FROM knowledge_document_sources WHERE knowledge_document_id = 'knowledge-how-should-an-ai-coding-agent-be-secured-d3c9c019';
 INSERT OR IGNORE INTO knowledge_document_sources
       (id, knowledge_document_id, source_reference, claim_reference, source_kind, source_role, admission_state, freshness_state, independent_evidence_weight, relationship)
-      VALUES ('62f1d4c3-f757-4295-ad39-f478cd501594', 'knowledge-how-should-an-ai-coding-agent-be-secured-d3c9c019', 'https://openai.com/index/running-codex-safely/', 'source:1', 'external_independent', 'evidence', 'admitted', 'current', 1, 'supports');
+      VALUES ('06a9da82-b70a-4a56-a78c-8ac3dca12189', 'knowledge-how-should-an-ai-coding-agent-be-secured-d3c9c019', 'https://openai.com/index/running-codex-safely/', 'source:1', 'external_independent', 'evidence', 'admitted', 'current', 1, 'supports');
 DELETE FROM knowledge_document_sources WHERE knowledge_document_id = 'knowledge-should-an-ai-agent-use-rag-or-fine-tuning-for-private-knowledge-f4da4eaf';
 INSERT OR IGNORE INTO knowledge_document_sources
       (id, knowledge_document_id, source_reference, claim_reference, source_kind, source_role, admission_state, freshness_state, independent_evidence_weight, relationship)
-      VALUES ('4be5404d-1768-4823-a7c4-b800cf53bf97', 'knowledge-should-an-ai-agent-use-rag-or-fine-tuning-for-private-knowledge-f4da4eaf', 'https://learn.microsoft.com/en-us/azure/developer/ai/augment-llm-rag-fine-tuning', 'source:114', 'external_independent', 'evidence', 'admitted', 'current', 1, 'supports');
+      VALUES ('951d35b3-c587-476f-aa98-1742db7762e9', 'knowledge-should-an-ai-agent-use-rag-or-fine-tuning-for-private-knowledge-f4da4eaf', 'https://learn.microsoft.com/en-us/azure/developer/ai/augment-llm-rag-fine-tuning', 'source:114', 'external_independent', 'evidence', 'admitted', 'current', 1, 'supports');
 DELETE FROM knowledge_document_sources WHERE knowledge_document_id = 'knowledge-can-a-local-open-weight-model-replace-a-frontier-cloud-model-for-coding-a194ede4';
 INSERT OR IGNORE INTO knowledge_document_sources
       (id, knowledge_document_id, source_reference, claim_reference, source_kind, source_role, admission_state, freshness_state, independent_evidence_weight, relationship)
-      VALUES ('1a573035-19f5-4ce7-8073-bec8e66bf681', 'knowledge-can-a-local-open-weight-model-replace-a-frontier-cloud-model-for-coding-a194ede4', 'https://z.ai/blog/glm-5.2', 'source:118', 'external_vendor', 'reported_claim', 'admitted', 'current', 0, 'supports');
+      VALUES ('b6300d19-d568-48b9-838c-d02ba308412f', 'knowledge-can-a-local-open-weight-model-replace-a-frontier-cloud-model-for-coding-a194ede4', 'https://z.ai/blog/glm-5.2', 'source:118', 'external_vendor', 'reported_claim', 'admitted', 'current', 0, 'supports');
 DELETE FROM knowledge_document_sources WHERE knowledge_document_id = 'knowledge-what-is-the-best-ai-model-for-web-research-5d0eb429';
 INSERT OR IGNORE INTO knowledge_document_sources
       (id, knowledge_document_id, source_reference, claim_reference, source_kind, source_role, admission_state, freshness_state, independent_evidence_weight, relationship)
-      VALUES ('245d7a9e-4b94-46e5-a76a-0529f2eac195', 'knowledge-what-is-the-best-ai-model-for-web-research-5d0eb429', 'https://openai.com/index/gpt-5-6/', 'source:1', 'external_independent', 'evidence', 'admitted', 'current', 1, 'supports');
+      VALUES ('aa89893a-af91-4487-af48-45ed7be9852e', 'knowledge-what-is-the-best-ai-model-for-web-research-5d0eb429', 'https://openai.com/index/gpt-5-6/', 'source:1', 'external_independent', 'evidence', 'admitted', 'current', 1, 'supports');
 DELETE FROM knowledge_document_sources WHERE knowledge_document_id = 'knowledge-what-is-an-ai-model-s-context-window-and-is-a-larger-context-window-always-bette-c82be10f';
 INSERT OR IGNORE INTO knowledge_document_sources
       (id, knowledge_document_id, source_reference, claim_reference, source_kind, source_role, admission_state, freshness_state, independent_evidence_weight, relationship)
-      VALUES ('cb52f339-61dd-4ffd-aa06-22848808ec57', 'knowledge-what-is-an-ai-model-s-context-window-and-is-a-larger-context-window-always-bette-c82be10f', 'https://developers.openai.com/api/docs/models', 'source:1', 'external_independent', 'evidence', 'admitted', 'current', 1, 'supports');
+      VALUES ('fdff8b20-a3a9-44aa-b888-7660527339fe', 'knowledge-what-is-an-ai-model-s-context-window-and-is-a-larger-context-window-always-bette-c82be10f', 'https://developers.openai.com/api/docs/models', 'source:1', 'external_independent', 'evidence', 'admitted', 'current', 1, 'supports');
 DELETE FROM knowledge_document_sources WHERE knowledge_document_id = 'knowledge-what-is-model-routing-and-why-should-an-ai-system-use-more-than-one-model-01e65407';
 INSERT OR IGNORE INTO knowledge_document_sources
       (id, knowledge_document_id, source_reference, claim_reference, source_kind, source_role, admission_state, freshness_state, independent_evidence_weight, relationship)
-      VALUES ('0fa04156-1c79-4813-892a-b0433f4bb14c', 'knowledge-what-is-model-routing-and-why-should-an-ai-system-use-more-than-one-model-01e65407', 'https://developers.openai.com/api/docs/models', 'source:1', 'external_independent', 'evidence', 'admitted', 'current', 1, 'supports');
+      VALUES ('bff6ae69-4100-457c-b733-bc1043482ef6', 'knowledge-what-is-model-routing-and-why-should-an-ai-system-use-more-than-one-model-01e65407', 'https://developers.openai.com/api/docs/models', 'source:1', 'external_independent', 'evidence', 'admitted', 'current', 1, 'supports');
 DELETE FROM knowledge_document_sources WHERE knowledge_document_id = 'knowledge-when-should-an-ai-agent-require-human-approval-582f8a2b';
 INSERT OR IGNORE INTO knowledge_document_sources
       (id, knowledge_document_id, source_reference, claim_reference, source_kind, source_role, admission_state, freshness_state, independent_evidence_weight, relationship)
-      VALUES ('1b56d8f5-5da6-4535-9324-ca5907a15cb4', 'knowledge-when-should-an-ai-agent-require-human-approval-582f8a2b', 'https://openai.github.io/openai-agents-python/human_in_the_loop/', 'source:116', 'external_independent', 'evidence', 'admitted', 'current', 1, 'supports');
+      VALUES ('87ac0b27-a73f-488b-beae-b9433594cf0e', 'knowledge-when-should-an-ai-agent-require-human-approval-582f8a2b', 'https://openai.github.io/openai-agents-python/human_in_the_loop/', 'source:116', 'external_independent', 'evidence', 'admitted', 'current', 1, 'supports');
 DELETE FROM knowledge_document_sources WHERE knowledge_document_id = 'knowledge-what-is-prompt-injection-and-how-should-ai-agents-defend-against-it-91c13e5d';
 INSERT OR IGNORE INTO knowledge_document_sources
       (id, knowledge_document_id, source_reference, claim_reference, source_kind, source_role, admission_state, freshness_state, independent_evidence_weight, relationship)
-      VALUES ('b443bbda-106b-4480-ac8f-ef7deec4c62b', 'knowledge-what-is-prompt-injection-and-how-should-ai-agents-defend-against-it-91c13e5d', 'https://csrc.nist.gov/glossary/term/prompt_injection', 'source:113', 'external_independent', 'evidence', 'admitted', 'current', 1, 'supports');
+      VALUES ('dcfa36f5-78d0-4ba4-96e6-3c9bd3db83d0', 'knowledge-what-is-prompt-injection-and-how-should-ai-agents-defend-against-it-91c13e5d', 'https://csrc.nist.gov/glossary/term/prompt_injection', 'source:113', 'external_independent', 'evidence', 'admitted', 'current', 1, 'supports');
 DELETE FROM knowledge_document_sources WHERE knowledge_document_id = 'knowledge-how-should-ai-agents-manage-secrets-credentials-and-identity-b9d24e27';
 INSERT OR IGNORE INTO knowledge_document_sources
       (id, knowledge_document_id, source_reference, claim_reference, source_kind, source_role, admission_state, freshness_state, independent_evidence_weight, relationship)
-      VALUES ('4d4137d8-2152-4593-8028-d4064241509c', 'knowledge-how-should-ai-agents-manage-secrets-credentials-and-identity-b9d24e27', 'https://www.nccoe.nist.gov/projects/software-and-ai-agent-identity-and-authorization', 'source:117', 'external_independent', 'evidence', 'admitted', 'current', 1, 'supports');
+      VALUES ('045dd4d3-7422-4742-8e44-d5bacb79b2bd', 'knowledge-how-should-ai-agents-manage-secrets-credentials-and-identity-b9d24e27', 'https://www.nccoe.nist.gov/projects/software-and-ai-agent-identity-and-authorization', 'source:117', 'external_independent', 'evidence', 'admitted', 'current', 1, 'supports');
 DELETE FROM knowledge_document_sources WHERE knowledge_document_id = 'knowledge-should-an-ai-agent-have-persistent-memory-4d484a83';
 INSERT OR IGNORE INTO knowledge_document_sources
       (id, knowledge_document_id, source_reference, claim_reference, source_kind, source_role, admission_state, freshness_state, independent_evidence_weight, relationship)
-      VALUES ('1ff3a64f-b7ec-4826-9544-4d0ea09d14b5', 'knowledge-should-an-ai-agent-have-persistent-memory-4d484a83', 'https://openai.github.io/openai-agents-python/sessions/', 'source:116', 'external_independent', 'evidence', 'admitted', 'current', 1, 'supports');
+      VALUES ('93752031-764e-4b2e-beb6-863ae89a3463', 'knowledge-should-an-ai-agent-have-persistent-memory-4d484a83', 'https://openai.github.io/openai-agents-python/sessions/', 'source:116', 'external_independent', 'evidence', 'admitted', 'current', 1, 'supports');
 DELETE FROM knowledge_document_sources WHERE knowledge_document_id = 'knowledge-how-can-ai-tool-calling-be-made-reliable-6852c808';
 INSERT OR IGNORE INTO knowledge_document_sources
       (id, knowledge_document_id, source_reference, claim_reference, source_kind, source_role, admission_state, freshness_state, independent_evidence_weight, relationship)
-      VALUES ('4f188c52-37be-4cc5-ac27-4aec2d8a94e4', 'knowledge-how-can-ai-tool-calling-be-made-reliable-6852c808', 'https://ai.google.dev/gemini-api/docs/function-calling', 'source:79', 'external_independent', 'evidence', 'admitted', 'current', 1, 'supports');
+      VALUES ('b9a9237c-63eb-495f-af78-bed5d87fe203', 'knowledge-how-can-ai-tool-calling-be-made-reliable-6852c808', 'https://ai.google.dev/gemini-api/docs/function-calling', 'source:79', 'external_independent', 'evidence', 'admitted', 'current', 1, 'supports');
 DELETE FROM knowledge_document_sources WHERE knowledge_document_id = 'knowledge-when-should-a-system-use-multiple-ai-agents-instead-of-one-agent-ab9ab0f2';
 INSERT OR IGNORE INTO knowledge_document_sources
       (id, knowledge_document_id, source_reference, claim_reference, source_kind, source_role, admission_state, freshness_state, independent_evidence_weight, relationship)
-      VALUES ('ca5b4773-67e1-4437-a722-23ef086304ef', 'knowledge-when-should-a-system-use-multiple-ai-agents-instead-of-one-agent-ab9ab0f2', 'https://openai.github.io/openai-agents-python/multi_agent/', 'source:116', 'external_independent', 'evidence', 'admitted', 'current', 1, 'supports');
+      VALUES ('b0fe390a-5f28-43b1-a9b2-d418a246c3a2', 'knowledge-when-should-a-system-use-multiple-ai-agents-instead-of-one-agent-ab9ab0f2', 'https://openai.github.io/openai-agents-python/multi_agent/', 'source:116', 'external_independent', 'evidence', 'admitted', 'current', 1, 'supports');
 DELETE FROM knowledge_document_sources WHERE knowledge_document_id = 'knowledge-how-should-multiple-ai-agents-coordinate-and-delegate-work-8d45a76a';
 INSERT OR IGNORE INTO knowledge_document_sources
       (id, knowledge_document_id, source_reference, claim_reference, source_kind, source_role, admission_state, freshness_state, independent_evidence_weight, relationship)
-      VALUES ('96f57d0e-5657-45d4-bfa3-8c57c65a2622', 'knowledge-how-should-multiple-ai-agents-coordinate-and-delegate-work-8d45a76a', 'https://openai.github.io/openai-agents-python/multi_agent/', 'source:116', 'external_independent', 'evidence', 'admitted', 'current', 1, 'supports');
+      VALUES ('33e742db-dc53-4b10-bde6-8056005dc2d7', 'knowledge-how-should-multiple-ai-agents-coordinate-and-delegate-work-8d45a76a', 'https://openai.github.io/openai-agents-python/multi_agent/', 'source:116', 'external_independent', 'evidence', 'admitted', 'current', 1, 'supports');
+DELETE FROM knowledge_document_sources WHERE knowledge_document_id = 'knowledge-what-is-an-ai-agent-and-when-should-one-be-used-5b742525';
+INSERT OR IGNORE INTO knowledge_document_sources
+      (id, knowledge_document_id, source_reference, claim_reference, source_kind, source_role, admission_state, freshness_state, independent_evidence_weight, relationship)
+      VALUES ('627a6581-5e53-4f96-9ae6-32cbf4416856', 'knowledge-what-is-an-ai-agent-and-when-should-one-be-used-5b742525', 'https://openai.com/business/guides-and-resources/a-practical-guide-to-building-ai-agents/', 'source:1', 'external_independent', 'evidence', 'admitted', 'current', 1, 'supports');
+DELETE FROM knowledge_document_sources WHERE knowledge_document_id = 'knowledge-what-is-agentic-rag-and-how-is-it-different-from-ordinary-rag-be01bfa3';
+INSERT OR IGNORE INTO knowledge_document_sources
+      (id, knowledge_document_id, source_reference, claim_reference, source_kind, source_role, admission_state, freshness_state, independent_evidence_weight, relationship)
+      VALUES ('1df2803d-2675-4bbd-b49e-b2e9183fc88e', 'knowledge-what-is-agentic-rag-and-how-is-it-different-from-ordinary-rag-be01bfa3', 'https://learn.microsoft.com/en-us/azure/architecture/ai-ml/guide/rag/rag-agentic', 'source:114', 'external_independent', 'evidence', 'admitted', 'current', 1, 'supports');
+DELETE FROM knowledge_document_sources WHERE knowledge_document_id = 'knowledge-what-is-a-computer-use-agent-and-is-it-safe-094875d0';
+INSERT OR IGNORE INTO knowledge_document_sources
+      (id, knowledge_document_id, source_reference, claim_reference, source_kind, source_role, admission_state, freshness_state, independent_evidence_weight, relationship)
+      VALUES ('0dd9b82a-a5b7-42db-b026-04b603ae73da', 'knowledge-what-is-a-computer-use-agent-and-is-it-safe-094875d0', 'https://ai.google.dev/gemini-api/docs/computer-use', 'source:79', 'external_independent', 'evidence', 'admitted', 'current', 1, 'supports');
+DELETE FROM knowledge_document_sources WHERE knowledge_document_id = 'knowledge-how-should-an-ai-agent-be-evaluated-before-production-use-bdab120b';
+INSERT OR IGNORE INTO knowledge_document_sources
+      (id, knowledge_document_id, source_reference, claim_reference, source_kind, source_role, admission_state, freshness_state, independent_evidence_weight, relationship)
+      VALUES ('5dcb4fd3-a80e-48cd-9aee-578cc46fdfd6', 'knowledge-how-should-an-ai-agent-be-evaluated-before-production-use-bdab120b', 'https://www.nist.gov/news-events/news/2026/01/towards-best-practices-automated-benchmark-evaluations', 'source:113', 'external_independent', 'evidence', 'admitted', 'current', 1, 'supports');
+DELETE FROM knowledge_document_sources WHERE knowledge_document_id = 'knowledge-what-are-ai-guardrails-and-what-can-they-actually-protect-against-2b010204';
+INSERT OR IGNORE INTO knowledge_document_sources
+      (id, knowledge_document_id, source_reference, claim_reference, source_kind, source_role, admission_state, freshness_state, independent_evidence_weight, relationship)
+      VALUES ('9592e9f6-cbde-4870-9207-b18930860b44', 'knowledge-what-are-ai-guardrails-and-what-can-they-actually-protect-against-2b010204', 'https://openai.github.io/openai-agents-python/guardrails/', 'source:116', 'external_independent', 'evidence', 'admitted', 'current', 1, 'supports');
+DELETE FROM knowledge_document_sources WHERE knowledge_document_id = 'knowledge-what-are-structured-outputs-and-how-are-they-different-from-json-mode-b3ef9fe0';
+INSERT OR IGNORE INTO knowledge_document_sources
+      (id, knowledge_document_id, source_reference, claim_reference, source_kind, source_role, admission_state, freshness_state, independent_evidence_weight, relationship)
+      VALUES ('a512039e-f20f-4547-ad3b-79eaafed8737', 'knowledge-what-are-structured-outputs-and-how-are-they-different-from-json-mode-b3ef9fe0', 'https://openai.com/index/introducing-structured-outputs-in-the-api/', 'source:1', 'external_independent', 'evidence', 'admitted', 'current', 1, 'supports');
+DELETE FROM knowledge_document_sources WHERE knowledge_document_id = 'knowledge-what-is-ai-model-quantization-and-does-it-reduce-quality-62978647';
+INSERT OR IGNORE INTO knowledge_document_sources
+      (id, knowledge_document_id, source_reference, claim_reference, source_kind, source_role, admission_state, freshness_state, independent_evidence_weight, relationship)
+      VALUES ('e41f15c9-7407-42d4-8311-6306110379d7', 'knowledge-what-is-ai-model-quantization-and-does-it-reduce-quality-62978647', 'https://huggingface.co/docs/transformers/quantization/concept_guide', 'source:17', 'external_independent', 'evidence', 'admitted', 'current', 1, 'supports');
+DELETE FROM knowledge_document_sources WHERE knowledge_document_id = 'knowledge-what-is-reasoning-effort-and-when-should-it-be-increased-3fee40a0';
+INSERT OR IGNORE INTO knowledge_document_sources
+      (id, knowledge_document_id, source_reference, claim_reference, source_kind, source_role, admission_state, freshness_state, independent_evidence_weight, relationship)
+      VALUES ('ec68ed3d-49dd-4233-a25f-be9bb96284ca', 'knowledge-what-is-reasoning-effort-and-when-should-it-be-increased-3fee40a0', 'https://openai.com/index/introducing-gpt-5-for-developers/', 'source:1', 'external_independent', 'evidence', 'admitted', 'current', 1, 'supports');
+DELETE FROM knowledge_document_sources WHERE knowledge_document_id = 'knowledge-what-is-a-small-language-model-and-when-should-one-be-used-f32506b8';
+INSERT OR IGNORE INTO knowledge_document_sources
+      (id, knowledge_document_id, source_reference, claim_reference, source_kind, source_role, admission_state, freshness_state, independent_evidence_weight, relationship)
+      VALUES ('8b5c0e7c-729f-46a5-9a54-f75a72e16d68', 'knowledge-what-is-a-small-language-model-and-when-should-one-be-used-f32506b8', 'https://ai.google.dev/gemma/docs', 'source:79', 'external_independent', 'evidence', 'admitted', 'current', 1, 'supports');
+DELETE FROM knowledge_document_sources WHERE knowledge_document_id = 'knowledge-what-is-a-multimodal-ai-model-and-when-is-it-useful-8c6ce8a3';
+INSERT OR IGNORE INTO knowledge_document_sources
+      (id, knowledge_document_id, source_reference, claim_reference, source_kind, source_role, admission_state, freshness_state, independent_evidence_weight, relationship)
+      VALUES ('dd3b4c11-3eeb-4bd2-8b9e-29e07ee2b32b', 'knowledge-what-is-a-multimodal-ai-model-and-when-is-it-useful-8c6ce8a3', 'https://ai.google.dev/gemini-api/docs/models', 'source:79', 'external_independent', 'evidence', 'admitted', 'current', 1, 'supports');
