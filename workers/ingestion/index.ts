@@ -32,14 +32,14 @@ interface InternalOperator { email: string; role: OperatorRole; requestId: strin
 const READ_ADMIN_ROUTES = new Set([
   "/admin/sources", "/admin/sources/health", "/admin/jobs", "/admin/cron-runs",
   "/admin/corrections", "/admin/published-stories", "/admin/clusters", "/admin/cluster-sources",
-  "/admin/candidates",
+  "/admin/candidates", "/admin/social-signals",
 ]);
 const WRITE_ADMIN_ROUTES = new Set([
   "/admin/ingest", "/admin/classify", "/admin/dedup", "/admin/cluster",
   "/admin/extract-claims", "/admin/detect-conflicts", "/admin/correct",
   "/admin/seed-models", "/admin/extract-model-data", "/admin/publish-story",
   "/admin/withdraw-story", "/admin/publish-briefing", "/admin/archive-cluster",
-  "/admin/candidates",
+  "/admin/candidates", "/admin/social-signals",
 ]);
 const MAX_ADMIN_BODY_BYTES = 64 * 1024;
 
@@ -619,6 +619,10 @@ async function handleAdminRoute(
       return request.method === "GET"
         ? handleCandidateList(env)
         : handleCandidateIntake(request, env, operator);
+    case "/admin/social-signals":
+      return request.method === "GET"
+        ? handleSocialSignalList(env)
+        : handleSocialSignalIntake(request, env, operator);
     default:
       return Response.json({ error: "Not found" }, { status: 404 });
   }
@@ -739,6 +743,84 @@ async function handleCandidateList(env: Env): Promise<Response> {
     return Response.json(results ?? []);
   } catch {
     return Response.json({ error: "TRACE Desk is unavailable until its migration is applied." }, { status: 503 });
+  }
+}
+
+// ============================================================
+// ADR 0009 — Social signal intake (manual, governed)
+// ============================================================
+
+const SOCIAL_PLATFORMS = ["reddit","x","bluesky","mastodon","linkedin","youtube","github-discussion","forum","other-approved"] as const;
+
+async function handleSocialSignalIntake(request: Request, env: Env, operator: InternalOperator): Promise<Response> {
+  const body = await readAdminObject(request, [
+    "platform", "url", "reason", "authorDisplayName", "authorHandle", "notes",
+  ]);
+  if (!body) return Response.json({ error: "Invalid request body." }, { status: 400 });
+
+  const platform = typeof body.platform === "string" ? body.platform.trim().toLowerCase() : "";
+  const url = typeof body.url === "string" ? body.url.trim() : "";
+  const reason = typeof body.reason === "string" ? body.reason.trim() : "";
+  const authorDisplayName = typeof body.authorDisplayName === "string" ? body.authorDisplayName.trim().slice(0, 200) : null;
+  const authorHandle = typeof body.authorHandle === "string" ? body.authorHandle.trim().slice(0, 200) : null;
+  const notes = typeof body.notes === "string" ? body.notes.trim().slice(0, 4000) : "";
+
+  if (!SOCIAL_PLATFORMS.includes(platform as typeof SOCIAL_PLATFORMS[number])) {
+    return Response.json({ error: `Platform must be one of: ${SOCIAL_PLATFORMS.join(", ")}.` }, { status: 400 });
+  }
+  if (!url || url.length > 2048) {
+    return Response.json({ error: "A valid URL is required (max 2048 characters)." }, { status: 400 });
+  }
+  try {
+    const parsed = new URL(url);
+    if (!["https:", "http:"].includes(parsed.protocol) || parsed.username || parsed.password) {
+      return Response.json({ error: "URL must be a public HTTP/HTTPS address." }, { status: 400 });
+    }
+  } catch {
+    return Response.json({ error: "URL is not valid." }, { status: 400 });
+  }
+  if (!reason || reason.length < 10 || reason.length > 1000) {
+    return Response.json({ error: "A submission reason is required (10–1000 characters)." }, { status: 400 });
+  }
+
+  const canonical = url;
+  const hashBuffer = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonical));
+  const canonicalUrlHash = Array.from(new Uint8Array(hashBuffer), (b) => b.toString(16).padStart(2, "0")).join("");
+
+  try {
+    await env.DB.prepare(`
+      INSERT INTO social_signals
+        (platform, canonical_url, canonical_url_hash, submitted_by, submission_reason,
+         author_display_name, author_handle, reviewer_notes)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(platform, canonical, canonicalUrlHash, operator.email, reason,
+            authorDisplayName, authorHandle, notes).run();
+    return Response.json(
+      { message: "Social signal recorded. Awaiting reviewer evaluation." },
+      { status: 201 },
+    );
+  } catch (e: any) {
+    if (e?.message?.includes?.("UNIQUE constraint")) {
+      return Response.json({ error: "This URL has already been submitted as a social signal." }, { status: 409 });
+    }
+    return Response.json({ error: "Social-signal intake is unavailable." }, { status: 503 });
+  }
+}
+
+async function handleSocialSignalList(env: Env): Promise<Response> {
+  try {
+    const { results } = await env.DB.prepare(`
+      SELECT id, platform, canonical_url, submitted_by, submitted_at, submission_reason,
+             author_display_name, author_handle, reviewer_notes, evidence_status,
+             corroboration_status, link_status, review_status, reviewed_by, reviewed_at,
+             created_at
+      FROM social_signals
+      ORDER BY created_at DESC
+      LIMIT 50
+    `).all();
+    return Response.json(results ?? []);
+  } catch {
+    return Response.json({ error: "Social signals are unavailable until its migration is applied." }, { status: 503 });
   }
 }
 

@@ -9,13 +9,13 @@ const MAX_BODY_BYTES = 64 * 1024;
 const READ_ROUTES = new Set([
   "sources", "sources/health", "jobs", "cron-runs", "corrections",
   "published-stories", "clusters", "cluster-sources",
-  "candidates",
+  "candidates", "social-signals",
 ]);
 const PUBLISH_ROUTES = new Set([
   "ingest", "classify", "dedup", "cluster", "extract-claims", "detect-conflicts",
   "correct", "seed-models", "extract-model-data", "publish-story", "withdraw-story",
   "publish-briefing", "archive-cluster",
-  "candidates",
+  "candidates", "social-signals",
 ]);
 
 interface ProxyEnvironment {
