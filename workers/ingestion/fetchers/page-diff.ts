@@ -133,7 +133,7 @@ export async function fetchPageDiff(
           items.set(key, { title: "", url: resolved, date: null, excerpt: null });
         }
 
-        const text = cleanText(el.textContent ?? null);
+        const text = cleanText((el as unknown as { textContent?: string }).textContent ?? null);
         if (text && text.length > 10 && text.length < 300) {
           // This element's text might be the title
           const entry = items.get(key)!;
@@ -145,7 +145,7 @@ export async function fetchPageDiff(
     })
     .on(config.dateSelector ?? "meta[property='article:published_time']", {
       element(el) {
-        const dt = el.getAttribute("datetime") || el.getAttribute("content") || el.textContent;
+        const dt = el.getAttribute("datetime") || el.getAttribute("content") || (el as unknown as { textContent?: string }).textContent;
         // Find the nearest parent item — simplified: set date on the last item
         // HTMLRewriter limitation: we use a simpler approach below
       },
