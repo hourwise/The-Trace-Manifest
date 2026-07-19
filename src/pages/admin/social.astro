@@ -99,6 +99,19 @@ export const prerender = false;
     return div.innerHTML;
   }
 
+  function authHeaders(method: string = "GET"): Record<string, string> {
+    return method === "GET" ? {} : { "Content-Type": "application/json" };
+  }
+
+  async function adminFetch(url: string, options: RequestInit = {}): Promise<Response> {
+    const res = await fetch(url, { ...options, headers: { ...authHeaders(options.method ?? "GET"), ...(options.headers as Record<string, string> ?? {}) } });
+    if (res.status === 401) {
+      status("Session expired. Reload the page to re-authenticate.", true);
+      throw new Error("Access session expired — reload the page.");
+    }
+    return res;
+  }
+
   const PLATFORM_LABELS: Record<string, string> = {
     reddit: "Reddit", x: "X", bluesky: "Bluesky", mastodon: "Mastodon",
     linkedin: "LinkedIn", youtube: "YouTube", "github-discussion": "GitHub Discussion",
@@ -124,9 +137,8 @@ export const prerender = false;
     status("Submitting…", false);
 
     try {
-      const res = await fetch("/api/admin/social-signals", {
+      const res = await adminFetch("/api/admin/social-signals", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ platform, url, reason, authorDisplayName, authorHandle, notes }),
       });
       const data = await res.json() as { message?: string; error?: string };
@@ -153,7 +165,7 @@ export const prerender = false;
     if (count) count.textContent = "";
 
     try {
-      const res = await fetch("/api/admin/social-signals");
+      const res = await adminFetch("/api/admin/social-signals");
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const signals: Array<{
         id: number; platform: string; canonical_url: string;
