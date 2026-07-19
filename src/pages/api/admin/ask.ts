@@ -10,7 +10,7 @@
 import type { APIRoute } from "astro";
 import { buildConfig } from "../../../ai/config";
 import { askTrace, hashPrivateIdentifier } from "../../../ai/trace-model-gateway";
-import { retrievePublishedEvidence } from "../../../lib/server/ask-evidence";
+import { retrievePublishedEvidence, retrieveApprovedKnowledge } from "../../../lib/server/ask-evidence";
 import { authenticateAccessRequest, type AccessEnvironment } from "../../../security/access-auth";
 
 export const prerender = false;
@@ -108,7 +108,14 @@ export const POST: APIRoute = async ({ request, locals }) => {
 
   if (!env.DB) return Response.json({ error: "Database unavailable." }, { status: 503 });
 
-  const evidence = await retrievePublishedEvidence(env.DB, question, config.maxEvidenceExcerpts);
+  // ADR 0017: merge published story evidence with approved knowledge documents.
+  const storyEvidence = await retrievePublishedEvidence(env.DB, question, config.maxEvidenceExcerpts);
+  const knowledgeEvidence = await retrieveApprovedKnowledge(env.DB, question, 4);
+  // Deduplicate and interleave: stories first (higher weight), then knowledge
+  const seenSourceIds = new Set(storyEvidence.map((e) => e.sourceId));
+  const uniqueKnowledge = knowledgeEvidence.filter((e) => !seenSourceIds.has(e.sourceId));
+  const evidence = [...storyEvidence, ...uniqueKnowledge];
+
   if (evidence.length === 0) {
     // ADR 0017: record the unanswered question before returning.
     await recordQuestionGap(env.DB, question, "knowledge_missing");

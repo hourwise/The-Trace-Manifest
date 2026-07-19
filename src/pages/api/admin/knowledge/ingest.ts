@@ -230,12 +230,16 @@ export const POST: APIRoute = async ({ request, locals }) => {
 
   // Check for duplicate
   const existing = await db
-    .prepare("SELECT id FROM knowledge_documents WHERE canonical_hash = ?")
+    .prepare("SELECT id, status, document_json, source_set_hash FROM knowledge_documents WHERE canonical_hash = ?")
     .bind(hash)
-    .first<{ id: string }>();
-  if (existing) {
+    .first<{ id: string; status: string; document_json: string; source_set_hash: string | null }>();
+
+  const url = new URL(request.url);
+  const overwrite = url.searchParams.get("overwrite") === "true";
+
+  if (existing && !overwrite) {
     return Response.json({
-      error: `A knowledge document already exists for this question (ID: ${existing.id}). Use the update flow instead.`,
+      error: `A knowledge document already exists for this question (ID: ${existing.id}). Add ?overwrite=true to update it with a new revision.`,
       existingId: existing.id,
     }, { status: 409 });
   }
@@ -253,6 +257,83 @@ export const POST: APIRoute = async ({ request, locals }) => {
     body,
     sections: bodySections,
   });
+
+  // ── ADR 0017 checkbox 5: version history on overwrite ──────────
+  if (existing && overwrite) {
+    try {
+      // Get current max revision number
+      const maxRev = await db
+        .prepare("SELECT MAX(revision_number) as max_rev FROM knowledge_document_revisions WHERE knowledge_document_id = ?")
+        .bind(existing.id)
+        .first<{ max_rev: number | null }>();
+      const nextRevision = (maxRev?.max_rev ?? 0) + 1;
+
+      // Save current version as a revision
+      await db
+        .prepare(
+          `INSERT INTO knowledge_document_revisions
+           (id, knowledge_document_id, revision_number, status, document_json, source_set_hash, change_summary, created_by)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .bind(
+          crypto.randomUUID(),
+          existing.id,
+          nextRevision,
+          existing.status,
+          existing.document_json,
+          existing.source_set_hash ?? null,
+          `Overwritten via ingest API by ${identity.email}`,
+          identity.email,
+        )
+        .run();
+
+      // Update the existing document
+      await db
+        .prepare(
+          `UPDATE knowledge_documents SET
+           canonical_question = ?, section_slug = ?, topic_slug = ?,
+           knowledge_type = ?, evidence_status = ?,
+           direct_answer = ?, detailed_explanation = ?, document_json = ?,
+           source_set_hash = ?, policy_version = 'trace-knowledge-v1',
+           valid_from = ?, review_after = ?, hard_expiry = ?,
+           updated_at = datetime('now')
+           WHERE id = ?`,
+        )
+        .bind(
+          frontmatter.canonical_question.trim(),
+          frontmatter.section,
+          topicSlug,
+          frontmatter.knowledge_type,
+          evidenceStatus,
+          directAnswer,
+          detailedExplanation,
+          documentJson,
+          frontmatter.source_set_hash || null,
+          frontmatter.valid_from || null,
+          frontmatter.review_after || null,
+          frontmatter.hard_expiry || null,
+          existing.id,
+        )
+        .run();
+
+      return Response.json({
+        success: true,
+        id: existing.id,
+        canonical_question: frontmatter.canonical_question.trim(),
+        knowledge_type: frontmatter.knowledge_type,
+        section: frontmatter.section,
+        status: existing.status,
+        revision: nextRevision,
+        message: `Knowledge document updated to revision ${nextRevision}. Previous version saved.`,
+      }, { status: 200 });
+    } catch (err) {
+      console.error("knowledge_document update failed:", err);
+      return Response.json({
+        error: "Failed to update knowledge document.",
+        detail: String(err),
+      }, { status: 500 });
+    }
+  }
 
   // Insert
   try {

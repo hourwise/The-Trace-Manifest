@@ -4,7 +4,7 @@
 // Run: node scripts/batch-ingest-knowledge.mjs
 
 import { readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { resolve, basename } from "node:path";
+import { resolve } from "node:path";
 import { createHash } from "node:crypto";
 
 const INPUT_DIR = resolve("docs/Knowledge Input");

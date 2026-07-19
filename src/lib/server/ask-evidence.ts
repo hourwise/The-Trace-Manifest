@@ -182,3 +182,75 @@ export function calculateDeterministicConfidence(evidence: EvidenceExcerpt[]): D
 
   return { label, score, reasons, freshestObservedAt, hasMaterialDisagreement: disputed > 0 };
 }
+
+// ── ADR 0017: Approved knowledge document retrieval ───────────────
+
+interface KnowledgeEvidenceRow {
+  id: string;
+  canonical_question: string;
+  knowledge_type: string;
+  evidence_status: string;
+  direct_answer: string | null;
+  detailed_explanation: string | null;
+  section_slug: string;
+  approved_at: string | null;
+}
+
+export async function retrieveApprovedKnowledge(
+  db: D1Database,
+  question: string,
+  limit = 4,
+): Promise<EvidenceExcerpt[]> {
+  const searchTerms = terms(question);
+  if (searchTerms.length === 0) return [];
+  const boundedLimit = Math.max(1, Math.min(Number.isInteger(limit) ? limit : 4, 8));
+
+  const searchable = "LOWER(kd.canonical_question || ' ' || COALESCE(kd.direct_answer, '') || ' ' || COALESCE(kd.detailed_explanation, ''))";
+  const predicates = searchTerms.map(() => `${searchable} LIKE ? ESCAPE '\\'`).join(" OR ");
+
+  const result = await db.prepare(`
+    SELECT kd.id, kd.canonical_question, kd.knowledge_type, kd.evidence_status,
+           kd.direct_answer, kd.detailed_explanation, kd.section_slug, kd.approved_at
+    FROM knowledge_documents kd
+    WHERE kd.status = 'approved'
+      AND kd.visibility IN ('public_knowledge', 'public_guide')
+      AND kd.approved_by IS NOT NULL
+      AND kd.approved_at IS NOT NULL
+      AND kd.direct_answer IS NOT NULL
+      AND (${predicates})
+    ORDER BY
+      CASE kd.evidence_status
+        WHEN 'confirmed' THEN 0 WHEN 'strongly_supported' THEN 1
+        WHEN 'provisionally_supported' THEN 2 ELSE 3
+      END,
+      kd.approved_at DESC
+    LIMIT ?
+  `).bind(...searchTerms.map(likeTerm), boundedLimit).all<KnowledgeEvidenceRow>();
+
+  return result.results.map((row) => {
+    const text = [
+      `TRACE Knowledge: ${row.canonical_question}`,
+      row.direct_answer ? `Answer: ${cleanEvidenceText(row.direct_answer, 800)}` : "",
+      row.detailed_explanation ? `Explanation: ${cleanEvidenceText(row.detailed_explanation, 600)}` : "",
+    ].filter(Boolean).join("\n");
+
+    return {
+      sourceId: `knowledge:${row.id}`,
+      sourceKind: "trace_knowledge" as TraceSourceKind,
+      sourceRole: "internal_synthesis" as const,
+      admissionState: "admitted" as const,
+      freshnessState: freshnessStateFor(row.approved_at ?? new Date().toISOString()),
+      independentEvidenceWeight: 0 as const,
+      claimId: `knowledge:${row.id}`,
+      text,
+      sourceClassification: `TRACE Knowledge; ${row.knowledge_type}; evidence ${row.evidence_status}`,
+      sourceName: "TRACE Knowledge Base",
+      sourceUrl: undefined,
+      observedAt: row.approved_at ?? undefined,
+      publishedAt: row.approved_at ?? undefined,
+      trustNotes: `TRACE approved knowledge (${row.evidence_status}). Always verify against primary sources.`,
+      relationship: "supports",
+      isDisputed: false,
+    };
+  });
+}
