@@ -37,6 +37,21 @@ function hasLegacyConstraint(error: unknown, table: "claims" | "claim_evidence",
   return error instanceof Error && error.message.includes(`NOT NULL constraint failed: ${table}.${column}`);
 }
 
+/** Returns a usable cluster ID, creating a placeholder cluster for unclustered items. */
+async function ensureClusterId(db: D1Database, clusterId: number | null, itemId: number): Promise<number> {
+  if (clusterId != null) return clusterId;
+  // Find or create a placeholder cluster for unclustered items.
+  const existing = await db.prepare(
+    "SELECT id FROM story_clusters WHERE title = 'Unclustered Items (placeholder)' LIMIT 1"
+  ).first<{ id: number }>();
+  if (existing) return existing.id;
+  const result = await db.prepare(
+    `INSERT INTO story_clusters (title, summary, publication_status, evidence_status, needs_human_review)
+     VALUES ('Unclustered Items (placeholder)', 'Claims extracted from items that have not yet been clustered.', 'draft', 'unverified', 0)`
+  ).run();
+  return result.meta.last_row_id as number;
+}
+
 // ============================================================
 // Claim extraction rule sets
 // Each rule: { domain, claimClass, patterns, severity, evidenceWeight }
@@ -448,6 +463,7 @@ export async function runClaimExtraction(
     } catch {
       // Item may not be clustered yet — still extract claims
     }
+    const effectiveClusterId = await ensureClusterId(db, clusterId, item.id);
 
     // Extract claims
     const claims = extractClaimsFromItem(
@@ -477,7 +493,7 @@ export async function runClaimExtraction(
               severity, evidence_quality, confidence_score, extraction_method, extraction_version, updated_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'rule_based', ?, datetime('now'))`
           ).bind(
-            clusterId,
+            effectiveClusterId,
             item.id,
             claim.claimText,
             claim.claimClass,
@@ -495,7 +511,7 @@ export async function runClaimExtraction(
               severity, evidence_quality, confidence_score, extraction_method, extraction_version, updated_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'rule_based', ?, datetime('now'))`
           ).bind(
-            clusterId,
+            effectiveClusterId,
             item.id,
             claim.claimText,
             legacyClaimTypeFor(claim.claimDomain),
