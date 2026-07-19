@@ -125,8 +125,8 @@ Deliver one phase at a time. Each phase follows: read its ADR -> write the small
 - [x] Record unanswered or weakly answered questions in a gap queue.
 - [x] Deduplicate and prioritise gaps using evidence need, not popularity alone.
 - [x] Draft knowledge documents with source links, version, owner, freshness, and review state.
-- [ ] Promote only reviewed documents into the Ask TRACE retrieval corpus.
-- [ ] Keep superseded versions and correction history.
+- [x] Promote only reviewed documents into the Ask TRACE retrieval corpus.
+- [x] Keep superseded versions and correction history.
 
 ### Phase 6 - Guides Lab (ADR 0013)
 

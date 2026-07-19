@@ -4,6 +4,7 @@
 
 import type { APIRoute } from "astro";
 import { authenticateAccessRequest, type AccessEnvironment } from "../../../../security/access-auth";
+import { extractEvidenceUrls, linkKnowledgeSources } from "../../../../lib/server/knowledge-sources";
 
 export const prerender = false;
 
@@ -316,6 +317,10 @@ export const POST: APIRoute = async ({ request, locals }) => {
         )
         .run();
 
+      // ADR 0017: extract and link evidence sources
+      const extractedSources = extractEvidenceUrls(body);
+      const linkResult = await linkKnowledgeSources(db, existing.id, extractedSources);
+
       return Response.json({
         success: true,
         id: existing.id,
@@ -324,7 +329,9 @@ export const POST: APIRoute = async ({ request, locals }) => {
         section: frontmatter.section,
         status: existing.status,
         revision: nextRevision,
-        message: `Knowledge document updated to revision ${nextRevision}. Previous version saved.`,
+        sourcesLinked: linkResult.linked,
+        sourcesQuarantined: linkResult.quarantined,
+        message: `Knowledge document updated to revision ${nextRevision}. ${linkResult.linked} source(s) linked, ${linkResult.quarantined} quarantined.`,
       }, { status: 200 });
     } catch (err) {
       console.error("knowledge_document update failed:", err);
@@ -369,6 +376,10 @@ export const POST: APIRoute = async ({ request, locals }) => {
       )
       .run();
 
+    // ADR 0017: extract and link evidence sources
+    const extractedSources = extractEvidenceUrls(body);
+    const linkResult = await linkKnowledgeSources(db, docId, extractedSources);
+
     return Response.json({
       success: true,
       id: docId,
@@ -376,7 +387,9 @@ export const POST: APIRoute = async ({ request, locals }) => {
       knowledge_type: frontmatter.knowledge_type,
       section: frontmatter.section,
       status: "draft",
-      message: "Knowledge document created. It is in draft status and must be reviewed before approval.",
+      sourcesLinked: linkResult.linked,
+      sourcesQuarantined: linkResult.quarantined,
+      message: `Knowledge document created with ${linkResult.linked} linked source(s) and ${linkResult.quarantined} quarantined.`,
     }, { status: 201 });
   } catch (err) {
     console.error("knowledge_document insert failed:", err);

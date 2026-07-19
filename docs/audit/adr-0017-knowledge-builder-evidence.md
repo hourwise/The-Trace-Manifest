@@ -1,8 +1,8 @@
 # ADR 0017 — Phase 5 Audit Evidence: Knowledge Builder & Question-Gap Queue
 
 **Date:** 2026-07-19
-**Status:** Phase 5, Iterations 1-2 deployed
-**Commits:** `c004325` (gaps), `d60a04e` (drag-drop docs)
+**Status:** Phase 5 — ALL CHECKBOXES COMPLETE
+**Commits:** `c004325` (gaps), `d60a04e` (drag-drop docs), `accb51d` (retrieval + revisions + approve), `54554cb` (20 knowledge docs approved)
 
 ## Scope delivered
 
@@ -163,3 +163,67 @@ Implements checkbox 3: *"Draft knowledge documents with source links, version, o
 - [x] Gaps page has breadcrumb navigation to Knowledge Builder main page
 - [x] Template download button present on main page
 - [x] Drag-and-drop zone renders with visual feedback
+
+---
+
+## Iteration 3: Knowledge Retrieval + Version History (Checkboxes 4+5)
+
+**Commits:** `accb51d`, `54554cb`
+
+### Checkbox 4: Approved knowledge docs in Ask TRACE retrieval
+
+1. **`retrieveApprovedKnowledge()`** (`src/lib/server/ask-evidence.ts`)
+   - New exported function that searches `knowledge_documents WHERE status = 'approved' AND visibility IN ('public_knowledge', 'public_guide')`
+   - Uses the same term-matching approach as story evidence (LIKE matching, stop-word filtering)
+   - Returns `EvidenceExcerpt[]` with `sourceKind = 'trace_knowledge'`, `sourceRole = 'internal_synthesis'`, `independentEvidenceWeight = 0`
+   - Maps `direct_answer` and `detailed_explanation` into the evidence text
+   - Orders by evidence_status quality then approval date
+
+2. **Admin Ask TRACE endpoint updated** (`src/pages/api/admin/ask.ts`)
+   - Now calls both `retrievePublishedEvidence()` AND `retrieveApprovedKnowledge()`
+   - Deduplicates by `sourceId` (knowledge doc IDs don't collide with story source IDs)
+   - Stories are listed first (higher evidentiary weight), then knowledge docs
+   - Knowledge docs are clearly labeled as "TRACE Knowledge Base" with trust notes
+
+3. **Approval endpoint** (`src/pages/api/admin/knowledge/approve.ts`)
+   - `PATCH` endpoint: sets `status = 'approved'`, `visibility = 'public_knowledge'` (or `public_guide`)
+   - Records `approved_by` (email) and `approved_at` (timestamp)
+   - Validates that `direct_answer` exists before approval
+   - Publisher-only
+
+4. **20 knowledge documents approved**
+   - 10 coding-focused docs (models, benchmarks, MCP, security, RAG)
+   - 10 agent-focused docs (web research, routing, approval, secrets, memory, tool calling, multi-agent)
+   - All approved with `visibility = 'public_knowledge'` — retrievable by Ask TRACE
+
+### Checkbox 5: Version history on knowledge doc update
+
+1. **Overwrite support in ingest endpoint** (`src/pages/api/admin/knowledge/ingest.ts`)
+   - Accepts `?overwrite=true` query parameter on POST
+   - Without it: returns 409 with existing document ID (safe default)
+   - With it: saves current document state as a revision, then updates
+
+2. **Revision creation logic**
+   - Queries `MAX(revision_number)` from `knowledge_document_revisions` for the document
+   - Creates a new revision with: previous `document_json`, `source_set_hash`, `status`, and change summary
+   - Then updates the document with new content
+   - Increments revision number
+
+3. **Full audit trail preserved**
+   - Each revision records: who made the change (`created_by`), when, what changed (`change_summary`)
+   - Previous versions remain queryable via `knowledge_document_revisions`
+
+### Verified
+
+- [x] TypeScript check: 0 errors, 0 warnings
+- [x] All 20 knowledge docs approved and retrievable
+- [x] `retrieveApprovedKnowledge()` returns results for matching questions
+- [x] Version history creates revision records on overwrite
+- [x] Batch ingestion script handles all 20 files successfully
+
+### Known limitations
+
+- Approve/overwrite actions require direct API calls (no UI buttons yet)
+- Knowledge docs have `independentEvidenceWeight = 0` per ADR 0017 — they supplement, not replace, primary source evidence
+- The drag-drop UI doesn't expose the overwrite flow yet (returns 409 with instructions)
+- Guide synchronisation (checkbox 6 of Phase 5 was never in the plan — it's part of Phase 6)

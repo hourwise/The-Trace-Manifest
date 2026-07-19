@@ -1,0 +1,144 @@
+// Extract and link evidence sources for existing knowledge documents.
+// Run: node scripts/link-knowledge-sources.mjs
+// This generates and executes SQL to populate knowledge_document_sources.
+
+import { readFileSync, writeFileSync } from "node:fs";
+import { execSync } from "node:child_process";
+
+// ── URL extractor (mirrors src/lib/server/knowledge-sources.ts) ──
+
+function extractEvidenceUrls(body) {
+  const sources = [];
+  const evidenceMatch = body.match(/^## Evidence\s*\n([\s\S]*?)(?=^## |\n## |$)/m);
+  if (!evidenceMatch) return sources;
+
+  const section = evidenceMatch[1];
+  const linkRegex = /^-\s*\[([^\]]+)\]\(([^)]+)\)(?:\s*[—–-]\s*(.+))?$/gm;
+  let match;
+  while ((match = linkRegex.exec(section)) !== null) {
+    const name = match[1].trim();
+    const url = match[2].trim();
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol !== "https:" && parsed.protocol !== "http:") continue;
+    } catch { continue; }
+    sources.push({ url, name, description: (match[3] ?? "").trim() });
+  }
+
+  // Bare URLs
+  const bareRegex = /^-\s*(https?:\/\/[^\s]+)\s*$/gm;
+  while ((match = bareRegex.exec(section)) !== null) {
+    const url = match[1].trim();
+    try { new URL(url); } catch { continue; }
+    if (!sources.some(s => s.url === url)) {
+      sources.push({ url, name: new URL(url).hostname, description: "" });
+    }
+  }
+  return sources;
+}
+
+function escapeSql(str) {
+  if (str === null || str === undefined) return "NULL";
+  return "'" + String(str).replace(/'/g, "''") + "'";
+}
+
+// ── Get all source domains from registry ──
+
+console.log("Fetching source registry...");
+const sourcesJson = execSync(
+  'npx wrangler d1 execute trace-manifest-db --remote --json --command="SELECT id, name, url, tier FROM sources WHERE active=1"',
+  { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] }
+);
+const sourcesData = JSON.parse(sourcesJson);
+const registrySources = (sourcesData[0]?.results ?? []).map(r => ({
+  id: r.id,
+  name: r.name,
+  url: r.url,
+  tier: r.tier,
+  hostname: (() => { try { return new URL(r.url).hostname.replace(/^www\./, ""); } catch { return ""; } })(),
+}));
+console.log(`  ${registrySources.length} active sources in registry`);
+
+// ── Get all knowledge documents ──
+
+console.log("Fetching knowledge documents...");
+const docsJson = execSync(
+  'npx wrangler d1 execute trace-manifest-db --remote --json --command="SELECT id, canonical_question, document_json FROM knowledge_documents"',
+  { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] }
+);
+const docsData = JSON.parse(docsJson);
+const docs = (docsData[0]?.results ?? []);
+console.log(`  ${docs.length} knowledge documents`);
+
+// ── Process each doc ──
+
+let totalLinked = 0;
+let totalQuarantined = 0;
+const sqlStatements = [];
+
+for (const doc of docs) {
+  let body = "";
+  try {
+    const parsed = JSON.parse(doc.document_json);
+    body = parsed.body ?? "";
+  } catch { continue; }
+
+  const extracted = extractEvidenceUrls(body);
+  if (extracted.length === 0) {
+    console.log(`  ${doc.id}: no evidence URLs found`);
+    continue;
+  }
+
+  // Delete existing links for this doc
+  sqlStatements.push(`DELETE FROM knowledge_document_sources WHERE knowledge_document_id = '${doc.id.replace(/'/g, "''")}';`);
+
+  let linked = 0, quarantined = 0;
+  for (const src of extracted) {
+    let hostname;
+    try { hostname = new URL(src.url).hostname.replace(/^www\./, ""); } catch { continue; }
+
+    // Match against registry
+    const matched = registrySources.find(s => s.hostname && hostname.includes(s.hostname) || s.hostname.includes(hostname));
+    const isAdmitted = !!matched;
+    const sourceKind = isAdmitted && (matched.tier === "A" || matched.tier === "B") ? "external_independent" : "external_vendor";
+    const sourceRole = isAdmitted && (matched.tier === "A" || matched.tier === "B") ? "evidence" : "reported_claim";
+    const admissionState = isAdmitted ? "admitted" : "quarantined";
+    const weight = (isAdmitted && (matched.tier === "A" || matched.tier === "B")) ? 1 : 0;
+
+    const sql = `INSERT OR IGNORE INTO knowledge_document_sources
+      (id, knowledge_document_id, source_reference, claim_reference, source_kind, source_role, admission_state, freshness_state, independent_evidence_weight, relationship)
+      VALUES (${escapeSql(crypto.randomUUID())}, ${escapeSql(doc.id)}, ${escapeSql(src.url)}, ${escapeSql(isAdmitted ? `source:${matched.id}` : "")}, '${sourceKind}', '${sourceRole}', '${admissionState}', 'current', ${weight}, 'supports');`;
+
+    sqlStatements.push(sql);
+    if (isAdmitted) linked++; else quarantined++;
+  }
+
+  console.log(`  ${doc.id}: ${linked} linked, ${quarantined} quarantined (${extracted.length} URLs)`);
+  totalLinked += linked;
+  totalQuarantined += quarantined;
+}
+
+// ── Write and execute SQL ──
+
+if (sqlStatements.length === 0) {
+  console.log("\nNo sources to link.");
+  process.exit(0);
+}
+
+const sqlPath = "scripts/link-knowledge-sources.sql";
+const header = "-- Link knowledge document evidence sources\n-- Generated by scripts/link-knowledge-sources.mjs\n\n";
+writeFileSync(sqlPath, header + sqlStatements.join("\n"), "utf8");
+console.log(`\nSQL written to: ${sqlPath}`);
+console.log(`Total: ${totalLinked} linked, ${totalQuarantined} quarantined`);
+
+// Execute against production
+console.log("\nExecuting against production D1...");
+try {
+  const result = execSync(
+    `echo Y | npx wrangler d1 execute trace-manifest-db --remote --file=${sqlPath}`,
+    { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] }
+  );
+  console.log(result.split("\n").slice(-10).join("\n"));
+} catch (err) {
+  console.error("Execution failed:", err.message);
+}
