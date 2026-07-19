@@ -1,0 +1,172 @@
+---
+// ADR 0017: Question Gap Queue — view unanswered / weakly-answered questions
+// recorded from Admin Ask TRACE. Publisher-only, server-rendered with direct D1.
+import BaseLayout from "../../../layouts/BaseLayout.astro";
+import { authenticateAccessRequest, type AccessEnvironment } from "../../../security/access-auth";
+
+export const prerender = false;
+
+const env = Astro.locals.runtime.env;
+const identity = await authenticateAccessRequest(Astro.request, env as unknown as AccessEnvironment);
+if (!identity || identity.role !== "publisher") {
+  return new Response("Forbidden", { status: 403 });
+}
+
+const db = env.DB as D1Database;
+
+interface GapRow {
+  id: string;
+  canonical_question: string;
+  failure_reason: string;
+  risk_class: string;
+  priority: string;
+  disposition: string;
+  request_count: number;
+  first_requested_at: string;
+  last_requested_at: string;
+  editor_notes: string | null;
+}
+
+// Fetch open gaps ordered by priority desc, then most recent first
+const gaps = await db
+  .prepare(
+    `SELECT id, canonical_question, failure_reason, risk_class, priority,
+            disposition, request_count, first_requested_at, last_requested_at,
+            editor_notes
+     FROM question_gaps
+     WHERE disposition = 'open'
+     ORDER BY
+       CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END,
+       last_requested_at DESC
+     LIMIT 100`,
+  )
+  .all<GapRow>();
+
+const gapList = gaps.results ?? [];
+
+function reasonLabel(reason: string): string {
+  const map: Record<string, string> = {
+    insufficient: "Insufficient evidence",
+    stale: "Stale evidence",
+    disputed: "Disputed evidence",
+    research_unavailable: "Research unavailable",
+    knowledge_missing: "No matching knowledge",
+    out_of_scope: "Out of scope",
+    low_confidence: "Low confidence",
+  };
+  return map[reason] ?? reason;
+}
+
+function priorityClass(priority: string): string {
+  if (priority === "urgent" || priority === "high") return "badge badge-warn";
+  return "badge";
+}
+---
+
+<BaseLayout title="Question Gaps — TRACE Knowledge Builder" description="Unanswered and weakly-answered questions captured from Ask TRACE.">
+  <div class="wrap">
+    <h1>Question Gaps</h1>
+    <p class="meta" style="margin-bottom:2rem;">
+      Questions that Ask TRACE could not answer confidently. Each gap links to the
+      original question and tracks how often it has been asked. Use this queue to
+      prioritise knowledge-building work.
+    </p>
+
+    <p style="margin-bottom:1rem;">
+      <a href="/admin" style="color:var(--color-accent);">&larr; Back to Admin</a>
+      &nbsp;|&nbsp;
+      <strong>{gapList.length}</strong> open gap{gapList.length !== 1 ? "s" : ""}
+    </p>
+
+    {
+      gapList.length === 0 ? (
+        <div class="card" style="text-align:center;padding:3rem;">
+          <p class="meta">No open question gaps yet.</p>
+          <p class="meta" style="margin-top:0.5rem;">
+            Gaps appear here when Ask TRACE returns a non-answer or low-confidence result
+            from <a href="/admin/ask" style="color:var(--color-accent);">Admin Ask TRACE</a>.
+          </p>
+        </div>
+      ) : (
+        <div class="card" style="overflow-x:auto;">
+          <table style="width:100%;border-collapse:collapse;font-size:0.9rem;">
+            <thead>
+              <tr style="border-bottom:2px solid var(--color-border);text-align:left;">
+                <th style="padding:0.5rem;">Question</th>
+                <th style="padding:0.5rem;">Reason</th>
+                <th style="padding:0.5rem;">Priority</th>
+                <th style="padding:0.5rem;">Requests</th>
+                <th style="padding:0.5rem;">Last asked</th>
+              </tr>
+            </thead>
+            <tbody>
+              {gapList.map((gap) => (
+                <tr style="border-bottom:1px solid var(--color-border-light);">
+                  <td style="padding:0.5rem;max-width:400px;">
+                    <span title={gap.canonical_question}>
+                      {gap.canonical_question.length > 100
+                        ? gap.canonical_question.slice(0, 100) + "…"
+                        : gap.canonical_question}
+                    </span>
+                    {gap.editor_notes && (
+                      <p class="meta" style="font-size:0.75rem;margin-top:0.25rem;">
+                        📝 {gap.editor_notes}
+                      </p>
+                    )}
+                  </td>
+                  <td style="padding:0.5rem;white-space:nowrap;">
+                    <span class="badge">{reasonLabel(gap.failure_reason)}</span>
+                  </td>
+                  <td style="padding:0.5rem;white-space:nowrap;">
+                    <span class={priorityClass(gap.priority)}>{gap.priority}</span>
+                  </td>
+                  <td style="padding:0.5rem;text-align:center;">{gap.request_count}</td>
+                  <td style="padding:0.5rem;white-space:nowrap;font-size:0.8rem;color:var(--color-muted);">
+                    {gap.last_requested_at?.replace("T", " ").slice(0, 16) ?? "—"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )
+    }
+
+    <section class="card" style="margin-top:2rem;">
+      <h2>About the gap queue</h2>
+      <p class="meta">
+        Gaps are recorded automatically when Admin Ask TRACE cannot provide a
+        sufficient answer. Each gap is deduplicated by canonical question (case-
+        and whitespace-normalised) so repeated queries increment the request
+        count rather than creating duplicates.
+      </p>
+      <p class="meta" style="margin-top:0.5rem;">
+        <strong>Failure reasons:</strong>
+        <em>knowledge_missing</em> — no matching published evidence;
+        <em>insufficient</em> — evidence exists but is insufficient;
+        <em>low_confidence</em> — AI produced an answer but confidence is below 40%.
+      </p>
+      <p class="meta" style="margin-top:0.5rem;">
+        Full knowledge document drafting, review, and approval workflows are
+        defined in ADR 0017 and will be implemented in subsequent iterations.
+      </p>
+    </section>
+  </div>
+</BaseLayout>
+
+<style>
+.badge {
+  display:inline-block;
+  padding:0.15rem 0.5rem;
+  border-radius:4px;
+  font-size:0.75rem;
+  background:var(--color-bg-muted);
+  color:var(--color-text);
+  border:1px solid var(--color-border);
+}
+.badge-warn {
+  background:#fff3cd;
+  color:#856404;
+  border-color:#ffc107;
+}
+</style>

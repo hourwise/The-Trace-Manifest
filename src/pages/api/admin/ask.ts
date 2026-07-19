@@ -3,6 +3,9 @@
 // Separate from public Ask TRACE (which stays disabled).
 // Uses authenticateAccessRequest directly because locals.operator is undefined
 // in Astro API routes (Cloudflare adapter limitation).
+//
+// ADR 0017: Records unanswered / low-confidence questions in the question_gaps
+// queue so editors can prioritise knowledge-building work.
 
 import type { APIRoute } from "astro";
 import { buildConfig } from "../../../ai/config";
@@ -11,6 +14,75 @@ import { retrievePublishedEvidence } from "../../../lib/server/ask-evidence";
 import { authenticateAccessRequest, type AccessEnvironment } from "../../../security/access-auth";
 
 export const prerender = false;
+
+// ── Question-gap recording (ADR 0017) ──────────────────────────────
+
+const VALID_FAILURE_REASONS = [
+  "insufficient", "stale", "disputed", "research_unavailable",
+  "knowledge_missing", "out_of_scope", "low_confidence",
+] as const;
+
+async function canonicalHash(question: string): Promise<string> {
+  const canonical = question.toLowerCase().trim();
+  const data = new TextEncoder().encode(canonical);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(hashBuffer))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+async function recordQuestionGap(
+  db: D1Database,
+  question: string,
+  failureReason: string,
+): Promise<void> {
+  try {
+    const hash = await canonicalHash(question);
+    const canonical = question.toLowerCase().trim();
+    const reason = (VALID_FAILURE_REASONS as readonly string[]).includes(failureReason)
+      ? failureReason
+      : "knowledge_missing";
+
+    const existing = await db
+      .prepare("SELECT id FROM question_gaps WHERE canonical_hash = ?")
+      .bind(hash)
+      .first<{ id: string }>();
+
+    if (existing) {
+      await db
+        .prepare(
+          "UPDATE question_gaps SET request_count = request_count + 1, last_requested_at = datetime('now'), updated_at = datetime('now') WHERE id = ?",
+        )
+        .bind(existing.id)
+        .run();
+      await db
+        .prepare(
+          "INSERT INTO question_gap_examples (id, question_gap_id, sanitised_question, source_kind) VALUES (?, ?, ?, 'ask_trace')",
+        )
+        .bind(crypto.randomUUID(), existing.id, question)
+        .run();
+    } else {
+      const gapId = crypto.randomUUID();
+      await db
+        .prepare(
+          "INSERT INTO question_gaps (id, canonical_question, canonical_hash, failure_reason, request_count, first_requested_at, last_requested_at) VALUES (?, ?, ?, ?, 1, datetime('now'), datetime('now'))",
+        )
+        .bind(gapId, canonical, hash, reason)
+        .run();
+      await db
+        .prepare(
+          "INSERT INTO question_gap_examples (id, question_gap_id, sanitised_question, source_kind) VALUES (?, ?, ?, 'ask_trace')",
+        )
+        .bind(crypto.randomUUID(), gapId, question)
+        .run();
+    }
+  } catch (err) {
+    // Gap recording is best-effort; never fail the Ask TRACE request.
+    console.error("question_gap record failed:", err);
+  }
+}
+
+// ── Endpoint ───────────────────────────────────────────────────────
 
 export const POST: APIRoute = async ({ request, locals }) => {
   const env = locals.runtime.env;
@@ -38,6 +110,8 @@ export const POST: APIRoute = async ({ request, locals }) => {
 
   const evidence = await retrievePublishedEvidence(env.DB, question, config.maxEvidenceExcerpts);
   if (evidence.length === 0) {
+    // ADR 0017: record the unanswered question before returning.
+    await recordQuestionGap(env.DB, question, "knowledge_missing");
     return Response.json({
       answer: "No published evidence matches your question. Try broader terms, or publish relevant stories first via the Review queue.",
       keyPoints: [],
@@ -71,6 +145,13 @@ export const POST: APIRoute = async ({ request, locals }) => {
   });
 
   if (result.status === "ok" && result.payload) {
+    // ADR 0017: record gaps for non-answers or low-confidence results.
+    if (result.payload.nonAnswer || result.payload.confidenceScore < 40) {
+      const reason = result.payload.nonAnswer
+        ? (result.payload.confidence === "insufficient_evidence" ? "insufficient" : "knowledge_missing")
+        : "low_confidence";
+      await recordQuestionGap(env.DB, question, reason);
+    }
     return Response.json(result.payload, { headers: { "Cache-Control": "no-store" } });
   }
 
