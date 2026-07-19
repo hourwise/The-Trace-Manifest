@@ -235,6 +235,7 @@ try {
       }
 
       // Load clusters
+      let clusterDetail: Record<number, { summary?: string | null; why?: string | null }> = {};
       $<HTMLButtonElement>("load-clusters-btn")?.addEventListener("click", async () => {
         const select = $<HTMLSelectElement>("cluster-select");
         const count = document.getElementById("cluster-count");
@@ -247,13 +248,15 @@ try {
         try {
           const res = await adminFetch(`/api/admin/clusters?limit=100`);
           if (!res.ok) { throw new Error(`HTTP ${res.status}`); }
-          const clusters: Array<{ id: number; title: string; publication_status: string; source_count: number }> = await res.json();
+          const clusters: Array<{ id: number; title: string; publication_status: string; source_count: number; summary: string | null; why_it_matters: string | null }> = await res.json();
 
           select.innerHTML = '<option value="">— Select a cluster —</option>';
           if (clusters.length > 0) {
-            // Fetch source types for all clusters to show indicators
+            // Store cluster metadata for pre-fill
             const clusterMeta: Record<number, string> = {};
+            clusterDetail = {};
             await Promise.all(clusters.slice(0, 15).map(async (c: any) => {
+              clusterDetail[c.id] = { summary: c.summary, why: c.why_it_matters };
               try {
                 const srcRes = await adminFetch(`/api/admin/cluster-sources?clusterId=${c.id}`);
                 if (srcRes.ok) {
@@ -322,6 +325,16 @@ try {
         if (aiBtn) aiBtn.disabled = true;
         if (aiResult) aiResult.style.display = "none";
         currentSources = [];
+
+        // Pre-fill form fields from cluster data if available
+        const detail = clusterDetail[clusterId];
+        if (detail) {
+          const summaryEl = $<HTMLTextAreaElement>("pub-summary");
+          const whyEl = $<HTMLInputElement>("pub-why");
+          if (summaryEl && detail.summary && !summaryEl.value.trim()) summaryEl.value = detail.summary;
+          if (whyEl && detail.why && !whyEl.value.trim()) whyEl.value = detail.why;
+          checkPublishReady();
+        }
 
         try {
           const res = await adminFetch(`/api/admin/cluster-sources?clusterId=${clusterId}`);
