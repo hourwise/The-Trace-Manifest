@@ -1,0 +1,340 @@
+---
+// ADR 0017: TRACE Knowledge Builder — main workspace.
+// Drag-and-drop Markdown knowledge documents, download templates,
+// and view recently created documents. Publisher-only.
+import BaseLayout from "../../../layouts/BaseLayout.astro";
+import { authenticateAccessRequest, type AccessEnvironment } from "../../../security/access-auth";
+
+export const prerender = false;
+
+const env = Astro.locals.runtime.env;
+const identity = await authenticateAccessRequest(Astro.request, env as unknown as AccessEnvironment);
+if (!identity || identity.role !== "publisher") {
+  return new Response("Forbidden", { status: 403 });
+}
+
+const db = env.DB as D1Database;
+
+interface DocRow {
+  id: string;
+  canonical_question: string;
+  knowledge_type: string;
+  status: string;
+  evidence_status: string;
+  section_slug: string;
+  created_at: string;
+}
+
+// Fetch recent knowledge documents (any status)
+const recentDocs = await db
+  .prepare(
+    `SELECT id, canonical_question, knowledge_type, status, evidence_status,
+            section_slug, created_at
+     FROM knowledge_documents
+     ORDER BY created_at DESC
+     LIMIT 20`,
+  )
+  .all<DocRow>();
+
+const docList = recentDocs.results ?? [];
+
+// Count open gaps for the nav badge
+const gapCount = await db
+  .prepare("SELECT COUNT(*) as count FROM question_gaps WHERE disposition = 'open'")
+  .first<{ count: number }>();
+
+function statusBadge(status: string): string {
+  const map: Record<string, string> = {
+    draft: "badge",
+    needs_review: "badge badge-warn",
+    approved: "badge badge-ok",
+    held: "badge",
+    rejected: "badge badge-err",
+    expired: "badge badge-err",
+    superseded: "badge",
+    retired: "badge",
+  };
+  return map[status] ?? "badge";
+}
+
+function typeLabel(t: string): string {
+  return t.replace(/_/g, " ");
+}
+---
+
+<BaseLayout title="Knowledge Builder — TRACE Desk" description="Create and manage structured TRACE knowledge documents.">
+  <div class="wrap">
+    <h1>TRACE Knowledge Builder</h1>
+
+    <!-- ── Navigation tabs ──────────────────────────────── -->
+    <nav style="display:flex;gap:0;margin-bottom:2rem;border-bottom:2px solid var(--color-border);">
+      <a href="/admin/knowledge" class="tab active" style="padding:0.5rem 1rem;text-decoration:none;color:var(--color-text);border-bottom:2px solid var(--color-accent);margin-bottom:-2px;font-weight:600;">
+        📄 Documents
+      </a>
+      <a href="/admin/knowledge/gaps" class="tab" style="padding:0.5rem 1rem;text-decoration:none;color:var(--color-muted);">
+        🔍 Gaps{((gapCount?.count) ?? 0) > 0 ? ` (${gapCount?.count})` : ""}
+      </a>
+      <a href="/admin" style="padding:0.5rem 1rem;text-decoration:none;color:var(--color-muted);margin-left:auto;">
+        &larr; Admin
+      </a>
+    </nav>
+
+    <!-- ── Template + drop zone ─────────────────────────── -->
+    <div class="grid-2" style="gap:1.5rem;margin-bottom:2rem;">
+      <!-- Left: Download template -->
+      <div class="card" style="text-align:center;">
+        <h2 style="font-size:1.1rem;margin-top:0;">1. Get the template</h2>
+        <p class="meta" style="margin-bottom:1rem;">
+          Download the standard Markdown template. Fill it in using any editor.
+        </p>
+        <a
+          href="/api/admin/knowledge/template"
+          download="trace-knowledge-template.md"
+          class="btn"
+          style="display:inline-block;padding:0.5rem 1.5rem;background:var(--color-accent);color:#fff;border-radius:4px;text-decoration:none;font-weight:600;"
+        >
+          ⬇ Download Template (.md)
+        </a>
+      </div>
+
+      <!-- Right: Drop zone -->
+      <div class="card" style="text-align:center;">
+        <h2 style="font-size:1.1rem;margin-top:0;">2. Drop your completed doc</h2>
+        <p class="meta" style="margin-bottom:1rem;">
+          Drag a <code>.md</code> file here, or click to select.
+        </p>
+        <div
+          id="drop-zone"
+          style="border:2px dashed var(--color-border);border-radius:8px;padding:2rem 1rem;cursor:pointer;transition:all 0.2s;background:var(--color-bg-muted);"
+        >
+          <p id="drop-text" style="margin:0;color:var(--color-muted);font-size:0.95rem;">
+            📂 Drop <code>.md</code> file here
+          </p>
+          <input type="file" id="file-input" accept=".md,.markdown,text/markdown" style="display:none;" />
+        </div>
+        <div id="ingest-result" style="margin-top:1rem;display:none;"></div>
+      </div>
+    </div>
+
+    <!-- ── Recent documents ──────────────────────────────── -->
+    <div class="card">
+      <h2 style="font-size:1.1rem;margin-top:0;">Recent documents</h2>
+      {
+        docList.length === 0 ? (
+          <p class="meta">No knowledge documents yet. Drop a completed template above to create your first one.</p>
+        ) : (
+          <div style="overflow-x:auto;">
+            <table style="width:100%;border-collapse:collapse;font-size:0.9rem;">
+              <thead>
+                <tr style="border-bottom:2px solid var(--color-border);text-align:left;">
+                  <th style="padding:0.5rem;">Question</th>
+                  <th style="padding:0.5rem;">Type</th>
+                  <th style="padding:0.5rem;">Status</th>
+                  <th style="padding:0.5rem;">Evidence</th>
+                  <th style="padding:0.5rem;">Section</th>
+                  <th style="padding:0.5rem;">Created</th>
+                </tr>
+              </thead>
+              <tbody>
+                {docList.map((doc) => (
+                  <tr style="border-bottom:1px solid var(--color-border-light);">
+                    <td style="padding:0.5rem;max-width:280px;" title={doc.canonical_question}>
+                      {doc.canonical_question.length > 80
+                        ? doc.canonical_question.slice(0, 80) + "…"
+                        : doc.canonical_question}
+                    </td>
+                    <td style="padding:0.5rem;white-space:nowrap;font-size:0.8rem;">
+                      <span class="badge">{typeLabel(doc.knowledge_type)}</span>
+                    </td>
+                    <td style="padding:0.5rem;white-space:nowrap;">
+                      <span class={statusBadge(doc.status)}>{doc.status.replace(/_/g, " ")}</span>
+                    </td>
+                    <td style="padding:0.5rem;white-space:nowrap;font-size:0.8rem;">
+                      {doc.evidence_status.replace(/_/g, " ")}
+                    </td>
+                    <td style="padding:0.5rem;white-space:nowrap;font-size:0.8rem;color:var(--color-muted);">
+                      {doc.section_slug}
+                    </td>
+                    <td style="padding:0.5rem;white-space:nowrap;font-size:0.8rem;color:var(--color-muted);">
+                      {doc.created_at?.replace("T", " ").slice(0, 16) ?? "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
+      }
+    </div>
+
+    <!-- ── Format reference ──────────────────────────────── -->
+    <details class="card" style="margin-top:1.5rem;">
+      <summary style="cursor:pointer;font-weight:600;">📋 Accepted format reference</summary>
+      <div style="margin-top:1rem;font-size:0.85rem;">
+        <p class="meta">Documents must use YAML frontmatter followed by Markdown body sections:</p>
+        <pre style="background:var(--color-bg-muted);padding:1rem;border-radius:4px;overflow-x:auto;font-size:0.8rem;"><code>---
+canonical_question: "What is the best closed model for coding?"
+section: ai-agents
+topics:
+  - coding-models
+knowledge_type: comparison
+evidence_status: vendor_reported
+valid_from: 2026-07-19
+review_after: 2026-10-19
+hard_expiry: 2027-07-19
+source_set_hash: ""
+---
+
+# Question
+
+## Direct answer
+
+## Detailed explanation
+
+## How TRACE assessed this
+
+## Evidence
+
+## Important limitations
+
+## What remains uncertain
+
+## Related TRACE knowledge
+
+## Review and expiry</code></pre>
+        <p class="meta" style="margin-top:0.5rem;">
+          <strong>Required fields:</strong> <code>canonical_question</code>, <code>section</code>, <code>knowledge_type</code>.
+          Section must match a valid <code>editorial_sections.slug</code>.
+          <code>knowledge_type</code> must be one of: definition, explainer, comparison, recommendation, how_to, current_status, timeline, product_profile, model_profile, policy_summary, security_advisory, frequently_asked_question.
+        </p>
+      </div>
+    </details>
+  </div>
+</BaseLayout>
+
+<!-- ── Drag-and-drop client script ──────────────────────── -->
+<script>
+  const dropZone = document.getElementById("drop-zone")!;
+  const fileInput = document.getElementById("file-input")! as HTMLInputElement;
+  const dropText = document.getElementById("drop-text")!;
+  const resultDiv = document.getElementById("ingest-result")!;
+
+  function showResult(success: boolean, message: string) {
+    resultDiv.style.display = "block";
+    resultDiv.innerHTML = `<div class="card" style="padding:0.75rem;background:${
+      success ? "#d4edda" : "#f8d7da"
+    };border:1px solid ${
+      success ? "#c3e6cb" : "#f5c6cb"
+    };border-radius:4px;font-size:0.9rem;">${message}</div>`;
+    if (success) {
+      // Reload after short delay to show the new document
+      setTimeout(() => location.reload(), 1500);
+    }
+  }
+
+  function setDragging(active: boolean) {
+    dropZone.style.borderColor = active ? "var(--color-accent)" : "var(--color-border)";
+    dropZone.style.background = active ? "rgba(59,130,246,0.05)" : "var(--color-bg-muted)";
+    dropText.textContent = active ? "📥 Release to ingest" : "📂 Drop .md file here";
+  }
+
+  dropZone.addEventListener("click", () => fileInput.click());
+
+  dropZone.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    setDragging(true);
+  });
+
+  dropZone.addEventListener("dragleave", () => setDragging(false));
+
+  dropZone.addEventListener("drop", (e) => {
+    e.preventDefault();
+    setDragging(false);
+    const file = e.dataTransfer?.files?.[0];
+    if (file) processFile(file);
+  });
+
+  fileInput.addEventListener("change", () => {
+    const file = fileInput.files?.[0];
+    if (file) processFile(file);
+  });
+
+  async function processFile(file: File) {
+    if (!file.name.endsWith(".md") && !file.name.endsWith(".markdown") && file.type !== "text/markdown") {
+      showResult(false, "⚠️ Please drop a <code>.md</code> Markdown file.");
+      return;
+    }
+
+    dropText.textContent = "⏳ Reading file…";
+
+    try {
+      const text = await file.text();
+      if (!text.trim().startsWith("---")) {
+        showResult(false, "⚠️ File must start with YAML frontmatter (<code>---</code>). Download the template first.");
+        return;
+      }
+
+      dropText.textContent = "⏳ Ingesting into TRACE…";
+
+      const resp = await fetch("/api/admin/knowledge/ingest", {
+        method: "POST",
+        headers: { "Content-Type": "text/plain; charset=utf-8" },
+        body: text,
+      });
+
+      const data: { success?: boolean; id?: string; status?: string; canonical_question?: string; knowledge_type?: string; section?: string; error?: string } = await resp.json();
+
+      if (resp.ok && data.success) {
+        showResult(
+          true,
+          `✅ <strong>Ingested!</strong> Document <code>${data.id}</code> created as <em>${data.status}</em>.<br>
+          <small>Question: ${data.canonical_question}</small><br>
+          <small>Type: ${data.knowledge_type} · Section: ${data.section}</small>`,
+        );
+      } else {
+        showResult(false, `❌ <strong>Ingest failed:</strong> ${data.error}`);
+        dropText.textContent = "📂 Drop .md file here";
+      }
+    } catch (err) {
+      showResult(false, `❌ <strong>Error reading file:</strong> ${String(err)}`);
+      dropText.textContent = "📂 Drop .md file here";
+    }
+  }
+</script>
+
+<style>
+.badge {
+  display:inline-block;
+  padding:0.15rem 0.5rem;
+  border-radius:4px;
+  font-size:0.75rem;
+  background:var(--color-bg-muted);
+  color:var(--color-text);
+  border:1px solid var(--color-border);
+}
+.badge-warn {
+  background:#fff3cd;
+  color:#856404;
+  border-color:#ffc107;
+}
+.badge-ok {
+  background:#d4edda;
+  color:#155724;
+  border-color:#c3e6cb;
+}
+.badge-err {
+  background:#f8d7da;
+  color:#721c24;
+  border-color:#f5c6cb;
+}
+.btn:hover {
+  opacity:0.9;
+}
+.grid-2 {
+  display:grid;
+  grid-template-columns:1fr 1fr;
+}
+@media (max-width:640px) {
+  .grid-2 { grid-template-columns:1fr; }
+}
+</style>
