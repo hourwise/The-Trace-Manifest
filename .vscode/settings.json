@@ -4,6 +4,7 @@
         "git add": true,
         "git commit": true,
         "git push": true,
-        "Pop-Location": true
+        "Pop-Location": true,
+        "npx astro": true
     }
 }

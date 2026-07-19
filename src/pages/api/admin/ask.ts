@@ -1,17 +1,20 @@
 // ADR 0016: Governed admin Ask TRACE research endpoint.
 // Publisher-only, uses existing evidence retrieval + AI gateway + all safety checks.
 // Separate from public Ask TRACE (which stays disabled).
+// Uses authenticateAccessRequest directly because locals.operator is undefined
+// in Astro API routes (Cloudflare adapter limitation).
 
 import type { APIRoute } from "astro";
 import { buildConfig } from "../../../ai/config";
 import { askTrace, hashPrivateIdentifier } from "../../../ai/trace-model-gateway";
 import { retrievePublishedEvidence } from "../../../lib/server/ask-evidence";
+import { authenticateAccessRequest, type AccessEnvironment } from "../../../security/access-auth";
 
 export const prerender = false;
 
 export const POST: APIRoute = async ({ request, locals }) => {
   const env = locals.runtime.env;
-  const identity = locals.operator;
+  const identity = await authenticateAccessRequest(request, env as unknown as AccessEnvironment);
   if (!identity || identity.role !== "publisher") {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
@@ -58,9 +61,9 @@ export const POST: APIRoute = async ({ request, locals }) => {
 };
 
 // GET returns a simple status page
-export const GET: APIRoute = async ({ locals }) => {
+export const GET: APIRoute = async ({ request, locals }) => {
   const env = locals.runtime.env;
-  const identity = locals.operator;
+  const identity = await authenticateAccessRequest(request, env as unknown as AccessEnvironment);
   if (!identity || identity.role !== "publisher") {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
