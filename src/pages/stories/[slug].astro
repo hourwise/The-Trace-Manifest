@@ -51,7 +51,7 @@ const hasIndependentVerification = story.sourceCount >= 2 && story.sourceClass !
   title={`${story.headline} — The Trace Manifest`}
   description={story.summary || `Published story: ${story.headline}`}
 >
-  <div class="container" style="max-width:42rem;">
+  <div class="wrap" style="max-width:42rem;">
     <nav aria-label="Breadcrumb" class="meta" style="margin-bottom:1.5rem;">
       <a href="/feed">Feed</a>
       {story.topic && <> &rsaquo; <a href={`/feed?topic=${story.topic.toLowerCase().replace(/\s+/g, "-")}`}>{story.topic}</a></>}
