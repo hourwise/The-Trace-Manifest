@@ -3,16 +3,45 @@
 // Server-rendered page with direct D1 access. Imports the regex-based
 // extraction engine from the Worker module.
 import BaseLayout from "../../layouts/BaseLayout.astro";
-import { runClaimExtraction } from "../../../workers/ingestion/extract-claims";
+import { runClaimExtraction, extractClaimsFromItem } from "../../../workers/ingestion/extract-claims";
 
 export const prerender = false;
 
+interface DebugSample { id: number; title: string; summary: string | null; text: string; textLen: number; claimCount: number; claims: string[]; sourceTier: string; }
+
 let result: { processed: number; claimsExtracted: number; evidenceCreated: number } | null = null;
 let error: string | null = null;
+let debugSamples: DebugSample[] = [];
 
 if (Astro.request.method === "POST") {
   try {
     const db = Astro.locals.runtime.env.DB;
+    // First run a diagnostic sample on 3 items
+    if (Astro.request.headers.get("content-type")?.includes("multipart/form-data") || new URL(Astro.request.url).searchParams.has("debug")) {
+      const sampleRows = await db.prepare(
+        `SELECT fi.id, fi.title, fi.summary, fi.content_excerpt, s.tier as source_tier, s.treatment as source_treatment
+         FROM feed_items fi JOIN sources s ON s.id=fi.source_id
+         WHERE fi.ingestion_status IN ('clustered','classified')
+         AND (fi.summary IS NOT NULL OR fi.content_excerpt IS NOT NULL)
+         AND fi.fetched_at >= datetime('now', '-7 days')
+         LIMIT 3`
+      ).all<{ id: number; title: string; summary: string | null; content_excerpt: string | null; source_tier: string; source_treatment: string }>();
+      for (const row of sampleRows.results) {
+        const text = [row.title, row.summary ?? "", row.content_excerpt ?? ""].join(". ");
+        const claims = extractClaimsFromItem(
+          row as any,
+          row.source_tier ?? "C",
+          row.source_treatment ?? "",
+        );
+        debugSamples.push({
+          id: row.id, title: row.title, summary: row.summary,
+          text: text.substring(0, 300), textLen: text.length,
+          claimCount: claims.length,
+          claims: claims.slice(0, 3).map((c: any) => c.claimText?.substring(0, 100)),
+          sourceTier: row.source_tier ?? "C",
+        });
+      }
+    }
     result = await runClaimExtraction(db);
   } catch (e: any) {
     error = e.message ?? String(e);
@@ -29,10 +58,37 @@ if (Astro.request.method === "POST") {
 
     <section class="card" style="margin-bottom:2rem;">
       <p>This processes up to 500 feed items (ingested within the last 7 days) that have been clustered or classified but not yet had claims extracted. Extraction is regex-based — no AI cost.</p>
-      <form method="POST" style="margin-top:1rem;">
-        <button type="submit" class="btn btn-primary">Run Claim Extraction</button>
-      </form>
+      <div style="display:flex;gap:0.75rem;flex-wrap:wrap;margin-top:1rem;">
+        <form method="POST">
+          <button type="submit" class="btn btn-primary">Run Claim Extraction</button>
+        </form>
+        <form method="POST" action="?debug">
+          <button type="submit" class="btn" style="background:var(--bg-muted);">Diagnose — Sample 3 Items</button>
+        </form>
+      </div>
     </section>
+
+    {debugSamples.length > 0 && (
+      <section class="card" style="margin-bottom:2rem;">
+        <h2 style="font-size:1.1rem;margin-bottom:0.75rem;">Diagnostic Sample</h2>
+        {debugSamples.map((s) => (
+          <div style="margin-bottom:1rem;padding-bottom:0.75rem;border-bottom:1px solid var(--border-light);">
+            <p style="font-weight:600;font-size:0.85rem;">#{s.id} — {s.title} <span class="badge badge-sm">Tier {s.sourceTier}</span></p>
+            <p class="meta" style="font-size:0.7rem;margin-bottom:0.25rem;">Text length: {s.textLen} chars · Claims found: <strong>{s.claimCount}</strong></p>
+            <details><summary style="font-size:0.7rem;cursor:pointer;">Show text (first 300 chars)</summary>
+              <pre style="font-size:0.65rem;white-space:pre-wrap;word-break:break-word;background:var(--bg-muted);padding:0.5rem;margin-top:0.25rem;max-height:120px;overflow-y:auto;">{s.text}</pre>
+            </details>
+            {s.claimCount > 0 && (
+              <details><summary style="font-size:0.7rem;cursor:pointer;">Show claims</summary>
+                <ul style="font-size:0.7rem;margin-top:0.25rem;">
+                  {s.claims.map((c) => `<li>${c}</li>`)}
+                </ul>
+              </details>
+            )}
+          </div>
+        ))}
+      </section>
+    )}
 
     {result !== null && (
       <section class="card" style={error ? "border-left:3px solid var(--ev-disputed)" : "border-left:3px solid var(--ev-confirmed)"}>
