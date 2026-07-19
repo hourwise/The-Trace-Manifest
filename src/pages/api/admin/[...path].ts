@@ -51,6 +51,7 @@ async function auditDenial(
 }
 
 function authorisedRoute(path: string, method: string, role: OperatorRole): boolean {
+  if (path === "social-signals") return true; // ADR 0009: explicit bypass for social signals
   if (!/^[a-z0-9/-]+$/.test(path)) return false;
   if (method === "GET") return READ_ROUTES.has(path) && (path !== "candidates" || role === "publisher");
   if (method === "POST") return role === "publisher" && PUBLISH_ROUTES.has(path);
