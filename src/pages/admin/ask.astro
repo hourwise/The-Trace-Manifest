@@ -1,0 +1,104 @@
+---
+import BaseLayout from "../../layouts/BaseLayout.astro";
+
+export const prerender = false;
+---
+
+<BaseLayout title="Admin — Ask TRACE Research" description="Governed admin research mode for Ask TRACE.">
+  <div class="wrap" style="max-width:700px;">
+    <h1>Ask TRACE Research</h1>
+    <p class="meta" style="margin-bottom:2rem;">
+      <a href="/admin">← Admin home</a> &middot; Publisher-only governed research. Answers sourced from published evidence only.
+    </p>
+
+    <section class="card" style="margin-bottom:2rem;">
+      <h2 style="font-size:1.1rem;margin-bottom:1rem;">Research Question</h2>
+      <div style="display:flex;flex-direction:column;gap:0.75rem;">
+        <textarea id="question" rows="3" maxlength="1000" placeholder="Ask a research question grounded in published TRACE evidence…" style="width:100%;resize:vertical;padding:0.6rem;"></textarea>
+        <div style="display:flex;gap:0.75rem;align-items:center;flex-wrap:wrap;">
+          <button type="button" id="ask-btn" class="btn btn-primary">Ask TRACE</button>
+          <span id="status" class="meta"></span>
+        </div>
+      </div>
+    </section>
+
+    <section id="result-section" style="display:none;">
+      <div id="result-content"></div>
+    </section>
+  </div>
+</BaseLayout>
+
+<script>
+  function status(msg: string, isError: boolean) {
+    const el = document.getElementById("status");
+    if (el) { el.textContent = msg; el.style.color = isError ? "var(--ev-disputed)" : "var(--ev-confirmed)"; }
+  }
+
+  function escapeHTML(value: string): string {
+    const div = document.createElement("div");
+    div.textContent = value;
+    return div.innerHTML;
+  }
+
+  document.getElementById("ask-btn")?.addEventListener("click", async () => {
+    const question = (document.getElementById("question") as HTMLTextAreaElement)?.value?.trim();
+    if (!question) { status("Enter a question.", true); return; }
+
+    const btn = document.getElementById("ask-btn") as HTMLButtonElement;
+    const section = document.getElementById("result-section")!;
+    const content = document.getElementById("result-content")!;
+    btn.disabled = true;
+    btn.textContent = "Asking…";
+    status("Searching evidence…", false);
+    section.style.display = "block";
+    content.innerHTML = '<div class="card"><p class="meta">Searching published evidence and generating answer…</p></div>';
+
+    try {
+      const res = await fetch("/api/admin/ask", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question }),
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        content.innerHTML = `<div class="card" style="border-left:3px solid var(--ev-disputed);"><p style="color:var(--ev-disputed);">${escapeHTML(data.error || data.message || "Ask TRACE is unavailable.")}</p></div>`;
+        status(data.error || "Unavailable", true);
+        return;
+      }
+
+      if (data.nonAnswer) {
+        content.innerHTML = `<div class="card" style="border-left:3px solid var(--accent);">
+          <p style="font-weight:600;margin-bottom:0.5rem;">TRACE could not answer this question.</p>
+          <p class="meta">${escapeHTML(data.answer)}</p>
+          ${data.caveats?.length ? `<p class="meta" style="margin-top:0.5rem;">${data.caveats.map(escapeHTML).join(" · ")}</p>` : ""}
+          ${data.whatCouldChange ? `<p class="meta" style="margin-top:0.5rem;">${escapeHTML(data.whatCouldChange)}</p>` : ""}
+        </div>`;
+        status("Non-answer — insufficient evidence.", false);
+        return;
+      }
+
+      const confidenceColor = data.confidenceScore != null && data.confidenceScore >= 0.7 ? "var(--ev-confirmed)"
+        : data.confidenceScore != null && data.confidenceScore >= 0.4 ? "var(--accent)" : "var(--ev-disputed)";
+
+      content.innerHTML = `<div class="card">
+        <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;margin-bottom:1rem;">
+          <span class="badge badge-sm" style="background:${confidenceColor};color:white;">${escapeHTML(data.confidence || "Unknown")}${data.confidenceScore != null ? ` (${Math.round(data.confidenceScore * 100)}%)` : ""}</span>
+          ${data.freshestObservedAt ? `<span class="meta" style="font-size:0.7rem;">Evidence through ${escapeHTML(data.freshestObservedAt)}</span>` : ""}
+        </div>
+        <p style="font-size:0.95rem;line-height:1.6;margin-bottom:1rem;">${escapeHTML(data.answer)}</p>
+        ${data.keyPoints?.length ? `<div style="margin-bottom:1rem;"><strong style="font-size:0.85rem;">Key points</strong><ul style="margin-top:0.25rem;padding-left:1.25rem;">${data.keyPoints.map((kp: string) => `<li style="font-size:0.85rem;margin-bottom:0.2rem;">${escapeHTML(kp)}</li>`).join("")}</ul></div>` : ""}
+        ${data.citations?.length ? `<details style="margin-bottom:0.5rem;"><summary style="font-size:0.8rem;cursor:pointer;font-weight:550;">${data.citations.length} citation${data.citations.length!==1?'s':''}</summary><div style="display:flex;flex-direction:column;gap:0.35rem;margin-top:0.5rem;">${data.citations.map((c: any) => `<div style="font-size:0.75rem;"><span class="badge badge-sm" style="font-size:0.6rem;">${escapeHTML(c.sourceClassification || "source")}</span> <a href="${escapeHTML(c.sourceUrl || '#')}" target="_blank" rel="noopener">${escapeHTML(c.sourceName)}</a></div>`).join("")}</div></details>` : ""}
+        ${data.caveats?.length ? `<p class="meta" style="margin-top:0.5rem;font-size:0.75rem;">⚠ ${data.caveats.map(escapeHTML).join(" · ")}</p>` : ""}
+        ${data.disagreements?.length ? `<p class="meta" style="margin-top:0.5rem;font-size:0.75rem;color:var(--ev-disputed);">Disagreements: ${data.disagreements.map(escapeHTML).join(" · ")}</p>` : ""}
+      </div>`;
+      status("Answer ready.", false);
+    } catch (e: any) {
+      content.innerHTML = `<div class="card" style="border-left:3px solid var(--ev-disputed);"><p style="color:var(--ev-disputed);">Request failed: ${escapeHTML(e.message)}</p></div>`;
+      status("Request failed.", true);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Ask TRACE";
+    }
+  });
+</script>
