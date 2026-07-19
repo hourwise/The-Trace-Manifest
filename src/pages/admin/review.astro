@@ -234,7 +234,7 @@ try {
         status("Loading clusters…", false);
 
         try {
-          const res = await fetch(`/api/admin/clusters?limit=50`, { headers: authHeaders() });
+          const res = await fetch(`/api/admin/clusters?limit=100`, { headers: authHeaders() });
           if (!res.ok) { throw new Error(`HTTP ${res.status}`); }
           const clusters: Array<{ id: number; title: string; publication_status: string; source_count: number }> = await res.json();
 

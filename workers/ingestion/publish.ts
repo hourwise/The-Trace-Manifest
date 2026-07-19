@@ -663,12 +663,13 @@ export async function getAllClusters(
            sc.created_at,
            (SELECT COUNT(*) FROM story_cluster_members WHERE cluster_id = sc.id) as source_count
     FROM story_clusters sc
+    WHERE sc.evidence_status NOT IN ('unverified','outdated','superseded')
   `;
 
   const params: any[] = [];
 
   if (options.status) {
-    query += ` WHERE sc.publication_status = ?`;
+    query += ` AND sc.publication_status = ?`;
     params.push(options.status);
   }
 
