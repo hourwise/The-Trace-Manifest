@@ -671,6 +671,8 @@ export async function getAllClusters(
   if (options.status) {
     query += ` AND sc.publication_status = ?`;
     params.push(options.status);
+  } else {
+    query += ` AND sc.publication_status NOT IN ('published','withdrawn')`;
   }
 
   query += ` ORDER BY sc.id DESC LIMIT ?`;
