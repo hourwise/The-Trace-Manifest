@@ -1,5 +1,5 @@
 import type { APIRoute } from "astro";
-import { authenticateAccessRequest, type OperatorRole } from "../../../security/access-auth";
+import { authenticateAccessRequest, type OperatorIdentity, type OperatorRole } from "../../../security/access-auth";
 import { sameOriginRequest } from "../../../security/origin-policy";
 import { signInternalRequest } from "../../../security/internal-signature";
 
@@ -106,8 +106,9 @@ export async function handleAdminProxyRequest(
   request: Request,
   path: string,
   env: ProxyEnvironment,
+  preAuthenticatedIdentity?: OperatorIdentity,
 ): Promise<Response> {
-  const identity = await authenticateAccessRequest(request, env);
+  const identity = preAuthenticatedIdentity ?? await authenticateAccessRequest(request, env);
   if (!identity) return Response.json({ error: "Unauthorized" }, { status: 401 });
 
   if (request.method === "POST" && !sameOriginRequest(request, env)) {
@@ -117,11 +118,10 @@ export async function handleAdminProxyRequest(
     return Response.json({ error: "Origin rejected" }, { status: 403 });
   }
   if (!authorisedRoute(path, request.method, identity.role)) {
-    // TEMPORARY DIAGNOSTIC — remove after debugging route resolution
-    return Response.json({
-      error: identity.role === "reader" ? "Forbidden" : "Not found",
-      _debug: { path, method: request.method, role: identity.role, inReadRoutes: READ_ROUTES.has(path), inPublishRoutes: PUBLISH_ROUTES.has(path), readRoutes: [...READ_ROUTES], publishRoutes: [...PUBLISH_ROUTES] },
-    }, { status: identity.role === "reader" ? 403 : 404 });
+    if (!await auditDenial(env, identity, path, "route_or_role_rejected")) {
+      return Response.json({ error: "Audit service unavailable" }, { status: 503 });
+    }
+    return Response.json({ error: identity.role === "reader" ? "Forbidden" : "Not found" }, { status: identity.role === "reader" ? 403 : 404 });
   }
 
   const workerOrigin = validWorkerOrigin(env.TRACE_INGESTION_WORKER_URL);
@@ -170,7 +170,7 @@ export async function handleAdminProxyRequest(
 }
 
 const route: APIRoute = async ({ request, params, locals }) => {
-  return handleAdminProxyRequest(request, params.path ?? "", locals.runtime.env);
+  return handleAdminProxyRequest(request, params.path ?? "", locals.runtime.env, locals.operator as OperatorIdentity | undefined);
 };
 
 export const GET = route;
