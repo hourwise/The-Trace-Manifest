@@ -96,29 +96,29 @@ Deliver one phase at a time. Each phase follows: read its ADR -> write the small
 
 ### Phase 1 - safe discovery expansion (ADR 0009)
 
-- [ ] Add social or community signals as private, administrator-reviewed intake only.
-- [ ] Link every signal to a separately evaluated source URL.
-- [ ] Add corroboration, source admission, rate-limit, abuse, and outbound-link controls.
-- [ ] Never publish a social signal directly.
+- [x] Add social or community signals as private, administrator-reviewed intake only.
+- [x] Link every signal to a separately evaluated source URL.
+- [x] Add corroboration, source admission, rate-limit, abuse, and outbound-link controls.
+- [x] Never publish a social signal directly.
 
 ### Phase 2 - robust source connectors (SOURCE-07)
 
-- [ ] Implement a safe `page_diff` connector only for a named source with a documented selector and change policy.
-- [ ] Add fixtures, bounds, redirect checks, and tests.
-- [ ] Keep unsupported/manual sources unsupported until the connector passes Preview and production checks.
+- [x] Implement a safe `page_diff` connector only for a named source with a documented selector and change policy.
+- [x] Add fixtures, bounds, redirect checks, and tests.
+- [x] Keep unsupported/manual sources unsupported until the connector passes Preview and production checks.
 
 ### Phase 3 - TRACE Desk and taxonomy completion (ADR 0015)
 
-- [ ] Add intake types, sections, topics, urgency, language, and audit views.
-- [ ] Keep intake private and non-fetching until an explicit research job is approved.
-- [ ] Add reviewer assignment and state transitions with audit rows.
+- [x] Add intake types, sections, topics, urgency, language, and audit views.
+- [x] Keep intake private and non-fetching until an explicit research job is approved.
+- [x] Add reviewer assignment and state transitions with audit rows.
 
 ### Phase 4 - governed Ask TRACE research (ADR 0016)
 
-- [ ] Admit only approved research sources through the source policy.
-- [ ] Fetch server-side with safe redirects, size/time limits, provenance, and failure states.
-- [ ] Keep research material separate from public evidence until promotion is approved.
-- [ ] Test citations, uncertainty, refusal, quota, and provider failure behaviour.
+- [x] Admit only approved research sources through the source policy.
+- [x] Fetch server-side with safe redirects, size/time limits, provenance, and failure states.
+- [x] Keep research material separate from public evidence until promotion is approved.
+- [x] Test citations, uncertainty, refusal, quota, and provider failure behaviour.
 
 ### Phase 5 - knowledge builder and question gaps (ADR 0017)
 
