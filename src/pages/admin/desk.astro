@@ -51,10 +51,11 @@ if (Astro.request.method === "POST") {
       const candidate = await db.prepare("SELECT * FROM editorial_candidates WHERE id=? AND state IN ('needs_review','published')").bind(candidateId).first<CandidateRow>();
       if (!candidate) throw new Error("Candidate must be in 'needs_review' or 'published' state to promote.");
       const headline = candidate.lead_text?.slice(0, 150) ?? candidate.submitted_url ?? "Untitled";
+      const summary = (candidate.lead_text ?? "").slice(0, 500);
       await db.prepare(`
-        INSERT INTO story_clusters (title, canonical_url, topic, evidence_status, publication_status, needs_human_review, created_at, updated_at)
-        VALUES (?, ?, ?, 'vendor_reported', 'draft', 1, datetime('now'), datetime('now'))
-      `).bind(headline, candidate.submitted_url, candidate.topic_slug ?? "general").run();
+        INSERT INTO story_clusters (title, canonical_url, topic, evidence_status, publication_status, needs_human_review, summary, why_it_matters, created_at, updated_at)
+        VALUES (?, ?, ?, 'vendor_reported', 'review', 1, ?, ?, datetime('now'), datetime('now'))
+      `).bind(headline, candidate.submitted_url, candidate.topic_slug ?? "general", summary, summary.slice(0, 300)).run();
       await db.prepare("UPDATE editorial_candidates SET state='published', updated_at=datetime('now') WHERE id=?").bind(candidateId).run();
       actionMessage = `Candidate promoted to story cluster.`;
     } catch (e: any) { actionError = e.message || "Promotion failed."; }
