@@ -37,19 +37,23 @@ function hasLegacyConstraint(error: unknown, table: "claims" | "claim_evidence",
   return error instanceof Error && error.message.includes(`NOT NULL constraint failed: ${table}.${column}`);
 }
 
-/** Returns a usable cluster ID, creating a placeholder cluster for unclustered items. */
+/** Returns a usable cluster ID, creating a placeholder cluster for unclustered items.
+ *  Result is cached in-memory for the duration of the extraction run. */
+let _placeholderClusterId: number | null = null;
 async function ensureClusterId(db: D1Database, clusterId: number | null, itemId: number): Promise<number> {
   if (clusterId != null) return clusterId;
+  if (_placeholderClusterId != null) return _placeholderClusterId;
   // Find or create a placeholder cluster for unclustered items.
   const existing = await db.prepare(
     "SELECT id FROM story_clusters WHERE title = 'Unclustered Items (placeholder)' LIMIT 1"
   ).first<{ id: number }>();
-  if (existing) return existing.id;
+  if (existing) { _placeholderClusterId = existing.id; return existing.id; }
   const result = await db.prepare(
     `INSERT INTO story_clusters (title, summary, publication_status, evidence_status, needs_human_review)
      VALUES ('Unclustered Items (placeholder)', 'Claims extracted from items that have not yet been clustered.', 'draft', 'unverified', 0)`
   ).run();
-  return result.meta.last_row_id as number;
+  _placeholderClusterId = result.meta.last_row_id as number;
+  return _placeholderClusterId;
 }
 
 // ============================================================
@@ -422,7 +426,7 @@ export async function runClaimExtraction(
      AND fi.fetched_at >= datetime('now', '-7 days')
      AND (fi.summary IS NOT NULL OR fi.content_excerpt IS NOT NULL)
      ORDER BY fi.fetched_at DESC
-     LIMIT 500`
+     LIMIT 50`
   ).all<FeedItem & { source_tier: string; source_treatment: string }>();
 
   if (results.length === 0) {
@@ -453,17 +457,17 @@ export async function runClaimExtraction(
       created_at: row.created_at,
     };
 
-    // Find the cluster this item belongs to
+    // Use effective cluster ID (cached, creates placeholder for unclustered items)
     let clusterId: number | null = null;
     try {
       const clusterRow = await db.prepare(
         "SELECT cluster_id FROM story_cluster_members WHERE feed_item_id = ? LIMIT 1"
       ).bind(item.id).first<{ cluster_id: number }>();
       clusterId = clusterRow?.cluster_id ?? null;
-    } catch {
-      // Item may not be clustered yet — still extract claims
-    }
-    const effectiveClusterId = await ensureClusterId(db, clusterId, item.id);
+    } catch { /* unclustered — handled below */ }
+    
+    // Skip DB call if we already have the placeholder cached and clusterId is null
+    const effectiveClusterId = clusterId != null ? clusterId : (_placeholderClusterId ?? await ensureClusterId(db, null, item.id));
 
     // Extract claims
     const claims = extractClaimsFromItem(
