@@ -1,0 +1,216 @@
+---
+// ADR 0013: TRACE Guides Lab — admin listing.
+// Publisher-only, server-rendered with direct D1.
+import BaseLayout from "../../../layouts/BaseLayout.astro";
+import { authenticateAccessRequest, type AccessEnvironment } from "../../../security/access-auth";
+
+export const prerender = false;
+
+const env = Astro.locals.runtime.env;
+const identity = await authenticateAccessRequest(Astro.request, env as unknown as AccessEnvironment);
+if (!identity || identity.role !== "publisher") {
+  return new Response("Forbidden", { status: 403 });
+}
+
+const db = env.DB as D1Database;
+
+interface GuideRow {
+  id: string;
+  slug: string;
+  title: string;
+  category: string;
+  difficulty: string;
+  verification_status: string;
+  status: string;
+  visibility: string;
+  author_name: string;
+  reviewed_by: string | null;
+  destructive_steps: number;
+  network_exposure: number;
+  downloads_executable: number;
+  last_verified_at: string | null;
+  review_due_at: string | null;
+  created_at: string;
+}
+
+const guides = await db
+  .prepare(
+    `SELECT id, slug, title, category, difficulty, verification_status,
+            status, visibility, author_name, reviewed_by,
+            destructive_steps, network_exposure, downloads_executable,
+            last_verified_at, review_due_at, created_at
+     FROM guides
+     ORDER BY created_at DESC
+     LIMIT 50`,
+  )
+  .all<GuideRow>();
+
+const guideList = guides.results ?? [];
+
+function categoryLabel(cat: string): string {
+  return cat.split("-").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+}
+
+function statusBadge(status: string): string {
+  const map: Record<string, string> = {
+    draft: "badge",
+    needs_review: "badge badge-warn",
+    approved: "badge badge-ok",
+    published: "badge badge-ok",
+    held: "badge",
+    outdated: "badge badge-err",
+    withdrawn: "badge badge-err",
+  };
+  return map[status] ?? "badge";
+}
+
+function verificationBadge(vs: string): string {
+  if (vs === "fully-tested" || vs === "long-term-tested") return "badge badge-ok";
+  if (vs === "outdated" || vs === "withdrawn") return "badge badge-err";
+  if (vs === "needs-review") return "badge badge-warn";
+  return "badge";
+}
+
+const safetyFlags = (g: GuideRow) => {
+  const flags: string[] = [];
+  if (g.destructive_steps) flags.push("⚠️ Destructive");
+  if (g.network_exposure) flags.push("🌐 Network");
+  if (g.downloads_executable) flags.push("📥 Downloads");
+  return flags.length > 0 ? flags.join(" · ") : "✅ Safe";
+};
+---
+
+<BaseLayout title="Guides Lab — TRACE Desk" description="Manage TRACE Guides with verification status, command safety, and provenance.">
+  <div class="wrap">
+    <h1>TRACE Guides Lab</h1>
+    <p class="meta" style="margin-bottom:2rem;">
+      Technical guides with authorship, verification status, command safety flags,
+      and source provenance. Drafts are internal only; published guides are public.
+    </p>
+
+    <p style="margin-bottom:1rem;">
+      <a href="/admin" style="color:var(--color-accent);">&larr; Admin</a>
+      &nbsp;|&nbsp;
+      <strong>{guideList.length}</strong> guide{guideList.length !== 1 ? "s" : ""}
+      &nbsp;|&nbsp;
+      <span class="meta" style="font-size:0.85rem;">
+        Add <code>.md</code> files to <code>docs/guides/</code> and run <code>node scripts/batch-ingest-guides.mjs</code>
+      </span>
+    </p>
+
+    {
+      guideList.length === 0 ? (
+        <div class="card" style="text-align:center;padding:3rem;">
+          <p class="meta">No guides yet.</p>
+          <p class="meta" style="margin-top:0.5rem;">
+            Add guide <code>.md</code> files to <code>docs/guides/</code> using the
+            <a href="/api/admin/knowledge/template" style="color:var(--color-accent);">template format</a>,
+            then run the batch ingest script.
+          </p>
+        </div>
+      ) : (
+        <div class="card" style="overflow-x:auto;">
+          <table style="width:100%;border-collapse:collapse;font-size:0.85rem;">
+            <thead>
+              <tr style="border-bottom:2px solid var(--color-border);text-align:left;">
+                <th style="padding:0.4rem;">Title</th>
+                <th style="padding:0.4rem;">Category</th>
+                <th style="padding:0.4rem;">Difficulty</th>
+                <th style="padding:0.4rem;">Verification</th>
+                <th style="padding:0.4rem;">Status</th>
+                <th style="padding:0.4rem;">Safety</th>
+                <th style="padding:0.4rem;">Review due</th>
+              </tr>
+            </thead>
+            <tbody>
+              {guideList.map((g) => (
+                <tr style="border-bottom:1px solid var(--color-border-light);">
+                  <td style="padding:0.4rem;max-width:240px;" title={g.title}>
+                    <strong>{g.title.length > 60 ? g.title.slice(0, 60) + "…" : g.title}</strong>
+                    <br /><span class="meta" style="font-size:0.7rem;">by {g.author_name}</span>
+                  </td>
+                  <td style="padding:0.4rem;white-space:nowrap;font-size:0.8rem;">
+                    {categoryLabel(g.category)}
+                  </td>
+                  <td style="padding:0.4rem;white-space:nowrap;">
+                    <span class="badge">{g.difficulty}</span>
+                  </td>
+                  <td style="padding:0.4rem;white-space:nowrap;">
+                    <span class={verificationBadge(g.verification_status)}>
+                      {g.verification_status.replace(/-/g, " ")}
+                    </span>
+                  </td>
+                  <td style="padding:0.4rem;white-space:nowrap;">
+                    <span class={statusBadge(g.status)}>{g.status.replace(/_/g, " ")}</span>
+                  </td>
+                  <td style="padding:0.4rem;white-space:nowrap;font-size:0.75rem;">
+                    {safetyFlags(g)}
+                  </td>
+                  <td style="padding:0.4rem;white-space:nowrap;font-size:0.8rem;color:var(--color-muted);">
+                    {g.review_due_at?.slice(0, 10) ?? "—"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )
+    }
+
+    <details class="card" style="margin-top:2rem;">
+      <summary style="cursor:pointer;font-weight:600;">📋 Guide ingestion format</summary>
+      <div style="margin-top:1rem;font-size:0.85rem;">
+        <p class="meta">Guides use YAML frontmatter with Markdown body:</p>
+        <pre style="background:var(--color-bg-muted);padding:1rem;border-radius:4px;overflow-x:auto;font-size:0.8rem;"><code>---
+title: "Install Node.js and npm on Windows"
+category: development-tools
+difficulty: beginner
+verification_status: documentation-reviewed
+author_name: "Phil Geran"
+tested_os:
+  - Windows 10
+  - Windows 11
+estimated_cost: "Free"
+destructive_steps: false
+network_exposure: false
+downloads_executable: true
+last_verified: 2026-07-19
+review_due: 2026-08-19
+sources:
+  - name: "Official Node.js download page"
+    url: "https://nodejs.org/en/download"
+    relationship: instruction-source
+---
+
+# Guide title
+
+## What you will achieve
+...</code></pre>
+        <p class="meta" style="margin-top:0.5rem;">
+          <strong>Valid categories:</strong> local-ai, mcp-agents, git-github, servers-self-hosting, cloud-deployment, security, development-tools, troubleshooting, mobile-development, databases, automation
+        </p>
+        <p class="meta">
+          <strong>Verification statuses:</strong> documentation-reviewed, partially-tested, fully-tested, long-term-tested, needs-review, outdated, withdrawn
+        </p>
+        <p class="meta">
+          <strong>Source relationships:</strong> instruction-source, security-source, compatibility-source, pricing-source, background, contradicting-source
+        </p>
+      </div>
+    </details>
+  </div>
+</BaseLayout>
+
+<style>
+.badge {
+  display:inline-block;
+  padding:0.15rem 0.5rem;
+  border-radius:4px;
+  font-size:0.75rem;
+  background:var(--color-bg-muted);
+  color:var(--color-text);
+  border:1px solid var(--color-border);
+}
+.badge-warn { background:#fff3cd; color:#856404; border-color:#ffc107; }
+.badge-ok { background:#d4edda; color:#155724; border-color:#c3e6cb; }
+.badge-err { background:#f8d7da; color:#721c24; border-color:#f5c6cb; }
+</style>

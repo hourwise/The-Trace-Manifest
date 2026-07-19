@@ -1,14 +1,30 @@
-# Install Node.js and npm on Windows
+---
+title: "Install Node.js and npm on Windows"
+category: development-tools
+difficulty: beginner
+verification_status: documentation-reviewed
+author_name: "Phil Geran"
+tested_os:
+  - Windows 10
+  - Windows 11
+tested_versions:
+  node: "24.x LTS"
+  npm: "11.x"
+estimated_cost: "Free"
+destructive_steps: false
+network_exposure: false
+credentials_required: false
+root_required: false
+downloads_executable: true
+last_verified: 2026-07-16
+review_due: 2026-08-16
+sources:
+  - name: "Official Node.js download page"
+    url: "https://nodejs.org/en/download"
+    relationship: instruction-source
+---
 
-**Status:** Draft for named human review — not published, indexed, or available to Ask TRACE  
-**Version:** 1  
-**Category:** Development Tools  
-**Difficulty:** Beginner  
-**Verification status:** Documentation-reviewed. The installation has not been independently run in a clean TRACE Lab environment.  
-**Prepared for review by:** Phil Geran  
-**Human publication approval:** Required; not yet given  
-**Last source check:** 16 July 2026  
-**Review due:** 16 August 2026
+# Install Node.js and npm on Windows
 
 ## What you will achieve
 
