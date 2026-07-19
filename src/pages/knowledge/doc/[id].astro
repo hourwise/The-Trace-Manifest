@@ -1,0 +1,159 @@
+---
+// ADR 0017: Public knowledge document page — served from D1.
+// Renders approved knowledge_documents with evidence, provenance, and freshness.
+import BaseLayout from "../../../layouts/BaseLayout.astro";
+
+export const prerender = false;
+
+const { id } = Astro.params;
+const db = Astro.locals.runtime.env.DB as D1Database;
+
+interface KnowledgeDoc {
+  id: string;
+  canonical_question: string;
+  knowledge_type: string;
+  evidence_status: string;
+  section_slug: string;
+  direct_answer: string | null;
+  detailed_explanation: string | null;
+  document_json: string;
+  approved_at: string | null;
+  review_after: string | null;
+  hard_expiry: string | null;
+}
+
+const doc = await db
+  .prepare(
+    `SELECT id, canonical_question, knowledge_type, evidence_status, section_slug,
+            direct_answer, detailed_explanation, document_json,
+            approved_at, review_after, hard_expiry
+     FROM knowledge_documents
+     WHERE id = ? AND status = 'approved' AND visibility IN ('public_knowledge', 'public_guide')`,
+  )
+  .bind(id)
+  .first<KnowledgeDoc>();
+
+if (!doc) {
+  return new Response("Not found", { status: 404 });
+}
+
+// Extract body sections from document_json
+let body = "";
+let sections: Record<string, string> = {};
+try {
+  const parsed = JSON.parse(doc.document_json);
+  body = parsed.body ?? "";
+  sections = parsed.sections ?? {};
+} catch { /* use empty */ }
+
+function typeLabel(t: string): string {
+  return t.replace(/_/g, " ");
+}
+---
+
+<BaseLayout
+  title={`${doc.canonical_question} — TRACE Knowledge`}
+  description={doc.direct_answer?.slice(0, 160) ?? "TRACE approved knowledge entry with evidence provenance."}
+>
+  <div class="wrap" style="max-width:42rem;">
+    <p class="meta" style="margin-bottom:0.5rem;">
+      <a href="/knowledge" style="color:var(--color-accent);">&larr; Knowledge Base</a>
+    </p>
+
+    <article>
+      <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center;margin-bottom:1rem;">
+        <span class="badge">{typeLabel(doc.knowledge_type)}</span>
+        <span class="badge">{doc.evidence_status.replace(/_/g, " ")}</span>
+        <span class="badge badge-ok">TRACE Approved</span>
+      </div>
+
+      <h1 style="font-size:1.5rem;">{doc.canonical_question}</h1>
+
+      {
+        doc.direct_answer && (
+          <div class="card" style="margin-top:1.5rem;background:var(--surface-2);border-left:3px solid var(--accent);">
+            <h2 style="font-size:1rem;margin-top:0;">Direct answer</h2>
+            <div class="prose">{doc.direct_answer}</div>
+          </div>
+        )
+      }
+
+      {
+        doc.detailed_explanation && (
+          <div class="card" style="margin-top:1rem;">
+            <h2 style="font-size:1rem;margin-top:0;">Detailed explanation</h2>
+            <div class="prose">{doc.detailed_explanation}</div>
+          </div>
+        )
+      }
+
+      {
+        sections["how_trace_assessed_this"] && (
+          <div class="card" style="margin-top:1rem;">
+            <h2 style="font-size:1rem;margin-top:0;">How TRACE assessed this</h2>
+            <div class="prose">{sections["how_trace_assessed_this"]}</div>
+          </div>
+        )
+      }
+
+      {
+        sections["evidence"] && (
+          <div class="card" style="margin-top:1rem;">
+            <h2 style="font-size:1rem;margin-top:0;">Evidence</h2>
+            <div class="prose">{sections["evidence"]}</div>
+          </div>
+        )
+      }
+
+      {
+        sections["important_limitations"] && (
+          <div class="card" style="margin-top:1rem;">
+            <h2 style="font-size:1rem;margin-top:0;">Important limitations</h2>
+            <div class="prose">{sections["important_limitations"]}</div>
+          </div>
+        )
+      }
+
+      {
+        sections["what_remains_uncertain"] && (
+          <div class="card" style="margin-top:1rem;">
+            <h2 style="font-size:1rem;margin-top:0;">What remains uncertain</h2>
+            <div class="prose">{sections["what_remains_uncertain"]}</div>
+          </div>
+        )
+      }
+
+      <div class="card" style="margin-top:2rem;background:var(--surface-2);font-size:0.85rem;">
+        <p class="meta">
+          <strong>Section:</strong> {doc.section_slug} &middot;
+          <strong>Type:</strong> {typeLabel(doc.knowledge_type)} &middot;
+          <strong>Evidence:</strong> {doc.evidence_status.replace(/_/g, " ")}
+        </p>
+        {doc.approved_at && (
+          <p class="meta">Approved: {new Date(doc.approved_at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}</p>
+        )}
+        {doc.review_after && (
+          <p class="meta">Review after: {doc.review_after}</p>
+        )}
+        {doc.hard_expiry && (
+          <p class="meta">Hard expiry: {doc.hard_expiry}</p>
+        )}
+      </div>
+    </article>
+  </div>
+</BaseLayout>
+
+<style>
+.badge {
+  display:inline-block;
+  padding:0.15rem 0.5rem;
+  border-radius:4px;
+  font-size:0.75rem;
+  background:var(--color-bg-muted);
+  color:var(--color-text);
+  border:1px solid var(--color-border);
+}
+.badge-ok { background:#d4edda; color:#155724; border-color:#c3e6cb; }
+.prose { line-height:1.7; }
+.prose :global(a) { color: var(--color-accent); }
+</style>

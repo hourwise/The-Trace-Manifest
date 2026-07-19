@@ -1,7 +1,45 @@
 ---
 import BaseLayout from "../../layouts/BaseLayout.astro";
 
-// Knowledge base hubs per Phase 3B build plan
+export const prerender = false;
+
+const db = Astro.locals.runtime.env.DB as D1Database;
+
+// ── D1 Knowledge Documents (ADR 0017) ────────────────────────────
+
+interface D1KnowledgeDoc {
+  id: string;
+  canonical_question: string;
+  knowledge_type: string;
+  evidence_status: string;
+  section_slug: string;
+  direct_answer: string | null;
+}
+
+const d1Docs = await db
+  .prepare(
+    `SELECT id, canonical_question, knowledge_type, evidence_status, section_slug, direct_answer
+     FROM knowledge_documents
+     WHERE status = 'approved' AND visibility IN ('public_knowledge', 'public_guide')
+     ORDER BY section_slug, knowledge_type, canonical_question`,
+  )
+  .all<D1KnowledgeDoc>();
+
+const d1DocList = d1Docs.results ?? [];
+
+// Group by section for display
+const d1BySection = new Map<string, D1KnowledgeDoc[]>();
+for (const doc of d1DocList) {
+  const section = doc.section_slug || "general";
+  if (!d1BySection.has(section)) d1BySection.set(section, []);
+  d1BySection.get(section)!.push(doc);
+}
+
+function typeLabel(t: string): string {
+  return t.replace(/_/g, " ");
+}
+
+// ── Static knowledge hubs (existing) ─────────────────────────────
 const hubs = [
   {
     id: "mcp",
@@ -149,11 +187,11 @@ for (const hub of publishedHubs) {
     <!-- Stats -->
     <div style="display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:2.5rem;">
       <div class="card" style="flex:1;min-width:100px;text-align:center;padding:1rem;">
-        <p style="font-size:1.5rem;font-weight:700;">{allPages.size}</p>
+        <p style="font-size:1.5rem;font-weight:700;">{allPages.size + d1DocList.length}</p>
         <p class="meta">Pages</p>
       </div>
       <div class="card" style="flex:1;min-width:100px;text-align:center;padding:1rem;">
-        <p style="font-size:1.5rem;font-weight:700;">{publishedHubs.length}</p>
+        <p style="font-size:1.5rem;font-weight:700;">{publishedHubs.length + d1BySection.size}</p>
         <p class="meta">Subject hubs</p>
       </div>
       <div class="card" style="flex:1;min-width:100px;text-align:center;padding:1rem;">
@@ -183,6 +221,37 @@ for (const hub of publishedHubs) {
         </div>
       ))}
     </div>
+
+    <!-- ADR 0017: TRACE Knowledge Base — approved D1 knowledge documents -->
+    {d1DocList.length > 0 && (
+      <section style="margin-bottom:3rem;padding-top:2rem;border-top:2px solid var(--color-border);">
+        <h2 style="font-size:1.3rem;margin-bottom:0.5rem;">TRACE Knowledge Base</h2>
+        <p class="meta" style="margin-bottom:1.5rem;">
+          {d1DocList.length} approved knowledge entries with evidence provenance.
+          These are retrievable by Ask TRACE and linked to their source material.
+        </p>
+
+        <div class="grid-2">
+          {[...d1BySection.entries()].map(([section, docs]) => (
+            <div class="card" id={`kb-${section}`}>
+              <h3 style="font-size:1rem;margin-bottom:0.5rem;text-transform:capitalize;">
+                {section.replace(/-/g, " ")}
+              </h3>
+              <ul style="list-style:none;padding:0;display:flex;flex-direction:column;gap:0.3rem;">
+                {docs.map(doc => (
+                  <li style="font-size:0.84rem;">
+                    <a href={`/knowledge/doc/${doc.id}`} style="display:flex;gap:0.4rem;align-items:baseline;">
+                      <span class="badge badge-sm" style="font-size:0.58rem;flex-shrink:0;">{typeLabel(doc.knowledge_type)}</span>
+                      <span>{doc.canonical_question}</span>
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+      </section>
+    )}
 
     <!-- How the knowledge base works -->
     <section class="card" style="padding:1.5rem;background:var(--surface-2);">
