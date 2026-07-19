@@ -192,10 +192,21 @@ try {
     </section>
 
     <script>
-      function authHeaders(): Record<string, string> {
-        return {
-          "Content-Type": "application/json",
-        };
+      function authHeaders(method: string = "GET"): Record<string, string> {
+        // Only set Content-Type for requests with a body; adding it to GET
+        // requests triggers a CORS preflight that fails when Cloudflare Access
+        // redirects to its login page after session expiry.
+        return method === "GET" ? {} : { "Content-Type": "application/json" };
+      }
+
+      async function adminFetch(url: string, options: RequestInit = {}): Promise<Response> {
+        const res = await fetch(url, { ...options, headers: { ...authHeaders(options.method ?? "GET"), ...(options.headers as Record<string, string> ?? {}) } });
+        if (res.status === 401 || res.status === 302 || res.type === "opaqueredirect") {
+          // Session expired — ask the operator to reload the page through Access
+          status("Session expired. Reload the page to re-authenticate.", true);
+          throw new Error("Access session expired — reload the page.");
+        }
+        return res;
       }
 
       function status(msg: string, isError: boolean): void {
@@ -234,7 +245,7 @@ try {
         status("Loading clusters…", false);
 
         try {
-          const res = await fetch(`/api/admin/clusters?limit=100`, { headers: authHeaders() });
+          const res = await adminFetch(`/api/admin/clusters?limit=100`);
           if (!res.ok) { throw new Error(`HTTP ${res.status}`); }
           const clusters: Array<{ id: number; title: string; publication_status: string; source_count: number }> = await res.json();
 
@@ -244,7 +255,7 @@ try {
             const clusterMeta: Record<number, string> = {};
             await Promise.all(clusters.slice(0, 15).map(async (c: any) => {
               try {
-                const srcRes = await fetch(`/api/admin/cluster-sources?clusterId=${c.id}`, { headers: authHeaders() });
+                const srcRes = await adminFetch(`/api/admin/cluster-sources?clusterId=${c.id}`);
                 if (srcRes.ok) {
                   const srcs: Array<{ sourceName: string }> = await srcRes.json();
                   const names = new Set(srcs.map((s: any) => s.sourceName));
@@ -313,7 +324,7 @@ try {
         currentSources = [];
 
         try {
-          const res = await fetch(`/api/admin/cluster-sources?clusterId=${clusterId}`, { headers: authHeaders() });
+          const res = await adminFetch(`/api/admin/cluster-sources?clusterId=${clusterId}`);
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           const sources: Array<{ title: string; url: string; excerpt: string | null; sourceName: string; sourceTier: string; publishedAt: string | null }> = await res.json();
 
@@ -350,9 +361,8 @@ try {
         status("AI analyzing…", false);
 
         try {
-          const res = await fetch("/api/admin/ai-triage", {
+          const res = await adminFetch("/api/admin/ai-triage", {
             method: "POST",
-            headers: authHeaders(),
             body: JSON.stringify({ sources: currentSources }),
           });
 
@@ -424,9 +434,8 @@ try {
         status("Archiving…", false);
 
         try {
-          const res = await fetch(`/api/admin/archive-cluster`, {
+          const res = await adminFetch(`/api/admin/archive-cluster`, {
             method: "POST",
-            headers: authHeaders(),
             body: JSON.stringify({ clusterId }),
           });
           if (!res.ok) { const d = await res.json() as { error?: string }; throw new Error(d.error || `HTTP ${res.status}`); }
@@ -463,9 +472,8 @@ try {
         status("Publishing…", false);
 
         try {
-          const res = await fetch(`/api/admin/publish-story`, {
+          const res = await adminFetch(`/api/admin/publish-story`, {
             method: "POST",
-            headers: authHeaders(),
             body: JSON.stringify(body),
           });
           const data: { error?: string; story?: { slug: string; headline: string } } = await res.json();
