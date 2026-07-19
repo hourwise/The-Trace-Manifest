@@ -6,6 +6,7 @@ import { fetchRSS } from "./fetchers/rss";
 import { fetchGitHubReleases } from "./fetchers/github";
 import { fetchArxivPapers } from "./fetchers/arxiv";
 import { fetchHackerNews } from "./fetchers/hackernews";
+import { fetchPageDiff } from "./fetchers/page-diff";
 import { checkSourceHealth } from "./health";
 import { deduplicateURL, hashURL } from "./dedup";
 import { runClassification } from "./classify";
@@ -20,7 +21,7 @@ import {
   getLatestPublishedBriefing, getPublishedSourcesForStory, getRelatedStories,
   getAllClusters, getClusterSources, archiveCluster,
 } from "./publish";
-import type { Source } from "./types";
+import type { Source, FetchedFeedItem } from "./types";
 import { verifyInternalRequestSignature } from "../../src/security/internal-signature";
 import type { OperatorRole } from "../../src/security/access-auth";
 
@@ -295,16 +296,6 @@ async function cronRunComplete(env: Env, runId: number, status: string, error?: 
 // Tier-based ingestion
 // ============================================================
 interface IngestSummary { processed: number; created: number; succeeded: number; failed: number; rejected: number; skipped: number }
-interface FetchedFeedItem {
-  external_id: string | null;
-  url: string;
-  title: string;
-  summary: string | null;
-  content_excerpt: string | null;
-  author: string | null;
-  published_at: string | null;
-  raw_metadata: Record<string, unknown>;
-}
 
 async function ingestTier(env: Env, _ctx: ExecutionContext, tier: string, jobType: string): Promise<IngestSummary> {
   const { results: sources } = await env.DB.prepare(
@@ -375,6 +366,9 @@ async function processSource(env: Env, source: Source, jobType: string) {
         break;
       case "hackernews_api":
         items = await fetchHackerNews(source);
+        break;
+      case "page_diff":
+        items = await fetchPageDiff(source.id, source.url);
         break;
       default:
         console.warn(`Skipping source ${source.id}: connector type is not implemented`);

@@ -1,5 +1,16 @@
 // The Trace Manifest — Ingestion Types
 
+export interface FetchedFeedItem {
+  external_id: string | null;
+  url: string;
+  title: string;
+  summary: string | null;
+  content_excerpt: string | null;
+  author: string | null;
+  published_at: string | null;
+  raw_metadata: Record<string, unknown>;
+}
+
 export interface Source {
   id: number;
   name: string;
