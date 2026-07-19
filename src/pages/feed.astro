@@ -1,6 +1,7 @@
 ﻿---
 import BaseLayout from "../layouts/BaseLayout.astro";
 import EvidenceBadge from "../components/EvidenceBadge.astro";
+import SocialSignalCard from "../components/SocialSignalCard.astro";
 import { getPublishedStories, getPublishedTopics } from "../lib/server/d1";
 
 export const prerender = false;
@@ -25,6 +26,25 @@ try {
   error = "Feed data is temporarily unavailable. Stories appear here only after editorial review and publication.";
   console.error(JSON.stringify({ message: "Feed query failed" }));
 }
+
+// ADR 0009: fetch approved social signals for public display
+let socialSignals: Array<{
+  id: number; platform: string; canonical_url: string;
+  trace_summary: string | null; author_display_name: string | null;
+  author_handle: string | null; corroboration_status: string;
+  evidence_status: string; linked_source_ids: string;
+}> = [];
+try {
+  const db = Astro.locals.runtime.env.DB;
+  const result = await db.prepare(`
+    SELECT id, platform, canonical_url, trace_summary, author_display_name,
+           author_handle, corroboration_status, evidence_status, linked_source_ids
+    FROM social_signals
+    WHERE review_status = 'approved' AND trace_summary IS NOT NULL
+    ORDER BY reviewed_at DESC LIMIT 10
+  `).all();
+  socialSignals = (result.results ?? []) as typeof socialSignals;
+} catch { /* social signals are optional */ }
 
 // Map topic slugs for filter links
 const topicFilterLabels = ["All", ...allTopics];
@@ -66,7 +86,7 @@ const topicFilterLabels = ["All", ...allTopics];
     )}
 
     <!-- Empty state -->
-    {!error && stories.length === 0 && (
+    {!error && stories.length === 0 && socialSignals.length === 0 && (
       <div class="card" style="padding:2rem;text-align:center;background:var(--surface-2);">
         <p style="font-size:1.1rem;margin-bottom:0.5rem;">No published stories yet</p>
         <p class="meta">
@@ -78,6 +98,25 @@ const topicFilterLabels = ["All", ...allTopics];
           <a href="/methodology">How the publication process works &rarr;</a>
         </p>
       </div>
+    )}
+
+    <!-- ADR 0009: Approved social signals -->
+    {socialSignals.length > 0 && (
+      <section style="margin-bottom:2rem;">
+        <h2 style="font-size:1rem;margin-bottom:0.75rem;">Community Signals</h2>
+        {socialSignals.map((sig) => (
+          <SocialSignalCard
+            platform={sig.platform}
+            traceSummary={sig.trace_summary ?? ""}
+            authorDisplayName={sig.author_display_name}
+            authorHandle={sig.author_handle}
+            canonicalUrl={sig.canonical_url}
+            corroborationStatus={sig.corroboration_status}
+            evidenceStatus={sig.evidence_status}
+            linkedSourceCount={JSON.parse(sig.linked_source_ids || "[]").length}
+          />
+        ))}
+      </section>
     )}
 
     <!-- Feed items -->
