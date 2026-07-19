@@ -122,7 +122,7 @@ Deliver one phase at a time. Each phase follows: read its ADR -> write the small
 
 ### Phase 5 - knowledge builder and question gaps (ADR 0017)
 
-- [ ] Record unanswered or weakly answered questions in a gap queue.
+- [x] Record unanswered or weakly answered questions in a gap queue.
 - [ ] Deduplicate and prioritise gaps using evidence need, not popularity alone.
 - [ ] Draft knowledge documents with source links, version, owner, freshness, and review state.
 - [ ] Promote only reviewed documents into the Ask TRACE retrieval corpus.
