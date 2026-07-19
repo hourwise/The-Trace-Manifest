@@ -52,10 +52,27 @@ if (Astro.request.method === "POST") {
       if (!candidate) throw new Error("Candidate must be in 'needs_review' or 'published' state to promote.");
       const headline = candidate.lead_text?.slice(0, 150) ?? candidate.submitted_url ?? "Untitled";
       const summary = (candidate.lead_text ?? "").slice(0, 500);
-      await db.prepare(`
+      const result = await db.prepare(`
         INSERT INTO story_clusters (title, canonical_url, topic, evidence_status, publication_status, needs_human_review, summary, why_it_matters, created_at, updated_at)
         VALUES (?, ?, ?, 'vendor_reported', 'review', 1, ?, ?, datetime('now'), datetime('now'))
       `).bind(headline, candidate.submitted_url, candidate.topic_slug ?? "general", summary, summary.slice(0, 300)).run();
+      const clusterId = result.meta?.last_row_id;
+
+      // Create a synthetic feed_item so the story has a source for publication
+      if (clusterId && candidate.submitted_url) {
+        const urlHash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(candidate.submitted_url))), (b) => b.toString(16).padStart(2,"0")).join("");
+        const feedResult = await db.prepare(`
+          INSERT OR IGNORE INTO feed_items (url, url_hash, title, summary, content_excerpt, source_id, ingestion_status, fetched_at, published_at)
+          VALUES (?, ?, ?, ?, ?, ?, 'raw', datetime('now'), datetime('now'))
+        `).bind(candidate.submitted_url, urlHash, headline, summary, summary.slice(0, 1000), 1).run();
+        const feedItemId = feedResult.meta?.last_row_id;
+        if (feedItemId) {
+          await db.prepare(`
+            INSERT OR IGNORE INTO story_cluster_members (cluster_id, feed_item_id, is_primary)
+            VALUES (?, ?, 1)
+          `).bind(clusterId, feedItemId).run();
+        }
+      }
       await db.prepare("UPDATE editorial_candidates SET state='published', updated_at=datetime('now') WHERE id=?").bind(candidateId).run();
       actionMessage = `Candidate promoted to story cluster.`;
     } catch (e: any) { actionError = e.message || "Promotion failed."; }
