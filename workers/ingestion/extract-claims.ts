@@ -395,7 +395,8 @@ export async function runClaimExtraction(
   db: D1Database,
   onProgress?: (processed: number, total: number) => void,
 ): Promise<{ processed: number; claimsExtracted: number; evidenceCreated: number }> {
-  // Fetch clustered items with source info, excluding already-extracted
+  // Fetch clustered items with source info, excluding already-extracted.
+  // Require at least some content — items with only a title cannot produce claims.
   const { results } = await db.prepare(
     `SELECT fi.*, s.tier as source_tier, s.treatment as source_treatment
      FROM feed_items fi
@@ -404,6 +405,7 @@ export async function runClaimExtraction(
      WHERE fi.ingestion_status IN ('clustered', 'classified')
      AND ps.id IS NULL
      AND fi.fetched_at >= datetime('now', '-7 days')
+     AND (fi.summary IS NOT NULL OR fi.content_excerpt IS NOT NULL)
      ORDER BY fi.fetched_at DESC
      LIMIT 500`
   ).all<FeedItem & { source_tier: string; source_treatment: string }>();
