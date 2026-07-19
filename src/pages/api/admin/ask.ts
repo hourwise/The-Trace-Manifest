@@ -48,6 +48,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
     questionHash: await hashPrivateIdentifier(`admin-q:${visitorSecret}:${question.toLowerCase()}`),
     question,
     evidenceExcerpts: evidence,
+    adminOverride: true,
   });
 
   if (result.status === "ok" && result.payload) {

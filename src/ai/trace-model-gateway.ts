@@ -26,6 +26,8 @@ export interface AskTraceContext {
   questionHash: string;
   question: string;
   evidenceExcerpts: EvidenceExcerpt[];
+  /** When true, allows editorial-enabled override of the public Ask TRACE gate. */
+  adminOverride?: boolean;
 }
 
 export interface PublicCitation {
@@ -226,7 +228,8 @@ function failedUsageSettlement(
 
 export async function askTrace(env: TraceAIRuntimeEnvironment, context: AskTraceContext): Promise<AskTraceResult> {
   const config = buildConfig(env);
-  if (!config.publicAskTraceEnabled || config.globalKillSwitch) {
+  const askEnabled = context.adminOverride ? config.editorialAIEnabled : config.publicAskTraceEnabled;
+  if (!askEnabled || config.globalKillSwitch) {
     return { status: "temporarily_unavailable", requestId: context.requestId, message: "Ask TRACE is not currently enabled." };
   }
   if (!env.DB || !config.deepseekApiKey) {
