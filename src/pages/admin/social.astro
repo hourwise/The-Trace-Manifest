@@ -137,7 +137,7 @@ export const prerender = false;
     status("Submitting…", false);
 
     try {
-      const res = await adminFetch("/api/social-signals", {
+      const res = await adminFetch("/admin/signals", {
         method: "POST",
         body: JSON.stringify({ platform, url, reason, authorDisplayName, authorHandle, notes }),
       });
@@ -165,7 +165,7 @@ export const prerender = false;
     if (count) count.textContent = "";
 
     try {
-      const res = await adminFetch("/api/social-signals");
+      const res = await adminFetch("/admin/signals");
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const signals: Array<{
         id: number; platform: string; canonical_url: string;
