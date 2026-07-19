@@ -6,26 +6,35 @@ import { getPublishedStories, getPublishedTopics } from "../lib/server/d1";
 
 export const prerender = false;
 
-// Read topic filter from query string
+// Read topic filter from query string — topics are stored as lowercase slugs
 const topicParam = Astro.url.searchParams.get("topic");
-const topic = topicParam
-  ? topicParam.split("-").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ")
-  : undefined;
+const topic = topicParam || undefined;
 
 // Fetch published stories from D1 — publication gate enforced server-side
 let stories: Awaited<ReturnType<typeof getPublishedStories>>;
-let allTopics: string[] = [];
+let allTopicSlugs: string[] = [];
 let error: string | null = null;
 
 try {
   const db = Astro.locals.runtime.env.DB;
   stories = await getPublishedStories(db, { topic, limit: 30 });
-  allTopics = await getPublishedTopics(db);
+  allTopicSlugs = await getPublishedTopics(db);
 } catch {
   stories = [];
   error = "Feed data is temporarily unavailable. Stories appear here only after editorial review and publication.";
   console.error(JSON.stringify({ message: "Feed query failed" }));
 }
+
+// Human-readable labels for topic slugs
+function topicLabel(slug: string): string {
+  return slug.split("-").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+}
+
+// Build filter items: { slug, label, href }
+const topicFilters = [
+  { slug: null, label: "All", href: "/feed" },
+  ...allTopicSlugs.map(s => ({ slug: s, label: topicLabel(s), href: `/feed?topic=${s}` })),
+];
 
 // ADR 0009: fetch approved social signals for public display
 let socialSignals: Array<{
@@ -46,33 +55,30 @@ try {
   socialSignals = (result.results ?? []) as typeof socialSignals;
 } catch { /* social signals are optional */ }
 
-// Map topic slugs for filter links
-const topicFilterLabels = ["All", ...allTopics];
 ---
 
 <BaseLayout
-  title={topic ? `${topic} — Intelligence Feed` : "Intelligence Feed"}
+  title={topic ? `${topicLabel(topic)} — Intelligence Feed` : "Intelligence Feed"}
   description="Chronological and relevance-ranked feed of AI model launches, research, benchmarks, security incidents, and provider updates with evidence ratings."
 >
   <div class="wrap">
     <h1>Intelligence Feed</h1>
     <p class="meta" style="margin-bottom:2rem;">
       {topic
-        ? `Stories tagged "${topic}". `
+        ? `Stories tagged "${topicLabel(topic)}". `
         : "Chronological feed of AI developments with source classification and evidence ratings. "}
       <a href="/methodology">How ratings work &rarr;</a>
     </p>
 
     <!-- Filter bar -->
     <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:2rem;" role="group" aria-label="Filter by topic">
-      {topicFilterLabels.map(t => {
-        const isActive = (t === "All" && !topic) || t === topic;
-        const href = t === "All" ? "/feed" : `/feed?topic=${t.toLowerCase().replace(/\s+/g, "-")}`;
+      {topicFilters.map(f => {
+        const isActive = (f.slug === null && !topic) || f.slug === topic;
         return (
-          <a href={href}
+          <a href={f.href}
              style={`font-size:0.85rem;padding:0.25rem 0.75rem;border:1px solid var(--border);border-radius:var(--radius);text-decoration:none;${isActive ? "background:var(--accent);color:var(--bg);border-color:var(--accent);" : ""}`}
              class="meta">
-            {t}
+            {f.label}
           </a>
         );
       })}
@@ -91,7 +97,7 @@ const topicFilterLabels = ["All", ...allTopics];
         <p style="font-size:1.1rem;margin-bottom:0.5rem;">No published stories yet</p>
         <p class="meta">
           {topic
-            ? `No published stories match the topic "${topic}". Stories are published after editorial review.`
+            ? `No published stories match the topic "${topicLabel(topic)}". Stories are published after editorial review.`
             : "The ingestion pipeline is collecting and classifying source material. Stories appear here after editorial review and publication."}
         </p>
         <p class="meta" style="margin-top:0.5rem;">
@@ -125,7 +131,7 @@ const topicFilterLabels = ["All", ...allTopics];
         {stories.map(story => (
           <article class="card">
             <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:0.5rem;">
-              <span class="meta">{story.topic || "Uncategorised"}</span>
+              <span class="meta">{story.topic ? topicLabel(story.topic) : "Uncategorised"}</span>
               <EvidenceBadge status={story.evidenceStatus} size="sm" />
             </div>
             <h2 style="font-size:1.15rem;margin-top:0.5rem;">
@@ -146,7 +152,7 @@ const topicFilterLabels = ["All", ...allTopics];
 
     {stories.length > 0 && (
       <p class="meta" style="text-align:center;margin-top:2rem;">
-        Showing {stories.length} published {topic ? `"${topic}" ` : ""}stories. Stories are reviewed before publication. <a href="/methodology">See methodology &rarr;</a>
+        Showing {stories.length} published {topic ? `"${topicLabel(topic)}" ` : ""}stories. Stories are reviewed before publication. <a href="/methodology">See methodology &rarr;</a>
       </p>
     )}
   </div>
