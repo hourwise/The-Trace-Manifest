@@ -21,8 +21,8 @@ const TRANSITIONS: Record<string, string[]> = {
   new: ["drafting","rejected"],
   drafting: ["draft_ready","rejected"],
   draft_ready: ["needs_review","drafting","rejected"],
-  needs_review: ["published","draft_ready","rejected"],
-  published: ["archived"],
+  needs_review: ["draft_ready","rejected"],  // "published" only via Promote button
+  published: ["draft_ready","archived"],
   rejected: ["new"],
   archived: [],
 };
@@ -48,8 +48,8 @@ if (Astro.request.method === "POST") {
     const candidateId = (formData.get("candidate_id") as string)?.trim() ?? "";
     try {
       if (!candidateId) throw new Error("Invalid candidate ID.");
-      const candidate = await db.prepare("SELECT * FROM editorial_candidates WHERE id=? AND state='needs_review'").bind(candidateId).first<CandidateRow>();
-      if (!candidate) throw new Error("Candidate must be in 'needs_review' state to promote.");
+      const candidate = await db.prepare("SELECT * FROM editorial_candidates WHERE id=? AND state IN ('needs_review','published')").bind(candidateId).first<CandidateRow>();
+      if (!candidate) throw new Error("Candidate must be in 'needs_review' or 'published' state to promote.");
       const headline = candidate.lead_text?.slice(0, 150) ?? candidate.submitted_url ?? "Untitled";
       await db.prepare(`
         INSERT INTO story_clusters (title, canonical_url, topic, evidence_status, publication_status, needs_human_review, created_at, updated_at)
@@ -134,7 +134,7 @@ const STATE_LABELS: Record<string, string> = { new:"New", drafting:"Drafting", d
        <div style="display:grid;gap:0.75rem;">
         {candidates.map((c) => {
           const nextStates = TRANSITIONS[c.state] ?? [];
-          const isPromotable = c.state === "needs_review";
+          const isPromotable = c.state === "needs_review" || c.state === "published";
           return (
             <div class="card" style="padding:0.75rem 1rem;">
               <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;flex-wrap:wrap;">
