@@ -421,7 +421,7 @@ export async function runClaimExtraction(
      FROM feed_items fi
      JOIN sources s ON fi.source_id = s.id
      LEFT JOIN pipeline_stages ps ON ps.feed_item_id = fi.id AND ps.stage = 'claim_extracted'
-     WHERE fi.ingestion_status IN ('clustered', 'classified')
+     WHERE fi.ingestion_status IN ('clustered', 'classified', 'published')
      AND ps.id IS NULL
      AND fi.fetched_at >= datetime('now', '-7 days')
      AND (fi.summary IS NOT NULL OR fi.content_excerpt IS NOT NULL)
