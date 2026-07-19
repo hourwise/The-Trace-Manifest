@@ -78,12 +78,12 @@ export const prerender = false;
         return;
       }
 
-      const confidenceColor = data.confidenceScore != null && data.confidenceScore >= 0.7 ? "var(--ev-confirmed)"
-        : data.confidenceScore != null && data.confidenceScore >= 0.4 ? "var(--accent)" : "var(--ev-disputed)";
+      const confidenceColor = data.confidenceScore != null && data.confidenceScore >= 70 ? "var(--ev-confirmed)"
+        : data.confidenceScore != null && data.confidenceScore >= 40 ? "var(--accent)" : "var(--ev-disputed)";
 
       content.innerHTML = `<div class="card">
         <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;margin-bottom:1rem;">
-          <span class="badge badge-sm" style="background:${confidenceColor};color:white;">${escapeHTML(data.confidence || "Unknown")}${data.confidenceScore != null ? ` (${Math.round(data.confidenceScore * 100)}%)` : ""}</span>
+          <span class="badge badge-sm" style="background:${confidenceColor};color:white;">${escapeHTML(data.confidence || "Unknown")}${data.confidenceScore != null ? ` (${Math.round(data.confidenceScore)}%)` : ""}</span>
           ${data.freshestObservedAt ? `<span class="meta" style="font-size:0.7rem;">Evidence through ${escapeHTML(data.freshestObservedAt)}</span>` : ""}
         </div>
         <p style="font-size:0.95rem;line-height:1.6;margin-bottom:1rem;">${escapeHTML(data.answer)}</p>
