@@ -1,0 +1,53 @@
+---
+// ADR 0016: Admin operations — manual claim extraction trigger.
+// Server-rendered page with direct D1 access. Imports the regex-based
+// extraction engine from the Worker module.
+import BaseLayout from "../../layouts/BaseLayout.astro";
+import { runClaimExtraction } from "../../../workers/ingestion/extract-claims";
+
+export const prerender = false;
+
+let result: { processed: number; claimsExtracted: number; evidenceCreated: number } | null = null;
+let error: string | null = null;
+
+if (Astro.request.method === "POST") {
+  try {
+    const db = Astro.locals.runtime.env.DB;
+    result = await runClaimExtraction(db);
+  } catch (e: any) {
+    error = e.message ?? String(e);
+  }
+}
+---
+
+<BaseLayout title="Admin — Extract Claims" description="Manually trigger claim extraction for feed items.">
+  <div class="wrap" style="max-width:700px;">
+    <h1>Extract Claims</h1>
+    <p class="meta" style="margin-bottom:2rem;">
+      <a href="/admin">← Admin home</a> &middot; Run regex-based claim extraction on clustered/classified feed items.
+    </p>
+
+    <section class="card" style="margin-bottom:2rem;">
+      <p>This processes up to 500 feed items (ingested within the last 7 days) that have been clustered or classified but not yet had claims extracted. Extraction is regex-based — no AI cost.</p>
+      <form method="POST" style="margin-top:1rem;">
+        <button type="submit" class="btn btn-primary">Run Claim Extraction</button>
+      </form>
+    </section>
+
+    {result !== null && (
+      <section class="card" style={error ? "border-left:3px solid var(--ev-disputed)" : "border-left:3px solid var(--ev-confirmed)"}>
+        <h2 style="font-size:1.1rem;margin-bottom:0.5rem;">{error ? "Extraction Failed" : "Extraction Complete"}</h2>
+        {error ? (
+          <p style="color:var(--ev-disputed);">{error}</p>
+        ) : (
+          <div>
+            <p><strong>{result.processed}</strong> items processed</p>
+            <p><strong>{result.claimsExtracted}</strong> claims extracted</p>
+            <p><strong>{result.evidenceCreated}</strong> evidence records created</p>
+            {result.processed === 0 && <p class="meta" style="margin-top:0.5rem;">No eligible items found. Items must be clustered/classified within the last 7 days.</p>}
+          </div>
+        )}
+      </section>
+    )}
+  </div>
+</BaseLayout>
