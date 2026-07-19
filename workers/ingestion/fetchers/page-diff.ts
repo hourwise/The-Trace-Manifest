@@ -93,7 +93,7 @@ export async function fetchPageDiff(
 
   const chunks: Uint8Array[] = [];
   let total = 0;
-  const MAX_BYTES = 256 * 1024;
+  const MAX_BYTES = 512 * 1024;
   try {
     while (true) {
       const { done, value } = await reader.read();
@@ -101,7 +101,7 @@ export async function fetchPageDiff(
       total += value.byteLength;
       if (total > MAX_BYTES) {
         await reader.cancel();
-        throw new Error("Page exceeds 256KB size limit.");
+        throw new Error("Page exceeds 512KB size limit.");
       }
       chunks.push(value);
     }
