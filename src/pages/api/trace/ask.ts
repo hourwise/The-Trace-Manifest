@@ -1,7 +1,7 @@
 import type { APIRoute } from "astro";
 import { buildConfig } from "../../../ai/config";
 import { askTrace, hashPrivateIdentifier, type TraceAIRuntimeEnvironment } from "../../../ai/trace-model-gateway";
-import { retrievePublishedEvidence } from "../../../lib/server/ask-evidence";
+import { retrievePublishedEvidence, retrieveApprovedKnowledge } from "../../../lib/server/ask-evidence";
 import { corsHeaders, isAllowedOrigin, type OriginPolicyEnvironment } from "../../../security/origin-policy";
 
 export const prerender = false;
@@ -126,7 +126,11 @@ export async function handleAskRequest(request: Request, env: AskEnvironment): P
 
   let evidence;
   try {
-    evidence = await retrievePublishedEvidence(env.DB, validation.data.question, config.maxEvidenceExcerpts);
+    const storyEvidence = await retrievePublishedEvidence(env.DB, validation.data.question, config.maxEvidenceExcerpts);
+    const knowledgeEvidence = await retrieveApprovedKnowledge(env.DB, validation.data.question, 4);
+    const seenSourceIds = new Set(storyEvidence.map((e) => e.sourceId));
+    const uniqueKnowledge = knowledgeEvidence.filter((e) => !seenSourceIds.has(e.sourceId));
+    evidence = [...storyEvidence, ...uniqueKnowledge];
   } catch {
     console.error(JSON.stringify({ message: "Ask TRACE evidence retrieval failed", requestId }));
     return json({ message: "Ask TRACE evidence is temporarily unavailable.", requestId }, 503, originHeaders, requestId);
