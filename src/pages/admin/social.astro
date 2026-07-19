@@ -2,6 +2,67 @@
 import BaseLayout from "../../layouts/BaseLayout.astro";
 
 export const prerender = false;
+
+interface SignalRow {
+  id: number; platform: string; canonical_url: string;
+  submitted_by: string; submitted_at: string; submission_reason: string;
+  author_display_name: string | null; author_handle: string | null;
+  reviewer_notes: string; evidence_status: string;
+  corroboration_status: string; review_status: string;
+}
+
+let signals: SignalRow[] = [];
+let loadError: string | null = null;
+let submitMessage: string | null = null;
+let submitError: string | null = null;
+
+// Handle POST submission via D1 directly
+if (Astro.request.method === "POST") {
+  try {
+    const formData = await Astro.request.formData();
+    const platform = (formData.get("platform") as string)?.trim().toLowerCase() ?? "";
+    const url = (formData.get("url") as string)?.trim() ?? "";
+    const reason = (formData.get("reason") as string)?.trim() ?? "";
+    const authorDisplayName = (formData.get("authorDisplayName") as string)?.trim() || null;
+    const authorHandle = (formData.get("authorHandle") as string)?.trim() || null;
+    const notes = (formData.get("notes") as string)?.trim() || "";
+
+    const VALID_PLATFORMS = ["reddit","x","bluesky","mastodon","linkedin","youtube","github-discussion","forum","other-approved"];
+    if (!VALID_PLATFORMS.includes(platform)) throw new Error("Invalid platform.");
+    if (!url || url.length > 2048) throw new Error("A valid URL is required.");
+    try { const p = new URL(url); if (!["https:","http:"].includes(p.protocol) || p.username || p.password) throw new Error(""); } catch { throw new Error("URL is not valid."); }
+    if (!reason || reason.length < 10 || reason.length > 1000) throw new Error("Reason must be 10–1000 characters.");
+
+    const canonical = url;
+    const hashBuffer = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonical));
+    const canonicalUrlHash = Array.from(new Uint8Array(hashBuffer), (b) => b.toString(16).padStart(2, "0")).join("");
+
+    const db = Astro.locals.runtime.env.DB;
+    const operator = Astro.locals.operator;
+    await db.prepare(`
+      INSERT INTO social_signals (platform, canonical_url, canonical_url_hash, submitted_by, submission_reason, author_display_name, author_handle, reviewer_notes)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(platform, canonical, canonicalUrlHash, operator?.email ?? "unknown", reason, authorDisplayName, authorHandle, notes).run();
+
+    submitMessage = "Signal recorded.";
+  } catch (e: any) {
+    submitError = e.message || "Submission failed.";
+  }
+}
+
+// Load signals for display
+try {
+  const db = Astro.locals.runtime.env.DB;
+  const result = await db.prepare(`
+    SELECT id, platform, canonical_url, submitted_by, submitted_at, submission_reason,
+           author_display_name, author_handle, reviewer_notes, evidence_status,
+           corroboration_status, review_status
+    FROM social_signals ORDER BY created_at DESC LIMIT 50
+  `).all<SignalRow>();
+  signals = result.results ?? [];
+} catch {
+  loadError = "Social signals are unavailable. Verify the D1 binding and migration.";
+}
 ---
 
 <BaseLayout
@@ -9,7 +70,7 @@ export const prerender = false;
   description="Governed social-media signal intake per ADR 0009."
 >
   <div class="wrap">
-    <h1>Admin: Social Signals <span style="font-size:0.6rem;color:var(--ev-confirmed);">DEPLOY 2fc2204</span></h1>
+    <h1>Admin: Social Signals</h1>
     <p class="meta" style="margin-bottom:2rem;">
       <a href="/admin">← Admin home</a> &middot; <a href="/admin/desk">TRACE Desk</a> &middot; <a href="/admin/review">Review Queue</a>
     </p>
@@ -19,14 +80,16 @@ export const prerender = false;
       Social posts are discovery signals, not proof. Each linked article, paper, or repository must be assessed independently.
     </p>
 
-    <!-- Submit a social signal -->
+    <!-- Submit -->
     <section style="margin-bottom:2.5rem;">
       <h2>Submit a Social Signal</h2>
-      <div class="card" style="background:var(--surface-2);">
+      {submitMessage && <div class="card" style="margin-bottom:1rem;background:color-mix(in oklch, var(--ev-confirmed) 10%, transparent);border-left:3px solid var(--ev-confirmed);"><p style="margin:0;">{submitMessage}</p></div>}
+      {submitError && <div class="card" style="margin-bottom:1rem;background:color-mix(in oklch, var(--ev-disputed) 10%, transparent);border-left:3px solid var(--ev-disputed);"><p style="margin:0;color:var(--ev-disputed);">{submitError}</p></div>}
+      <form method="POST" class="card" style="background:var(--surface-2);">
         <div style="display:flex;flex-direction:column;gap:1rem;">
           <div>
             <label for="sig-platform" style="font-size:0.85rem;font-weight:600;display:block;margin-bottom:0.25rem;">Platform</label>
-            <select id="sig-platform" style="width:100%;">
+            <select name="platform" id="sig-platform" style="width:100%;">
               <option value="">— Select —</option>
               <option value="reddit">Reddit</option>
               <option value="x">X (Twitter)</option>
@@ -41,167 +104,59 @@ export const prerender = false;
           </div>
           <div>
             <label for="sig-url" style="font-size:0.85rem;font-weight:600;display:block;margin-bottom:0.25rem;">Public URL <span style="color:var(--ev-disputed);">*required</span></label>
-            <input type="url" id="sig-url" placeholder="https://…" style="width:100%;" />
+            <input type="url" name="url" id="sig-url" placeholder="https://…" style="width:100%;" />
           </div>
           <div>
             <label for="sig-reason" style="font-size:0.85rem;font-weight:600;display:block;margin-bottom:0.25rem;">Why this matters <span style="color:var(--ev-disputed);">*required</span> <span class="meta" style="font-weight:400;">(10–1000 chars)</span></label>
-            <textarea id="sig-reason" rows="2" placeholder="What makes this signal worth reviewing? Link to specific claims, events, or community knowledge…" style="width:100%;resize:vertical;"></textarea>
+            <textarea name="reason" id="sig-reason" rows="2" placeholder="What makes this signal worth reviewing?…" style="width:100%;resize:vertical;"></textarea>
           </div>
           <div style="display:flex;gap:1rem;flex-wrap:wrap;">
             <div style="flex:1;min-width:180px;">
               <label for="sig-author-name" style="font-size:0.85rem;font-weight:600;display:block;margin-bottom:0.25rem;">Author display name <span class="meta" style="font-weight:400;">(optional)</span></label>
-              <input type="text" id="sig-author-name" placeholder="e.g. Sarah Chen" style="width:100%;" />
+              <input type="text" name="authorDisplayName" id="sig-author-name" placeholder="e.g. Sarah Chen" style="width:100%;" />
             </div>
             <div style="flex:1;min-width:180px;">
               <label for="sig-author-handle" style="font-size:0.85rem;font-weight:600;display:block;margin-bottom:0.25rem;">Author handle <span class="meta" style="font-weight:400;">(optional)</span></label>
-              <input type="text" id="sig-author-handle" placeholder="e.g. @sarahchen" style="width:100%;" />
+              <input type="text" name="authorHandle" id="sig-author-handle" placeholder="e.g. @sarahchen" style="width:100%;" />
             </div>
           </div>
           <div>
-            <label for="sig-notes" style="font-size:0.85rem;font-weight:600;display:block;margin-bottom:0.25rem;">Reviewer notes <span class="meta" style="font-weight:400;">(optional — add context for later review)</span></label>
-            <textarea id="sig-notes" rows="2" placeholder="Notes about the signal, linked material, or verification status…" style="width:100%;resize:vertical;"></textarea>
+            <label for="sig-notes" style="font-size:0.85rem;font-weight:600;display:block;margin-bottom:0.25rem;">Reviewer notes <span class="meta" style="font-weight:400;">(optional)</span></label>
+            <textarea name="notes" id="sig-notes" rows="2" placeholder="Notes about the signal…" style="width:100%;resize:vertical;"></textarea>
           </div>
         </div>
-        <div style="margin-top:1rem;display:flex;gap:0.75rem;align-items:center;flex-wrap:wrap;">
-          <button type="button" id="submit-btn" class="btn btn-primary">Submit Signal</button>
-          <span id="submit-status" class="meta"></span>
+        <div style="margin-top:1rem;">
+          <button type="submit" class="btn btn-primary">Submit Signal</button>
         </div>
-      </div>
+      </form>
     </section>
 
     <!-- Pending signals -->
     <section>
       <h2>Pending Signals</h2>
-      <div style="display:flex;gap:0.5rem;align-items:center;margin-bottom:1rem;">
-        <button type="button" id="load-btn" class="btn btn-secondary" style="font-size:0.8rem;">Load Signals</button>
-        <span id="load-count" class="meta"></span>
-      </div>
-      <div id="signal-list" style="display:flex;flex-direction:column;gap:0.65rem;">
-        <div class="card" style="text-align:center;padding:2rem;"><p class="meta">Click Load Signals to view submitted signals.</p></div>
-      </div>
+      {loadError ? <div class="card"><p class="meta" style="color:var(--ev-disputed);">{loadError}</p></div> :
+       signals.length === 0 ? <div class="card" style="text-align:center;padding:2rem;"><p class="meta">No signals submitted yet.</p></div> :
+       <div style="display:flex;flex-direction:column;gap:0.65rem;">
+        {signals.map((s) => (
+          <div class="card" style="padding:0.75rem 1rem;">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;flex-wrap:wrap;">
+              <div style="flex:1;min-width:0;">
+                <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;margin-bottom:0.35rem;">
+                  <span class="badge badge-sm" style="font-size:0.65rem;">{s.platform}</span>
+                  <span class="badge badge-sm" style="font-size:0.65rem;background:var(--surface-1);">{s.review_status}</span>
+                  <span class="badge badge-sm" style="font-size:0.65rem;background:var(--surface-1);">{s.evidence_status}</span>
+                </div>
+                <a href={s.canonical_url} target="_blank" rel="noopener" style="font-weight:550;font-size:0.9rem;word-break:break-all;">{s.canonical_url.slice(0, 100)}{s.canonical_url.length > 100 ? "…" : ""}</a>
+                {s.author_display_name ? <span class="meta" style="font-size:0.75rem;"> — {s.author_display_name}{s.author_handle ? ` (${s.author_handle})` : ""}</span> : null}
+                <p class="meta" style="font-size:0.8rem;margin-top:0.35rem;">{s.submission_reason.slice(0, 200)}{s.submission_reason.length > 200 ? "…" : ""}</p>
+                {s.reviewer_notes ? <p class="meta" style="font-size:0.75rem;color:var(--muted);margin-top:0.2rem;">Notes: {s.reviewer_notes.slice(0, 150)}{s.reviewer_notes.length > 150 ? "…" : ""}</p> : null}
+                <p class="meta" style="font-size:0.7rem;margin-top:0.3rem;">Submitted by {s.submitted_by} · {s.submitted_at ? new Date(s.submitted_at).toLocaleString("en-GB") : "—"}</p>
+              </div>
+            </div>
+          </div>
+        ))}
+       </div>
+      }
     </section>
   </div>
 </BaseLayout>
-
-<script>
-  function status(msg: string, isError: boolean): void {
-    const el = document.getElementById("submit-status");
-    if (el) { el.textContent = msg; el.style.color = isError ? "var(--ev-disputed)" : "var(--ev-confirmed)"; }
-  }
-
-  function $<T>(id: string): T | null {
-    return document.getElementById(id) as T | null;
-  }
-
-  function escapeHTML(value: string): string {
-    const div = document.createElement("div");
-    div.textContent = value;
-    return div.innerHTML;
-  }
-
-  function authHeaders(method: string = "GET"): Record<string, string> {
-    return method === "GET" ? {} : { "Content-Type": "application/json" };
-  }
-
-  async function adminFetch(url: string, options: RequestInit = {}): Promise<Response> {
-    const res = await fetch(url, { ...options, headers: { ...authHeaders(options.method ?? "GET"), ...(options.headers as Record<string, string> ?? {}) } });
-    if (res.status === 401) {
-      status("Session expired. Reload the page to re-authenticate.", true);
-      throw new Error("Access session expired — reload the page.");
-    }
-    return res;
-  }
-
-  const PLATFORM_LABELS: Record<string, string> = {
-    reddit: "Reddit", x: "X", bluesky: "Bluesky", mastodon: "Mastodon",
-    linkedin: "LinkedIn", youtube: "YouTube", "github-discussion": "GitHub Discussion",
-    forum: "Forum", "other-approved": "Other",
-  };
-
-  // Submit
-  $<HTMLButtonElement>("submit-btn")?.addEventListener("click", async () => {
-    const platform = $<HTMLSelectElement>("sig-platform")?.value;
-    const url = $<HTMLInputElement>("sig-url")?.value?.trim();
-    const reason = $<HTMLTextAreaElement>("sig-reason")?.value?.trim();
-    const authorDisplayName = $<HTMLInputElement>("sig-author-name")?.value?.trim() || undefined;
-    const authorHandle = $<HTMLInputElement>("sig-author-handle")?.value?.trim() || undefined;
-    const notes = $<HTMLTextAreaElement>("sig-notes")?.value?.trim() || undefined;
-
-    if (!platform) { status("Select a platform.", true); return; }
-    if (!url) { status("URL is required.", true); return; }
-    if (!reason || reason.length < 10) { status("Reason must be at least 10 characters.", true); return; }
-    if (reason.length > 1000) { status("Reason must be 1000 characters or fewer.", true); return; }
-
-    const btn = $<HTMLButtonElement>("submit-btn");
-    if (btn) { btn.disabled = true; btn.textContent = "Submitting…"; }
-    status("Submitting…", false);
-
-    try {
-      const res = await adminFetch("/admin/signals", {
-        method: "POST",
-        body: JSON.stringify({ platform, url, reason, authorDisplayName, authorHandle, notes }),
-      });
-      const data = await res.json() as { message?: string; error?: string };
-      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-      status(data.message || "Signal recorded.", false);
-      // Clear form
-      if ($<HTMLInputElement>("sig-url")) $<HTMLInputElement>("sig-url")!.value = "";
-      if ($<HTMLTextAreaElement>("sig-reason")) $<HTMLTextAreaElement>("sig-reason")!.value = "";
-      if ($<HTMLTextAreaElement>("sig-notes")) $<HTMLTextAreaElement>("sig-notes")!.value = "";
-    } catch (e: any) {
-      status(e.message || "Submission failed.", true);
-    } finally {
-      if (btn) { btn.disabled = false; btn.textContent = "Submit Signal"; }
-    }
-  });
-
-  // Load list
-  $<HTMLButtonElement>("load-btn")?.addEventListener("click", async () => {
-    const list = document.getElementById("signal-list");
-    const count = document.getElementById("load-count");
-    if (!list) return;
-
-    list.innerHTML = '<div class="card" style="text-align:center;padding:2rem;"><p class="meta">Loading…</p></div>';
-    if (count) count.textContent = "";
-
-    try {
-      const res = await adminFetch("/admin/signals");
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const signals: Array<{
-        id: number; platform: string; canonical_url: string;
-        submitted_by: string; submitted_at: string; submission_reason: string;
-        author_display_name: string | null; author_handle: string | null;
-        reviewer_notes: string; evidence_status: string;
-        corroboration_status: string; review_status: string;
-      }> = await res.json();
-
-      if (signals.length === 0) {
-        list.innerHTML = '<div class="card" style="text-align:center;padding:2rem;"><p class="meta">No signals submitted yet.</p></div>';
-        if (count) count.textContent = "0 signals";
-        return;
-      }
-
-      if (count) count.textContent = `${signals.length} signal${signals.length !== 1 ? "s" : ""}`;
-      list.innerHTML = signals.map((s) => `
-        <div class="card" style="padding:0.75rem 1rem;">
-          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;flex-wrap:wrap;">
-            <div style="flex:1;min-width:0;">
-              <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;margin-bottom:0.35rem;">
-                <span class="badge badge-sm" style="font-size:0.65rem;">${escapeHTML(PLATFORM_LABELS[s.platform] || s.platform)}</span>
-                <span class="badge badge-sm" style="font-size:0.65rem;background:var(--surface-1);">${escapeHTML(s.review_status)}</span>
-                <span class="badge badge-sm" style="font-size:0.65rem;background:var(--surface-1);">${escapeHTML(s.evidence_status)}</span>
-              </div>
-              <a href="${escapeHTML(s.canonical_url)}" target="_blank" rel="noopener" style="font-weight:550;font-size:0.9rem;word-break:break-all;">${escapeHTML(s.canonical_url.slice(0, 100))}${s.canonical_url.length > 100 ? "…" : ""}</a>
-              ${s.author_display_name ? `<span class="meta" style="font-size:0.75rem;"> — ${escapeHTML(s.author_display_name)}${s.author_handle ? ` (${escapeHTML(s.author_handle)})` : ""}</span>` : ""}
-              <p class="meta" style="font-size:0.8rem;margin-top:0.35rem;">${escapeHTML(s.submission_reason.slice(0, 200))}${s.submission_reason.length > 200 ? "…" : ""}</p>
-              ${s.reviewer_notes ? `<p class="meta" style="font-size:0.75rem;color:var(--muted);margin-top:0.2rem;">Notes: ${escapeHTML(s.reviewer_notes.slice(0, 150))}${s.reviewer_notes.length > 150 ? "…" : ""}</p>` : ""}
-              <p class="meta" style="font-size:0.7rem;margin-top:0.3rem;">Submitted by ${escapeHTML(s.submitted_by)} · ${s.submitted_at ? new Date(s.submitted_at).toLocaleString("en-GB") : "—"}</p>
-            </div>
-          </div>
-        </div>
-      `).join("");
-    } catch {
-      list.innerHTML = '<div class="card" style="text-align:center;padding:2rem;"><p class="meta" style="color:var(--ev-disputed);">Failed to load signals.</p></div>';
-    }
-  });
-</script>
