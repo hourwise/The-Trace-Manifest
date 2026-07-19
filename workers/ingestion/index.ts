@@ -1024,7 +1024,7 @@ async function handlePublishStory(request: Request, env: Env, operator: Internal
     editorialAnalysis: body.editorialAnalysis as string | undefined,
     whyItMatters: body.whyItMatters as string | undefined,
     headlineImageUrl: body.headlineImageUrl as string | undefined,
-    reviewedBy: operator.email,
+    reviewedBy: "Admin",
   });
 
   if (!result.success) {
@@ -1076,7 +1076,7 @@ async function handlePublishBriefing(request: Request, env: Env, operator: Inter
     title: body.title as string,
     summary: body.summary as string,
     contentJson: body.contentJson as string,
-    reviewedBy: operator.email,
+    reviewedBy: "Admin",
   });
 
   if (!result.success) {
