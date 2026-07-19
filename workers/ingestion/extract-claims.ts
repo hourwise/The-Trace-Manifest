@@ -486,6 +486,7 @@ export async function runClaimExtraction(
     }
 
     // Store claims and evidence
+    let hadFailure = false;
     for (const claim of claims) {
       try {
         // Insert the claim (schema requires claim_type)
@@ -537,7 +538,7 @@ export async function runClaimExtraction(
           await db.prepare(
             `INSERT INTO claim_evidence
              (claim_id, feed_item_id, evidence_type, relationship, evidence_summary, source_tier, is_primary_source)
-             VALUES (?, ?, 'source', 'reports', ?, ?, 1)`
+             VALUES (?, ?, 'vendor_claim', 'reports', ?, ?, 1)`
           ).bind(
             claimId,
             item.id,
@@ -549,8 +550,8 @@ export async function runClaimExtraction(
           if (!hasLegacyConstraint(error, "claim_evidence", "evidence_type")) throw error;
           await db.prepare(
             `INSERT INTO claim_evidence
-             (claim_id, feed_item_id, relationship, evidence_summary, source_tier, is_primary_source)
-             VALUES (?, ?, 'reports', ?, ?, 1)`
+             (claim_id, feed_item_id, evidence_type, relationship, evidence_summary, source_tier, is_primary_source)
+             VALUES (?, ?, 'vendor_claim', 'reports', ?, ?, 1)`
           ).bind(
             claimId,
             item.id,
@@ -561,15 +562,18 @@ export async function runClaimExtraction(
 
         evidenceCreated++;
       } catch (err) {
+        hadFailure = true;
         const msg = err instanceof Error ? err.message : String(err);
         await recordPipelineStage(db, item.id, "claim_extracted", "failed",
           `Claim insert failed: ${msg.substring(0, 200)}`);
       }
     }
 
-    // Mark pipeline stage
-    await recordPipelineStage(db, item.id, "claim_extracted", "completed",
-      `${claims.length} claims extracted`);
+    // Mark pipeline stage (skip if already marked as failed above)
+    if (!hadFailure) {
+      await recordPipelineStage(db, item.id, "claim_extracted", "completed",
+        `${claims.length} claims extracted, ${evidenceCreated} evidence records`);
+    }
     processed++;
     onProgress?.(processed, total);
   }
