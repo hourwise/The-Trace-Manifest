@@ -27,19 +27,33 @@ const d1Docs = await db
 
 const d1DocList = d1Docs.results ?? [];
 
-// Group by section for display
-const d1BySection = new Map<string, D1KnowledgeDoc[]>();
+// Group D1 docs by knowledge_type for unified card display
+const d1ByType = new Map<string, D1KnowledgeDoc[]>();
 for (const doc of d1DocList) {
-  const section = doc.section_slug || "general";
-  if (!d1BySection.has(section)) d1BySection.set(section, []);
-  d1BySection.get(section)!.push(doc);
+  const type = doc.knowledge_type || "general";
+  if (!d1ByType.has(type)) d1ByType.set(type, []);
+  d1ByType.get(type)!.push(doc);
 }
 
 function typeLabel(t: string): string {
   return t.replace(/_/g, " ");
 }
 
-// ── Static knowledge hubs (existing) ─────────────────────────────
+// Human-readable labels and descriptions for knowledge types
+const typeMeta: Record<string, { name: string; description: string }> = {
+  comparison: { name: "Comparisons", description: "Side-by-side evaluations of AI models, tools, and approaches with evidence-based recommendations." },
+  definition: { name: "Definitions", description: "Clear explanations of AI concepts, protocols, and terminology." },
+  how_to: { name: "How-To Guides", description: "Practical guidance on securing, evaluating, and building with AI systems." },
+  security_advisory: { name: "Security Advisories", description: "Security risks, threat models, and defensive practices for AI systems." },
+  explainer: { name: "Explainers", description: "In-depth explanations of AI technologies and their practical implications." },
+  recommendation: { name: "Recommendations", description: "Evidence-based guidance on tool and model selection." },
+  current_status: { name: "Current Status", description: "Up-to-date information on AI model and product availability." },
+  policy_summary: { name: "Policy Summaries", description: "Summaries of AI governance, regulation, and policy developments." },
+  frequently_asked_question: { name: "FAQ", description: "Frequently asked questions about AI tools, models, and practices." },
+};
+
+// Build unified hubs: static published hubs + D1 type groups
+// ── Static knowledge hubs ────────────────────────────────────────
 const hubs = [
   {
     id: "mcp",
@@ -170,6 +184,44 @@ for (const hub of publishedHubs) {
     }
   }
 }
+
+// ── Unified hubs: static published + D1 knowledge types ──────────
+
+interface UnifiedHub {
+  id: string;
+  name: string;
+  description: string;
+  source: "static" | "d1";
+  items: { href: string; badge: string; title: string }[];
+}
+
+const unifiedHubs: UnifiedHub[] = [
+  ...publishedHubs.map(hub => ({
+    id: hub.id,
+    name: hub.name,
+    description: hub.description,
+    source: "static" as const,
+    items: hub.pages.map(page => ({
+      href: `/knowledge/${page.slug}`,
+      badge: page.type,
+      title: page.title,
+    })),
+  })),
+  ...[...d1ByType.entries()].map(([type, docs]) => ({
+    id: `kb-${type}`,
+    name: typeMeta[type]?.name ?? typeLabel(type),
+    description: typeMeta[type]?.description ?? `TRACE-approved knowledge entries (${typeLabel(type)}).`,
+    source: "d1" as const,
+    items: docs.map(doc => ({
+      href: `/knowledge/doc/${doc.id}`,
+      badge: typeLabel(doc.knowledge_type),
+      title: doc.canonical_question,
+    })),
+  })),
+];
+
+const totalPages = allPages.size + d1DocList.length;
+const totalHubs = unifiedHubs.length;
 ---
 
 <BaseLayout
@@ -187,11 +239,11 @@ for (const hub of publishedHubs) {
     <!-- Stats -->
     <div style="display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:2.5rem;">
       <div class="card" style="flex:1;min-width:100px;text-align:center;padding:1rem;">
-        <p style="font-size:1.5rem;font-weight:700;">{allPages.size + d1DocList.length}</p>
+        <p style="font-size:1.5rem;font-weight:700;">{totalPages}</p>
         <p class="meta">Pages</p>
       </div>
       <div class="card" style="flex:1;min-width:100px;text-align:center;padding:1rem;">
-        <p style="font-size:1.5rem;font-weight:700;">{publishedHubs.length + d1BySection.size}</p>
+        <p style="font-size:1.5rem;font-weight:700;">{totalHubs}</p>
         <p class="meta">Subject hubs</p>
       </div>
       <div class="card" style="flex:1;min-width:100px;text-align:center;padding:1rem;">
@@ -200,20 +252,23 @@ for (const hub of publishedHubs) {
       </div>
     </div>
 
-    <!-- Hub grid -->
+    <!-- Unified hub grid: static hubs + D1 knowledge type groups -->
     <div class="grid-2" style="margin-bottom:3rem;">
-      {publishedHubs.map(hub => (
+      {unifiedHubs.map(hub => (
         <div class="card" id={hub.id}>
           <h2 style="font-size:1.1rem;margin-bottom:0.35rem;">
             <a href={`/knowledge#${hub.id}`}>{hub.name}</a>
+            {hub.source === "d1" && (
+              <span class="badge badge-sm badge-ok" style="margin-left:0.4rem;font-size:0.55rem;">TRACE</span>
+            )}
           </h2>
           <p class="meta" style="margin-bottom:0.75rem;">{hub.description}</p>
           <ul style="list-style:none;padding:0;display:flex;flex-direction:column;gap:0.25rem;">
-            {hub.pages.map(page => (
+            {hub.items.map(item => (
               <li style="font-size:0.84rem;">
-                <a href={`/knowledge/${page.slug}`} style="display:flex;gap:0.4rem;align-items:baseline;">
-                  <span class="badge badge-sm" style="font-size:0.58rem;flex-shrink:0;">{page.type}</span>
-                  <span>{page.title}</span>
+                <a href={item.href} style="display:flex;gap:0.4rem;align-items:baseline;">
+                  <span class="badge badge-sm" style="font-size:0.58rem;flex-shrink:0;">{item.badge}</span>
+                  <span>{item.title.length > 90 ? item.title.slice(0, 90) + "…" : item.title}</span>
                 </a>
               </li>
             ))}
@@ -221,37 +276,6 @@ for (const hub of publishedHubs) {
         </div>
       ))}
     </div>
-
-    <!-- ADR 0017: TRACE Knowledge Base — approved D1 knowledge documents -->
-    {d1DocList.length > 0 && (
-      <section style="margin-bottom:3rem;padding-top:2rem;border-top:2px solid var(--color-border);">
-        <h2 style="font-size:1.3rem;margin-bottom:0.5rem;">TRACE Knowledge Base</h2>
-        <p class="meta" style="margin-bottom:1.5rem;">
-          {d1DocList.length} approved knowledge entries with evidence provenance.
-          These are retrievable by Ask TRACE and linked to their source material.
-        </p>
-
-        <div class="grid-2">
-          {[...d1BySection.entries()].map(([section, docs]) => (
-            <div class="card" id={`kb-${section}`}>
-              <h3 style="font-size:1rem;margin-bottom:0.5rem;text-transform:capitalize;">
-                {section.replace(/-/g, " ")}
-              </h3>
-              <ul style="list-style:none;padding:0;display:flex;flex-direction:column;gap:0.3rem;">
-                {docs.map(doc => (
-                  <li style="font-size:0.84rem;">
-                    <a href={`/knowledge/doc/${doc.id}`} style="display:flex;gap:0.4rem;align-items:baseline;">
-                      <span class="badge badge-sm" style="font-size:0.58rem;flex-shrink:0;">{typeLabel(doc.knowledge_type)}</span>
-                      <span>{doc.canonical_question}</span>
-                    </a>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ))}
-        </div>
-      </section>
-    )}
 
     <!-- How the knowledge base works -->
     <section class="card" style="padding:1.5rem;background:var(--surface-2);">
