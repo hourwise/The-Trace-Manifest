@@ -31,10 +31,10 @@ if (Astro.request.method === "POST") {
     try {
       if (!id || id < 1) throw new Error("Invalid signal ID.");
       await db.prepare(`
-        UPDATE social_signals SET review_status = ?, reviewed_by = ?, reviewed_at = datetime('now'),
+        UPDATE social_signals SET review_status = ?, reviewed_by = 'Admin', reviewed_at = datetime('now'),
         trace_summary = COALESCE(?, trace_summary), updated_at = datetime('now')
         WHERE id = ?
-      `).bind(action === "approve" ? "approved" : "rejected", operator?.email ?? "unknown", summary, id).run();
+      `).bind(action === "approve" ? "approved" : "rejected", summary, id).run();
       actionMessage = action === "approve" ? "Signal approved." : "Signal rejected.";
     } catch (e: any) {
       actionError = e.message || "Action failed.";
@@ -61,8 +61,8 @@ if (Astro.request.method === "POST") {
 
       await db.prepare(`
         INSERT INTO social_signals (platform, canonical_url, canonical_url_hash, submitted_by, submission_reason, author_display_name, author_handle, reviewer_notes)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `).bind(platform, canonical, canonicalUrlHash, operator?.email ?? "unknown", reason, authorDisplayName, authorHandle, notes).run();
+        VALUES (?, ?, ?, 'Admin', ?, ?, ?, ?)
+      `).bind(platform, canonical, canonicalUrlHash, reason, authorDisplayName, authorHandle, notes).run();
 
       actionMessage = "Signal recorded.";
     } catch (e: any) {
