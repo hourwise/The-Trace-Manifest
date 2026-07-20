@@ -112,9 +112,13 @@ try {
       <div id="source-material" class="card" style="margin-bottom:1.5rem;background:var(--surface-2);display:none;">
         <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.5rem;margin-bottom:0.75rem;">
           <h3 style="font-size:0.95rem;margin:0;">Source Material <span class="meta" style="font-weight:400;" id="source-count"></span></h3>
-          <button type="button" id="ai-analyze-btn" class="btn btn-secondary" style="font-size:0.8rem;" data-ai-enabled={String(editorialAIEnabled)} disabled>{editorialAIEnabled ? "🤖 AI Analyze" : "AI Analyze disabled"}</button>
+          <div style="display:flex;gap:0.5rem;">
+            <button type="button" id="find-related-btn" class="btn btn-secondary" style="font-size:0.8rem;" disabled>🔍 Find Related</button>
+            <button type="button" id="ai-analyze-btn" class="btn btn-secondary" style="font-size:0.8rem;" data-ai-enabled={String(editorialAIEnabled)} disabled>{editorialAIEnabled ? "🤖 AI Analyze" : "AI Analyze disabled"}</button>
+          </div>
         </div>
         <div id="ai-result" style="display:none;margin-bottom:0.75rem;padding:0.75rem;background:color-mix(in oklch, var(--accent) 6%, transparent);border-radius:var(--radius);border-left:3px solid var(--accent);"></div>
+        <div id="related-items" style="display:none;margin-bottom:0.75rem;padding:0.75rem;background:color-mix(in oklch, var(--accent) 6%, transparent);border-radius:var(--radius);border-left:3px solid var(--accent);max-height:300px;overflow-y:auto;"></div>
         <div id="source-list" style="display:flex;flex-direction:column;gap:0.75rem;max-height:400px;overflow-y:auto;"></div>
       </div>
 
@@ -434,6 +438,10 @@ try {
         count.textContent = "";
         if (aiBtn) aiBtn.disabled = true;
         if (aiResult) aiResult.style.display = "none";
+        const findRelatedBtn = $<HTMLButtonElement>("find-related-btn");
+        if (findRelatedBtn) findRelatedBtn.disabled = true;
+        const relatedDiv = document.getElementById("related-items");
+        if (relatedDiv) relatedDiv.style.display = "none";
         currentSources = [];
 
         // Pre-fill form fields from cluster data if available
@@ -453,6 +461,7 @@ try {
 
           currentSources = sources.map(s => ({ title: s.title, excerpt: s.excerpt }));
           if (aiBtn) aiBtn.disabled = aiBtn.dataset.aiEnabled !== "true" || currentSources.length === 0;
+          if (findRelatedBtn) findRelatedBtn.disabled = false;
 
           count.textContent = `(${sources.length} source${sources.length !== 1 ? "s" : ""})`;
           if (sources.length > 0) {
@@ -571,6 +580,52 @@ try {
             btn.disabled = btn.dataset.aiEnabled !== "true" || currentSources.length === 0;
             btn.textContent = btn.dataset.aiEnabled === "true" ? "🤖 AI Analyze" : "AI Analyze disabled";
           }
+        }
+      });
+
+      // Find Related Coverage — search ingested items for related coverage
+      $<HTMLButtonElement>("find-related-btn")?.addEventListener("click", async () => {
+        const relatedDiv = document.getElementById("related-items");
+        const btn = $<HTMLButtonElement>("find-related-btn");
+        if (!relatedDiv || !btn) return;
+
+        const clusterId = parseInt($<HTMLSelectElement>("cluster-select")?.value ?? "0");
+        if (!clusterId) { status("Select a cluster first.", true); return; }
+
+        btn.disabled = true;
+        btn.textContent = "🔍 Searching…";
+        relatedDiv.style.display = "block";
+        relatedDiv.innerHTML = '<p class="meta">Searching ingested items for related coverage…</p>';
+
+        try {
+          const res = await adminFetch(`/api/admin/related-items?clusterId=${clusterId}`);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const data: { clusterItemCount: number; items: Array<{ id: number; title: string; sourceName: string; sourceTier: string; url: string; publishedAt: string | null; score: number; matchReasons: string[] }> } = await res.json();
+
+          if (data.items.length === 0) {
+            relatedDiv.innerHTML = '<p class="meta">No related items found in the ingested pool. This story may be unique.</p>';
+          } else {
+            relatedDiv.innerHTML = `<p class="meta" style="margin-bottom:0.5rem;"><strong>${data.items.length} related item(s)</strong> found across ${data.clusterItemCount} cluster source(s). Click to review the original.</p>` +
+              data.items.slice(0, 15).map(item => `
+                <div style="padding:0.4rem 0;border-bottom:1px solid var(--border-light);font-size:0.82rem;">
+                  <div style="display:flex;gap:0.5rem;align-items:baseline;flex-wrap:wrap;">
+                    <span class="badge" style="font-size:0.6rem;">${item.sourceTier}-tier</span>
+                    <span class="badge" style="font-size:0.6rem;">score ${item.score}</span>
+                    <a href="${escapeHTML(item.url)}" target="_blank" rel="noopener" style="font-weight:600;">${escapeHTML(item.title.slice(0, 90))}${item.title.length > 90 ? '…' : ''}</a>
+                  </div>
+                  <div class="meta" style="font-size:0.7rem;margin-top:0.15rem;">
+                    ${item.sourceName} · ${item.matchReasons.join(" · ")} ${item.publishedAt ? '· ' + item.publishedAt.slice(0, 10) : ''}
+                  </div>
+                </div>
+              `).join("");
+          }
+          status(`Found ${data.items.length} related item(s).`, false);
+        } catch (e: any) {
+          relatedDiv.innerHTML = `<p class="meta" style="color:var(--ev-disputed);">Search failed: ${e.message}</p>`;
+          status("Related search failed.", true);
+        } finally {
+          btn.disabled = false;
+          btn.textContent = "🔍 Find Related";
         }
       });
 
