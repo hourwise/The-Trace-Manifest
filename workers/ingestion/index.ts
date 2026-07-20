@@ -7,6 +7,7 @@ import { fetchGitHubReleases } from "./fetchers/github";
 import { fetchArxivPapers } from "./fetchers/arxiv";
 import { fetchHackerNews } from "./fetchers/hackernews";
 import { fetchHuggingFaceModels } from "./fetchers/huggingface-models";
+import { fetchLMSYSArena } from "./fetchers/lmsys-arena";
 import { fetchPageDiff } from "./fetchers/page-diff";
 import { checkSourceHealth } from "./health";
 import { deduplicateURL, hashURL } from "./dedup";
@@ -446,6 +447,9 @@ async function processSource(env: Env, source: Source, jobType: string): Promise
         break;
       case "huggingface_api":
         items = await fetchHuggingFaceModels(source);
+        break;
+      case "lmsys_api":
+        items = await fetchLMSYSArena(source);
         break;
       case "page_diff":
         items = await fetchPageDiff(source.id, source.url);

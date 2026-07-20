@@ -20,7 +20,7 @@ export interface Source {
   tier: "A" | "B" | "C";
   treatment: string;
   cadence_minutes: number;
-  ingestion_type: "rss" | "github_api" | "arxiv_api" | "page_diff" | "huggingface_api" | "hackernews_api" | "manual";
+  ingestion_type: "rss" | "github_api" | "arxiv_api" | "page_diff" | "huggingface_api" | "hackernews_api" | "lmsys_api" | "manual";
   active: boolean;
   last_fetched_at: string | null;
   last_success_at: string | null;
