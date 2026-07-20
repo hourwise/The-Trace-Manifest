@@ -6,6 +6,7 @@ import { fetchRSS } from "./fetchers/rss";
 import { fetchGitHubReleases } from "./fetchers/github";
 import { fetchArxivPapers } from "./fetchers/arxiv";
 import { fetchHackerNews } from "./fetchers/hackernews";
+import { fetchHuggingFaceModels } from "./fetchers/huggingface-models";
 import { fetchPageDiff } from "./fetchers/page-diff";
 import { checkSourceHealth } from "./health";
 import { deduplicateURL, hashURL } from "./dedup";
@@ -442,6 +443,9 @@ async function processSource(env: Env, source: Source, jobType: string): Promise
         break;
       case "hackernews_api":
         items = await fetchHackerNews(source);
+        break;
+      case "huggingface_api":
+        items = await fetchHuggingFaceModels(source);
         break;
       case "page_diff":
         items = await fetchPageDiff(source.id, source.url);
