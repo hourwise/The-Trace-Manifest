@@ -275,6 +275,23 @@ export async function publishStory(
     return { success: false, error: "Publication state changed concurrently; reload and review again." };
   }
 
+  // Record promotion audit
+  try {
+    await env.DB.prepare(`
+      INSERT INTO admin_audit_log (event_id, operator_email, operator_role, action, target_type, target_id, request_id, outcome, detail_code)
+      VALUES (?, ?, 'publisher', 'publish_story_to_homepage', 'cluster', ?, ?, 'succeeded', ?)
+    `).bind(
+      crypto.randomUUID(),
+      input.reviewedBy ?? "Admin",
+      String(input.clusterId),
+      crypto.randomUUID(),
+      `evidence=${cluster.evidence_status}`,
+    ).run();
+  } catch {
+    // Audit failure should not block publication
+    console.error("Failed to record publication audit.");
+  }
+
   // 9. Return the published story
   const story: PublishedStory = {
     id: cluster.id,

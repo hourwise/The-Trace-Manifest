@@ -277,6 +277,9 @@ async function cronRunStart(env: Env, cron: string): Promise<number> {
 }
 
 async function cronRunComplete(env: Env, runId: number, status: string, error?: string, summary?: IngestSummary) {
+  const detail = summary
+    ? `${summary.succeeded} succeeded, ${summary.failed} failed, ${summary.created} items accepted, ${summary.duplicates} duplicates, ${summary.tooOld} too old, ${summary.filtered} filtered, ${summary.malformed} malformed, ${summary.rejected} rejected, ${summary.skipped} unsupported, ${summary.candidatesCreated} candidates created, ${summary.candidatesLinked} linked.`
+    : null;
   await env.DB.prepare(
     `UPDATE cron_runs SET completed_at = datetime('now'), status = ?, error_message = ?,
        items_processed = ?, items_failed = ?, items_rejected = ?, items_skipped = ?, outcome_detail = ? WHERE id = ?`
@@ -287,7 +290,7 @@ async function cronRunComplete(env: Env, runId: number, status: string, error?: 
     summary?.failed ?? 0,
     summary?.rejected ?? 0,
     summary?.skipped ?? 0,
-    summary ? `${summary.succeeded} succeeded, ${summary.failed} failed, ${summary.rejected} items rejected, ${summary.skipped} unsupported.` : null,
+    detail,
     runId,
   ).run();
 }
@@ -295,7 +298,20 @@ async function cronRunComplete(env: Env, runId: number, status: string, error?: 
 // ============================================================
 // Tier-based ingestion
 // ============================================================
-interface IngestSummary { processed: number; created: number; succeeded: number; failed: number; rejected: number; skipped: number }
+const SUPPORTED_CONNECTORS = new Set(["rss", "github_api", "arxiv_api", "hackernews_api", "page_diff"]);
+
+interface IngestSummary {
+  processed: number; created: number; succeeded: number; failed: number; rejected: number; skipped: number;
+  duplicates: number; tooOld: number; filtered: number; malformed: number;
+  candidatesCreated: number; candidatesLinked: number;
+}
+
+interface SourceOutcome {
+  resultStatus: string;
+  processed: number; created: number; rejected: number; skipped: number;
+  duplicates: number; tooOld: number; filtered: number; malformed: number;
+  candidatesCreated: number; candidatesLinked: number;
+}
 
 async function ingestTier(env: Env, _ctx: ExecutionContext, tier: string, jobType: string): Promise<IngestSummary> {
   const { results: sources } = await env.DB.prepare(
@@ -304,14 +320,30 @@ async function ingestTier(env: Env, _ctx: ExecutionContext, tier: string, jobTyp
 
   if (!sources || sources.length === 0) {
     console.log(`No sources to fetch for tier ${tier}`);
-    return { processed: 0, created: 0, succeeded: 0, failed: 0, rejected: 0, skipped: 0 };
+    return { processed: 0, created: 0, succeeded: 0, failed: 0, rejected: 0, skipped: 0, duplicates: 0, tooOld: 0, filtered: 0, malformed: 0, candidatesCreated: 0, candidatesLinked: 0 };
   }
 
-  console.log(`Ingesting ${sources.length} sources for tier ${tier}`);
+  // Separate supported and unsupported sources
+  const supported: Source[] = [];
+  const unsupportedCount = { skipped: 0 };
+  for (const source of sources) {
+    if (SUPPORTED_CONNECTORS.has(source.ingestion_type)) {
+      supported.push(source);
+    } else {
+      // Mark unsupported sources as degraded without running a job
+      await env.DB.prepare(
+        "UPDATE sources SET health_status = 'degraded', last_fetched_at = datetime('now'), last_error_at = datetime('now'), last_error_message = ? WHERE id = ?"
+      ).bind(`Unsupported connector type: ${source.ingestion_type}. Source is scheduled but has no implemented fetcher.`, source.id).run();
+      console.warn(`Skipping source ${source.id} (${source.name}): connector type ${source.ingestion_type} is not implemented`);
+      unsupportedCount.skipped++;
+    }
+  }
 
-  const outcomes: Array<{ resultStatus: string; processed: number; created: number; rejected: number; skipped: number }> = [];
-  for (let index = 0; index < sources.length; index += 4) {
-    outcomes.push(...await Promise.all(sources.slice(index, index + 4).map((source) => processSource(env, source, jobType))));
+  console.log(`Ingesting ${supported.length} supported sources for tier ${tier} (${unsupportedCount.skipped} unsupported skipped)`);
+
+  const outcomes: SourceOutcome[] = [];
+  for (let index = 0; index < supported.length; index += 4) {
+    outcomes.push(...await Promise.all(supported.slice(index, index + 4).map((source) => processSource(env, source, jobType))));
   }
   return {
     processed: outcomes.reduce((sum, item) => sum + item.processed, 0),
@@ -319,16 +351,22 @@ async function ingestTier(env: Env, _ctx: ExecutionContext, tier: string, jobTyp
     succeeded: outcomes.filter((item) => item.resultStatus.startsWith("succeeded")).length,
     failed: outcomes.filter((item) => item.resultStatus === "failed").length,
     rejected: outcomes.reduce((sum, item) => sum + item.rejected, 0),
-    skipped: outcomes.reduce((sum, item) => sum + item.skipped, 0),
+    skipped: outcomes.reduce((sum, item) => sum + item.skipped, 0) + unsupportedCount.skipped,
+    duplicates: outcomes.reduce((sum, item) => sum + item.duplicates, 0),
+    tooOld: outcomes.reduce((sum, item) => sum + item.tooOld, 0),
+    filtered: outcomes.reduce((sum, item) => sum + item.filtered, 0),
+    malformed: outcomes.reduce((sum, item) => sum + item.malformed, 0),
+    candidatesCreated: outcomes.reduce((sum, item) => sum + item.candidatesCreated, 0),
+    candidatesLinked: outcomes.reduce((sum, item) => sum + item.candidatesLinked, 0),
   };
 }
 
-function eligibleFeedItem(item: FetchedFeedItem, rawMetadata: string): boolean {
+function eligibleFeedItem(item: FetchedFeedItem, rawMetadata: string): { ok: boolean; reason?: string } {
   let url: URL;
   try {
     url = new URL(item.url);
   } catch {
-    return false;
+    return { ok: false, reason: "invalid_url_parse" };
   }
   const host = url.hostname.toLowerCase();
   const private172 = host.match(/^172\.(\d{1,3})\./);
@@ -337,22 +375,58 @@ function eligibleFeedItem(item: FetchedFeedItem, rawMetadata: string): boolean {
     && !host.includes(":") && host !== "localhost" && !host.endsWith(".local")
     && !/^(127\.|10\.|169\.254\.|192\.168\.|0\.)/.test(host)
     && !(private172 && Number(private172[1]) >= 16 && Number(private172[1]) <= 31);
-  const publishedAt = item.published_at === null
-    || (typeof item.published_at === "string" && item.published_at.length <= 50 && !Number.isNaN(Date.parse(item.published_at)));
-  return publicUrl
-    && typeof item.title === "string" && item.title.trim().length >= 1 && item.title.length <= 500
-    && (item.external_id === null || (typeof item.external_id === "string" && item.external_id.length <= 500))
-    && (item.summary === null || (typeof item.summary === "string" && item.summary.length <= 4_000))
-    && (item.content_excerpt === null || (typeof item.content_excerpt === "string" && item.content_excerpt.length <= 4_000))
-    && (item.author === null || (typeof item.author === "string" && item.author.length <= 500))
-    && publishedAt && rawMetadata.length <= 32_000;
+  if (!publicUrl) return { ok: false, reason: "non_public_url" };
+  if (typeof item.title !== "string" || item.title.trim().length < 1) return { ok: false, reason: "missing_title" };
+  if (item.title.length > 500) return { ok: false, reason: "title_too_long" };
+  if (item.external_id !== null && (typeof item.external_id !== "string" || item.external_id.length > 500)) return { ok: false, reason: "invalid_external_id" };
+  if (item.summary !== null && (typeof item.summary !== "string" || item.summary.length > 4_000)) return { ok: false, reason: "summary_too_long" };
+  if (item.content_excerpt !== null && (typeof item.content_excerpt !== "string" || item.content_excerpt.length > 4_000)) return { ok: false, reason: "excerpt_too_long" };
+  if (item.author !== null && (typeof item.author !== "string" || item.author.length > 500)) return { ok: false, reason: "author_too_long" };
+  if (item.published_at !== null && (typeof item.published_at !== "string" || item.published_at.length > 50 || Number.isNaN(Date.parse(item.published_at)))) return { ok: false, reason: "invalid_published_date" };
+  if (rawMetadata.length > 32_000) return { ok: false, reason: "metadata_too_large" };
+  return { ok: true };
 }
 
-async function processSource(env: Env, source: Source, jobType: string) {
+// Items older than this are counted as "too old" rather than candidates
+const MAX_ITEM_AGE_DAYS = 30;
+
+function isTooOld(publishedAt: string | null): boolean {
+  if (!publishedAt) return false;
+  try {
+    const pubDate = new Date(publishedAt).getTime();
+    if (Number.isNaN(pubDate)) return false;
+    return (Date.now() - pubDate) > MAX_ITEM_AGE_DAYS * 24 * 60 * 60 * 1000;
+  } catch {
+    return false;
+  }
+}
+
+function isProbablyIrrelevant(title: string, summary: string | null): boolean {
+  const text = `${title} ${summary ?? ""}`.toLowerCase();
+  // Reject items that are clearly not AI/tech news (spam, unrelated topics)
+  const spamPatterns = [
+    /\b(casino|gambling|poker|slots|betting)\b/i,
+    /\b(weight loss|diet pill|miracle cure)\b/i,
+    /\b(earn \$\d+|make money online|get rich quick)\b/i,
+    /\b(viagra|cialis|pharmacy)\b/i,
+    /\b(seo services|buy backlinks|link building)\b/i,
+    /\b(nft drop|token presale|crypto airdrop)\b/i,
+  ];
+  return spamPatterns.some((p) => p.test(text));
+}
+
+async function processSource(env: Env, source: Source, jobType: string): Promise<SourceOutcome> {
   const jobId = await createJob(env, source.id, jobType);
+
+  const outcome: SourceOutcome = {
+    resultStatus: "failed", processed: 0, created: 0, rejected: 0, skipped: 0,
+    duplicates: 0, tooOld: 0, filtered: 0, malformed: 0,
+    candidatesCreated: 0, candidatesLinked: 0,
+  };
 
   try {
     let items: FetchedFeedItem[] = [];
+    const fetchMeta: Record<string, unknown> = { connector: source.ingestion_type };
 
     switch (source.ingestion_type) {
       case "rss":
@@ -371,61 +445,303 @@ async function processSource(env: Env, source: Source, jobType: string) {
         items = await fetchPageDiff(source.id, source.url);
         break;
       default:
-        console.warn(`Skipping source ${source.id}: connector type is not implemented`);
+        // Should be filtered by ingestTier, but guard anyway
+        const unsupportedMsg = `Connector ${source.ingestion_type} is not implemented.`;
         await env.DB.prepare(
           "UPDATE sources SET health_status = 'degraded', last_fetched_at = datetime('now'), last_error_at = datetime('now'), last_error_message = ? WHERE id = ?"
-        ).bind(`Unsupported connector type: ${source.ingestion_type}`, source.id).run();
-        await completeJob(env, jobId, "completed", 0, 0, undefined, "unsupported", 0, 1, `Connector ${source.ingestion_type} is not implemented.`);
-        return { resultStatus: "unsupported", processed: 0, created: 0, rejected: 0, skipped: 1 };
+        ).bind(unsupportedMsg, source.id).run();
+        await completeJob(env, jobId, "completed", 0, 0, undefined, "unsupported", 0, 0, 0, 0, 0, 0, 0, 1, `Connector ${source.ingestion_type} is not implemented.`);
+        outcome.resultStatus = "unsupported";
+        outcome.skipped = 1;
+        return outcome;
     }
 
-    // Deduplicate against existing items
-    let created = 0;
-    let rejected = 0;
+    outcome.processed = items.length;
+    fetchMeta.items_discovered = items.length;
+
+    // Deduplicate against existing items and apply filtering
     for (const item of items) {
-      const rawMetadata = JSON.stringify(item.raw_metadata || {});
-      if (!eligibleFeedItem(item, rawMetadata)) {
-        rejected++;
+      const rawMetadata = JSON.stringify({ ...item.raw_metadata, fetch_meta: fetchMeta });
+      const eligibility = eligibleFeedItem(item, rawMetadata);
+      if (!eligibility.ok) {
+        outcome.malformed++;
         continue;
       }
+
+      // Age check — count separately, don't just skip
+      if (isTooOld(item.published_at)) {
+        outcome.tooOld++;
+        continue;
+      }
+
+      // Content relevance check
+      if (isProbablyIrrelevant(item.title, item.summary)) {
+        outcome.filtered++;
+        continue;
+      }
+
       const urlHash = await hashURL(item.url);
       const isDup = await deduplicateURL(env.DB, urlHash);
 
-      if (!isDup) {
-        await env.DB.prepare(
-          `INSERT INTO feed_items (source_id, external_id, url, url_hash, title, summary, content_excerpt, author, published_at, fetched_at, raw_metadata, ingestion_status)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, 'raw')`
-        ).bind(
-          source.id, item.external_id, item.url, urlHash, item.title,
-          item.summary, item.content_excerpt, item.author,
-          item.published_at, rawMetadata
-        ).run();
-        created++;
+      if (isDup) {
+        outcome.duplicates++;
+        // Try to link to existing candidate
+        const linked = await linkItemToExistingCandidate(env, urlHash);
+        if (linked) outcome.candidatesLinked++;
+        continue;
       }
+
+      // Persist the new item
+      await env.DB.prepare(
+        `INSERT INTO feed_items (source_id, external_id, url, url_hash, title, summary, content_excerpt, author, published_at, fetched_at, raw_metadata, ingestion_status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, 'raw')`
+      ).bind(
+        source.id, item.external_id, item.url, urlHash, item.title,
+        item.summary, item.content_excerpt, item.author,
+        item.published_at, rawMetadata
+      ).run();
+      outcome.created++;
+
+      // Create or link story candidate from accepted item
+      const candidateResult = await createCandidateFromItem(env, {
+        url: item.url,
+        urlHash,
+        title: item.title,
+        summary: item.summary,
+        publishedAt: item.published_at,
+        sourceId: source.id,
+        sourceName: source.name,
+      });
+      if (candidateResult === "created") outcome.candidatesCreated++;
+      else if (candidateResult === "linked") outcome.candidatesLinked++;
     }
 
-    // Update source health
+    // Update source health — success
     await env.DB.prepare(
       "UPDATE sources SET last_fetched_at = datetime('now'), last_success_at = datetime('now'), last_error_at = NULL, last_error_message = NULL, consecutive_failures = 0, health_status = 'healthy' WHERE id = ?"
     ).bind(source.id).run();
 
-    const resultStatus = rejected > 0 ? "succeeded_with_rejections" : "succeeded";
+    const resultStatus = outcome.created === 0 && outcome.processed > 0
+      ? (outcome.duplicates > 0 ? "succeeded_duplicates_only" : "succeeded_zero_accepted")
+      : outcome.rejected > 0 || outcome.malformed > 0 || outcome.tooOld > 0 || outcome.filtered > 0
+        ? "succeeded_with_rejections"
+        : "succeeded";
+
+    const detail = buildOutcomeDetail(outcome, items.length);
+
     await completeJob(
-      env, jobId, "completed", items.length, created, undefined, resultStatus, rejected, 0,
-      rejected ? `${rejected} malformed or ineligible fetched items were rejected.` : undefined,
+      env, jobId, "completed", items.length, outcome.created, undefined, resultStatus,
+      outcome.malformed, outcome.duplicates, outcome.tooOld, outcome.filtered,
+      outcome.candidatesCreated, outcome.candidatesLinked,
+      0, detail,
     );
-    console.log(`Source ${source.name}: ${created}/${items.length} new items; ${rejected} rejected`);
-    return { resultStatus, processed: items.length, created, rejected, skipped: 0 };
+    outcome.resultStatus = resultStatus;
+    console.log(`Source ${source.name}: ${outcome.created} new, ${outcome.duplicates} dup, ${outcome.malformed} malformed, ${outcome.tooOld} old, ${outcome.filtered} filtered, ${outcome.candidatesCreated} candidates`);
+    return outcome;
   } catch (error: any) {
-    const safeError = redactError(error);
-    console.error(JSON.stringify({ message: "Source processing failed", sourceId: source.id, error: safeError }));
+    const errorDetail = captureFetchError(error, source);
+    console.error(JSON.stringify({
+      message: "Source processing failed",
+      sourceId: source.id,
+      sourceName: source.name,
+      connector: source.ingestion_type,
+      error: errorDetail,
+    }));
 
     await env.DB.prepare(
       "UPDATE sources SET last_fetched_at = datetime('now'), last_error_at = datetime('now'), last_error_message = ?, consecutive_failures = consecutive_failures + 1, health_status = CASE WHEN consecutive_failures + 1 >= 3 THEN 'failing' ELSE 'degraded' END WHERE id = ?"
-    ).bind(safeError, source.id).run();
+    ).bind(JSON.stringify(errorDetail), source.id).run();
 
-    await completeJob(env, jobId, "failed", 0, 0, "Source processing failed.", "failed", 0, 0, "See source health for the redacted failure detail.");
-    return { resultStatus: "failed", processed: 0, created: 0, rejected: 0, skipped: 0 };
+    await completeJob(
+      env, jobId, "failed", 0, 0, undefined, "failed",
+      0, 0, 0, 0, 0, 0, 0,
+      `${errorDetail.stage ?? "fetch"}: ${errorDetail.message ?? "Unknown error"}`,
+    );
+    outcome.resultStatus = "failed";
+    return outcome;
+  }
+}
+
+/**
+ * Capture structured error detail from a fetch/parse failure.
+ */
+function captureFetchError(error: unknown, source: Source): Record<string, unknown> {
+  const message = error instanceof Error ? error.message : "Unknown processing error";
+  const detail: Record<string, unknown> = {
+    sourceId: source.id,
+    sourceName: source.name,
+    connector: source.ingestion_type,
+    message: message.slice(0, 500),
+    retryable: true,
+  };
+
+  // Parse HTTP status from error message
+  const httpMatch = message.match(/HTTP\s+(\d{3})/i);
+  if (httpMatch) {
+    detail.httpStatus = parseInt(httpMatch[1]);
+    detail.retryable = ![400, 401, 403, 404, 410].includes(detail.httpStatus as number);
+  }
+
+  // Detect timeout
+  if (/timeout|timed out/i.test(message)) {
+    detail.stage = "fetch";
+    detail.timeout = true;
+    detail.retryable = true;
+  }
+
+  // Detect redirect issues
+  if (/redirect/i.test(message)) {
+    detail.stage = "redirect";
+    detail.retryable = false;
+  }
+
+  // Detect content type issues
+  if (/content.type/i.test(message)) {
+    detail.stage = "content_type_validation";
+    detail.retryable = false;
+  }
+
+  // Detect parsing errors
+  if (/parse|xml|malformed|syntax/i.test(message)) {
+    detail.stage = detail.stage ?? "parse";
+  }
+
+  // Detect rate limiting
+  if (/rate.limit|429|too many requests/i.test(message)) {
+    detail.httpStatus = 429;
+    detail.stage = "fetch";
+    detail.rateLimited = true;
+    detail.retryable = true;
+  }
+
+  // Detect size issues
+  if (/exceeds.*limit|too large/i.test(message)) {
+    detail.stage = "response_size";
+    detail.retryable = false;
+  }
+
+  if (!detail.stage) detail.stage = "fetch";
+
+  // Sanitise: never store secrets
+  const safe = redactError(error);
+  detail.sanitisedMessage = safe;
+
+  return detail;
+}
+
+function buildOutcomeDetail(outcome: SourceOutcome, discovered: number): string {
+  const parts: string[] = [];
+  if (outcome.created > 0) parts.push(`${outcome.created} accepted`);
+  if (outcome.duplicates > 0) parts.push(`${outcome.duplicates} duplicates`);
+  if (outcome.tooOld > 0) parts.push(`${outcome.tooOld} too old`);
+  if (outcome.filtered > 0) parts.push(`${outcome.filtered} filtered irrelevant`);
+  if (outcome.malformed > 0) parts.push(`${outcome.malformed} malformed`);
+  if (outcome.candidatesCreated > 0) parts.push(`${outcome.candidatesCreated} candidates created`);
+  if (outcome.candidatesLinked > 0) parts.push(`${outcome.candidatesLinked} linked to existing`);
+  if (parts.length === 0) parts.push(`${discovered} discovered, 0 accepted`);
+  return parts.join("; ");
+}
+
+/**
+ * Try to link a duplicate URL to an existing story candidate.
+ */
+async function linkItemToExistingCandidate(env: Env, urlHash: string): Promise<boolean> {
+  try {
+    const existing = await env.DB.prepare(
+      "SELECT id, ingestion_status FROM feed_items WHERE url_hash = ? LIMIT 1"
+    ).bind(urlHash).first<{ id: number; ingestion_status: string }>();
+    if (!existing) return false;
+
+    // Check if already linked to a candidate
+    const linked = await env.DB.prepare(
+      "SELECT 1 FROM story_cluster_members WHERE feed_item_id = ? LIMIT 1"
+    ).bind(existing.id).first();
+    return !!linked;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Create a story candidate from an accepted feed item, or link to an existing one.
+ */
+async function createCandidateFromItem(
+  env: Env,
+  item: { url: string; urlHash: string; title: string; summary: string | null; publishedAt: string | null; sourceId: number; sourceName: string },
+): Promise<"created" | "linked" | "none"> {
+  try {
+    // Check if this URL is already in a cluster
+    const existingItem = await env.DB.prepare(
+      `SELECT fi.id FROM feed_items fi
+       JOIN story_cluster_members scm ON fi.id = scm.feed_item_id
+       WHERE fi.url_hash = ? LIMIT 1`
+    ).bind(item.urlHash).first<{ id: number }>();
+
+    if (existingItem) return "linked";
+
+    // Check for an existing open candidate with a similar title
+    const similarCandidate = await findSimilarOpenCandidate(env, item.title, item.url);
+
+    if (similarCandidate) {
+      // Link to existing candidate
+      await env.DB.prepare(
+        "UPDATE editorial_candidates SET updated_at = datetime('now') WHERE id = ?"
+      ).bind(similarCandidate).run();
+      return "linked";
+    }
+
+    // Create a new editorial candidate for this item
+    const candidateId = crypto.randomUUID();
+    await env.DB.prepare(`
+      INSERT INTO editorial_candidates
+        (id, intake_type, submitted_url, lead_text, source_hash, state, section_slug, urgency, development_status, created_by)
+      VALUES (?, 'manual_url', ?, ?, ?, 'new', 'ai-agents', 'normal', 'developing', 'auto-ingestion')
+    `).bind(
+      candidateId,
+      item.url,
+      item.summary ?? item.title,
+      item.urlHash,
+    ).run();
+
+    return "created";
+  } catch {
+    return "none";
+  }
+}
+
+/**
+ * Find an existing open editorial candidate with a similar title or URL.
+ */
+async function findSimilarOpenCandidate(env: Env, title: string, url: string): Promise<string | null> {
+  try {
+    // Check by URL first
+    const urlHash = await hashURL(url);
+    const byUrl = await env.DB.prepare(
+      "SELECT id FROM editorial_candidates WHERE source_hash = ? AND state NOT IN ('published','archived','rejected') LIMIT 1"
+    ).bind(urlHash).first<{ id: string }>();
+    if (byUrl) return byUrl.id;
+
+    // Check by title keyword similarity — simple shared-word heuristic
+    const titleWords = new Set(
+      title.toLowerCase().replace(/[^\w\s]/g, "").split(/\s+/).filter((w) => w.length > 3)
+    );
+    if (titleWords.size < 3) return null;
+
+    const recent = await env.DB.prepare(
+      "SELECT id, lead_text FROM editorial_candidates WHERE state NOT IN ('published','archived','rejected') AND created_at >= datetime('now', '-3 days') LIMIT 30"
+    ).all<{ id: string; lead_text: string | null }>();
+    if (!recent.results) return null;
+
+    for (const row of recent.results) {
+      const candidateWords = new Set(
+        (row.lead_text ?? "").toLowerCase().replace(/[^\w\s]/g, "").split(/\s+/).filter((w) => w.length > 3)
+      );
+      const intersection = [...titleWords].filter((w) => candidateWords.has(w));
+      if (intersection.length >= 3) return row.id;
+    }
+    return null;
+  } catch {
+    return null;
   }
 }
 
@@ -448,14 +764,33 @@ async function completeJob(
   error?: string,
   resultStatus = status === "failed" ? "failed" : "succeeded",
   rejected = 0,
+  duplicates = 0,
+  tooOld = 0,
+  filtered = 0,
+  candidatesCreated = 0,
+  candidatesLinked = 0,
   skipped = 0,
   detail?: string,
 ) {
+  // Store all nuanced counters in outcome_detail since the table schema
+  // only has items_processed, items_created, items_rejected, items_skipped.
+  const fullDetail = detail || [
+    created > 0 ? `${created} accepted` : null,
+    duplicates > 0 ? `${duplicates} duplicates` : null,
+    tooOld > 0 ? `${tooOld} too old` : null,
+    filtered > 0 ? `${filtered} filtered` : null,
+    rejected > 0 ? `${rejected} malformed` : null,
+    candidatesCreated > 0 ? `${candidatesCreated} candidates created` : null,
+    candidatesLinked > 0 ? `${candidatesLinked} linked` : null,
+    skipped > 0 ? `${skipped} unsupported` : null,
+    created === 0 && duplicates === 0 ? "0 accepted" : null,
+  ].filter(Boolean).join("; ");
+
   await env.DB.prepare(
     `UPDATE ingestion_jobs SET status = ?, items_processed = ?, items_created = ?, error_message = ?,
        result_status = ?, items_rejected = ?, items_skipped = ?, outcome_detail = ?, completed_at = datetime('now')
      WHERE id = ?`
-  ).bind(status, processed, created, error || null, resultStatus, rejected, skipped, detail || null, jobId).run();
+  ).bind(status, processed, created, error || null, resultStatus, rejected, skipped, fullDetail || null, jobId).run();
 }
 
 function redactError(error: unknown): string {

@@ -50,50 +50,165 @@ if (Astro.request.method === "POST") {
       if (!candidateId) throw new Error("Invalid candidate ID.");
       const candidate = await db.prepare("SELECT * FROM editorial_candidates WHERE id=? AND state IN ('needs_review','published')").bind(candidateId).first<CandidateRow>();
       if (!candidate) throw new Error("Candidate must be in 'needs_review' or 'published' state to promote.");
+
+      // Generate headline and summary
       const headline = candidate.lead_text?.slice(0, 150) ?? candidate.submitted_url ?? "Untitled";
       const summary = (candidate.lead_text ?? "").slice(0, 500);
+
+      // Determine evidence status — manual submissions default to vendor_reported or unverified
+      const evidenceStatus = candidate.intake_type === "lead" ? "unverified"
+        : candidate.intake_type === "social_url" ? "community_reported"
+        : "vendor_reported";
+
       const result = await db.prepare(`
         INSERT INTO story_clusters (title, canonical_url, topic, evidence_status, publication_status, needs_human_review, summary, why_it_matters, created_at, updated_at)
-        VALUES (?, ?, ?, 'vendor_reported', 'review', 1, ?, ?, datetime('now'), datetime('now'))
-      `).bind(headline, candidate.submitted_url, candidate.topic_slug ?? "general", summary, summary.slice(0, 300)).run();
+        VALUES (?, ?, ?, ?, 'review', 1, ?, ?, datetime('now'), datetime('now'))
+      `).bind(headline, candidate.submitted_url, candidate.topic_slug ?? candidate.section_slug ?? "general", evidenceStatus, summary, summary.slice(0, 300)).run();
       const clusterId = result.meta?.last_row_id;
 
-      // Create a synthetic feed_item so the story has a source for publication
-      if (clusterId && candidate.submitted_url) {
-        const urlHash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(candidate.submitted_url))), (b) => b.toString(16).padStart(2,"0")).join("");
-        const feedResult = await db.prepare(`
-          INSERT OR IGNORE INTO feed_items (url, url_hash, title, summary, content_excerpt, source_id, ingestion_status, fetched_at, published_at)
-          VALUES (?, ?, ?, ?, ?, ?, 'raw', datetime('now'), datetime('now'))
-        `).bind(candidate.submitted_url, urlHash, headline, summary, summary.slice(0, 1000), 1).run();
-        const feedItemId = feedResult.meta?.last_row_id;
-        if (feedItemId) {
-          await db.prepare(`
-            INSERT OR IGNORE INTO story_cluster_members (cluster_id, feed_item_id, is_primary)
-            VALUES (?, ?, 1)
-          `).bind(clusterId, feedItemId).run();
+      if (clusterId) {
+        // Create a linked feed_item entry for the candidate's URL
+        if (candidate.submitted_url) {
+          const urlHash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(candidate.submitted_url))), (b) => b.toString(16).padStart(2,"0")).join("");
+          const feedResult = await db.prepare(`
+            INSERT OR IGNORE INTO feed_items (url, url_hash, title, summary, content_excerpt, source_id, ingestion_status, fetched_at, published_at)
+            VALUES (?, ?, ?, ?, ?, ?, 'raw', datetime('now'), datetime('now'))
+          `).bind(candidate.submitted_url, urlHash, headline, summary, summary.slice(0, 1000), 1).run();
+          const feedItemId = feedResult.meta?.last_row_id;
+          if (feedItemId) {
+            await db.prepare(`
+              INSERT OR IGNORE INTO story_cluster_members (cluster_id, feed_item_id, is_primary)
+              VALUES (?, ?, 1)
+            `).bind(clusterId, feedItemId).run();
+          }
         }
+
+        // Record promotion audit
+        await db.prepare(`
+          INSERT INTO admin_audit_log (event_id, operator_email, operator_role, action, target_type, target_id, request_id, outcome)
+          VALUES (?, 'Admin', 'publisher', 'promote_candidate_to_cluster', 'candidate', ?, ?, 'succeeded')
+        `).bind(crypto.randomUUID(), candidateId, crypto.randomUUID()).run();
       }
+
       await db.prepare("UPDATE editorial_candidates SET state='published', updated_at=datetime('now') WHERE id=?").bind(candidateId).run();
-      actionMessage = `Candidate promoted to story cluster.`;
+      actionMessage = `Candidate promoted to story cluster #${clusterId} (evidence: ${evidenceStatus}). It needs editorial review before homepage placement.`;
     } catch (e: any) { actionError = e.message || "Promotion failed."; }
   } else {
     try {
       const intakeType = (formData.get("intakeType") as string) ?? "manual_url";
-      const url = (formData.get("url") as string)?.trim() || null;
+      const rawUrl = (formData.get("url") as string)?.trim() || null;
       const lead = (formData.get("lead") as string)?.trim() || "";
       const section = (formData.get("section") as string)?.trim() || null;
       const urgency = (formData.get("urgency") as string) ?? "normal";
       const sourceLanguage = (formData.get("sourceLanguage") as string)?.trim() || null;
-      if (!lead || lead.length < 10) throw new Error("Lead text must be at least 10 characters.");
-      const sourceHash = url
-        ? Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(url))), (b) => b.toString(16).padStart(2,"0")).join("")
-        : Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(lead))), (b) => b.toString(16).padStart(2,"0")).join("");
-      const candidateId = crypto.randomUUID();
-      await db.prepare(`
-        INSERT INTO editorial_candidates (id, intake_type, submitted_url, lead_text, source_hash, state, section_slug, urgency, source_language, created_by)
-        VALUES (?, ?, ?, ?, ?, 'new', ?, ?, ?, 'Admin')
-      `).bind(candidateId, intakeType, url, lead, sourceHash, section, urgency, sourceLanguage).run();
-      actionMessage = "Candidate recorded.";
+
+      // Normalize and validate URL
+      let url: string | null = null;
+      if (rawUrl) {
+        try {
+          const parsed = new URL(rawUrl);
+          if (!["https:", "http:"].includes(parsed.protocol) || parsed.username || parsed.password) {
+            throw new Error("URL must be a public HTTP/HTTPS address with no credentials.");
+          }
+          // Normalize: remove tracking params, trailing slash consistency
+          const trackingParams = ["utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "ref", "source", "fbclid", "gclid"];
+          for (const param of trackingParams) {
+            parsed.searchParams.delete(param);
+          }
+          let normalized = parsed.toString();
+          if (normalized.endsWith("/") && !parsed.pathname.endsWith("/")) {
+            normalized = normalized.slice(0, -1);
+          }
+          url = normalized;
+        } catch (e: any) {
+          throw new Error(e.message || "URL is not valid.");
+        }
+      }
+
+      // Minimum lead text for article/social URLs
+      if (intakeType !== "lead" && !lead) {
+        // Don't require lead text for URL submissions — auto-generate a placeholder
+      }
+      if (intakeType === "lead" && (!lead || lead.length < 10)) {
+        throw new Error("Lead text must be at least 10 characters.");
+      }
+
+      // Check for duplicate URL
+      if (url) {
+        const urlHash = Array.from(
+          new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(url))),
+          (b) => b.toString(16).padStart(2, "0")
+        ).join("");
+
+        // Check feed_items for already-ingested URL
+        const existingItem = await db.prepare(
+          "SELECT id FROM feed_items WHERE url_hash = ? LIMIT 1"
+        ).bind(urlHash).first<{ id: number }>();
+        if (existingItem) {
+          // URL is already in the system — check cluster membership
+          const clusterMember = await db.prepare(
+            "SELECT cluster_id FROM story_cluster_members WHERE feed_item_id = ? LIMIT 1"
+          ).bind(existingItem.id).first<{ cluster_id: number }>();
+          if (clusterMember) {
+            throw new Error(`This URL is already part of story cluster #${clusterMember.cluster_id}. View it in the review queue.`);
+          }
+          actionMessage = `URL is already ingested (feed item #${existingItem.id}). A candidate can still be created.`;
+        }
+
+        // Check editorial_candidates for existing submission
+        const existingCandidate = await db.prepare(
+          "SELECT id, state FROM editorial_candidates WHERE source_hash = ? AND state NOT IN ('published','archived','rejected') LIMIT 1"
+        ).bind(urlHash).first<{ id: string; state: string }>();
+        if (existingCandidate) {
+          throw new Error(`This URL is already an open candidate (${existingCandidate.state}). <a href="/admin/desk">View it in the queue</a>.`);
+        }
+
+        // Search for similar open candidates
+        const titleWords = lead ? new Set(
+          lead.toLowerCase().replace(/[^\w\s]/g, "").split(/\s+/).filter((w: string) => w.length > 3)
+        ) : new Set<string>();
+        let matchedCandidate: string | null = null;
+        if (titleWords.size >= 3) {
+          const recentCandidates = await db.prepare(
+            "SELECT id, lead_text FROM editorial_candidates WHERE state NOT IN ('published','archived','rejected') AND created_at >= datetime('now', '-3 days') LIMIT 20"
+          ).all<{ id: string; lead_text: string | null }>();
+          for (const row of (recentCandidates.results ?? [])) {
+            const candWords = new Set(
+              (row.lead_text ?? "").toLowerCase().replace(/[^\w\s]/g, "").split(/\s+/).filter((w: string) => w.length > 3)
+            );
+            const intersection = [...titleWords].filter((w: string) => candWords.has(w));
+            if (intersection.length >= 3) {
+              matchedCandidate = row.id;
+              break;
+            }
+          }
+        }
+
+        const sourceHash = urlHash;
+        const candidateId = crypto.randomUUID();
+        await db.prepare(`
+          INSERT INTO editorial_candidates (id, intake_type, submitted_url, lead_text, source_hash, state, section_slug, urgency, source_language, created_by)
+          VALUES (?, ?, ?, ?, ?, 'new', ?, ?, ?, 'Admin')
+        `).bind(candidateId, intakeType, url, lead || url, sourceHash, section, urgency, sourceLanguage).run();
+
+        if (matchedCandidate) {
+          actionMessage = `Candidate recorded and linked to existing candidate #${matchedCandidate.slice(0, 8)}.`;
+        } else {
+          actionMessage = `Candidate recorded. URL normalized from "${rawUrl}" to final form.`;
+        }
+      } else {
+        // No URL — lead-only submission
+        const sourceHash = Array.from(
+          new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(lead))),
+          (b) => b.toString(16).padStart(2, "0")
+        ).join("");
+        const candidateId = crypto.randomUUID();
+        await db.prepare(`
+          INSERT INTO editorial_candidates (id, intake_type, submitted_url, lead_text, source_hash, state, section_slug, urgency, source_language, created_by)
+          VALUES (?, ?, ?, ?, ?, 'new', ?, ?, ?, 'Admin')
+        `).bind(candidateId, intakeType, null, lead, sourceHash, section, urgency, sourceLanguage).run();
+        actionMessage = "Editorial lead recorded.";
+      }
     } catch (e: any) { actionError = e.message || "Submission failed."; }
   }
 }

@@ -5,26 +5,26 @@
 INSERT OR IGNORE INTO sources (name, url, feed_url, section, tier, treatment, cadence_minutes, ingestion_type)
 VALUES
   ('OpenAI News', 'https://openai.com/news/', 'https://openai.com/news/rss.xml', 'A', 'A', 'vendor-reported', 60, 'rss'),
-  ('OpenAI API Changelog', 'https://platform.openai.com/docs/changelog', NULL, 'A', 'A', 'primary-technical', 180, 'page_diff'),
-  ('OpenAI Model Documentation', 'https://platform.openai.com/docs/models', NULL, 'A', 'A', 'primary-technical', 1440, 'page_diff'),
+  ('OpenAI API Changelog', 'https://platform.openai.com/docs/changelog', NULL, 'A', 'A', 'primary-technical', 360, 'manual'),
+  ('OpenAI Model Documentation', 'https://platform.openai.com/docs/models', NULL, 'A', 'A', 'primary-technical', 1440, 'manual'),
   ('Anthropic Newsroom', 'https://www.anthropic.com/news', NULL, 'A', 'A', 'vendor-reported', 60, 'page_diff'),
   ('Anthropic Research', 'https://www.anthropic.com/research', NULL, 'A', 'A', 'primary-research', 360, 'page_diff'),
-  ('Anthropic API Release Notes', 'https://docs.anthropic.com/en/release-notes', NULL, 'A', 'A', 'primary-technical', 180, 'page_diff'),
+  ('Anthropic API Release Notes', 'https://docs.anthropic.com/en/release-notes', NULL, 'A', 'A', 'primary-technical', 360, 'manual'),
   ('Google DeepMind Blog', 'https://deepmind.google/discover/blog/', 'https://deepmind.google/blog/rss.xml', 'A', 'A', 'primary-vendor', 120, 'rss'),
   ('Google Research Blog', 'https://research.google/blog/', 'https://research.google/blog/rss/', 'A', 'A', 'primary-research', 360, 'rss'),
-  ('Google Developers AI', 'https://developers.googleblog.com/en/search/label/ai/', NULL, 'A', 'A', 'primary-technical', 120, 'page_diff'),
-  ('Google Cloud AI Blog', 'https://cloud.google.com/blog/products/ai-machine-learning', NULL, 'A', 'A', 'primary-vendor', 180, 'page_diff'),
-  ('Meta AI Blog', 'https://ai.meta.com/blog/', NULL, 'A', 'A', 'vendor-reported', 120, 'page_diff'),
-  ('Meta AI Research', 'https://ai.meta.com/research/', NULL, 'A', 'A', 'primary-research', 360, 'page_diff'),
+  ('Google Developers AI', 'https://developers.googleblog.com/en/search/label/ai/', 'https://developers.googleblog.com/feeds/posts/default/-/ai/', 'A', 'A', 'primary-technical', 180, 'rss'),
+  ('Google Cloud AI Blog', 'https://cloud.google.com/blog/products/ai-machine-learning', 'https://cloud.google.com/blog/products/ai-machine-learning/rss', 'A', 'A', 'primary-vendor', 360, 'rss'),
+  ('Meta AI Blog', 'https://ai.meta.com/blog/', NULL, 'A', 'A', 'vendor-reported', 360, 'manual'),
+  ('Meta AI Research', 'https://ai.meta.com/research/', NULL, 'A', 'A', 'primary-research', 720, 'manual'),
   ('Microsoft AI Blog', 'https://news.microsoft.com/source/topics/ai/', 'https://news.microsoft.com/source/topics/ai/feed/', 'A', 'A', 'vendor-reported', 180, 'rss'),
-  ('Mistral News', 'https://mistral.ai/news/', NULL, 'A', 'A', 'vendor-reported', 90, 'page_diff'),
-  ('Cohere Blog', 'https://cohere.com/blog', NULL, 'A', 'A', 'vendor-reported', 180, 'page_diff'),
+  ('Mistral News', 'https://mistral.ai/news/', 'https://mistral.ai/news/rss/', 'A', 'A', 'vendor-reported', 90, 'rss'),
+  ('Cohere Blog', 'https://cohere.com/blog', 'https://cohere.com/blog/feed/', 'A', 'A', 'vendor-reported', 180, 'rss'),
   ('NVIDIA Technical Blog — GenAI', 'https://developer.nvidia.com/blog/category/generative-ai/', 'https://developer.nvidia.com/blog/category/generative-ai/feed/', 'A', 'A', 'primary-vendor', 180, 'rss'),
-  ('Hugging Face Blog', 'https://huggingface.co/blog', NULL, 'A', 'A', 'mixed-primary', 120, 'rss'),
+  ('Hugging Face Blog', 'https://huggingface.co/blog', 'https://huggingface.co/blog/feed.xml', 'A', 'A', 'mixed-primary', 120, 'rss'),
   ('AWS Machine Learning Blog', 'https://aws.amazon.com/blogs/machine-learning/', 'https://aws.amazon.com/blogs/machine-learning/feed/', 'A', 'A', 'primary-vendor', 180, 'rss'),
-  ('Stability AI News', 'https://stability.ai/news', NULL, 'A', 'A', 'vendor-reported', 180, 'page_diff'),
+  ('Stability AI News', 'https://stability.ai/news', NULL, 'A', 'A', 'vendor-reported', 360, 'manual'),
   ('Apple ML Research', 'https://machinelearning.apple.com/', 'https://machinelearning.apple.com/rss.xml', 'A', 'A', 'primary-research', 720, 'rss'),
-  ('IBM Research AI', 'https://research.ibm.com/artificial-intelligence', NULL, 'A', 'A', 'primary-research', 720, 'page_diff'),
+  ('IBM Research AI', 'https://research.ibm.com/artificial-intelligence', NULL, 'A', 'A', 'primary-research', 1440, 'manual'),
   ('Databricks Release Notes', 'https://docs.databricks.com/aws/en/release-notes', 'https://docs.databricks.com/aws/en/feed.xml', 'A', 'A', 'primary-technical', 360, 'rss');
 
 -- Section C: Research (Tier B)
@@ -69,16 +69,16 @@ VALUES
   ('NVIDIA Deep Learning Blog', 'https://blogs.nvidia.com/blog/category/enterprise/deep-learning/', 'https://blogs.nvidia.com/blog/category/deep-learning/feed/', 'A', 'A', 'vendor-reported', 180, 'rss'),
   ('AWS AI/ML What''s New', 'https://aws.amazon.com/new/?whats-new-content-all.sort-by=item.additionalFields.postDateTime&whats-new-content-all.sort-order=desc&awsf.whats-new-ml=*all', NULL, 'A', 'A', 'primary-technical', 180, 'manual'),
   ('Hugging Face Trending Models', 'https://huggingface.co/models?sort=trending', NULL, 'A', 'A', 'discovery', 120, 'manual'),
-  ('xAI Blog', 'https://x.ai/blog', NULL, 'A', 'A', 'vendor-reported', 180, 'page_diff'),
+  ('xAI Blog', 'https://x.ai/blog', NULL, 'A', 'A', 'vendor-reported', 360, 'manual'),
   ('Together AI Blog', 'https://www.together.ai/blog', 'https://www.together.ai/blog/rss.xml', 'A', 'A', 'vendor-reported', 180, 'rss'),
-  ('Groq Blog', 'https://groq.com/blog/', NULL, 'A', 'A', 'vendor-reported', 180, 'page_diff');
+  ('Groq Blog', 'https://groq.com/blog/', NULL, 'A', 'A', 'vendor-reported', 360, 'manual');
 
 -- Section B: Chinese and open-weight ecosystems (Tier A/B)
 INSERT OR IGNORE INTO sources (name, url, section, tier, treatment, cadence_minutes, ingestion_type)
 VALUES
   ('GitHub — DeepSeek V3', 'https://github.com/deepseek-ai/DeepSeek-V3', 'B', 'A', 'primary-technical', 180, 'github_api'),
   ('GitHub — Qwen Code', 'https://github.com/QwenLM/qwen-code', 'B', 'A', 'primary-technical', 180, 'github_api'),
-  ('AI21 Labs Blog', 'https://www.ai21.com/blog', 'B', 'B', 'vendor-reported', 360, 'page_diff');
+  ('AI21 Labs Blog', 'https://www.ai21.com/blog', NULL, 'B', 'B', 'vendor-reported', 720, 'manual');
 
 -- Section C additions: Research and benchmark sources (Tier B)
 INSERT OR IGNORE INTO sources (name, url, section, tier, treatment, cadence_minutes, ingestion_type)
