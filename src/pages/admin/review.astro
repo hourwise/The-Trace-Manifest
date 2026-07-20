@@ -404,17 +404,22 @@ try {
             isNewsworthy: boolean;
             headline: string;
             summary: string;
+            editorialAnalysis?: string;
             whyItMatters: string;
             keyFacts: string[];
+            proposedConfidence?: string;
+            caveats?: string[];
             requestId: string;
           } = await res.json();
 
           // Populate form fields
           const headlineEl = $<HTMLInputElement>("pub-headline");
           const summaryEl = $<HTMLTextAreaElement>("pub-summary");
+          const analysisEl = $<HTMLTextAreaElement>("pub-analysis");
           const whyEl = $<HTMLInputElement>("pub-why");
           if (headlineEl && analysis.headline) headlineEl.value = analysis.headline;
           if (summaryEl && analysis.summary) { summaryEl.value = analysis.summary; checkPublishReady(); }
+          if (analysisEl && analysis.editorialAnalysis) analysisEl.value = analysis.editorialAnalysis;
           if (whyEl && analysis.whyItMatters) whyEl.value = analysis.whyItMatters;
 
           // Show result
