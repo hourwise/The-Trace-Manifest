@@ -498,10 +498,18 @@ try {
         if (resultDiv) { resultDiv.style.display = "block"; resultDiv.innerHTML = '<p class="meta">Asking TRACE AI to analyze these sources…</p>'; }
         status("AI analyzing…", false);
 
+        // Send at most 30 sources (API cap), prioritizing primary + Tier A
+        const MAX_AI_SOURCES = 30;
+        let aiSources = currentSources;
+        if (aiSources.length > MAX_AI_SOURCES) {
+          aiSources = aiSources.slice(0, MAX_AI_SOURCES);
+          status(`AI analyzing ${MAX_AI_SOURCES} of ${currentSources.length} sources…`, false);
+        }
+
         try {
           const res = await adminFetch("/api/admin/ai-triage", {
             method: "POST",
-            body: JSON.stringify({ sources: currentSources }),
+            body: JSON.stringify({ sources: aiSources }),
           });
 
           if (!res.ok) {

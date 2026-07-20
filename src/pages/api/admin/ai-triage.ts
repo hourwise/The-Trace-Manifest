@@ -10,7 +10,7 @@ import {
 export const prerender = false;
 
 const MAX_BODY_BYTES = 64 * 1024;
-const MAX_SOURCES = 10;
+const MAX_SOURCES = 30;
 const MAX_TITLE_LENGTH = 300;
 const MAX_EXCERPT_LENGTH = 4_000;
 
