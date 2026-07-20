@@ -64,6 +64,98 @@ try {
       vendor claims conflict with independent findings, or story confidence is below threshold.
     </p>
 
+    <!-- Publish a story — primary action, placed first for quick access -->
+    <section style="margin-bottom:2.5rem;">
+      <h2>Publish a Story</h2>
+      <p class="meta" style="margin-bottom:1rem;">
+        Select a draft cluster, write the editorial summary, and publish. Published stories appear on the public <a href="/feed">feed</a> and <a href="/">homepage</a>.
+      </p>
+
+      <!-- Cluster selector with filters -->
+      <div class="card" style="margin-bottom:1.5rem;background:var(--surface-2);">
+        <div style="display:flex;gap:0.5rem;align-items:flex-end;flex-wrap:wrap;">
+          <div style="flex:1;min-width:200px;">
+            <label for="cluster-select" style="font-size:0.85rem;font-weight:600;display:block;margin-bottom:0.35rem;">Story Cluster</label>
+            <select id="cluster-select" style="width:100%;" disabled>
+              <option value="">— Click Load to view reviewed data —</option>
+            </select>
+          </div>
+          <button type="button" id="load-clusters-btn" class="btn btn-secondary" style="font-size:0.8rem;">Load Clusters</button>
+        </div>
+        <!-- Filter row -->
+        <div style="display:flex;gap:0.6rem;align-items:center;flex-wrap:wrap;margin-top:0.6rem;font-size:0.75rem;">
+          <label style="display:flex;align-items:center;gap:0.25rem;">Topic
+            <select id="filter-topic" style="font-size:0.75rem;padding:0.2rem 0.3rem;" disabled>
+              <option value="">All</option>
+            </select>
+          </label>
+          <label style="display:flex;align-items:center;gap:0.25rem;">Sort
+            <select id="filter-sort" style="font-size:0.75rem;padding:0.2rem 0.3rem;" disabled>
+              <option value="newest">Newest first</option>
+              <option value="oldest">Oldest first</option>
+            </select>
+          </label>
+          <label style="display:flex;align-items:center;gap:0.25rem;cursor:pointer;">
+            <input type="checkbox" id="filter-hide-dupes" disabled style="width:auto;" /> Hide duplicates
+          </label>
+          <label style="display:flex;align-items:center;gap:0.25rem;cursor:pointer;">
+            <input type="checkbox" id="filter-manual-only" disabled style="width:auto;" /> Manual entries only
+          </label>
+          <label style="display:flex;align-items:center;gap:0.25rem;cursor:pointer;">
+            <input type="checkbox" id="filter-auto-only" disabled style="width:auto;" /> Feed entries only
+          </label>
+        </div>
+        <p class="meta" style="margin-top:0.35rem;font-size:0.75rem;" id="cluster-count"></p>
+      </div>
+
+      <!-- Source Material — appears when cluster selected -->
+      <div id="source-material" class="card" style="margin-bottom:1.5rem;background:var(--surface-2);display:none;">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.5rem;margin-bottom:0.75rem;">
+          <h3 style="font-size:0.95rem;margin:0;">Source Material <span class="meta" style="font-weight:400;" id="source-count"></span></h3>
+          <button type="button" id="ai-analyze-btn" class="btn btn-secondary" style="font-size:0.8rem;" data-ai-enabled={String(editorialAIEnabled)} disabled>{editorialAIEnabled ? "🤖 AI Analyze" : "AI Analyze disabled"}</button>
+        </div>
+        <div id="ai-result" style="display:none;margin-bottom:0.75rem;padding:0.75rem;background:color-mix(in oklch, var(--accent) 6%, transparent);border-radius:var(--radius);border-left:3px solid var(--accent);"></div>
+        <div id="source-list" style="display:flex;flex-direction:column;gap:0.75rem;max-height:400px;overflow-y:auto;"></div>
+      </div>
+
+      <!-- Editorial fields -->
+      <div class="card" style="margin-bottom:1.5rem;background:var(--surface-2);">
+        <div style="display:flex;flex-direction:column;gap:1rem;">
+          <div>
+            <label for="pub-headline" style="font-size:0.85rem;font-weight:600;display:block;margin-bottom:0.25rem;">Headline <span class="meta" style="font-weight:400;">(optional — uses cluster title if blank)</span></label>
+            <input type="text" id="pub-headline" placeholder="Override the auto-generated headline…" style="width:100%;" />
+          </div>
+          <div>
+            <label for="pub-summary" style="font-size:0.85rem;font-weight:600;display:block;margin-bottom:0.25rem;">Summary <span style="color:var(--ev-disputed);">*required</span></label>
+            <textarea id="pub-summary" rows="3" placeholder="A concise neutral summary of what happened. Min 20 characters." style="width:100%;resize:vertical;"></textarea>
+          </div>
+          <div>
+            <label for="pub-analysis" style="font-size:0.85rem;font-weight:600;display:block;margin-bottom:0.25rem;">TRACE Editorial Analysis <span class="meta" style="font-weight:400;">(optional)</span></label>
+            <textarea id="pub-analysis" rows="3" placeholder="Why this matters, what may be overstated, how it relates to earlier events." style="width:100%;resize:vertical;"></textarea>
+          </div>
+          <div>
+            <label for="pub-why" style="font-size:0.85rem;font-weight:600;display:block;margin-bottom:0.25rem;">Why This Matters <span class="meta" style="font-weight:400;">(optional)</span></label>
+            <input type="text" id="pub-why" placeholder="A one-line explanation of significance…" style="width:100%;" />
+          </div>
+          <div>
+            <label for="pub-image" style="font-size:0.85rem;font-weight:600;display:block;margin-bottom:0.25rem;">Headline Image URL <span class="meta" style="font-weight:400;">(optional — auto-detected from feed if blank)</span></label>
+            <input type="url" id="pub-image" placeholder="https://…" style="width:100%;" />
+          </div>
+        </div>
+        <div style="margin-top:1rem;display:flex;gap:0.75rem;align-items:center;flex-wrap:wrap;">
+          <button type="button" id="publish-btn" class="btn btn-primary" disabled>Publish Story</button>
+          <button type="button" id="archive-btn" class="btn btn-secondary" style="font-size:0.8rem;" disabled>Archive (not news)</button>
+          <span id="publish-status" class="meta"></span>
+        </div>
+      </div>
+
+      <!-- Recent publishes -->
+      <div class="card" style="background:var(--surface-2);">
+        <h3 style="font-size:0.95rem;margin-bottom:0.5rem;">Recently Published</h3>
+        <div id="recent-publishes" class="meta" style="font-size:0.8rem;">—</div>
+      </div>
+    </section>
+
     <!-- Pending review queue -->
     <section style="margin-bottom:2.5rem;">
       <h2>Pending Review</h2>
@@ -122,75 +214,6 @@ try {
         )}</div>}
     </section>
 
-    <!-- Publish a story -->
-    <section style="margin-top:2.5rem;">
-      <h2>Publish a Story</h2>
-      <p class="meta" style="margin-bottom:1rem;">
-        Select a draft cluster, write the editorial summary, and publish. Published stories appear on the public <a href="/feed">feed</a> and <a href="/">homepage</a>.
-      </p>
-
-      <!-- Cluster selector -->
-      <div class="card" style="margin-bottom:1.5rem;background:var(--surface-2);">
-        <div style="display:flex;gap:0.5rem;align-items:flex-end;flex-wrap:wrap;">
-          <div style="flex:1;min-width:200px;">
-            <label for="cluster-select" style="font-size:0.85rem;font-weight:600;display:block;margin-bottom:0.35rem;">Story Cluster</label>
-            <select id="cluster-select" style="width:100%;" disabled>
-              <option value="">— Click Load to view reviewed data —</option>
-            </select>
-          </div>
-          <button type="button" id="load-clusters-btn" class="btn btn-secondary" style="font-size:0.8rem;">Load Clusters</button>
-        </div>
-        <p class="meta" style="margin-top:0.35rem;font-size:0.75rem;" id="cluster-count"></p>
-      </div>
-
-      <!-- Source Material — appears when cluster selected -->
-      <div id="source-material" class="card" style="margin-bottom:1.5rem;background:var(--surface-2);display:none;">
-        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.5rem;margin-bottom:0.75rem;">
-          <h3 style="font-size:0.95rem;margin:0;">Source Material <span class="meta" style="font-weight:400;" id="source-count"></span></h3>
-          <button type="button" id="ai-analyze-btn" class="btn btn-secondary" style="font-size:0.8rem;" data-ai-enabled={String(editorialAIEnabled)} disabled>{editorialAIEnabled ? "🤖 AI Analyze" : "AI Analyze disabled"}</button>
-        </div>
-        <div id="ai-result" style="display:none;margin-bottom:0.75rem;padding:0.75rem;background:color-mix(in oklch, var(--accent) 6%, transparent);border-radius:var(--radius);border-left:3px solid var(--accent);"></div>
-        <div id="source-list" style="display:flex;flex-direction:column;gap:0.75rem;max-height:400px;overflow-y:auto;"></div>
-      </div>
-
-      <!-- Editorial fields -->
-      <div class="card" style="margin-bottom:1.5rem;background:var(--surface-2);">
-        <div style="display:flex;flex-direction:column;gap:1rem;">
-          <div>
-            <label for="pub-headline" style="font-size:0.85rem;font-weight:600;display:block;margin-bottom:0.25rem;">Headline <span class="meta" style="font-weight:400;">(optional — uses cluster title if blank)</span></label>
-            <input type="text" id="pub-headline" placeholder="Override the auto-generated headline…" style="width:100%;" />
-          </div>
-          <div>
-            <label for="pub-summary" style="font-size:0.85rem;font-weight:600;display:block;margin-bottom:0.25rem;">Summary <span style="color:var(--ev-disputed);">*required</span></label>
-            <textarea id="pub-summary" rows="3" placeholder="A concise neutral summary of what happened. Min 20 characters." style="width:100%;resize:vertical;"></textarea>
-          </div>
-          <div>
-            <label for="pub-analysis" style="font-size:0.85rem;font-weight:600;display:block;margin-bottom:0.25rem;">TRACE Editorial Analysis <span class="meta" style="font-weight:400;">(optional)</span></label>
-            <textarea id="pub-analysis" rows="3" placeholder="Why this matters, what may be overstated, how it relates to earlier events." style="width:100%;resize:vertical;"></textarea>
-          </div>
-          <div>
-            <label for="pub-why" style="font-size:0.85rem;font-weight:600;display:block;margin-bottom:0.25rem;">Why This Matters <span class="meta" style="font-weight:400;">(optional)</span></label>
-            <input type="text" id="pub-why" placeholder="A one-line explanation of significance…" style="width:100%;" />
-          </div>
-          <div>
-            <label for="pub-image" style="font-size:0.85rem;font-weight:600;display:block;margin-bottom:0.25rem;">Headline Image URL <span class="meta" style="font-weight:400;">(optional — auto-detected from feed if blank)</span></label>
-            <input type="url" id="pub-image" placeholder="https://…" style="width:100%;" />
-          </div>
-        </div>
-        <div style="margin-top:1rem;display:flex;gap:0.75rem;align-items:center;flex-wrap:wrap;">
-          <button type="button" id="publish-btn" class="btn btn-primary" disabled>Publish Story</button>
-          <button type="button" id="archive-btn" class="btn btn-secondary" style="font-size:0.8rem;" disabled>Archive (not news)</button>
-          <span id="publish-status" class="meta"></span>
-        </div>
-      </div>
-
-      <!-- Recent publishes -->
-      <div class="card" style="background:var(--surface-2);">
-        <h3 style="font-size:0.95rem;margin-bottom:0.5rem;">Recently Published</h3>
-        <div id="recent-publishes" class="meta" style="font-size:0.8rem;">—</div>
-      </div>
-    </section>
-
     <script>
       function authHeaders(method: string = "GET"): Record<string, string> {
         // Only set Content-Type for requests with a body; adding it to GET
@@ -234,8 +257,74 @@ try {
         }
       }
 
-      // Load clusters
+      // Load clusters with filtering
+      let allClusters: Array<{ id: number; title: string; topic: string | null; publication_status: string; source_count: number; summary: string | null; why_it_matters: string | null; created_at: string }> = [];
       let clusterDetail: Record<number, { summary?: string | null; why?: string | null }> = {};
+      let clusterMeta: Record<number, string> = {};
+
+      function applyClusterFilters(): void {
+        const select = $<HTMLSelectElement>("cluster-select");
+        const count = document.getElementById("cluster-count");
+        if (!select || !count) return;
+
+        const topicFilter = $<HTMLSelectElement>("filter-topic")?.value ?? "";
+        const sortOrder = $<HTMLSelectElement>("filter-sort")?.value ?? "newest";
+        const hideDupes = $<HTMLInputElement>("filter-hide-dupes")?.checked ?? false;
+        const manualOnly = $<HTMLInputElement>("filter-manual-only")?.checked ?? false;
+        const autoOnly = $<HTMLInputElement>("filter-auto-only")?.checked ?? false;
+
+        let filtered = [...allClusters];
+
+        // Topic filter
+        if (topicFilter) {
+          filtered = filtered.filter(c => (c.topic ?? "uncategorised") === topicFilter);
+        }
+
+        // Manual/auto filter (approximate: clusters with 1 source and no topic tend to be manual entries)
+        if (manualOnly) {
+          filtered = filtered.filter(c => c.source_count <= 1 && !c.topic);
+        }
+        if (autoOnly) {
+          filtered = filtered.filter(c => c.source_count > 1 || !!c.topic);
+        }
+
+        // Hide duplicate titles
+        if (hideDupes) {
+          const seen = new Set<string>();
+          filtered = filtered.filter(c => {
+            const key = c.title.toLowerCase().slice(0, 40);
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          });
+        }
+
+        // Sort
+        if (sortOrder === "oldest") {
+          filtered.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+        } else {
+          filtered.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+        }
+
+        // Render
+        const currentValue = select.value;
+        select.innerHTML = '<option value="">— Select a cluster —</option>';
+        filtered.forEach((c: any) => {
+          const opt = document.createElement("option");
+          opt.value = String(c.id);
+          const meta = clusterMeta[c.id] ? ` — ${clusterMeta[c.id]}` : "";
+          const dateStr = c.created_at ? ` ${new Date(c.created_at).toLocaleDateString("en-GB")}` : "";
+          opt.textContent = `#${c.id}: ${c.title.slice(0, 70)} [${c.publication_status}] (${c.source_count || 0}s${meta})${dateStr}`;
+          select.appendChild(opt);
+        });
+        if (currentValue && filtered.some(c => String(c.id) === currentValue)) {
+          select.value = currentValue;
+        }
+        const drafts = filtered.filter(c => c.publication_status === 'draft').length;
+        count.textContent = `${filtered.length} of ${allClusters.length} clusters shown. ${drafts} drafts.`;
+        checkPublishReady();
+      }
+
       $<HTMLButtonElement>("load-clusters-btn")?.addEventListener("click", async () => {
         const select = $<HTMLSelectElement>("cluster-select");
         const count = document.getElementById("cluster-count");
@@ -246,16 +335,15 @@ try {
         status("Loading clusters…", false);
 
         try {
-          const res = await adminFetch(`/api/admin/clusters?limit=100`);
+          const res = await adminFetch(`/api/admin/clusters?limit=200`);
           if (!res.ok) { throw new Error(`HTTP ${res.status}`); }
-          const clusters: Array<{ id: number; title: string; publication_status: string; source_count: number; summary: string | null; why_it_matters: string | null }> = await res.json();
+          allClusters = await res.json();
 
-          select.innerHTML = '<option value="">— Select a cluster —</option>';
-          if (clusters.length > 0) {
-            // Store cluster metadata for pre-fill
-            const clusterMeta: Record<number, string> = {};
+          if (allClusters.length > 0) {
             clusterDetail = {};
-            await Promise.all(clusters.slice(0, 15).map(async (c: any) => {
+            clusterMeta = {};
+            // Fetch source names for the first 20 clusters (for display in dropdown)
+            await Promise.all(allClusters.slice(0, 20).map(async (c: any) => {
               clusterDetail[c.id] = { summary: c.summary, why: c.why_it_matters };
               try {
                 const srcRes = await adminFetch(`/api/admin/cluster-sources?clusterId=${c.id}`);
@@ -267,27 +355,49 @@ try {
               } catch { clusterMeta[c.id] = ""; }
             }));
 
-            clusters.forEach((c: any) => {
-              const opt = document.createElement("option");
-              opt.value = String(c.id);
-              const meta = clusterMeta[c.id] ? ` — ${clusterMeta[c.id]}` : "";
-              opt.textContent = `#${c.id}: ${c.title.slice(0, 70)} [${c.publication_status}] (${c.source_count || 0} sources${meta})`;
-              select.appendChild(opt);
-            });
-            count.textContent = `${clusters.length} clusters loaded. ${clusters.filter((c) => c.publication_status === 'draft').length} drafts.`;
-          } else {
-            count.textContent = "No clusters found. The ingestion pipeline may not have run yet.";
+            // Populate topic filter
+            const topicSelect = $<HTMLSelectElement>("filter-topic");
+            if (topicSelect) {
+              const topics = new Set(allClusters.map(c => c.topic ?? "uncategorised").filter(Boolean));
+              topicSelect.innerHTML = '<option value="">All</option>';
+              [...topics].sort().forEach(t => {
+                const opt = document.createElement("option");
+                opt.value = t; opt.textContent = t;
+                topicSelect.appendChild(opt);
+              });
+            }
           }
 
+          // Enable filters
+          $<HTMLSelectElement>("filter-topic")!.disabled = false;
+          $<HTMLSelectElement>("filter-sort")!.disabled = false;
+          $<HTMLInputElement>("filter-hide-dupes")!.disabled = false;
+          $<HTMLInputElement>("filter-manual-only")!.disabled = false;
+          $<HTMLInputElement>("filter-auto-only")!.disabled = false;
           select.disabled = false;
-          status("Select a cluster from the dropdown.", false);
+
+          applyClusterFilters();
+          status(`Loaded ${allClusters.length} clusters.`, false);
         } catch (e) {
           select.innerHTML = '<option value="">— Error loading —</option>';
           select.disabled = false;
-          count.textContent = "";
+          if (count) count.textContent = "";
           status("Failed to load. Check your Access role and network.", true);
           console.error(e);
         }
+      });
+
+      // Re-filter on any filter change
+      $<HTMLSelectElement>("filter-topic")?.addEventListener("change", applyClusterFilters);
+      $<HTMLSelectElement>("filter-sort")?.addEventListener("change", applyClusterFilters);
+      $<HTMLInputElement>("filter-hide-dupes")?.addEventListener("change", applyClusterFilters);
+      $<HTMLInputElement>("filter-manual-only")?.addEventListener("change", function() {
+        if (this.checked) { const cb = $<HTMLInputElement>("filter-auto-only"); if (cb) cb.checked = false; }
+        applyClusterFilters();
+      });
+      $<HTMLInputElement>("filter-auto-only")?.addEventListener("change", function() {
+        if (this.checked) { const cb = $<HTMLInputElement>("filter-manual-only"); if (cb) cb.checked = false; }
+        applyClusterFilters();
       });
 
       // Enable publish button when cluster selected and summary has content

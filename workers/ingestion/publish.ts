@@ -673,7 +673,7 @@ export async function getAllClusters(
   env: Env,
   options: { limit?: number; status?: string } = {},
 ): Promise<{ id: number; title: string; topic: string | null; evidence_status: string; publication_status: string; source_count: number; created_at: string; summary: string | null; why_it_matters: string | null }[]> {
-  const limit = Math.max(1, Math.min(Number.isInteger(options.limit) ? options.limit! : 50, 100));
+  const limit = Math.max(1, Math.min(Number.isInteger(options.limit) ? options.limit! : 50, 200));
 
   let query = `
     SELECT sc.id, sc.title, sc.topic, sc.evidence_status, sc.publication_status,
