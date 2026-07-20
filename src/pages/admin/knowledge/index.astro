@@ -278,6 +278,7 @@ source_set_hash: ""
 
       const resp = await fetch("/api/admin/knowledge/ingest", {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "text/plain; charset=utf-8" },
         body: text,
       });

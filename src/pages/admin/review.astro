@@ -200,7 +200,7 @@ try {
       }
 
       async function adminFetch(url: string, options: RequestInit = {}): Promise<Response> {
-        const res = await fetch(url, { ...options, headers: { ...authHeaders(options.method ?? "GET"), ...(options.headers as Record<string, string> ?? {}) } });
+        const res = await fetch(url, { ...options, credentials: "include", headers: { ...authHeaders(options.method ?? "GET"), ...(options.headers as Record<string, string> ?? {}) } });
         if (res.status === 401 || res.status === 302 || res.type === "opaqueredirect") {
           // Session expired — ask the operator to reload the page through Access
           status("Session expired. Reload the page to re-authenticate.", true);
