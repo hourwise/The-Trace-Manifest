@@ -156,6 +156,9 @@ export function parseRSSXML(xml: string): Array<{
 
     if (!title || !link || !safeRemoteUrl(link)) continue;
 
+    // Extract image/enclosure URLs from RSS, Atom, and media namespaces
+    const imageUrl = extractEnclosureUrl(block) || extractFirstImageSrc(description);
+
     items.push({
       external_id: guid || link || null,
       url: link,
@@ -164,11 +167,44 @@ export function parseRSSXML(xml: string): Array<{
       content_excerpt: description ? decodeHTML(description).slice(0, 500) : null,
       author: author || null,
       published_at: pubDate ? normalizeDate(pubDate) : null,
-      raw_metadata: { feedTitle: "", itemGuid: guid || null },
+      raw_metadata: {
+        feedTitle: "",
+        itemGuid: guid || null,
+        ...(imageUrl ? { image: imageUrl, enclosure: { url: imageUrl }, thumbnail: imageUrl } : {}),
+      },
     });
   }
 
   return items;
+}
+
+function extractEnclosureUrl(xml: string): string | null {
+  // RSS <enclosure url="..." type="image/..."/>
+  const enclosureMatch = xml.match(/<enclosure[^>]*url="([^"]*)"[^>]*type="image\/[^"]*"[^>]*\/?>/i)
+    || xml.match(/<enclosure[^>]*type="image\/[^"]*"[^>]*url="([^"]*)"[^>]*\/?>/i);
+  if (enclosureMatch) return enclosureMatch[1];
+
+  // RSS <media:thumbnail url="..."/> or <media:content url="..." type="image/..."/>
+  const mediaMatch = xml.match(/<media:(?:thumbnail|content)[^>]*url="([^"]*)"[^>]*\/?>/i);
+  if (mediaMatch) return mediaMatch[1];
+
+  // Atom <link rel="enclosure" href="..." type="image/..."/>
+  const atomEnclosure = xml.match(/<link[^>]*rel="enclosure"[^>]*href="([^"]*)"[^>]*type="image\/[^"]*"[^>]*\/?>/i);
+  if (atomEnclosure) return atomEnclosure[1];
+
+  return null;
+}
+
+function extractFirstImageSrc(html: string | null): string | null {
+  if (!html) return null;
+  // Extract first <img src="..."> from HTML content
+  const imgMatch = html.match(/<img[^>]*src="([^"]*)"[^>]*\/?>/i);
+  if (!imgMatch) return null;
+  const src = imgMatch[1];
+  // Skip tracking pixels and tiny icons
+  if (/\.(svg|gif)(\?|$)/i.test(src) && /(pixel|tracker|icon|spacer)/i.test(src)) return null;
+  if (/\/\d+x\d+\.(png|jpg|jpeg|webp)/i.test(src) || /\.(png|jpg|jpeg|webp)(\?|$)/i.test(src)) return src;
+  return null;
 }
 
 function extractTag(xml: string, tag: string): string | null {
