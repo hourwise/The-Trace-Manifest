@@ -133,7 +133,18 @@ export async function getPublishedStories(db: D1Database, options: {
     params.push(options.topic);
   }
 
-  query += ` ORDER BY sc.published_at DESC LIMIT ? OFFSET ?`;
+  query += ` ORDER BY
+    CASE sc.evidence_status
+      WHEN 'confirmed' THEN 0
+      WHEN 'strongly_supported' THEN 1
+      WHEN 'provisionally_supported' THEN 2
+      WHEN 'vendor_reported' THEN 3
+      WHEN 'community_reported' THEN 4
+      WHEN 'disputed' THEN 5
+      ELSE 6
+    END,
+    sc.published_at DESC
+    LIMIT ? OFFSET ?`;
   params.push(limit, offset);
 
   const result = await db.prepare(query).bind(...params).all<Record<string, unknown>>();

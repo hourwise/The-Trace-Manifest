@@ -20,6 +20,7 @@ import {
   getPublishedStories, getPublishedStoryBySlug, getPublishedTopics,
   getLatestPublishedBriefing, getPublishedSourcesForStory, getRelatedStories,
   getAllClusters, getClusterSources, archiveCluster,
+  upgradeClusterEvidence,
 } from "./publish";
 import type { Source, FetchedFeedItem } from "./types";
 import { verifyInternalRequestSignature } from "../../src/security/internal-signature";
@@ -147,6 +148,7 @@ export default {
           await runClassificationPipeline(env);
           await runCrossSourceMatchingPipeline(env);
           await runClusteringPipeline(env);
+          await runEvidenceUpgradePipeline(env);
           await runClaimExtractionPipeline(env);
           await runConflictDetectionPipeline(env);
           await runModelDataPipeline(env);
@@ -450,7 +452,7 @@ async function processSource(env: Env, source: Source, jobType: string): Promise
         await env.DB.prepare(
           "UPDATE sources SET health_status = 'degraded', last_fetched_at = datetime('now'), last_error_at = datetime('now'), last_error_message = ? WHERE id = ?"
         ).bind(unsupportedMsg, source.id).run();
-        await completeJob(env, jobId, "completed", 0, 0, undefined, "unsupported", 0, 0, 0, 0, 0, 0, 0, 1, `Connector ${source.ingestion_type} is not implemented.`);
+        await completeJob(env, jobId, "completed", 0, 0, undefined, "unsupported", 0, 0, 0, 0, 0, 0, 1, `Connector ${source.ingestion_type} is not implemented.`);
         outcome.resultStatus = "unsupported";
         outcome.skipped = 1;
         return outcome;
@@ -850,6 +852,22 @@ async function runClaimExtractionPipeline(env: Env) {
     }
   );
   console.log(`Claim extraction: done — ${result.claimsExtracted} claims from ${result.processed} items, ${result.evidenceCreated} evidence records`);
+}
+
+// ============================================================
+// Evidence upgrade pipeline (runs after clustering)
+// Auto-upgrades evidence status when multiple independent sources
+// corroborate the same story cluster.
+// ============================================================
+async function runEvidenceUpgradePipeline(env: Env) {
+  console.log("Evidence upgrade: starting...");
+  const results = await upgradeClusterEvidence(env.DB);
+  if (results.length > 0) {
+    for (const r of results) {
+      console.log(`Evidence upgrade: cluster #${r.clusterId} "${r.title.slice(0, 60)}" ${r.previousStatus} → ${r.newStatus} (${r.tierA}A ${r.tierB}B ${r.tierC}C, ${r.sourceCount} sources)`);
+    }
+  }
+  console.log(`Evidence upgrade: done — ${results.length} cluster(s) upgraded`);
 }
 
 // ============================================================

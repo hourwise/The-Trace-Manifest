@@ -763,3 +763,78 @@ export async function archiveCluster(
 
   return { success: true };
 }
+
+// ============================================================
+// Evidence upgrade — count distinct source tiers per cluster
+// and auto-upgrade evidence status when multiple independent
+// sources corroborate the same story.
+// ============================================================
+
+const EVIDENCE_UPGRADE_MAP: Record<string, { minTierA: number; minTierB: number; nextStatus: string }> = {
+  // From vendor_reported → provisionally_supported: need 1 Tier B+ source
+  vendor_reported: { minTierA: 0, minTierB: 1, nextStatus: "provisionally_supported" },
+  // From provisionally_supported → strongly_supported: need 1 Tier A + 1 more
+  provisionally_supported: { minTierA: 1, minTierB: 2, nextStatus: "strongly_supported" },
+};
+
+export interface EvidenceUpgradeResult {
+  clusterId: number;
+  title: string;
+  previousStatus: string;
+  newStatus: string | null;
+  sourceCount: number;
+  tierA: number;
+  tierB: number;
+  tierC: number;
+}
+
+export async function upgradeClusterEvidence(
+  db: D1Database,
+): Promise<EvidenceUpgradeResult[]> {
+  const clusters = await db.prepare(`
+    SELECT sc.id, sc.title, sc.evidence_status,
+           COUNT(DISTINCT s.id) as source_count,
+           COUNT(DISTINCT CASE WHEN s.tier = 'A' THEN s.id END) as tier_a,
+           COUNT(DISTINCT CASE WHEN s.tier = 'B' THEN s.id END) as tier_b,
+           COUNT(DISTINCT CASE WHEN s.tier = 'C' THEN s.id END) as tier_c
+    FROM story_clusters sc
+    JOIN story_cluster_members scm ON scm.cluster_id = sc.id
+    JOIN feed_items fi ON fi.id = scm.feed_item_id
+    JOIN sources s ON s.id = fi.source_id
+    WHERE sc.publication_status NOT IN ('withdrawn')
+      AND sc.evidence_status IN ('vendor_reported', 'provisionally_supported')
+    GROUP BY sc.id
+    HAVING source_count >= 2
+  `).all<{
+    id: number; title: string; evidence_status: string;
+    source_count: number; tier_a: number; tier_b: number; tier_c: number;
+  }>();
+
+  const results: EvidenceUpgradeResult[] = [];
+
+  for (const cluster of clusters.results) {
+    const rule = EVIDENCE_UPGRADE_MAP[cluster.evidence_status];
+    if (!rule) continue;
+
+    const totalAB = cluster.tier_a + cluster.tier_b;
+    const satisfiesRule = cluster.tier_a >= rule.minTierA && totalAB >= rule.minTierB;
+    if (!satisfiesRule) continue;
+
+    await db.prepare(
+      `UPDATE story_clusters SET evidence_status = ?, updated_at = datetime('now') WHERE id = ?`
+    ).bind(rule.nextStatus, cluster.id).run();
+
+    results.push({
+      clusterId: cluster.id,
+      title: cluster.title,
+      previousStatus: cluster.evidence_status,
+      newStatus: rule.nextStatus,
+      sourceCount: cluster.source_count,
+      tierA: cluster.tier_a,
+      tierB: cluster.tier_b,
+      tierC: cluster.tier_c,
+    });
+  }
+
+  return results;
+}
