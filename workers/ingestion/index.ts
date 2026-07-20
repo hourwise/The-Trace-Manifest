@@ -1435,7 +1435,7 @@ async function handleClustersList(request: Request, env: Env): Promise<Response>
   const status = url.searchParams.get("status") || undefined;
   const limit = Number(url.searchParams.get("limit") || "50");
   if ((status && !["draft", "review", "published", "withdrawn", "superseded"].includes(status))
-    || !Number.isInteger(limit) || limit < 1 || limit > 100) {
+    || !Number.isInteger(limit) || limit < 1 || limit > 200) {
     return Response.json({ error: "Invalid cluster query." }, { status: 400 });
   }
 
