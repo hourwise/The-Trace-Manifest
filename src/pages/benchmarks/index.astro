@@ -1,26 +1,79 @@
 ---
 import BaseLayout from "../../layouts/BaseLayout.astro";
 import BenchmarkHealthBadge from "../../components/BenchmarkHealthBadge.astro";
-import { getPublishedBenchmarks } from "../../lib/server/catalog-data";
+import { getPublishedBenchmarks, getTraceModelScores } from "../../lib/server/catalog-data";
 
 export const prerender = false;
 let benchmarks: Awaited<ReturnType<typeof getPublishedBenchmarks>> = [];
+let traceScores: Awaited<ReturnType<typeof getTraceModelScores>> = [];
 let unavailable = false;
-try { benchmarks = await getPublishedBenchmarks(Astro.locals.runtime.env.DB); } catch { unavailable = true; }
+try {
+  const db = Astro.locals.runtime.env.DB;
+  [benchmarks, traceScores] = await Promise.all([
+    getPublishedBenchmarks(db),
+    getTraceModelScores(db),
+  ]);
+} catch { unavailable = true; }
+
+const scored = traceScores.filter(s => s.aggregateScore !== null);
+const unscored = traceScores.filter(s => s.aggregateScore === null);
 ---
 
-<BaseLayout title="Benchmark Registry" description="Reviewed benchmark records and health assessments.">
+<BaseLayout title="Benchmark Registry" description="Reviewed benchmark records and TRACE aggregate model scores.">
   <div class="wrap" style="max-width:52rem;">
     <h1 class="display h1">Benchmark Registry</h1>
-    <p class="lead">Only reviewed and explicitly published benchmark assessments appear here. <a href="/methodology">Methodology &rarr;</a></p>
-    {unavailable ? <div class="card" style="margin-top:2rem;"><p class="meta">Benchmark data is temporarily unavailable.</p></div> :
-      benchmarks.length === 0 ? <div class="card" style="margin-top:2rem;"><p class="meta">No benchmark records have completed editorial review and publication yet.</p></div> :
-      <div class="table-wrap" style="margin-top:2rem;"><table class="data"><thead><tr><th>Benchmark</th><th>Version</th><th>Owner</th><th>Domain</th><th>Health</th></tr></thead><tbody>
-        {benchmarks.map((item) => <tr>
-          <td><a href={`/benchmarks/${item.slug}`}>{item.name}</a><br /><span class="meta">{item.purpose}</span></td>
-          <td>{item.version ?? "—"}</td><td>{item.owner ?? "—"}</td><td>{item.domain}</td>
-          <td><BenchmarkHealthBadge healthStatus={item.healthStatus} size="sm" /></td>
-        </tr>)}
-      </tbody></table></div>}
+    <p class="lead">Live TRACE scores aggregate independent and vendor-reported benchmark results. <a href="/methodology">Methodology &rarr;</a></p>
+    {unavailable ? <div class="card" style="margin-top:2rem;"><p class="meta">Benchmark data is temporarily unavailable.</p></div> : <>
+      <!-- TRACE Model Scores card -->
+      {scored.length > 0 && (
+        <section class="card" style="margin-top:2rem;">
+          <h2 style="font-size:1.15rem;margin-bottom:0.75rem;">TRACE Aggregate Model Scores</h2>
+          <p class="meta" style="margin-bottom:1rem;">Weighted average across all published benchmarks. Independent runs 3× weight; vendor runs 1×. Click a score to see source data.</p>
+          <div class="table-wrap"><table class="data"><thead><tr><th>Model</th><th>Provider</th><th>TRACE Score</th><th>Benchmarks</th><th>Independent</th><th>Vendor</th><th>Last run</th></tr></thead><tbody>
+            {scored.map((score) => (
+              <tr>
+                <td><a href={`/models/${score.modelSlug}`}>{score.modelName}</a></td>
+                <td>{score.provider}</td>
+                <td style="font-weight:700;font-size:1.05rem;">{
+                  score.breakdowns.length > 0
+                    ? score.breakdowns.map((b, i) => (
+                        <span>
+                          {b.sourceUrl
+                            ? <a href={b.sourceUrl} rel="noopener noreferrer" title={`${b.benchmarkName}: ${b.scoreDisplay} (${b.isIndependent ? "independent" : "vendor"})`} style="text-decoration:none;">{score.aggregateScore}</a>
+                            : score.aggregateScore}
+                          {i < score.breakdowns.length - 1 ? " " : ""}
+                        </span>
+                      ))
+                    : score.aggregateScore
+                }</td>
+                <td>{score.benchmarkCount}</td>
+                <td>{score.independentRuns}</td>
+                <td>{score.vendorRuns}</td>
+                <td class="meta">{score.lastUpdated ? new Date(score.lastUpdated).toLocaleDateString("en-GB") : "—"}</td>
+              </tr>
+            ))}
+          </tbody></table></div>
+          {unscored.length > 0 && (
+            <details style="margin-top:1rem;">
+              <summary class="meta" style="cursor:pointer;">{unscored.length} model{unscored.length !== 1 ? "s" : ""} with insufficient data (fewer than 2 distinct benchmarks)</summary>
+              <p class="meta" style="margin-top:0.5rem;">{unscored.map(s => s.modelName).join(", ")}</p>
+            </details>
+          )}
+        </section>
+      )}
+
+      <!-- Benchmark registry table -->
+      {benchmarks.length === 0 ? <div class="card" style="margin-top:2rem;"><p class="meta">No benchmark records have completed editorial review and publication yet.</p></div> :
+      <section style="margin-top:2rem;">
+        <h2>Benchmark Sources</h2>
+        <div class="table-wrap" style="margin-top:1rem;"><table class="data"><thead><tr><th>Benchmark</th><th>Version</th><th>Owner</th><th>Domain</th><th>Health</th></tr></thead><tbody>
+          {benchmarks.map((item) => <tr>
+            <td><a href={`/benchmarks/${item.slug}`}>{item.name}</a><br /><span class="meta">{item.purpose}</span></td>
+            <td>{item.version ?? "—"}</td><td>{item.owner ?? "—"}</td><td>{item.domain}</td>
+            <td><BenchmarkHealthBadge healthStatus={item.healthStatus} size="sm" /></td>
+          </tr>)}
+        </tbody></table></div>
+      </section>}
+    </>}
   </div>
 </BaseLayout>

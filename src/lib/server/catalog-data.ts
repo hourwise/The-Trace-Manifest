@@ -184,3 +184,148 @@ export async function getPublishedBenchmarkRuns(db: D1Database, benchmarkId: num
     sourceUrl: safeUrl(row.source_url as string | null),
   }));
 }
+
+// ============================================================
+// TRACE aggregate model scores
+// ============================================================
+
+export interface TraceModelScore {
+  modelId: number;
+  modelName: string;
+  modelSlug: string;
+  provider: string;
+  /** Weighted aggregate 0–100; null if fewer than 2 benchmark sources */
+  aggregateScore: number | null;
+  /** Number of distinct benchmarks contributing to the score */
+  benchmarkCount: number;
+  /** Number of independent runs */
+  independentRuns: number;
+  /** Number of vendor-reported runs */
+  vendorRuns: number;
+  /** Individual benchmark results that feed the aggregate */
+  breakdowns: TraceScoreBreakdown[];
+  /** When the latest contributing run was recorded */
+  lastUpdated: string | null;
+}
+
+export interface TraceScoreBreakdown {
+  benchmarkName: string;
+  benchmarkSlug: string;
+  scoreDisplay: string;
+  score: number;
+  isIndependent: boolean;
+  testDate: string;
+  sourceUrl: string | null;
+}
+
+/**
+ * Compute TRACE aggregate scores for all models with published benchmark runs.
+ * Independent runs are weighted 3×; vendor runs 1×. Only comparable results
+ * are included. A model must have ≥2 distinct benchmark sources to receive
+ * an aggregate score.
+ */
+export async function getTraceModelScores(db: D1Database): Promise<TraceModelScore[]> {
+  const result = await db.prepare(`
+    SELECT m.id AS model_id, m.name AS model_name, m.slug AS model_slug,
+           m.provider, b.name AS benchmark_name, b.slug AS benchmark_slug,
+           br.score, br.score_display, br.is_vendor_run, br.is_independent,
+           br.comparable_results, br.test_date, br.source_url
+    FROM benchmark_runs br
+    JOIN benchmarks b ON b.id = br.benchmark_id
+    JOIN models m ON m.id = br.model_id
+    WHERE br.publication_status = 'published'
+      AND br.reviewed_by IS NOT NULL AND br.reviewed_at IS NOT NULL
+      AND br.source_url IS NOT NULL AND date(br.test_date) <= date('now')
+      AND br.comparable_results = 1
+      AND m.publication_status = 'published' AND m.reviewed_by IS NOT NULL
+      AND m.reviewed_at IS NOT NULL AND m.last_verified_at IS NOT NULL
+      AND b.publication_status = 'published' AND b.reviewed_by IS NOT NULL
+      AND b.reviewed_at IS NOT NULL AND b.last_reviewed_at IS NOT NULL
+    ORDER BY m.name, br.test_date DESC
+  `).all<{
+    model_id: number; model_name: string; model_slug: string; provider: string;
+    benchmark_name: string; benchmark_slug: string;
+    score: number; score_display: string | null;
+    is_vendor_run: number; is_independent: number;
+    comparable_results: number; test_date: string; source_url: string | null;
+  }>();
+
+  // Group runs by model
+  const grouped = new Map<number, {
+    modelName: string; modelSlug: string; provider: string;
+    runs: TraceScoreBreakdown[];
+  }>();
+
+  for (const row of result.results) {
+    const sourceUrl = safeUrl(row.source_url as string | null);
+    if (!sourceUrl) continue;
+
+    const breakdown: TraceScoreBreakdown = {
+      benchmarkName: row.benchmark_name,
+      benchmarkSlug: row.benchmark_slug,
+      scoreDisplay: (row.score_display ?? String(row.score)),
+      score: row.score,
+      isIndependent: Boolean(row.is_independent),
+      testDate: row.test_date,
+      sourceUrl,
+    };
+
+    if (!grouped.has(row.model_id)) {
+      grouped.set(row.model_id, {
+        modelName: row.model_name,
+        modelSlug: row.model_slug,
+        provider: row.provider,
+        runs: [],
+      });
+    }
+    grouped.get(row.model_id)!.runs.push(breakdown);
+  }
+
+  // Compute aggregate scores
+  const scores: TraceModelScore[] = [];
+  for (const [modelId, data] of grouped) {
+    const { runs } = data;
+    const distinctBenchmarks = new Set(runs.map(r => r.benchmarkSlug)).size;
+    const independentRuns = runs.filter(r => r.isIndependent).length;
+    const vendorRuns = runs.filter(r => !r.isIndependent).length;
+
+    // Weighted average: independent ×3, vendor ×1
+    let weightedSum = 0;
+    let totalWeight = 0;
+    for (const run of runs) {
+      const weight = run.isIndependent ? 3 : 1;
+      weightedSum += run.score * weight;
+      totalWeight += weight;
+    }
+
+    const aggregateScore = distinctBenchmarks >= 2
+      ? Math.round((weightedSum / totalWeight) * 10) / 10
+      : null;
+
+    const lastUpdated = runs.reduce((latest, r) =>
+      !latest || r.testDate > latest ? r.testDate : latest, null as string | null);
+
+    scores.push({
+      modelId,
+      modelName: data.modelName,
+      modelSlug: data.modelSlug,
+      provider: data.provider,
+      aggregateScore,
+      benchmarkCount: distinctBenchmarks,
+      independentRuns,
+      vendorRuns,
+      breakdowns: runs,
+      lastUpdated,
+    });
+  }
+
+  // Sort: scored models first (highest score), then by benchmark count
+  scores.sort((a, b) => {
+    if (a.aggregateScore !== null && b.aggregateScore !== null) return b.aggregateScore - a.aggregateScore;
+    if (a.aggregateScore !== null) return -1;
+    if (b.aggregateScore !== null) return 1;
+    return b.benchmarkCount - a.benchmarkCount;
+  });
+
+  return scores;
+}

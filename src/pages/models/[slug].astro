@@ -1,14 +1,35 @@
 ---
 import BaseLayout from "../../layouts/BaseLayout.astro";
-import { getPublishedModelBySlug } from "../../lib/server/catalog-data";
+import { getPublishedModelBySlug, getTraceModelScores } from "../../lib/server/catalog-data";
 
 export const prerender = false;
 const slug = Astro.params.slug ?? "";
 let model: Awaited<ReturnType<typeof getPublishedModelBySlug>> = null;
+let modelScores: Awaited<ReturnType<typeof getTraceModelScores>> = [];
 let unavailable = false;
-try { model = await getPublishedModelBySlug(Astro.locals.runtime.env.DB, slug); } catch { unavailable = true; }
+try {
+  const db = Astro.locals.runtime.env.DB;
+  [model, modelScores] = await Promise.all([
+    getPublishedModelBySlug(db, slug),
+    getTraceModelScores(db),
+  ]);
+} catch { unavailable = true; }
+const traceScore = modelScores.find(s => s.modelSlug === slug);
 Astro.response.status = unavailable ? 503 : model ? 200 : 404;
 const openness: Record<string, string> = { closed: "Closed", api_only: "API only", open_weight: "Open-weight", open_source: "Open-source" };
+
+function traceScoreAnalysis(score: typeof traceScore): string {
+  if (!score) return "No benchmark data is available for this model.";
+  if (score.aggregateScore === null) {
+    return `This model has results from ${score.benchmarkCount} benchmark${score.benchmarkCount !== 1 ? "s" : ""}, but fewer than 2 distinct benchmarks — insufficient for a TRACE aggregate score.`;
+  }
+  const parts: string[] = [];
+  parts.push(`TRACE Score ${score.aggregateScore}/100 based on ${score.benchmarkCount} benchmark${score.benchmarkCount !== 1 ? "s" : ""}.`);
+  if (score.independentRuns > 0) parts.push(`${score.independentRuns} independent run${score.independentRuns !== 1 ? "s" : ""} (weighted 3×).`);
+  if (score.vendorRuns > 0) parts.push(`${score.vendorRuns} vendor-reported run${score.vendorRuns !== 1 ? "s" : ""} (weighted 1×).`);
+  parts.push(`Last updated ${score.lastUpdated ? new Date(score.lastUpdated).toLocaleDateString("en-GB") : "unknown"}.`);
+  return parts.join(" ");
+}
 ---
 
 <BaseLayout title={model ? `${model.name} — Model Detail` : "Model not available"} description={model?.description ?? "Reviewed model record."}>
@@ -32,6 +53,39 @@ const openness: Record<string, string> = { closed: "Closed", api_only: "API only
         </dl>
         {model.bestUseCases.length > 0 && <section><h2>Reviewed use cases</h2><ul>{model.bestUseCases.map((item) => <li>{item}</li>)}</ul></section>}
         {model.weaknesses.length > 0 && <section><h2>Recorded limitations</h2><ul>{model.weaknesses.map((item) => <li>{item}</li>)}</ul></section>}
+
+        <!-- TRACE Benchmark Scores -->
+        {traceScore && (
+          <section style="margin-top:2rem;">
+            <h2>Benchmark Performance</h2>
+            {traceScore.aggregateScore !== null ? (
+              <div class="card" style="background:var(--surface-2);margin-bottom:1rem;">
+                <div style="display:flex;align-items:baseline;gap:0.75rem;flex-wrap:wrap;">
+                  <span style="font-size:2rem;font-weight:700;color:var(--accent);">{traceScore.aggregateScore}</span>
+                  <span class="meta">/ 100 &nbsp; TRACE Aggregate Score</span>
+                </div>
+                <p class="meta" style="margin-top:0.35rem;">{traceScoreAnalysis(traceScore)}</p>
+              </div>
+            ) : (
+              <div class="card" style="background:var(--surface-2);margin-bottom:1rem;">
+                <p class="meta">{traceScoreAnalysis(traceScore)}</p>
+              </div>
+            )}
+            {traceScore.breakdowns.length > 0 && (
+              <div class="table-wrap"><table class="data"><thead><tr><th>Benchmark</th><th>Score</th><th>Provenance</th><th>Date</th><th>Source</th></tr></thead><tbody>
+                {traceScore.breakdowns.map((b) => (
+                  <tr>
+                    <td><a href={`/benchmarks/${b.benchmarkSlug}`}>{b.benchmarkName}</a></td>
+                    <td style="font-weight:600;">{b.scoreDisplay}</td>
+                    <td>{b.isIndependent ? "Independent" : "Vendor"}</td>
+                    <td class="meta">{new Date(b.testDate).toLocaleDateString("en-GB")}</td>
+                    <td>{b.sourceUrl ? <a href={b.sourceUrl} rel="noopener noreferrer">Source</a> : "—"}</td>
+                  </tr>
+                ))}
+              </tbody></table></div>
+            )}
+          </section>
+        )}
         <p class="meta" style="margin-top:2rem;">Pricing is omitted until provider-model pricing rows have their own completed review and publication state.</p>
       </article>}
   </div>
