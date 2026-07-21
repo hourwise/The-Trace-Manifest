@@ -17,6 +17,7 @@
 | 4 — Admin Ask TRACE | ✅ | `/admin/ask`, evidence-grounded research with citations |
 | 5 — Knowledge Builder | ✅ | 30 knowledge docs, gaps queue, drag-drop ingest, public pages, Ask TRACE retrieval, version history, source linking |
 | 6 — Guides Lab | 🔄 | Migration + template + ingest + admin page built. 21 guides ingested (draft). Public rendering deferred. |
+| 6.5 — TRACE Briefing | Planned | Manual, versioned editorial editions before candidate automation, AI drafting or scheduling. See `docs/TraceBriefing.md`. |
 | 7-8 | ⏸️ | Multilingual, sharing/snapshots — not started |
 | 9 — Models/Benchmarks | ✅ | 22 models, 10 benchmarks, 11 providers, 14+ benchmark runs. TRACE aggregate scores, model card scores, score normalisation. |
 | 10 | ⏸️ | Commercial features — not started |
@@ -40,7 +41,9 @@
 
 ### Briefings
 
-The `/briefing/daily` route exists but shows a placeholder. Briefings are created via the TRACE Desk publish flow but no briefing content has been published yet. Daily/weekly briefing strategy needs to be planned.
+The repository has a manual briefing foundation: `/briefing/daily` and `/briefing/weekly` render the latest reviewed briefing when present and otherwise show recent published stories; the Worker has an authenticated, reviewer-required briefing publication endpoint. There is not yet an admin briefing editor, immutable/versioned editions, archive, deterministic selection, AI drafting/validation, briefing schedule, or the intended homepage card. Production briefing-content state must be verified separately rather than inferred from this repository.
+
+[`TraceBriefing.md`](TraceBriefing.md) is the canonical feature plan. [`TRACE-BRIEFING-READINESS-REPORT.md`](TRACE-BRIEFING-READINESS-REPORT.md) records the implementation baseline and reconciles this plan with the earlier launch documents.
 
 ### Worker deploy pending
 
@@ -80,7 +83,7 @@ The Cloudflare Pages deploy command (`npx wrangler pages deploy dist`) was remov
 - [ ] **Story ↔ Knowledge linking** — auto-suggest related knowledge docs when publishing a story. `knowledge_document_relationships` table exists; needs UI wiring.
 - [ ] **Feed item classification during publishing** — auto-suggest topics on the review page
 - [ ] **Homepage and feed page layouts** — redesign pass (under discussion)
-- [ ] **Briefings strategy** — plan daily vs weekly format, populate first briefing
+- [ ] **TRACE Briefing B1 — manual structured edition** — implement the versioned data model, admin editor, public dated/archive pages, homepage card and a reviewed Preview edition. Follow [`TraceBriefing.md`](TraceBriefing.md); do not start automated drafting or scheduling first.
 - [ ] **Signups and newsletters** — email collection
 - [ ] **Ingest all model and benchmark data** — finish Artificial Analysis connector
 
@@ -310,6 +313,45 @@ Deliver one phase at a time. Each phase follows: read its ADR -> write the small
 - [ ] Public guide pages and Ask TRACE integration for guides.
 
 **Status:** Migration, template, batch ingest, and admin listing page built. 21 guides ingested (development-tools category). Guides are `draft`/`internal` — not yet publicly visible. Public rendering and Ask TRACE integration deferred.
+
+### Phase 6.5 - TRACE Briefing
+
+**Canonical plan:** [`TraceBriefing.md`](TraceBriefing.md)
+**Readiness report:** [`TRACE-BRIEFING-READINESS-REPORT.md`](TRACE-BRIEFING-READINESS-REPORT.md)
+
+The briefing is TRACE’s curated editorial front door: a weekday Daily Briefing and Sunday Weekly Briefing, both initially generated for human review only. A no-edition result is valid when evidence is insufficient. Briefings are never automatically published or auto-posted to social media.
+
+#### B1 - manual structured edition
+
+- [ ] Complete the Worker deployment/readiness and source-health checks relevant to selecting from published stories.
+- [ ] Replace the mutable legacy briefing records with one canonical, versioned edition model; migrate or reconcile `briefings` and `published_briefings` without losing audit history.
+- [ ] Build `/admin/briefings` for manual selection, editing, authenticated review, approval, rejection, skip and visible correction/version handling.
+- [ ] Build `/briefing`, permanent dated daily/weekly routes, and the final lead/developments/signals/takeaways/watch-next/evidence-snapshot layout.
+- [ ] Replace the homepage briefing statistic/generic card with a latest-valid-edition card; keep the last valid edition visible when no edition is issued today.
+- [ ] Make RSS accurately represent briefing editions or remove the briefing-RSS claim while it remains a story feed.
+- [ ] Test and approve one manual edition in Preview before requesting production publication approval.
+
+#### B2 - deterministic candidate selection
+
+- [ ] Add the 24–30 hour eligibility query, score components, diversity limits and candidate/rejection audit records.
+- [ ] Add fixtures/tests for weak evidence, duplicates, corrections, stale stories and no-edition outcomes.
+- [ ] Keep briefing prose manually authored while the selection logic is evaluated.
+
+#### B3 - governed AI drafting
+
+- [ ] Build bounded story evidence packets and a structured JSON editorial-draft contract.
+- [ ] Validate IDs, evidence labels, factual support, required sections and language; failed drafts enter review with a reason.
+- [ ] Permit at most one authorised manual regeneration; prove in tests that model output cannot select candidates, alter evidence or publish.
+
+#### B4 - scheduling and integration
+
+- [ ] Add DST-safe UK-time weekday and Sunday jobs, idempotency, run audit and safe no-edition handling.
+- [ ] Keep reviewed publication mandatory and obtain separate approval before enabling any scheduled AI behaviour in production.
+
+#### B5 - evaluation and future automation gate
+
+- [ ] Record editorial additions, removals, rewrites and reasons across several weeks of reviewed editions.
+- [ ] Consider conditional auto-publication only after an explicit ADR/policy change and evidence that the quality gate is met.
 
 ### Phase 7 - multilingual ingestion and publication (ADR 0018)
 
