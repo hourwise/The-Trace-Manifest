@@ -281,7 +281,35 @@ export async function getTraceModelScores(db: D1Database): Promise<TraceModelSco
     grouped.get(row.model_id)!.runs.push(breakdown);
   }
 
-  // Compute aggregate scores
+  // Normalise scores within each benchmark to a 0–100 scale.
+  // Some benchmarks use different scales (e.g. LMSYS ELO ~800–1600,
+  // SWE-bench 0–100). Normalisation makes scores comparable.
+  const benchmarkMax = new Map<string, number>();
+  const benchmarkMin = new Map<string, number>();
+  for (const row of result.results) {
+    const key = row.benchmark_slug;
+    if (!benchmarkMax.has(key) || row.score > benchmarkMax.get(key)!) benchmarkMax.set(key, row.score);
+    if (!benchmarkMin.has(key) || row.score < benchmarkMin.get(key)!) benchmarkMin.set(key, row.score);
+  }
+
+  // Known benchmark scale overrides (hardcoded where the range is well-known)
+  const KNOWN_RANGES: Record<string, { min: number; max: number }> = {
+    "lmsys-chatbot-arena": { min: 800, max: 1600 },  // ELO range
+  };
+
+  function normaliseScore(score: number, benchmarkSlug: string): number {
+    const known = KNOWN_RANGES[benchmarkSlug];
+    if (known) {
+      return Math.max(0, Math.min(100, ((score - known.min) / (known.max - known.min)) * 100));
+    }
+    // Auto-detect: if all scores for this benchmark are <= 100, they're already percentages
+    const max = benchmarkMax.get(benchmarkSlug) ?? 100;
+    if (max <= 100) return Math.max(0, Math.min(100, score));
+    // Otherwise normalise using observed range
+    const min = benchmarkMin.get(benchmarkSlug) ?? 0;
+    if (max <= min) return 50;
+    return Math.max(0, Math.min(100, ((score - min) / (max - min)) * 100));
+  }
   const scores: TraceModelScore[] = [];
   for (const [modelId, data] of grouped) {
     const { runs } = data;
@@ -289,12 +317,13 @@ export async function getTraceModelScores(db: D1Database): Promise<TraceModelSco
     const independentRuns = runs.filter(r => r.isIndependent).length;
     const vendorRuns = runs.filter(r => !r.isIndependent).length;
 
-    // Weighted average: independent ×3, vendor ×1
+    // Weighted average of normalised scores: independent ×3, vendor ×1
     let weightedSum = 0;
     let totalWeight = 0;
     for (const run of runs) {
       const weight = run.isIndependent ? 3 : 1;
-      weightedSum += run.score * weight;
+      const normalised = normaliseScore(run.score, run.benchmarkSlug);
+      weightedSum += normalised * weight;
       totalWeight += weight;
     }
 

@@ -1,12 +1,20 @@
 ---
 import BaseLayout from "../../layouts/BaseLayout.astro";
 import ModelCard from "../../components/ModelCard.astro";
-import { getPublishedModels } from "../../lib/server/catalog-data";
+import { getPublishedModels, getTraceModelScores } from "../../lib/server/catalog-data";
 
 export const prerender = false;
 let models: Awaited<ReturnType<typeof getPublishedModels>> = [];
+let traceScores: Awaited<ReturnType<typeof getTraceModelScores>> = [];
 let unavailable = false;
-try { models = await getPublishedModels(Astro.locals.runtime.env.DB); } catch { unavailable = true; }
+try {
+  const db = Astro.locals.runtime.env.DB;
+  [models, traceScores] = await Promise.all([
+    getPublishedModels(db),
+    getTraceModelScores(db),
+  ]);
+} catch { unavailable = true; }
+const scoreBySlug = new Map(traceScores.filter(s => s.aggregateScore !== null).map(s => [s.modelSlug, s.aggregateScore!]));
 const closedModels = models.filter((item) => item.openness === "closed" || item.openness === "api_only");
 const openModels = models.filter((item) => item.openness === "open_weight" || item.openness === "open_source");
 ---
@@ -21,8 +29,8 @@ const openModels = models.filter((item) => item.openness === "open_weight" || it
       <div class="card" style="margin-top:2rem;"><p class="meta">No model records have completed editorial review and publication yet.</p></div>
     ) : (
       <>
-        {closedModels.length > 0 && <section style="margin-top:2rem;"><h2>Closed and API-only models</h2><div class="grid-2">{closedModels.map((item) => <ModelCard model={item} />)}</div></section>}
-        {openModels.length > 0 && <section style="margin-top:2rem;"><h2>Open-weight and open-source models</h2><div class="grid-2">{openModels.map((item) => <ModelCard model={item} />)}</div></section>}
+        {closedModels.length > 0 && <section style="margin-top:2rem;"><h2>Closed and API-only models</h2><div class="grid-2">{closedModels.map((item) => <ModelCard model={item} traceScore={scoreBySlug.get(item.slug) ?? null} />)}</div></section>}
+        {openModels.length > 0 && <section style="margin-top:2rem;"><h2>Open-weight and open-source models</h2><div class="grid-2">{openModels.map((item) => <ModelCard model={item} traceScore={scoreBySlug.get(item.slug) ?? null} />)}</div></section>}
       </>
     )}
   </div>
