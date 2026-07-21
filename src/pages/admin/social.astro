@@ -218,8 +218,7 @@ try {
     </section>
   </div>
 
-  <script>
-    const aiEnabled = {String(editorialAIEnabled)};
+  <script define:vars={{ aiEnabled: editorialAIEnabled }}>
     document.querySelectorAll(".ai-triage-btn").forEach(btn => {
       btn.addEventListener("click", async function(this: HTMLButtonElement) {
         if (!aiEnabled) { alert("Editorial AI is disabled for this deployment."); return; }
