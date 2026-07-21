@@ -5,23 +5,31 @@ import { getPublishedStories, getLatestPublishedBriefing, getPublishedTopics } f
 
 export const prerender = false;
 
-// Fetch latest published content for homepage
+// Fetch live stats for homepage
 let latestStories: Awaited<ReturnType<typeof getPublishedStories>> = [];
 let latestBriefing: Awaited<ReturnType<typeof getLatestPublishedBriefing>> = null;
 let topicCount = 0;
+let publishedStoryCount = 0;
+let evidenceCount = 0;
+let modelCount = 0;
 
 try {
   const db = Astro.locals.runtime.env.DB;
-  [latestStories, latestBriefing, topicCount] = await Promise.all([
+  [latestStories, latestBriefing, topicCount, publishedStoryCount, evidenceCount, modelCount] = await Promise.all([
     getPublishedStories(db, { limit: 4 }),
     getLatestPublishedBriefing(db, "daily"),
     getPublishedTopics(db).then(t => t.length),
+    db.prepare("SELECT COUNT(*) as count FROM story_clusters WHERE publication_status = 'published' AND slug IS NOT NULL AND published_at IS NOT NULL AND reviewed_by IS NOT NULL AND summary IS NOT NULL AND trim(summary) <> ''").first<{ count: number }>().then(r => r?.count ?? 0),
+    db.prepare("SELECT COUNT(*) as count FROM claim_evidence WHERE publication_status = 'published'").first<{ count: number }>().then(r => r?.count ?? 0),
+    db.prepare("SELECT COUNT(*) as count FROM models WHERE publication_status = 'published'").first<{ count: number }>().then(r => r?.count ?? 0),
   ]);
 } catch {
   console.error(JSON.stringify({ message: "Homepage query failed" }));
 }
 
-const hasPublishedData = latestStories.length > 0 || latestBriefing !== null;
+const briefingLabel = latestBriefing
+  ? new Date(latestBriefing.briefing_date).toLocaleDateString("en-GB", { day: "numeric", month: "short" })
+  : null;
 ---
 
 <BaseLayout
@@ -45,13 +53,17 @@ const hasPublishedData = latestStories.length > 0 || latestBriefing !== null;
     </div>
   </section>
 
-  <!-- Stats — live when data exists -->
+  <!-- Stats — live counts from database -->
   <section class="section" style="padding-block:2rem;">
     <div class="wrap">
       <div class="grid-3" style="text-align:center;">
-        <div><p class="display h1" style="color:var(--accent);margin-bottom:0;">{topicCount || "—"}</p><p class="meta">Topics tracked</p></div>
-        <div><p class="display h1" style="color:var(--accent);margin-bottom:0;">{latestBriefing ? "Today" : "—"}</p><p class="meta">Daily briefing</p></div>
-        <div><p class="display h1" style="color:var(--accent);margin-bottom:0;">{hasPublishedData ? "Available" : "—"}</p><p class="meta">Published evidence</p></div>
+        <div><p class="display h1" style="color:var(--accent);margin-bottom:0;">{publishedStoryCount || "—"}</p><p class="meta">Published stories</p></div>
+        <div><p class="display h1" style="color:var(--accent);margin-bottom:0;">{evidenceCount || "—"}</p><p class="meta">Evidence records</p></div>
+        <div><p class="display h1" style="color:var(--accent);margin-bottom:0;">{modelCount || "—"}</p><p class="meta">Models tracked</p></div>
+      </div>
+      <div class="grid-2" style="text-align:center;margin-top:1.5rem;">
+        <div><p class="meta">Tracking {topicCount || "—"} topics</p></div>
+        <div><p class="meta">Daily briefing: {briefingLabel || "—"}</p></div>
       </div>
     </div>
   </section>
