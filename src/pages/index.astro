@@ -1,35 +1,31 @@
 ---
 import BaseLayout from "../layouts/BaseLayout.astro";
 import EvidenceBadge from "../components/EvidenceBadge.astro";
-import { getPublishedStories, getLatestPublishedBriefing, getPublishedTopics } from "../lib/server/d1";
+import { getPublishedStories } from "../lib/server/d1";
 
 export const prerender = false;
 
 // Fetch live stats for homepage
 let latestStories: Awaited<ReturnType<typeof getPublishedStories>> = [];
-let latestBriefing: Awaited<ReturnType<typeof getLatestPublishedBriefing>> = null;
 let topicCount = 0;
 let publishedStoryCount = 0;
 let evidenceCount = 0;
 let modelCount = 0;
+let briefingLabel: string | null = null;
 
 try {
   const db = Astro.locals.runtime.env.DB;
-  [latestStories, latestBriefing, topicCount, publishedStoryCount, evidenceCount, modelCount] = await Promise.all([
+  [latestStories, publishedStoryCount, evidenceCount, modelCount, topicCount, briefingLabel] = await Promise.all([
     getPublishedStories(db, { limit: 4 }),
-    getLatestPublishedBriefing(db, "daily"),
-    getPublishedTopics(db).then(t => t.length),
-    db.prepare("SELECT COUNT(*) as count FROM story_clusters WHERE publication_status = 'published' AND slug IS NOT NULL AND published_at IS NOT NULL AND reviewed_by IS NOT NULL AND summary IS NOT NULL AND trim(summary) <> ''").first<{ count: number }>().then(r => r?.count ?? 0),
-    db.prepare("SELECT COUNT(*) as count FROM claim_evidence WHERE publication_status = 'published'").first<{ count: number }>().then(r => r?.count ?? 0),
+    db.prepare("SELECT COUNT(*) as count FROM story_clusters WHERE publication_status = 'published'").first<{ count: number }>().then(r => r?.count ?? 0),
+    db.prepare("SELECT COUNT(*) as count FROM claim_evidence").first<{ count: number }>().then(r => r?.count ?? 0),
     db.prepare("SELECT COUNT(*) as count FROM models WHERE publication_status = 'published'").first<{ count: number }>().then(r => r?.count ?? 0),
+    db.prepare("SELECT COUNT(DISTINCT topic) as count FROM story_clusters WHERE publication_status = 'published' AND topic IS NOT NULL").first<{ count: number }>().then(r => r?.count ?? 0),
+    db.prepare("SELECT briefing_date FROM published_briefings WHERE briefing_type = 'daily' AND publication_status = 'published' ORDER BY briefing_date DESC LIMIT 1").first<{ briefing_date: string }>().then(r => r ? new Date(r.briefing_date).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : null),
   ]);
 } catch {
   console.error(JSON.stringify({ message: "Homepage query failed" }));
 }
-
-const briefingLabel = latestBriefing
-  ? new Date(latestBriefing.briefingDate).toLocaleDateString("en-GB", { day: "numeric", month: "short" })
-  : null;
 ---
 
 <BaseLayout
