@@ -1,24 +1,24 @@
 # Build-to-launch and post-launch plan
 
 **Audience:** a lower-capability implementation model or a tired human operator  
-**Current baseline:** commit `15a44ba` on `main` and `origin/main` (20 July 2026)  
+**Current baseline:** commit `2687de6` on `main` and `origin/main` (21 July 2026)  
 **Purpose:** execute the remaining launch work in small, verifiable steps, then deliver the accepted ADR features in a safe order.
 
-## Current status (20 July 2026)
+## Current status (21 July 2026)
 
 **Part A (launch):** Complete. Site is live at [thetracemanifest.com](https://thetracemanifest.com).  
-**Part B (post-launch):** Phases 1-5 complete. Phase 6 foundation built. Models & Benchmarks catalogue populated (Phase 9 foundation). Source connector overhaul complete.
+**Part B (post-launch):** Phases 1-5 complete. Phase 6 foundation built. Models & Benchmarks catalogue populated (Phase 9 foundation). Source connector overhaul complete. Ingestion pipeline repaired, editorial workflow unified, TRACE aggregate scores live.
 
 | Phase | Status | Key deliverables |
 |---|---|---|
 | 1 — Social Signals | ✅ | `/admin/social`, `social_signals` table, Community Signals on feed |
 | 2 — Page-Diff Connector | ✅ | HTMLRewriter connector for Anthropic Newsroom + Research |
-| 3 — TRACE Desk | ✅ | Server-rendered desk, state machine, promote-to-story |
+| 3 — TRACE Desk | ✅ | Server-rendered desk, state machine, promote-to-story, manual URL normalisation, duplicate detection, candidate matching |
 | 4 — Admin Ask TRACE | ✅ | `/admin/ask`, evidence-grounded research with citations |
 | 5 — Knowledge Builder | ✅ | 30 knowledge docs, gaps queue, drag-drop ingest, public pages, Ask TRACE retrieval, version history, source linking |
 | 6 — Guides Lab | 🔄 | Migration + template + ingest + admin page built. 21 guides ingested (draft). Public rendering deferred. |
 | 7-8 | ⏸️ | Multilingual, sharing/snapshots — not started |
-| 9 — Models/Benchmarks (partial) | ✅ | 22 models, 10 benchmarks, 11 providers, 14 benchmark runs. Public pages live. |
+| 9 — Models/Benchmarks | ✅ | 22 models, 10 benchmarks, 11 providers, 14+ benchmark runs. TRACE aggregate scores, model card scores, score normalisation. |
 | 10 | ⏸️ | Commercial features — not started |
 | **Bonus: Public Ask TRACE** | ✅ | Live with 3 questions/day/visitor, knowledge + story evidence |
 | **Bonus: Evidence source linking** | ✅ | 79-source registry, auto-link knowledge doc evidence URLs |
@@ -27,45 +27,69 @@
 | **Bonus: Source connector overhaul** | ✅ | 25 sources activated or repaired. 4 new connectors built (HF, LMSYS). 69/79 sources have automated ingestion. |
 | **Bonus: Evidence upgrade pipeline** | ✅ | Auto-upgrade evidence based on source tier counts (runs 9 AM daily) |
 | **Bonus: Find Related Coverage** | ✅ | Review page button searches ingested pool for corroborating items |
+| **Bonus: TRACE Aggregate Scores** | ✅ | Live 0–100 normalised scores across benchmarks. Displayed on `/benchmarks`, `/models`, and model cards. |
+| **Bonus: Homepage live stats** | ✅ | Published stories, evidence records, models tracked, topics, briefing date — all from live DB queries. |
+| **Bonus: Editorial AI analysis** | ✅ | AI triage populates headline, summary, editorial analysis, and why-it-matters on review page. |
+| **Bonus: Review page restructure** | ✅ | Publish section at top; cluster filters (topic, sort, dedup, manual/auto). |
+| **Bonus: RSS image extraction** | 🔄 | Code written — extracts enclosure/media/image URLs. Needs Worker deploy. |
+| **Bonus: Ingestion error reporting** | 🔄 | Structured errors, per-item counters, unsupported-connector filtering. Needs Worker deploy. |
 
-### Models and Benchmarks pages
+### Homepage state
 
-**Live at `/models` and `/benchmarks`.** Populated 20 July 2026 with 22 curated model records (10 closed/API-only, 12 open-weight) across 11 providers, 10 benchmark records, and 14 benchmark runs (SWE-bench, LMSYS, MMLU-Pro, HumanEval+). All records have `publication_status = 'published'` with reviewer attribution. See `docs/MODELS-BENCHMARKS-IMPLEMENTATION-PLAN.md` for the full plan.
+**Fixed 21 July.** Stats now show live database counts: published stories, evidence records, models tracked, topics, and briefing date. Queries use simple publication_status checks to match actual DB state (previously required reviewer/summary/slug fields that not all records have).
 
 ### Briefings
 
 The `/briefing/daily` route exists but shows a placeholder. Briefings are created via the TRACE Desk publish flow but no briefing content has been published yet. Daily/weekly briefing strategy needs to be planned.
 
-### Homepage state
+### Worker deploy pending
 
-The homepage shows latest stories but has placeholder stats ("—" for daily briefing, "Available" for published evidence). These need to be connected to live data.
+Several fixes are committed to `main` but the Worker has not been redeployed since the ingestion repair pass:
+- RSS image extraction (enclosure/media/img tags)
+- Structured error reporting with stage/HTTP status/timeout/retryability
+- Per-item rejection counters (duplicates, too-old, filtered, malformed)
+- Unsupported connector filtering (manual/huggingface_api sources no longer generate repeated noise)
+- Auto candidate creation from accepted feed items
+- Promotion audit recording
+- Cluster list limit 100→200
+
+**Deploy with:** `npx wrangler deploy -c wrangler.worker.toml`
+
+### Pages deploy note
+
+The Cloudflare Pages deploy command (`npx wrangler pages deploy dist`) was removed from build settings. Git-integrated Pages auto-deploys on push. The API token authentication issue on the deploy step is no longer relevant.
 
 ---
 
 ## Future plans (prioritised)
 
-### Immediate (next session)
+### 🔴 Critical — Worker deploy
 
-- [ ] **Verify new sources are pulling through** — check ingestion jobs for the 25 newly-activated sources (RSS, GitHub, HF, LMSYS). Confirm stories are flowing from Meta AI, Stability, xAI, Cohere, Mistral, HF Trending, LMSYS, etc.
-- [ ] **Check evidence is attaching to knowledge docs and published stories** — verify `claim_evidence` records are being created, check Ask TRACE can retrieve knowledge docs + story evidence together
-- [ ] **Homepage stats** — connect "Daily briefing" and "Published evidence" cards to live data (remove placeholders)
-- [ ] **Benchmark scores on model cards** — display benchmark runs on individual model pages with source attribution and vendor/independent flags
+- [ ] **Deploy the Worker** — `npx wrangler deploy -c wrangler.worker.toml`. Activates RSS images, structured errors, connector filtering, counters, candidate auto-creation, audit recording, cluster 200-limit.
+
+### Immediate (this session)
+
+- [x] **Homepage stats** — connected live counts (published stories, evidence records, models, topics, briefing date)
+- [x] **Benchmark scores on model cards** — TRACE aggregate scores on `/benchmarks`, `/models/[slug]`, and model cards. Normalised 0–100 scale.
+- [x] **Review page restructure** — Publish section moved to top; cluster filters added (topic, sort, dedup, manual/auto)
+- [x] **Editorial AI analysis field** — AI triage now populates Editorial Analysis textarea
+- [ ] **Verify sources pulling through** — check `/admin/jobs` for newly-activated sources
 
 ### Short-term
 
-- [ ] **Homepage and feed page layouts** — redesign pass (under discussion)
-- [ ] **Briefings strategy** — plan daily vs weekly format, populate first briefing, connect to feed items
-- [ ] **Signups and newsletters** — email collection, weekly/monthly newsletter infrastructure
-- [ ] **Ingest all model and benchmark data** — finish Artificial Analysis connector, add benchmark score scraping/API for remaining benchmarks
-- [ ] **Story ↔ Knowledge linking** — auto-suggest related knowledge docs when publishing a story
+- [ ] **Story ↔ Knowledge linking** — auto-suggest related knowledge docs when publishing a story. `knowledge_document_relationships` table exists; needs UI wiring.
 - [ ] **Feed item classification during publishing** — auto-suggest topics on the review page
+- [ ] **Homepage and feed page layouts** — redesign pass (under discussion)
+- [ ] **Briefings strategy** — plan daily vs weekly format, populate first briefing
+- [ ] **Signups and newsletters** — email collection
+- [ ] **Ingest all model and benchmark data** — finish Artificial Analysis connector
 
 ### Medium-term
 
 - [ ] **Public Guides** — render approved guides at `/guides/[slug]`, integrate with Ask TRACE
 - [ ] **Guides ↔ Knowledge linking** — cross-reference guides with related knowledge docs
 - [ ] **Social signals → Feed items** — promotion workflow for social posts to become stories
-- [ ] **Page-diff for remaining 3 changelogs** — AWS, OpenAI, Gemini API release notes
+- [ ] **Page-diff for remaining changelogs** — AWS, OpenAI, Gemini API release notes
 - [ ] **Artificial Analysis connector** — highest-value remaining manual source
 
 ### Long-term (post-launch phases)
@@ -93,7 +117,7 @@ The homepage shows latest stories but has placeholder stats ("—" for daily bri
 
 ---
 
-## Database state (20 July 2026)
+## Database state (21 July 2026)
 
 | Resource | Count |
 |---|---|
@@ -108,10 +132,11 @@ The homepage shows latest stories but has placeholder stats ("—" for daily bri
 | How-to guides (draft) | 21 |
 | Models (published) | 22 |
 | Benchmarks (published) | 10 |
-| Benchmark runs (published) | 14 |
+| Benchmark runs (published) | 14+ |
 | Providers (published) | 11 |
 | Claims extracted | ~1,064 |
 | Evidence records | ~282 |
+| TRACE aggregate scores (≥2 benchmarks) | 4 (Claude Fable 5, GPT-5.6 Sol, Kimi K3, Qwen3-Coder-Next) |
 | Social signals | Displayed on feed |
 | Question gaps recorded | Active via Admin Ask TRACE |
 
@@ -128,27 +153,30 @@ The homepage shows latest stories but has placeholder stats ("—" for daily bri
 | `TRACE_INTERNAL_SERVICE_SECRET` | Set | `wrangler pages secret put` |
 | `CF_ACCESS_AUD` | Set | `wrangler pages secret put` |
 
-## Key commit history (19-20 July)
+## Key commit history (19-21 July)
 
-| Commit | Description |
-|---|---|
-| `15a44ba` | LMSYS Chatbot Arena connector (lmsys_api) |
-| `1ab6025` | Convert 4 final manual sources to github_api/rss |
-| `3878557` | Job 2 Batch C: benchmark sources to github_api/rss |
-| `dd1f293` | Job 2 Batch B: HuggingFace Trending Models API connector |
-| `8147d82` | Job 2 Batch A: fix 12 RSS sources, add 5 new RSS feeds |
-| `5410135` | DeepSeek-V4, Kimi K3, Qwen3-Coder-Next + 14 benchmark runs |
-| `fd4f395` | Models & Benchmarks implementation plan |
-| `d663886` | Populate Models Directory (22) and Benchmarks Registry (10) |
-| `844aced` | Find Related Coverage button on review page |
-| `df72a3a` | Fix 8 source connectors (RSS URLs) |
-| `0a8817d` | Auto-evidence upgrade pipeline + homepage sort |
-| `843e7ba` | AI analysis MAX_SOURCES 10→30 |
-| `ed87afe` | Fix worker cluster list limit 100→200 |
-| `4b31cb2` | Public Ask TRACE enabled |
-| `e8c19b3` | Phase 6 Guides Lab foundation |
-| `d60a04e` | Knowledge Builder drag-and-drop |
-| `c004325` | Phase 5 gaps recording |
+| Commit | Date | Description |
+|---|---|---|
+| `2687de6` | 21 Jul | Fix homepage stats: simplified queries matching actual DB state |
+| `33ff08d` | 21 Jul | Fix TRACE scores: normalise across benchmark scales, fix display, add scores to model cards |
+| `acc7442` | 21 Jul | Fix homepage: briefing_date → briefingDate (camelCase) |
+| `71836b7` | 21 Jul | TRACE aggregate model scores: live benchmark scoring on registry and model cards |
+| `dc6597c` | 21 Jul | Homepage stats: replace placeholders with live counts |
+| `859c862` | 21 Jul | Review page: move Publish to top; add cluster filters |
+| `39640f6` | 21 Jul | RSS parser: extract enclosure and image URLs |
+| `6e3a91d` | 21 Jul | AI triage: populate Editorial Analysis field |
+| `03eaa79` | 21 Jul | Fix admin fetch calls missing credentials:include |
+| `0c1621e` | 21 Jul | Ingestion & editorial workflow repair pass |
+| `f47b1a5` | 20 Jul | Comprehensive docs update |
+| `15a44ba` | 20 Jul | LMSYS Chatbot Arena connector |
+| `1ab6025` | 20 Jul | Convert 4 final manual sources to github_api/rss |
+| `3878557` | 20 Jul | Job 2 Batch C: benchmark sources to github_api/rss |
+| `dd1f293` | 20 Jul | Job 2 Batch B: HuggingFace Trending Models API connector |
+| `8147d82` | 20 Jul | Job 2 Batch A: fix 12 RSS sources, add 5 new RSS feeds |
+| `5410135` | 20 Jul | DeepSeek-V4, Kimi K3, Qwen3-Coder-Next + 14 benchmark runs |
+| `d663886` | 19 Jul | Populate Models Directory and Benchmarks Registry |
+| `844aced` | 19 Jul | Find Related Coverage button on review page |
+| `0a8817d` | 19 Jul | Auto-evidence upgrade pipeline + homepage sort |
 
 ## Rules that must be followed exactly
 
