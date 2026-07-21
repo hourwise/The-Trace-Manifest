@@ -970,6 +970,8 @@ async function handleAdminRoute(
       return handleClusterSources(request, env);
     case "/admin/archive-cluster":
       return handleArchiveCluster(request, env);
+    case "/admin/related-items":
+      return handleRelatedItems(request, env);
     case "/admin/candidates":
       return request.method === "GET"
         ? handleCandidateList(env)
@@ -1497,4 +1499,92 @@ async function handleArchiveCluster(request: Request, env: Env): Promise<Respons
   }
 
   return Response.json({ status: "ok" });
+}
+
+async function handleRelatedItems(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const clusterId = Number(url.searchParams.get("clusterId") || "0");
+  if (!Number.isInteger(clusterId) || clusterId < 1) {
+    return Response.json({ error: "clusterId query param is required" }, { status: 400 });
+  }
+
+  try {
+    const clusterSources = await env.DB.prepare(`
+      SELECT fi.id, fi.title, fi.content_excerpt, fi.url
+      FROM story_cluster_members scm
+      JOIN feed_items fi ON scm.feed_item_id = fi.id
+      WHERE scm.cluster_id = ? AND fi.ingestion_status <> 'archived'
+      LIMIT 10
+    `).bind(clusterId).all<{ id: number; title: string; content_excerpt: string | null; url: string }>();
+
+    if (!clusterSources.results || clusterSources.results.length === 0) {
+      return Response.json({ clusterItemCount: 0, items: [] });
+    }
+
+    const clusterWords = new Set<string>();
+    for (const src of clusterSources.results) {
+      for (const word of tokenizeForSearch(src.title)) clusterWords.add(word);
+      if (src.content_excerpt) {
+        for (const word of tokenizeForSearch(src.content_excerpt.slice(0, 200))) clusterWords.add(word);
+      }
+    }
+
+    if (clusterWords.size < 2) {
+      return Response.json({ clusterItemCount: clusterSources.results.length, items: [] });
+    }
+
+    const clusterItemIds = new Set(clusterSources.results.map(r => r.id));
+    const candidates = await env.DB.prepare(`
+      SELECT fi.id, fi.title, fi.content_excerpt, fi.url, fi.published_at,
+             s.name AS source_name, s.tier AS source_tier
+      FROM feed_items fi
+      JOIN sources s ON fi.source_id = s.id
+      WHERE fi.ingestion_status NOT IN ('archived', 'rejected')
+        AND fi.fetched_at >= datetime('now', '-30 days')
+      ORDER BY fi.fetched_at DESC
+      LIMIT 500
+    `).all<{
+      id: number; title: string; content_excerpt: string | null; url: string;
+      published_at: string | null; source_name: string; source_tier: string;
+    }>();
+
+    interface ScoredItem {
+      id: number; title: string; sourceName: string; sourceTier: string;
+      url: string; publishedAt: string | null; score: number; matchReasons: string[];
+    }
+
+    const scored: ScoredItem[] = [];
+    for (const row of (candidates.results ?? [])) {
+      if (clusterItemIds.has(row.id)) continue;
+      const candidateWords = new Set(tokenizeForSearch(row.title));
+      let overlap = 0;
+      const matchedWords: string[] = [];
+      for (const w of clusterWords) {
+        if (candidateWords.has(w)) {
+          overlap++;
+          if (matchedWords.length < 3) matchedWords.push(w);
+        }
+      }
+      if (overlap >= 2) {
+        const score = Math.min(100, Math.round((overlap / Math.min(clusterWords.size, 8)) * 100));
+        scored.push({
+          id: row.id, title: row.title,
+          sourceName: row.source_name, sourceTier: row.source_tier,
+          url: row.url, publishedAt: row.published_at, score,
+          matchReasons: matchedWords.length > 0 ? [`matched: ${matchedWords.join(", ")}`] : ["title overlap"],
+        });
+      }
+    }
+
+    scored.sort((a, b) => b.score - a.score);
+    return Response.json({ clusterItemCount: clusterSources.results.length, items: scored.slice(0, 20) });
+  } catch (error: any) {
+    console.error(JSON.stringify({ message: "Related items search failed", clusterId, error: redactError(error) }));
+    return Response.json({ error: "Related items search is unavailable." }, { status: 500 });
+  }
+}
+
+function tokenizeForSearch(text: string): string[] {
+  return text.toLowerCase().replace(/[^\w\s]/g, " ").replace(/\s+/g, " ").trim().split(" ")
+    .filter(w => w.length > 2 && !["the","and","for","with","that","this","from","have","been","what","when","where","which","about","just","also","very","only","more","some","than","then","over","into","after","before","their","they","will","would","could","should","these","those"].includes(w));
 }
