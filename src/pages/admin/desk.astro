@@ -2,6 +2,7 @@
 import BaseLayout from "../../layouts/BaseLayout.astro";
 
 export const prerender = false;
+const editorialAIEnabled = Astro.locals.runtime.env.TRACE_AI_EDITORIAL_ENABLED === "true";
 
 interface CandidateRow {
   id: string; intake_type: string; submitted_url: string | null;
@@ -249,8 +250,12 @@ const STATE_LABELS: Record<string, string> = { new:"New", drafting:"Drafting", d
           <input name="url" type="url" maxlength="2048" placeholder="https://…" />
         </label>
         <label>Lead or editorial note
-          <textarea name="lead" rows="5" maxlength="8000" placeholder="Why this matters, source context, or a summary."></textarea>
+          <textarea name="lead" id="desk-lead" rows="5" maxlength="8000" placeholder="Why this matters, source context, or a summary."></textarea>
         </label>
+        <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;">
+          <button type="button" id="desk-ai-btn" class="btn btn-secondary" style="font-size:0.8rem;">🤖 AI Analyse URL</button>
+          <span id="desk-ai-status" class="meta" style="font-size:0.75rem;"></span>
+        </div>
         <div class="grid grid--3" style="gap:1rem;">
           <label>Section <select name="section"><option value="">Unclassified</option><option value="ai-agents">AI &amp; Agents</option></select></label>
           <label>Urgency <select name="urgency"><option value="normal">Normal</option><option value="high">High</option><option value="breaking">Breaking</option><option value="low">Low</option></select></label>
@@ -309,6 +314,46 @@ const STATE_LABELS: Record<string, string> = { new:"New", drafting:"Drafting", d
     </section>
   </div>
 </BaseLayout>
+
+<script define:vars={{ aiEnabled: editorialAIEnabled }}>
+  document.getElementById("desk-ai-btn").addEventListener("click", async function() {
+    if (!aiEnabled) { alert("Editorial AI is disabled for this deployment."); return; }
+    var urlField = document.querySelector("input[name='url']");
+    var leadField = document.getElementById("desk-lead");
+    var statusEl = document.getElementById("desk-ai-status");
+    var btn = this;
+    var url = (urlField && urlField.value) ? urlField.value.trim() : "";
+
+    if (!url) { if (statusEl) statusEl.textContent = "Enter a URL first."; return; }
+    btn.disabled = true;
+    btn.textContent = "🤖 Analysing…";
+    if (statusEl) statusEl.textContent = "Asking AI to analyse this URL…";
+
+    try {
+      var res = await fetch("/api/admin/ai-triage", {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sources: [{ title: "Submitted URL", excerpt: url }] }),
+      });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      var data = await res.json();
+      var summary = data.summary || "";
+      var analysis = data.editorialAnalysis || "";
+      var why = data.whyItMatters || "";
+      var result = summary;
+      if (analysis) result += "\n\n" + analysis;
+      if (why) result += "\n\nWhy it matters: " + why;
+      if (leadField) leadField.value = result.slice(0, 8000);
+      if (statusEl) statusEl.textContent = "✅ Done — review and edit before recording.";
+    } catch (e) {
+      if (statusEl) statusEl.textContent = "❌ AI analysis failed. You can still enter notes manually.";
+      console.error("Desk AI triage failed", e);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "🤖 AI Analyse URL";
+    }
+  });
+</script>
 
 <style>
   .desk-form label { display: grid; gap: 0.35rem; font-size: 0.875rem; font-weight: 600; }
