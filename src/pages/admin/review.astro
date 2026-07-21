@@ -600,24 +600,32 @@ try {
         try {
           const res = await adminFetch(`/api/admin/related-items?clusterId=${clusterId}`);
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          const data: { clusterItemCount: number; items: Array<{ id: number; title: string; sourceName: string; sourceTier: string; url: string; publishedAt: string | null; score: number; matchReasons: string[] }> } = await res.json();
+          const data: { clusterItemCount: number; items: Array<{ id: number; title: string; sourceName: string; sourceTier: string; kind: "ingested_coverage" | "cluster" | "published_story"; clusterId: number | null; url: string | null; publishedAt: string | null; score: number; matchReasons: string[] }> } = await res.json();
 
           if (data.items.length === 0) {
             relatedDiv.innerHTML = '<p class="meta">No related items found in the ingested pool. This story may be unique.</p>';
           } else {
-            relatedDiv.innerHTML = `<p class="meta" style="margin-bottom:0.5rem;"><strong>${data.items.length} related item(s)</strong> found across ${data.clusterItemCount} cluster source(s). Click to review the original.</p>` +
-              data.items.slice(0, 15).map(item => `
+            relatedDiv.innerHTML = `<p class="meta" style="margin-bottom:0.5rem;"><strong>${data.items.length} related result(s)</strong> found from ingested coverage, other clusters, and published stories.</p>` +
+              data.items.slice(0, 15).map(item => {
+                const kindLabel = item.kind === "published_story" ? "published story" : item.kind === "cluster" ? "cluster" : "coverage";
+                const sourceLabel = item.sourceTier === "TRACE" ? "TRACE" : item.sourceTier === "cluster" ? "cluster" : `Tier ${item.sourceTier}`;
+                const title = item.url
+                  ? `<a href="${escapeHTML(safeExternalUrl(item.url))}" target="_blank" rel="noopener" style="font-weight:600;">${escapeHTML(item.title.slice(0, 90))}${item.title.length > 90 ? '…' : ''}</a>`
+                  : `<span style="font-weight:600;">${escapeHTML(item.title.slice(0, 90))}${item.title.length > 90 ? '…' : ''}</span>`;
+                return `
                 <div style="padding:0.4rem 0;border-bottom:1px solid var(--border-light);font-size:0.82rem;">
                   <div style="display:flex;gap:0.5rem;align-items:baseline;flex-wrap:wrap;">
-                    <span class="badge" style="font-size:0.6rem;">${item.sourceTier}-tier</span>
+                    <span class="badge" style="font-size:0.6rem;">${kindLabel}</span>
+                    <span class="badge" style="font-size:0.6rem;">${escapeHTML(sourceLabel)}</span>
                     <span class="badge" style="font-size:0.6rem;">score ${item.score}</span>
-                    <a href="${escapeHTML(item.url)}" target="_blank" rel="noopener" style="font-weight:600;">${escapeHTML(item.title.slice(0, 90))}${item.title.length > 90 ? '…' : ''}</a>
+                    ${title}
                   </div>
                   <div class="meta" style="font-size:0.7rem;margin-top:0.15rem;">
-                    ${item.sourceName} · ${item.matchReasons.join(" · ")} ${item.publishedAt ? '· ' + item.publishedAt.slice(0, 10) : ''}
+                    ${escapeHTML(item.sourceName)} · ${item.matchReasons.map(escapeHTML).join(" · ")} ${item.publishedAt ? '· ' + escapeHTML(item.publishedAt.slice(0, 10)) : ''}
                   </div>
                 </div>
-              `).join("");
+              `;
+              }).join("");
           }
           status(`Found ${data.items.length} related item(s).`, false);
         } catch (e: any) {

@@ -10,6 +10,7 @@ import { GUIDE_CONTRACT_VERSION, guideFreshness, isGuideEligibleForProceduralRet
 import { nodeWindowsVerificationCommands } from "../src/guides/drafts/install-node-js-and-npm-on-windows";
 import { validateAskBody } from "../src/pages/api/trace/ask";
 import { handleTriageRequest } from "../src/pages/api/admin/ai-triage";
+import { extractTriageUrlSource, TriageUrlFetchError } from "../src/lib/server/triage-url-source";
 import { signInternalRequest, verifyInternalRequestSignature } from "../src/security/internal-signature";
 import { publishBriefing, publishStory } from "../workers/ingestion/publish";
 import worker from "../workers/ingestion/index";
@@ -259,6 +260,30 @@ async function deskBoundaryTests(): Promise<void> {
     const queue = await request("publisher", "GET", "/admin/candidates");
     assert.equal(queue.status, 200, "publishers can view the Desk queue");
     assert.equal((await queue.json() as Array<{ state: string }>)[0]?.state, "new");
+
+    database.sqlite.exec(`
+      INSERT INTO sources (id, name, url, section, tier, treatment, ingestion_type) VALUES
+        (301, 'Primary coverage', 'https://primary.example', 'A', 'A', 'primary-technical', 'rss'),
+        (302, 'Independent coverage', 'https://independent.example', 'B', 'B', 'independent-reporting', 'rss');
+      INSERT INTO feed_items (id, source_id, url, url_hash, title, content_excerpt, fetched_at, ingestion_status) VALUES
+        (301, 301, 'https://primary.example/helios', 'related-hash-301', 'OpenAI Helios model release', 'Initial coverage of the Helios model release.', datetime('now'), 'clustered'),
+        (302, 302, 'https://independent.example/helios', 'related-hash-302', 'OpenAI Helios model release adds enterprise controls', 'Independent reporting on the Helios model release and its controls.', datetime('now'), 'classified');
+      INSERT INTO story_clusters (id, title, topic, summary, publication_status, evidence_status, created_at, updated_at) VALUES
+        (301, 'OpenAI Helios model release', 'ai-agents', 'A new OpenAI Helios model release.', 'draft', 'provisionally_supported', datetime('now'), datetime('now')),
+        (302, 'Helios model release needs wider testing', 'ai-agents', 'A related cluster about testing the Helios model release.', 'review', 'provisionally_supported', datetime('now'), datetime('now')),
+        (303, 'Published analysis of the Helios model release', 'ai-agents', 'Published TRACE coverage of the Helios model release.', 'published', 'strongly_supported', datetime('now'), datetime('now'));
+      UPDATE story_clusters SET slug = 'published-helios-analysis', published_at = datetime('now'), reviewed_by = 'publisher@example.com', reviewed_at = datetime('now') WHERE id = 303;
+      INSERT INTO story_cluster_members (cluster_id, feed_item_id, is_primary) VALUES (301, 301, 1);
+    `);
+    const related = await request("publisher", "GET", "/admin/related-items?clusterId=301");
+    assert.equal(related.status, 200, "related coverage search is available to publishers");
+    const relatedPayload = await related.json() as { items: Array<{ id: number; kind: string; url: string | null }> };
+    assert.ok(relatedPayload.items.some((item) => item.kind === "ingested_coverage" && item.id === 302), "related ingested coverage is returned");
+    assert.ok(relatedPayload.items.some((item) => item.kind === "cluster" && item.id === 302), "related unpublished clusters are returned");
+    assert.ok(
+      relatedPayload.items.some((item) => item.kind === "published_story" && item.id === 303 && item.url === "/stories/published-helios-analysis"),
+      "related published stories are returned with their public URL",
+    );
   } finally {
     database.close();
   }
@@ -348,7 +373,51 @@ async function boundaryTests(): Promise<void> {
   assert.equal(await verifyInternalRequestSignature(secret, "POST", "/admin/publish-story", "{\"clusterId\":1}", identity, signature), false);
 }
 
+async function triageUrlSourceTests(): Promise<void> {
+  const originalFetch = globalThis.fetch;
+  const requestedUrls: string[] = [];
+  try {
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      requestedUrls.push(url);
+      assert.equal(init?.redirect, "manual", "URL triage validates redirects itself");
+      assert.equal(new Headers(init?.headers).get("Accept"), "text/html,application/xhtml+xml;q=0.9");
+      if (url === "https://example.test/redirect") {
+        return new Response(null, { status: 302, headers: { Location: "/post" } });
+      }
+      return new Response(`
+        <html><head>
+          <title>Fallback title</title>
+          <meta property="og:title" content="Alice reports an issue" />
+          <meta property="og:description" content="A bounded public post description." />
+          <meta name="author" content="Alice Example" />
+          <meta name="twitter:creator" content="@alice" />
+        </head><body><article>Visible post text with useful context.</article><script>ignore()</script></body></html>
+      `, { headers: { "Content-Type": "text/html; charset=utf-8" } });
+    }) as typeof fetch;
+
+    const source = await extractTriageUrlSource("https://example.test/redirect");
+    assert.deepEqual(requestedUrls, ["https://example.test/redirect", "https://example.test/post"]);
+    assert.equal(source.finalUrl, "https://example.test/post");
+    assert.equal(source.title, "Alice reports an issue");
+    assert.equal(source.authorDisplayName, "Alice Example");
+    assert.equal(source.authorHandle, "@alice");
+    assert.match(source.excerpt, /Visible post text with useful context/);
+    assert.doesNotMatch(source.excerpt, /ignore\(\)/, "script content is excluded from AI triage material");
+
+    await assert.rejects(
+      () => extractTriageUrlSource("http://127.0.0.1/private"),
+      (error: unknown) => error instanceof TriageUrlFetchError && error.status === 400,
+      "private-network targets are rejected before any fetch",
+    );
+    assert.equal(requestedUrls.length, 2, "rejected private URLs never reach fetch");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
 await boundaryTests();
+await triageUrlSourceTests();
 await governanceTests();
 await gatewayTests();
 await publicationAndIngestionTests();

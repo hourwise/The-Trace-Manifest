@@ -333,7 +333,7 @@ const STATE_LABELS: Record<string, string> = { new:"New", drafting:"Drafting", d
       var res = await fetch("/api/admin/ai-triage", {
         method: "POST", credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sources: [{ title: "Submitted URL", excerpt: url }] }),
+        body: JSON.stringify({ sources: [{ title: "Submitted URL", excerpt: null, url: url }] }),
       });
       if (!res.ok) throw new Error("HTTP " + res.status);
       var data = await res.json();

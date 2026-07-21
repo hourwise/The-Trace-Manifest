@@ -144,6 +144,10 @@ try {
             <label for="sig-url" style="font-size:0.85rem;font-weight:600;display:block;margin-bottom:0.25rem;">Public URL <span style="color:var(--ev-disputed);">*required</span></label>
             <input type="url" name="url" id="sig-url" placeholder="https://…" style="width:100%;" />
           </div>
+          <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;">
+            <button type="button" id="sig-ai-import-btn" class="btn btn-secondary" style="font-size:0.8rem;">AI Triage URL</button>
+            <span id="sig-ai-import-status" class="meta" style="font-size:0.75rem;"></span>
+          </div>
           <div>
             <label for="sig-reason" style="font-size:0.85rem;font-weight:600;display:block;margin-bottom:0.25rem;">Why this matters <span style="color:var(--ev-disputed);">*required</span> <span class="meta" style="font-weight:400;">(10–1000 chars)</span></label>
             <textarea name="reason" id="sig-reason" rows="2" placeholder="What makes this signal worth reviewing?…" style="width:100%;resize:vertical;"></textarea>
@@ -219,6 +223,66 @@ try {
   </div>
 
   <script define:vars={{ aiEnabled: editorialAIEnabled }}>
+    function inferSocialPlatform(value) {
+      try {
+        var host = new URL(value).hostname.toLowerCase().replace(/^www\./, "");
+        if (host === "reddit.com" || host.endsWith(".reddit.com") || host === "redd.it") return "reddit";
+        if (host === "x.com" || host.endsWith(".x.com") || host === "twitter.com" || host.endsWith(".twitter.com")) return "x";
+        if (host === "bsky.app" || host.endsWith(".bsky.app")) return "bluesky";
+        if (host === "linkedin.com" || host.endsWith(".linkedin.com")) return "linkedin";
+        if (host === "youtube.com" || host.endsWith(".youtube.com") || host === "youtu.be") return "youtube";
+        if (host === "github.com" || host.endsWith(".github.com")) return "github-discussion";
+      } catch (_) { /* URL validation is enforced by the server. */ }
+      return "";
+    }
+
+    document.getElementById("sig-ai-import-btn").addEventListener("click", async function() {
+      if (!aiEnabled) { alert("Editorial AI is disabled for this deployment."); return; }
+      var urlField = document.getElementById("sig-url");
+      var platformField = document.getElementById("sig-platform");
+      var reasonField = document.getElementById("sig-reason");
+      var notesField = document.getElementById("sig-notes");
+      var authorNameField = document.getElementById("sig-author-name");
+      var authorHandleField = document.getElementById("sig-author-handle");
+      var statusEl = document.getElementById("sig-ai-import-status");
+      var url = urlField && urlField.value ? urlField.value.trim() : "";
+      if (!url) { if (statusEl) statusEl.textContent = "Enter a public URL first."; return; }
+
+      this.disabled = true;
+      this.textContent = "AI triaging…";
+      if (statusEl) statusEl.textContent = "Retrieving the public page and drafting suggestions…";
+      try {
+        var res = await fetch("/api/admin/ai-triage", {
+          method: "POST", credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sources: [{ title: "Submitted social signal", excerpt: null, url: url }] }),
+        });
+        var data = await res.json();
+        if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
+
+        var reason = [data.summary || "", data.whyItMatters ? ("Why it matters: " + data.whyItMatters) : ""].filter(Boolean).join("\n\n");
+        var notes = [data.editorialAnalysis || "", (data.keyFacts || []).length ? ("Key points:\n- " + data.keyFacts.join("\n- ")) : "", (data.caveats || []).length ? ("Caveats:\n- " + data.caveats.join("\n- ")) : ""].filter(Boolean).join("\n\n");
+        if (reasonField && !reasonField.value.trim()) reasonField.value = reason.slice(0, 1000);
+        if (notesField && !notesField.value.trim()) notesField.value = notes.slice(0, 3000);
+        if (platformField && !platformField.value) {
+          var inferredPlatform = inferSocialPlatform(url);
+          if (inferredPlatform) platformField.value = inferredPlatform;
+        }
+        var extracted = data.extractedSources && data.extractedSources[0];
+        if (extracted) {
+          if (authorNameField && !authorNameField.value.trim() && extracted.authorDisplayName) authorNameField.value = extracted.authorDisplayName;
+          if (authorHandleField && !authorHandleField.value.trim() && extracted.authorHandle) authorHandleField.value = extracted.authorHandle;
+        }
+        if (statusEl) statusEl.textContent = "Suggestions added — review and edit them before submitting.";
+      } catch (e) {
+        if (statusEl) statusEl.textContent = e && e.message ? e.message : "AI triage failed. You can still enter details manually.";
+        console.error("Social import AI triage failed", e);
+      } finally {
+        this.disabled = false;
+        this.textContent = "AI Triage URL";
+      }
+    });
+
     document.querySelectorAll(".ai-triage-btn").forEach(function(btn) {
       btn.addEventListener("click", async function() {
         if (!aiEnabled) { alert("Editorial AI is disabled for this deployment."); return; }
@@ -239,7 +303,7 @@ try {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               sources: [
-                { title: "Social signal from " + platform, excerpt: ("URL: " + url + "\nReason: " + reason + "\nNotes: " + notes).slice(0, 3000) }
+                { title: "Social signal from " + platform, excerpt: ("Reason: " + reason + "\nNotes: " + notes).slice(0, 3000), url: url }
               ]
             }),
           });

@@ -32,14 +32,15 @@ The initial workflow will:
 
 1. accept a direct URL submitted by an editor or approved contributor;
 2. validate and canonicalise the social URL;
-3. store limited reviewer-supplied metadata;
-4. classify the post as a discovery signal or attributed claim;
-5. allow a reviewer to add linked material separately;
-6. create separate source candidates for linked articles, papers, official documents, repositories, releases and advisories;
-7. optionally ask TRACE to draft a short original summary from reviewer notes;
-8. require human approval before a social card is published;
-9. link readers to the original platform;
-10. avoid automatic mirroring, full-thread scraping and media rehosting.
+3. when an authenticated editor requests triage, retrieve one bounded public HTML representation of that submitted URL;
+4. store limited reviewer-supplied metadata after the editor reviews any generated suggestions;
+5. classify the post as a discovery signal or attributed claim;
+6. allow a reviewer to add linked material separately;
+7. create separate source candidates for linked articles, papers, official documents, repositories, releases and advisories;
+8. optionally ask TRACE to draft a short original summary from bounded page material and reviewer notes;
+9. require human approval before a social card is published;
+10. link readers to the original platform;
+11. avoid automatic mirroring, full-thread scraping and media rehosting.
 
 This ADR does not authorise bulk or automatic social-platform ingestion.
 
@@ -74,11 +75,14 @@ TRACE may:
 ## 4. Approved initial flow
 
 ```text
-Editor submits public social URL
-    -> URL validation and canonicalisation
+Editor enters public social URL
+    -> authenticated editor may request one URL triage
+    -> URL validation, bounded public-HTML extraction and canonicalisation
+    -> TRACE drafts suggestions from the bounded extraction
+    -> editor reviews and edits suggestions
     -> pending social-signal record
     -> reviewer opens original in browser
-    -> reviewer records why it matters
+    -> reviewer records why it matters and any linked material
     -> reviewer identifies linked material
     -> each linked item becomes a separate candidate
     -> normal source admission and story clustering
@@ -236,23 +240,28 @@ TRACE must not initially:
 
 ## 10. TRACE AI boundary
 
-DeepSeek or another model must not independently browse arbitrary social URLs in this workflow.
+DeepSeek or another model must not independently browse arbitrary social URLs in this workflow. The model has no URL-fetching capability and must not be instructed to fetch, follow, or otherwise access submitted URLs.
 
 Approved flow:
 
 ```text
-Reviewer opens original
-    -> reviewer records bounded notes
-    -> model drafts a short structured summary
+Authenticated editor requests triage for one entered public URL
+    -> server validates the URL and every redirect
+    -> server retrieves one bounded public HTML response without cookies or credentials
+    -> server extracts limited metadata and visible text transiently
+    -> model drafts a short structured summary from that bounded material
     -> deterministic validation
-    -> human approval
+    -> editor reviews and edits suggestions
+    -> human approval before any public card
 ```
+
+The server-side extraction is allowed only for an authenticated editor or publisher, only after an explicit button action, and only for the submitted URL. It must enforce private-network and unsafe-host rejection, HTTP(S)-only URLs, a small response-size limit, a timeout, content-type allowlisting, manual redirect validation and a small redirect limit. It must not use platform credentials, cookies or login workarounds; follow links embedded in the post; crawl a timeline, replies or thread; retrieve media; persist the fetched page; or create a signal, candidate or public card automatically.
 
 The model may receive:
 
 - platform;
 - reviewer notes;
-- limited approved excerpt;
+- a bounded, transient server-extracted title, metadata and visible-text excerpt from the one submitted public page;
 - claim type;
 - linked source IDs;
 - corroboration status;
@@ -263,7 +272,7 @@ The model must not receive:
 - platform credentials or cookies;
 - private messages;
 - unrestricted browsing instructions;
-- arbitrary page content fetched from an untrusted URL;
+- page content from any URL other than the explicitly submitted, server-validated public page;
 - unnecessary personal data.
 
 ## 11. Evidence states
@@ -374,7 +383,8 @@ The intake endpoint must:
 - compute a canonical hash;
 - detect duplicates;
 - avoid unlimited redirects;
-- avoid fetching a URL merely to validate syntax.
+- avoid fetching a URL merely to validate syntax; a fetch is permitted only after an authenticated editor explicitly requests triage;
+- for an allowed triage fetch, enforce response-size, timeout, redirect-count and HTML content-type limits, and do not send credentials or cookies.
 
 Any later link-check fetcher must have SSRF protection, size limits, timeouts, redirect limits, content-type checks and per-domain rate limits.
 
@@ -473,6 +483,7 @@ Public cards must provide a route to report inaccurate attribution, misleading s
 Add an **Add social signal** action with:
 
 - URL;
+- an explicit **AI Triage URL** action that adds editable suggestions to the intake card before submission;
 - detected platform;
 - why it matters;
 - author/handle, optional;
@@ -521,7 +532,7 @@ Linked sources may enter the governed automatic-publication pipeline only after 
 - authorised endpoint;
 - review form and queue;
 - audit events;
-- no model call and no server-side fetch.
+- no batch or automatic server-side fetches.
 
 ### Phase S2 — Linked-source discovery
 
@@ -535,6 +546,7 @@ Linked sources may enter the governed automatic-publication pipeline only after 
 ### Phase S3 — TRACE summaries
 
 - bounded input schema;
+- authenticated, on-demand extraction of one submitted public URL for triage only;
 - one-call social-summary task;
 - structured validation;
 - human approval;
@@ -563,9 +575,9 @@ Linked sources may enter the governed automatic-publication pipeline only after 
 - duplicates are blocked;
 - unapproved platforms are rejected;
 - public users cannot create signals;
-- model cannot call submitted URLs;
+- the model cannot call submitted URLs; only the server may make one bounded, authenticated editor-requested fetch;
 - reviewer notes remain private;
-- no arbitrary fetch occurs in the initial phase.
+- no arbitrary, automatic or linked-URL fetch occurs in the initial phase.
 
 ### Editorial integrity
 
@@ -611,3 +623,11 @@ Linked sources may enter the governed automatic-publication pipeline only after 
 ## 24. Decision summary
 
 TRACE will use social media as a manually reviewed discovery layer. Social posts remain attributed signals. Articles, papers, official documents, repositories, releases and advisories linked from them become independent source candidates. TRACE may reject the social post while retaining useful linked material.
+
+## 25. Decision amendment — authenticated URL triage and future public submissions
+
+**Amended 21 July 2026.** TRACE may retrieve a single public HTML representation of an editor-entered social post or TRACE Desk URL only when an authenticated editor explicitly requests AI triage. The retrieval is transient and bounded as defined in section 10; it does not make the material evidence, approve a signal, create a source candidate, or publish content.
+
+TRACE Desk uses the same boundary for ordinary public website URLs. The extraction is input to an editorial draft only. It must not be presented as independently verified evidence, and any source, claim or link identified in the page remains subject to the normal source-admission and editorial-review workflows.
+
+A future public social-submission feature is not enabled by this decision. When introduced, it must queue each submission as untrusted, rate-limited input and require an editor to select it and explicitly request triage. A public submission must never trigger a server-side fetch, source admission, signal acceptance or publication on its own. Every social signal remains editor-reviewed and manually approved before it can appear publicly.

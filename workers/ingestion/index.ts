@@ -36,7 +36,7 @@ interface InternalOperator { email: string; role: OperatorRole; requestId: strin
 const READ_ADMIN_ROUTES = new Set([
   "/admin/sources", "/admin/sources/health", "/admin/jobs", "/admin/cron-runs",
   "/admin/corrections", "/admin/published-stories", "/admin/clusters", "/admin/cluster-sources",
-  "/admin/candidates", "/admin/social-signals",
+  "/admin/candidates", "/admin/social-signals", "/admin/related-items",
 ]);
 const WRITE_ADMIN_ROUTES = new Set([
   "/admin/ingest", "/admin/classify", "/admin/dedup", "/admin/cluster",
@@ -1509,6 +1509,16 @@ async function handleRelatedItems(request: Request, env: Env): Promise<Response>
   }
 
   try {
+    const currentCluster = await env.DB.prepare(`
+      SELECT id, title, topic, summary, editorial_analysis, why_it_matters
+      FROM story_clusters
+      WHERE id = ?
+    `).bind(clusterId).first<{
+      id: number; title: string; topic: string | null; summary: string | null;
+      editorial_analysis: string | null; why_it_matters: string | null;
+    }>();
+    if (!currentCluster) return Response.json({ error: "Cluster not found." }, { status: 404 });
+
     const clusterSources = await env.DB.prepare(`
       SELECT fi.id, fi.title, fi.content_excerpt, fi.url
       FROM story_cluster_members scm
@@ -1517,15 +1527,19 @@ async function handleRelatedItems(request: Request, env: Env): Promise<Response>
       LIMIT 10
     `).bind(clusterId).all<{ id: number; title: string; content_excerpt: string | null; url: string }>();
 
-    if (!clusterSources.results || clusterSources.results.length === 0) {
-      return Response.json({ clusterItemCount: 0, items: [] });
-    }
-
     const clusterWords = new Set<string>();
+    for (const text of [
+      currentCluster.title,
+      currentCluster.summary,
+      currentCluster.editorial_analysis,
+      currentCluster.why_it_matters,
+    ]) {
+      if (text) for (const word of tokenizeForSearch(text.slice(0, 2_000))) clusterWords.add(word);
+    }
     for (const src of clusterSources.results) {
       for (const word of tokenizeForSearch(src.title)) clusterWords.add(word);
       if (src.content_excerpt) {
-        for (const word of tokenizeForSearch(src.content_excerpt.slice(0, 200))) clusterWords.add(word);
+        for (const word of tokenizeForSearch(src.content_excerpt.slice(0, 500))) clusterWords.add(word);
       }
     }
 
@@ -1534,54 +1548,121 @@ async function handleRelatedItems(request: Request, env: Env): Promise<Response>
     }
 
     const clusterItemIds = new Set(clusterSources.results.map(r => r.id));
-    const candidates = await env.DB.prepare(`
-      SELECT fi.id, fi.title, fi.content_excerpt, fi.url, fi.published_at,
-             s.name AS source_name, s.tier AS source_tier
-      FROM feed_items fi
-      JOIN sources s ON fi.source_id = s.id
-      WHERE fi.ingestion_status NOT IN ('archived', 'rejected')
-        AND fi.fetched_at >= datetime('now', '-30 days')
-      ORDER BY fi.fetched_at DESC
-      LIMIT 500
-    `).all<{
-      id: number; title: string; content_excerpt: string | null; url: string;
-      published_at: string | null; source_name: string; source_tier: string;
-    }>();
+    const [feedCandidates, relatedClusters] = await Promise.all([
+      env.DB.prepare(`
+        SELECT fi.id, fi.title, fi.content_excerpt, fi.url, fi.published_at,
+               s.name AS source_name, s.tier AS source_tier
+        FROM feed_items fi
+        JOIN sources s ON fi.source_id = s.id
+        WHERE fi.ingestion_status IN ('classified', 'clustered', 'published')
+          AND fi.fetched_at >= datetime('now', '-30 days')
+        ORDER BY fi.fetched_at DESC
+        LIMIT 500
+      `).all<{
+        id: number; title: string; content_excerpt: string | null; url: string;
+        published_at: string | null; source_name: string; source_tier: string;
+      }>(),
+      env.DB.prepare(`
+        SELECT id, slug, title, topic, summary, editorial_analysis, why_it_matters,
+               publication_status, published_at
+        FROM story_clusters
+        WHERE id <> ? AND publication_status NOT IN ('withdrawn', 'superseded')
+        ORDER BY COALESCE(published_at, updated_at, created_at) DESC
+        LIMIT 250
+      `).bind(clusterId).all<{
+        id: number; slug: string | null; title: string; topic: string | null;
+        summary: string | null; editorial_analysis: string | null; why_it_matters: string | null;
+        publication_status: string; published_at: string | null;
+      }>(),
+    ]);
 
-    interface ScoredItem {
+    interface RelatedItem {
       id: number; title: string; sourceName: string; sourceTier: string;
-      url: string; publishedAt: string | null; score: number; matchReasons: string[];
+      kind: "ingested_coverage" | "cluster" | "published_story";
+      clusterId: number | null; url: string | null; publishedAt: string | null;
+      score: number; matchReasons: string[];
     }
 
-    const scored: ScoredItem[] = [];
-    for (const row of (candidates.results ?? [])) {
+    const scored: RelatedItem[] = [];
+    for (const row of feedCandidates.results ?? []) {
       if (clusterItemIds.has(row.id)) continue;
-      const candidateWords = new Set(tokenizeForSearch(row.title));
-      let overlap = 0;
-      const matchedWords: string[] = [];
-      for (const w of clusterWords) {
-        if (candidateWords.has(w)) {
-          overlap++;
-          if (matchedWords.length < 3) matchedWords.push(w);
-        }
-      }
-      if (overlap >= 2) {
-        const score = Math.min(100, Math.round((overlap / Math.min(clusterWords.size, 8)) * 100));
+      const match = scoreRelatedContent(clusterWords, row.title, row.content_excerpt, currentCluster.topic, null);
+      if (match.score >= 20) {
         scored.push({
           id: row.id, title: row.title,
           sourceName: row.source_name, sourceTier: row.source_tier,
-          url: row.url, publishedAt: row.published_at, score,
-          matchReasons: matchedWords.length > 0 ? [`matched: ${matchedWords.join(", ")}`] : ["title overlap"],
+          kind: "ingested_coverage", clusterId: null,
+          url: row.url, publishedAt: row.published_at, score: match.score,
+          matchReasons: match.reasons,
         });
       }
     }
 
-    scored.sort((a, b) => b.score - a.score);
+    for (const row of relatedClusters.results ?? []) {
+      const match = scoreRelatedContent(
+        clusterWords,
+        row.title,
+        [row.summary, row.editorial_analysis, row.why_it_matters].filter(Boolean).join("\n"),
+        currentCluster.topic,
+        row.topic,
+      );
+      if (match.score < 20) continue;
+      const publishedStory = row.publication_status === "published";
+      scored.push({
+        id: row.id, title: row.title,
+        sourceName: publishedStory ? "Published TRACE story" : `Story cluster #${row.id}`,
+        sourceTier: publishedStory ? "TRACE" : "cluster",
+        kind: publishedStory ? "published_story" : "cluster",
+        clusterId: row.id,
+        url: publishedStory && row.slug ? `/stories/${encodeURIComponent(row.slug)}` : null,
+        publishedAt: row.published_at,
+        score: match.score,
+        matchReasons: match.reasons,
+      });
+    }
+
+    scored.sort((a, b) => b.score - a.score || a.title.localeCompare(b.title));
     return Response.json({ clusterItemCount: clusterSources.results.length, items: scored.slice(0, 20) });
   } catch (error: any) {
     console.error(JSON.stringify({ message: "Related items search failed", clusterId, error: redactError(error) }));
     return Response.json({ error: "Related items search is unavailable." }, { status: 500 });
   }
+}
+
+function scoreRelatedContent(
+  searchTerms: Set<string>,
+  title: string,
+  supportingText: string | null,
+  currentTopic: string | null,
+  candidateTopic: string | null,
+): { score: number; reasons: string[] } {
+  const titleTerms = new Set(tokenizeForSearch(title));
+  const textTerms = new Set([
+    ...titleTerms,
+    ...tokenizeForSearch((supportingText ?? "").slice(0, 2_000)),
+  ]);
+  const titleMatches = [...searchTerms].filter((term) => titleTerms.has(term));
+  const contextMatches = [...searchTerms].filter((term) => !titleTerms.has(term) && textTerms.has(term));
+  const reasons: string[] = [];
+  let score = 0;
+
+  if (titleMatches.length >= 2) {
+    score += 20 + Math.min(titleMatches.length, 4) * 10;
+    reasons.push(`shared title terms: ${titleMatches.slice(0, 3).join(", ")}`);
+  } else if (titleMatches.length === 1) {
+    score += 10;
+    reasons.push(`shared title term: ${titleMatches[0]}`);
+  }
+  if (contextMatches.length >= 2) {
+    score += Math.min(contextMatches.length, 4) * 5;
+    reasons.push(`related context: ${contextMatches.slice(0, 3).join(", ")}`);
+  }
+  if (currentTopic && candidateTopic && currentTopic === candidateTopic) {
+    score += 20;
+    reasons.push(`same topic (${currentTopic})`);
+  }
+
+  return { score: Math.min(score, 100), reasons };
 }
 
 function tokenizeForSearch(text: string): string[] {
