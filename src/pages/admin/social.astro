@@ -34,7 +34,24 @@ if (Astro.request.method === "POST") {
         trace_summary = COALESCE(?, trace_summary), updated_at = datetime('now')
         WHERE id = ?
       `).bind(action === "approve" ? "approved" : "rejected", summary, id).run();
-      actionMessage = action === "approve" ? "Signal approved." : "Signal rejected.";
+
+      // For approved signals: create a knowledge document so Ask TRACE can retrieve it
+      if (action === "approve") {
+        const signal = await db.prepare(
+          "SELECT platform, canonical_url, submission_reason, trace_summary, author_display_name, author_handle FROM social_signals WHERE id = ?"
+        ).bind(id).first<{ platform: string; canonical_url: string; submission_reason: string; trace_summary: string | null; author_display_name: string | null; author_handle: string | null }>();
+        if (signal) {
+          const knowledgeTitle = `Social Signal: ${signal.platform} — ${(signal.trace_summary ?? signal.submission_reason).slice(0, 80)}`;
+          const knowledgeBody = `**Platform:** ${signal.platform}\n**URL:** ${signal.canonical_url}\n**Author:** ${signal.author_display_name ?? "Unknown"}${signal.author_handle ? ` (${signal.author_handle})` : ""}\n**Summary:** ${signal.trace_summary ?? signal.submission_reason}`;
+          const docId = crypto.randomUUID();
+          await db.prepare(`
+            INSERT OR IGNORE INTO knowledge_documents (id, canonical_question, answer_text, knowledge_type, status, source_url, created_by, created_at, updated_at)
+            VALUES (?, ?, ?, 'social_signal', 'approved', ?, 'Admin', datetime('now'), datetime('now'))
+          `).bind(docId, knowledgeTitle.slice(0, 200), knowledgeBody, signal.canonical_url).run();
+        }
+      }
+
+      actionMessage = action === "approve" ? "Signal approved and added to knowledge base." : "Signal rejected.";
     } catch (e: any) {
       actionError = e.message || "Action failed.";
     }
@@ -176,10 +193,11 @@ try {
               </div>
               {s.review_status === "pending" ? (
                 <div style="display:flex;flex-direction:column;gap:0.35rem;min-width:120px;">
+                  <button type="button" class="btn btn-secondary ai-triage-btn" style="font-size:0.65rem;padding:0.2rem 0.4rem;width:100%;" data-signal-id={String(s.id)} data-reason={s.submission_reason} data-notes={s.reviewer_notes ?? ""} data-platform={s.platform} data-url={s.canonical_url}>🤖 AI Summarise</button>
                   <form method="POST" style="display:flex;flex-direction:column;gap:0.35rem;">
                     <input type="hidden" name="_action" value="approve" />
                     <input type="hidden" name="id" value={String(s.id)} />
-                    <input type="text" name="trace_summary" placeholder="TRACE summary (optional)" style="font-size:0.7rem;width:100%;" />
+                    <input type="text" name="trace_summary" placeholder="TRACE summary (optional)" style="font-size:0.7rem;width:100%;" id={`sig-summary-${s.id}`} />
                     <button type="submit" class="btn btn-primary" style="font-size:0.7rem;padding:0.25rem 0.5rem;">Approve</button>
                   </form>
                   <form method="POST">
@@ -198,4 +216,46 @@ try {
       }
     </section>
   </div>
+
+  <script>
+    const aiEnabled = {String(Astro.locals.runtime.env.TRACE_AI_EDITORIAL_ENABLED === "true")};
+    document.querySelectorAll(".ai-triage-btn").forEach(btn => {
+      btn.addEventListener("click", async function(this: HTMLButtonElement) {
+        if (!aiEnabled) { alert("Editorial AI is disabled for this deployment."); return; }
+        const signalId = this.dataset.signalId ?? "";
+        const reason = this.dataset.reason ?? "";
+        const notes = this.dataset.notes ?? "";
+        const platform = this.dataset.platform ?? "";
+        const url = this.dataset.url ?? "";
+
+        const summaryField = document.getElementById(`sig-summary-${signalId}`) as HTMLInputElement | null;
+        this.disabled = true;
+        this.textContent = "🤖 Analysing…";
+
+        try {
+          const res = await fetch("/api/admin/ai-triage", {
+            method: "POST",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              sources: [
+                { title: `Social signal from ${platform}`, excerpt: `URL: ${url}\nReason: ${reason}\nNotes: ${notes}`.slice(0, 3000) }
+              ]
+            }),
+          });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const data = await res.json() as { summary: string; whyItMatters: string; isNewsworthy: boolean };
+          const summary = data.summary || data.whyItMatters || "AI analysis unavailable.";
+          if (summaryField) { summaryField.value = summary.slice(0, 300); }
+          this.textContent = "✅ Done";
+        } catch (e: any) {
+          this.textContent = "❌ Failed";
+          console.error("Social AI triage failed", e);
+        } finally {
+          this.disabled = false;
+          setTimeout(() => { this.textContent = "🤖 AI Summarise"; }, 2000);
+        }
+      });
+    });
+  </script>
 </BaseLayout>

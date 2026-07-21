@@ -9,6 +9,8 @@ export const prerender = false;
 // Read topic filter from query string — topics are stored as lowercase slugs
 const topicParam = Astro.url.searchParams.get("topic");
 const topic = topicParam || undefined;
+const tabParam = Astro.url.searchParams.get("tab");
+const showCommunityTab = tabParam === "community";
 
 // Fetch published stories from D1 — publication gate enforced server-side
 let stories: Awaited<ReturnType<typeof getPublishedStories>>;
@@ -73,7 +75,7 @@ try {
     <!-- Filter bar -->
     <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:2rem;" role="group" aria-label="Filter by topic">
       {topicFilters.map(f => {
-        const isActive = (f.slug === null && !topic) || f.slug === topic;
+        const isActive = (f.slug === null && !topic && !showCommunityTab) || f.slug === topic;
         return (
           <a href={f.href}
              style={`font-size:0.85rem;padding:0.25rem 0.75rem;border:1px solid var(--border);border-radius:var(--radius);text-decoration:none;${isActive ? "background:var(--accent);color:var(--bg);border-color:var(--accent);" : ""}`}
@@ -82,8 +84,45 @@ try {
           </a>
         );
       })}
+      <a href="/feed?tab=community"
+         style={`font-size:0.85rem;padding:0.25rem 0.75rem;border:1px solid var(--border);border-radius:var(--radius);text-decoration:none;${showCommunityTab ? "background:var(--accent);color:var(--bg);border-color:var(--accent);" : ""}`}
+         class="meta">
+        💬 Community Signals
+      </a>
     </div>
 
+    <!-- Community Signals tab -->
+    {showCommunityTab && (
+      <section>
+        <h2 style="font-size:1.15rem;margin-bottom:0.25rem;">Community Signals</h2>
+        <p class="meta" style="margin-bottom:1rem;font-size:0.85rem;">
+          Discovery leads from social media and community platforms. These are unverified signals, not evidence. Each linked article or post must be assessed independently. <a href="/methodology">How signals are governed &rarr;</a>
+        </p>
+        {socialSignals.length === 0 ? (
+          <div class="card" style="padding:2rem;text-align:center;background:var(--surface-2);">
+            <p class="meta">No approved community signals yet. Signals appear here after administrator review.</p>
+          </div>
+        ) : (
+          <div style="display:flex;flex-direction:column;gap:0.75rem;">
+            {socialSignals.map((sig) => (
+              <SocialSignalCard
+                platform={sig.platform}
+                traceSummary={sig.trace_summary ?? ""}
+                authorDisplayName={sig.author_display_name}
+                authorHandle={sig.author_handle}
+                canonicalUrl={sig.canonical_url}
+                corroborationStatus={sig.corroboration_status}
+                evidenceStatus={sig.evidence_status}
+                linkedSourceCount={JSON.parse(sig.linked_source_ids || "[]").length}
+              />
+            ))}
+          </div>
+        )}
+      </section>
+    )}
+
+    <!-- Normal feed: stories -->
+    {!showCommunityTab && (<>
     <!-- Error state -->
     {error && (
       <div class="card" style="padding:2rem;text-align:center;background:var(--surface-2);">
@@ -158,5 +197,6 @@ try {
         ))}
       </section>
     )}
+    </>)}
   </div>
 </BaseLayout>
