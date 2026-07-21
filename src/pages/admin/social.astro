@@ -2,6 +2,7 @@
 import BaseLayout from "../../layouts/BaseLayout.astro";
 
 export const prerender = false;
+const editorialAIEnabled = Astro.locals.runtime.env.TRACE_AI_EDITORIAL_ENABLED === "true";
 
 interface SignalRow {
   id: number; platform: string; canonical_url: string;
@@ -218,7 +219,7 @@ try {
   </div>
 
   <script>
-    const aiEnabled = {String(Astro.locals.runtime.env.TRACE_AI_EDITORIAL_ENABLED === "true")};
+    const aiEnabled = {String(editorialAIEnabled)};
     document.querySelectorAll(".ai-triage-btn").forEach(btn => {
       btn.addEventListener("click", async function(this: HTMLButtonElement) {
         if (!aiEnabled) { alert("Editorial AI is disabled for this deployment."); return; }
