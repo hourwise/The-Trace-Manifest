@@ -219,41 +219,42 @@ try {
   </div>
 
   <script define:vars={{ aiEnabled: editorialAIEnabled }}>
-    document.querySelectorAll(".ai-triage-btn").forEach(btn => {
-      btn.addEventListener("click", async function(this: HTMLButtonElement) {
+    document.querySelectorAll(".ai-triage-btn").forEach(function(btn) {
+      btn.addEventListener("click", async function() {
         if (!aiEnabled) { alert("Editorial AI is disabled for this deployment."); return; }
-        const signalId = this.dataset.signalId ?? "";
-        const reason = this.dataset.reason ?? "";
-        const notes = this.dataset.notes ?? "";
-        const platform = this.dataset.platform ?? "";
-        const url = this.dataset.url ?? "";
+        var signalId = this.dataset.signalId || "";
+        var reason = this.dataset.reason || "";
+        var notes = this.dataset.notes || "";
+        var platform = this.dataset.platform || "";
+        var url = this.dataset.url || "";
 
-        const summaryField = document.getElementById(`sig-summary-${signalId}`) as HTMLInputElement | null;
+        var summaryField = document.getElementById("sig-summary-" + signalId);
         this.disabled = true;
         this.textContent = "🤖 Analysing…";
 
         try {
-          const res = await fetch("/api/admin/ai-triage", {
+          var res = await fetch("/api/admin/ai-triage", {
             method: "POST",
             credentials: "include",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               sources: [
-                { title: `Social signal from ${platform}`, excerpt: `URL: ${url}\nReason: ${reason}\nNotes: ${notes}`.slice(0, 3000) }
+                { title: "Social signal from " + platform, excerpt: ("URL: " + url + "\nReason: " + reason + "\nNotes: " + notes).slice(0, 3000) }
               ]
             }),
           });
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          const data = await res.json() as { summary: string; whyItMatters: string; isNewsworthy: boolean };
-          const summary = data.summary || data.whyItMatters || "AI analysis unavailable.";
+          if (!res.ok) throw new Error("HTTP " + res.status);
+          var data = await res.json();
+          var summary = data.summary || data.whyItMatters || "AI analysis unavailable.";
           if (summaryField) { summaryField.value = summary.slice(0, 300); }
           this.textContent = "✅ Done";
-        } catch (e: any) {
+        } catch (e) {
           this.textContent = "❌ Failed";
           console.error("Social AI triage failed", e);
         } finally {
           this.disabled = false;
-          setTimeout(() => { this.textContent = "🤖 AI Summarise"; }, 2000);
+          var self = this;
+          setTimeout(function() { self.textContent = "🤖 AI Summarise"; }, 2000);
         }
       });
     });
