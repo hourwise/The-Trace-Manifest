@@ -153,7 +153,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
 
   if (result.status === "ok" && result.payload) {
     // ADR 0017: record gaps for non-answers or low-confidence results.
-    if (result.payload.nonAnswer || result.payload.confidenceScore < 40) {
+    if (result.payload.nonAnswer || (typeof result.payload.confidenceScore === "number" && result.payload.confidenceScore < 40)) {
       const reason = result.payload.nonAnswer
         ? (result.payload.confidence === "insufficient_evidence" ? "insufficient" : "knowledge_missing")
         : "low_confidence";

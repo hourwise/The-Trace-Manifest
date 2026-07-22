@@ -4,7 +4,7 @@ import { DurableAIGovernance } from "../src/ai/durable-governance";
 import { askTrace } from "../src/ai/trace-model-gateway";
 import { validateAnswerDraft, validateAskTraceInput } from "../src/ai/schemas";
 import { validateAnswerOutput } from "../src/ai/validation";
-import { calculateDeterministicConfidence } from "../src/lib/server/ask-evidence";
+import { calculateDeterministicConfidence, isKnowledgeHardExpired, isKnowledgeReviewDue, retrieveApprovedKnowledge } from "../src/lib/server/ask-evidence";
 import { isAnswerEligibleEvidence, PUBLIC_ASK_TASK_POLICY, TRACE_POLICY_VERSION } from "../src/ai/task-policy";
 import { GUIDE_CONTRACT_VERSION, guideFreshness, isGuideEligibleForProceduralRetrieval, validateGuideCommand, validateGuideMetadata } from "../src/guides/contract";
 import { nodeWindowsVerificationCommands } from "../src/guides/drafts/install-node-js-and-npm-on-windows";
@@ -12,7 +12,7 @@ import { validateAskBody } from "../src/pages/api/trace/ask";
 import { handleTriageRequest } from "../src/pages/api/admin/ai-triage";
 import { extractTriageUrlSource, TriageUrlFetchError } from "../src/lib/server/triage-url-source";
 import { signInternalRequest, verifyInternalRequestSignature } from "../src/security/internal-signature";
-import { publishBriefing, publishStory } from "../workers/ingestion/publish";
+import { publishBriefing, publishStory, upgradeClusterEvidence } from "../workers/ingestion/publish";
 import worker from "../workers/ingestion/index";
 import { SQLiteD1 } from "./sqlite-d1";
 import type { EvidenceExcerpt } from "../src/ai/provider";
@@ -108,7 +108,22 @@ async function gatewayTests(): Promise<void> {
     });
     assert.equal(staleOnly.status, "ok");
     assert.equal(staleOnly.payload?.nonAnswer, true, "stale evidence fails closed before a model call");
+    assert.equal(staleOnly.payload?.confidenceScore, null, "public Ask TRACE does not expose an uncalibrated numeric confidence score");
     assert.equal(providerCalls, 0, "ineligible evidence cannot invoke the model");
+    const unresolvedKnowledge = await askTrace(env, {
+      ...context,
+      requestId: "ask-knowledge-unresolved", idempotencyKeyHash: "knowledge-action", questionHash: "knowledge-question",
+      evidenceExcerpts: [{
+        ...evidence[0], sourceId: "knowledge:one", claimId: "knowledge:one",
+        sourceKind: "trace_knowledge", sourceRole: "internal_synthesis", independentEvidenceWeight: 0,
+        externalEvidenceResolved: false,
+      }],
+    });
+    assert.equal(unresolvedKnowledge.status, "ok");
+    assert.equal(unresolvedKnowledge.payload?.nonAnswer, true, "unresolved TRACE knowledge cannot answer directly");
+    assert.ok(unresolvedKnowledge.payload?.caveats.some((caveat) => caveat.includes("external claim and source bundle are unresolved")),
+      "Ask TRACE explains why unresolved internal knowledge was excluded");
+    assert.equal(providerCalls, 0, "unresolved internal knowledge cannot invoke the model");
     const [owner, duplicate] = await Promise.all([
       askTrace(env, context),
       askTrace(env, { ...context, requestId: "ask-two" }),
@@ -289,6 +304,79 @@ async function deskBoundaryTests(): Promise<void> {
   }
 }
 
+async function kc01TrustTests(): Promise<void> {
+  const database = new SQLiteD1();
+  try {
+    database.sqlite.exec(`
+      INSERT INTO sources (id, name, url, section, tier, treatment, ingestion_type) VALUES
+        (901, 'Derivative source one', 'https://one.example', 'A', 'A', 'primary', 'rss'),
+        (902, 'Derivative source two', 'https://two.example', 'B', 'B', 'independent-reporting', 'rss');
+      INSERT INTO feed_items (id, source_id, url, url_hash, title, content_excerpt, ingestion_status)
+        VALUES
+        (901, 901, 'https://one.example/orion', 'kc01-one', 'Orion release', 'Vendor announcement.', 'clustered'),
+        (902, 902, 'https://two.example/orion', 'kc01-two', 'Orion release repeated', 'Derivative report.', 'clustered');
+      INSERT INTO story_clusters (id, title, evidence_status, publication_status)
+        VALUES (901, 'Orion release', 'vendor_reported', 'draft');
+      INSERT INTO story_cluster_members (cluster_id, feed_item_id, is_primary)
+        VALUES (901, 901, 1), (901, 902, 0);
+    `);
+
+    const upgrades = await upgradeClusterEvidence(database.asD1());
+    assert.deepEqual(upgrades, [], "tier/source counts cannot trigger an evidence upgrade");
+    const cluster = await database.prepare("SELECT evidence_status FROM story_clusters WHERE id = 901").first<{ evidence_status: string }>();
+    assert.equal(cluster?.evidence_status, "vendor_reported", "count-only evidence upgrade remains disabled");
+
+    const derivativeExcerpt: EvidenceExcerpt = {
+      sourceId: "source:901",
+      sourceKind: "external_independent",
+      sourceRole: "evidence",
+      admissionState: "admitted",
+      freshnessState: "current",
+      independentEvidenceWeight: 1,
+      claimId: "claim:derivative-one",
+      text: "Derivative coverage repeats the same originating report.",
+      sourceClassification: "Tier B; independent",
+      observedAt: "2026-07-22T00:00:00Z",
+    };
+    const derivativeConfidence = calculateDeterministicConfidence([
+      derivativeExcerpt,
+      { ...derivativeExcerpt, claimId: "claim:derivative-two", text: "A second derivative copy repeats the same report." },
+    ]);
+    assert.equal(derivativeConfidence.label, "insufficient_evidence", "repeated coverage from one source cannot create independent corroboration");
+
+    database.sqlite.exec(`
+      INSERT INTO knowledge_documents
+        (id, canonical_question, canonical_hash, section_slug, knowledge_type, status, visibility,
+         evidence_status, direct_answer, detailed_explanation, document_json, policy_version,
+         created_by, approved_by, approved_at, review_after, hard_expiry)
+      VALUES
+        ('kc01-current', 'Orion current', 'kc01-current-hash', 'ai-agents', 'definition', 'approved', 'public_knowledge',
+         'provisionally_supported', 'Current answer', 'Current explanation', '{}', 'kc01-test',
+         'test-publisher', 'test-publisher', datetime('now'), '2099-01-01', '2099-12-31'),
+        ('kc01-due', 'Orion due review', 'kc01-due-hash', 'ai-agents', 'definition', 'approved', 'public_knowledge',
+         'provisionally_supported', 'Due answer', 'Due explanation', '{}', 'kc01-test',
+         'test-publisher', 'test-publisher', datetime('now'), '2000-01-01', '2099-12-31'),
+        ('kc01-expired', 'Orion expired', 'kc01-expired-hash', 'ai-agents', 'definition', 'approved', 'public_knowledge',
+         'provisionally_supported', 'Expired answer', 'Expired explanation', '{}', 'kc01-test',
+         'test-publisher', 'test-publisher', datetime('now'), '2099-01-01', '2000-01-01');
+    `);
+
+    const knowledge = await retrieveApprovedKnowledge(database.asD1(), "Orion", 8);
+    assert.ok(knowledge.some((item) => item.sourceId === "knowledge:kc01-current"), "current approved knowledge remains retrievable");
+    const due = knowledge.find((item) => item.sourceId === "knowledge:kc01-due");
+    assert.ok(due, "review-due knowledge remains visible for a warning");
+    assert.equal(due?.freshnessState, "stale", "review-due knowledge is not current evidence");
+    assert.equal(due?.externalEvidenceResolved, false, "knowledge evidence inheritance remains explicitly unresolved");
+    assert.ok(due?.trustNotes?.includes("review due"), "review-due knowledge carries a warning");
+    assert.equal(knowledge.some((item) => item.sourceId === "knowledge:kc01-expired"), false, "hard-expired knowledge is excluded from retrieval");
+    assert.equal(isKnowledgeReviewDue("2000-01-01", Date.parse("2026-07-22T00:00:00Z")), true);
+    assert.equal(isKnowledgeHardExpired("2000-01-01", Date.parse("2026-07-22T00:00:00Z")), true);
+    assert.equal(isKnowledgeHardExpired("2099-01-01", Date.parse("2026-07-22T00:00:00Z")), false);
+  } finally {
+    database.close();
+  }
+}
+
 async function boundaryTests(): Promise<void> {
   assert.equal(TRACE_POLICY_VERSION, "adr-0016-2026-07-16.1");
   assert.equal(PUBLIC_ASK_TASK_POLICY.section, "ai-agents");
@@ -422,4 +510,5 @@ await governanceTests();
 await gatewayTests();
 await publicationAndIngestionTests();
 await deskBoundaryTests();
+await kc01TrustTests();
 console.log("Stabilisation tests passed.");

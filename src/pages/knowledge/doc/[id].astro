@@ -2,6 +2,7 @@
 // ADR 0017: Public knowledge document page — served from D1.
 // Renders approved knowledge_documents with evidence, provenance, and freshness.
 import BaseLayout from "../../../layouts/BaseLayout.astro";
+import { isKnowledgeHardExpired, isKnowledgeReviewDue } from "../../../lib/server/ask-evidence";
 
 export const prerender = false;
 
@@ -33,9 +34,11 @@ const doc = await db
   .bind(id)
   .first<KnowledgeDoc>();
 
-if (!doc) {
+if (!doc || isKnowledgeHardExpired(doc.hard_expiry)) {
   return new Response("Not found", { status: 404 });
 }
+
+const reviewDue = isKnowledgeReviewDue(doc.review_after);
 
 // Extract body sections from document_json
 let body = "";
@@ -68,6 +71,13 @@ function typeLabel(t: string): string {
       </div>
 
       <h1 style="font-size:1.5rem;">{doc.canonical_question}</h1>
+
+      {reviewDue && (
+        <div role="alert" class="card" style="margin-top:1rem;background:color-mix(in oklch, var(--ev-outdated) 10%, transparent);border-left:4px solid var(--ev-outdated);">
+          <strong>Review due.</strong>
+          <span class="meta"> This knowledge document remains visible for editorial transparency, but it is not current evidence for Ask TRACE until reviewed.</span>
+        </div>
+      )}
 
       {
         doc.direct_answer && (

@@ -76,6 +76,8 @@ export interface EvidenceExcerpt {
   trustNotes?: string;
   relationship?: string;
   isDisputed?: boolean;
+  /** True only when a TRACE knowledge record's external assertion bundle is resolved. */
+  externalEvidenceResolved?: boolean;
 }
 
 // ============================================================

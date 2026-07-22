@@ -16,12 +16,12 @@ export interface Props {
   status: string;
   /** Source classification (primary, vendor, community, mixed) */
   sourceClass?: string;
-  /** Source tier (A, B, C) */
-  sourceTier?: string;
-  /** Number of corroborating sources */
-  corroborationCount?: number;
-  /** Whether independent verification exists */
-  hasIndependentVerification?: boolean;
+  /** Reviewed claim-level source tier (A, B, C); null means not assessed. */
+  sourceTier?: string | null;
+  /** Reviewed claim-level corroboration count; null means not assessed. */
+  corroborationCount?: number | null;
+  /** Whether reviewed claim assertions establish independent verification. */
+  hasIndependentVerification?: boolean | null;
   /** Whether conflicts have been detected */
   hasConflicts?: boolean;
   /** Date of last evidence check */
@@ -39,9 +39,9 @@ export interface Props {
 const {
   status,
   sourceClass = "Unknown",
-  sourceTier = "C",
-  corroborationCount = 0,
-  hasIndependentVerification = false,
+  sourceTier = null,
+  corroborationCount = null,
+  hasIndependentVerification = null,
   hasConflicts = false,
   lastChecked,
   isCorrected = false,
@@ -81,51 +81,71 @@ function buildFactors(): RatingFactor[] {
   });
 
   // 2. Source tier
-  const tierAssessment = sourceTier === "A" ? "positive" as const
-    : sourceTier === "B" ? "neutral" as const
-    : "warning" as const;
+  if (sourceTier === null) {
+    factors.push({
+      label: "Source tier",
+      value: "Not assessed",
+      assessment: "warning",
+      detail: "Claim-level source tier has not yet been determined from reviewed evidence records.",
+    });
+  } else {
+    const tierAssessment = sourceTier === "A" ? "positive" as const
+      : sourceTier === "B" ? "neutral" as const
+      : "warning" as const;
 
-  factors.push({
-    label: "Source tier",
-    value: `Tier ${sourceTier}`,
-    assessment: tierAssessment,
-    detail: sourceTier === "A"
-      ? "Tier A — primary technical or research source with strong provenance."
-      : sourceTier === "B"
-        ? "Tier B — reputable secondary source with editorial standards."
-        : "Tier C — community, aggregator, or unverified source.",
-  });
+    factors.push({
+      label: "Source tier",
+      value: `Tier ${sourceTier}`,
+      assessment: tierAssessment,
+      detail: sourceTier === "A"
+        ? "Tier A — primary technical or research source with strong provenance."
+        : sourceTier === "B"
+          ? "Tier B — reputable secondary source with editorial standards."
+          : "Tier C — community, aggregator, or unverified source.",
+    });
+  }
 
   // 3. Corroboration
-  const corroborationAssessment = corroborationCount >= 3 ? "positive" as const
-    : corroborationCount >= 1 ? "neutral" as const
-    : "warning" as const;
+  if (corroborationCount === null) {
+    factors.push({
+      label: "Corroboration",
+      value: "Not assessed",
+      assessment: "warning",
+      detail: "Independent corroboration has not yet been determined from reviewed claim assertions.",
+    });
+  } else {
+    const corroborationAssessment = corroborationCount >= 3 ? "positive" as const
+      : corroborationCount >= 1 ? "neutral" as const
+      : "warning" as const;
 
-  factors.push({
-    label: "Corroboration",
-    value: corroborationCount >= 3
-      ? `${corroborationCount} independent sources`
-      : corroborationCount === 1
-        ? "Single source"
-        : corroborationCount === 0
-          ? "No corroborating sources"
-          : `${corroborationCount} sources`,
-    assessment: corroborationAssessment,
-    detail: corroborationCount >= 3
-      ? "Multiple independent sources report consistent findings."
-      : corroborationCount >= 1
-        ? "Limited corroboration — additional sources would strengthen confidence."
-        : "No independent corroboration available yet — single-source claim.",
-  });
+    factors.push({
+      label: "Corroboration",
+      value: corroborationCount >= 3
+        ? `${corroborationCount} independent sources`
+        : corroborationCount === 1
+          ? "Single source"
+          : corroborationCount === 0
+            ? "No corroborating sources"
+            : `${corroborationCount} sources`,
+      assessment: corroborationAssessment,
+      detail: corroborationCount >= 3
+        ? "Multiple independent sources report consistent findings."
+        : corroborationCount >= 1
+          ? "Limited corroboration — additional sources would strengthen confidence."
+          : "No independent corroboration available yet — single-source claim.",
+    });
+  }
 
   // 4. Independent verification
   factors.push({
     label: "Independent verification",
-    value: hasIndependentVerification ? "Yes" : "Not yet",
+    value: hasIndependentVerification === null ? "Not assessed" : hasIndependentVerification ? "Yes" : "Not yet",
     assessment: hasIndependentVerification ? "positive" as const : "warning" as const,
-    detail: hasIndependentVerification
-      ? "At least one independent third party has verified or reproduced the claim."
-      : "No independent third-party verification is currently available.",
+    detail: hasIndependentVerification === null
+      ? "Independent verification has not yet been determined from reviewed claim assertions."
+      : hasIndependentVerification
+        ? "At least one independent third party has verified or reproduced the claim."
+        : "No independent third-party verification is currently available.",
   });
 
   // 5. Conflict of interest
@@ -172,16 +192,16 @@ function buildFactors(): RatingFactor[] {
   });
 
   // 7. Reproducibility
-  if (isReproducible !== null) {
-    factors.push({
-      label: "Reproducibility",
-      value: isReproducible ? "Reproducible" : "Not verified",
-      assessment: isReproducible ? "positive" as const : "warning" as const,
-      detail: isReproducible
+  factors.push({
+    label: "Reproducibility",
+    value: isReproducible === null ? "Not assessed" : isReproducible ? "Reproducible" : "Not verified",
+    assessment: isReproducible ? "positive" as const : "warning" as const,
+    detail: isReproducible === null
+      ? "Reproducibility has not yet been determined from reviewed claim assertions."
+      : isReproducible
         ? "Claim has been reproduced by independent parties."
         : "Reproducibility has not been confirmed.",
-    });
-  }
+  });
 
   // 8. Disagreement / conflict level
   if (hasConflicts) {
@@ -191,7 +211,7 @@ function buildFactors(): RatingFactor[] {
       assessment: "warning" as const,
       detail: "Conflicting claims have been identified. See conflict details below.",
     });
-  } else if (corroborationCount >= 2) {
+  } else if (corroborationCount !== null && corroborationCount >= 2) {
     factors.push({
       label: "Disagreement level",
       value: "Consistent",

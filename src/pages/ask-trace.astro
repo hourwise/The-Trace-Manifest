@@ -97,7 +97,9 @@ const suggestions = [
   function renderAnswer(data: any): void {
     result.style.display = "block";
     const badge = document.getElementById("confidence-badge")!;
-    badge.textContent = `${String(data.confidence ?? "insufficient_evidence").replaceAll("_", " ")} (${data.confidenceScore ?? 0}/100)`;
+    const confidenceLabel = String(data.confidence ?? "insufficient_evidence").replaceAll("_", " ");
+    const confidenceScore = typeof data.confidenceScore === "number" ? ` (${Math.round(data.confidenceScore)}/100)` : "";
+    badge.textContent = `${confidenceLabel}${confidenceScore}`;
     badge.className = `badge badge-${data.confidence === "high" ? "confirmed" : data.confidence === "medium" ? "provisional" : "unverified"}`;
     document.getElementById("request-id")!.textContent = data.requestId ? `ID: ${data.requestId}` : "";
     document.getElementById("answer-text")!.textContent = data.answer ?? "No validated answer was produced.";

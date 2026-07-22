@@ -46,7 +46,8 @@ export interface AskTracePayload {
   claims: { text: string; evidenceSourceIds: string[]; evidenceClaimIds: string[] }[];
   citations: PublicCitation[];
   confidence: DeterministicConfidence["label"];
-  confidenceScore: number;
+  /** Numeric confidence is internal/admin-only until KC-07 calibration passes. */
+  confidenceScore: number | null;
   confidenceReasons: string[];
   freshestObservedAt: string | null;
   hasMaterialDisagreement: boolean;
@@ -92,14 +93,19 @@ function durableConfig(
   };
 }
 
-function safeNonAnswer(requestId: string, confidence: DeterministicConfidence, reason: string): AskTracePayload {
+function safeNonAnswer(
+  requestId: string,
+  confidence: DeterministicConfidence,
+  reason: string,
+  exposeNumericScore = false,
+): AskTracePayload {
   return {
     answer: "TRACE does not have enough eligible published evidence to answer this question reliably.",
     keyPoints: [],
     claims: [],
     citations: [],
     confidence: "insufficient_evidence",
-    confidenceScore: confidence.score,
+    confidenceScore: exposeNumericScore ? confidence.score : null,
     confidenceReasons: [...confidence.reasons, reason],
     freshestObservedAt: confidence.freshestObservedAt,
     hasMaterialDisagreement: confidence.hasMaterialDisagreement,
@@ -109,6 +115,15 @@ function safeNonAnswer(requestId: string, confidence: DeterministicConfidence, r
     requestId,
     nonAnswer: true,
   };
+}
+
+function unresolvedKnowledgeWarning(evidence: EvidenceExcerpt[]): string | null {
+  const unresolvedCount = evidence.filter((item) =>
+    item.sourceKind === "trace_knowledge"
+    && item.externalEvidenceResolved !== true,
+  ).length;
+  if (unresolvedCount === 0) return null;
+  return `${unresolvedCount} approved TRACE knowledge record${unresolvedCount === 1 ? " was" : "s were"} found, but could not be used as evidence because the external claim and source bundle are unresolved.`;
 }
 
 function citationsFor(draft: TraceAnswerDraft, evidence: EvidenceExcerpt[]): PublicCitation[] {
@@ -138,19 +153,27 @@ function answerPayload(
   draft: TraceAnswerDraft,
   evidence: EvidenceExcerpt[],
   confidence: DeterministicConfidence,
+  knowledgeWarning?: string | null,
+  exposeNumericScore = false,
 ): AskTracePayload {
+  const confidenceReasons = knowledgeWarning
+    ? [...confidence.reasons, knowledgeWarning]
+    : confidence.reasons;
+  const caveats = knowledgeWarning
+    ? [...draft.caveats, knowledgeWarning]
+    : draft.caveats;
   return {
     answer: draft.answer,
     keyPoints: draft.keyPoints,
     claims: draft.claims,
     citations: citationsFor(draft, evidence),
     confidence: confidence.label,
-    confidenceScore: confidence.score,
-    confidenceReasons: confidence.reasons,
+    confidenceScore: exposeNumericScore ? confidence.score : null,
+    confidenceReasons,
     freshestObservedAt: confidence.freshestObservedAt,
     hasMaterialDisagreement: confidence.hasMaterialDisagreement,
     disagreements: draft.disagreements,
-    caveats: draft.caveats,
+    caveats,
     whatCouldChange: draft.whatCouldChange,
     requestId,
     nonAnswer: false,
@@ -280,14 +303,17 @@ export async function askTrace(env: TraceAIRuntimeEnvironment, context: AskTrace
 
   const eligibleEvidence = context.evidenceExcerpts.filter(isAnswerEligibleEvidence);
   const excludedEvidence = context.evidenceExcerpts.length - eligibleEvidence.length;
+  const knowledgeWarning = unresolvedKnowledgeWarning(context.evidenceExcerpts);
   const confidence = calculateDeterministicConfidence(eligibleEvidence);
   if (confidence.label === "insufficient_evidence") {
+    const exclusionReason = excludedEvidence > 0
+      ? `${excludedEvidence} supplied record${excludedEvidence === 1 ? " was" : "s were"} excluded because it was not admitted, current external evidence.`
+      : "Eligible evidence did not meet the minimum corroboration policy.";
     const payload = safeNonAnswer(
       context.requestId,
       confidence,
-      excludedEvidence > 0
-        ? `${excludedEvidence} supplied record${excludedEvidence === 1 ? " was" : "s were"} excluded because it was not admitted, current external evidence.`
-        : "Eligible evidence did not meet the minimum corroboration policy.",
+      [knowledgeWarning, exclusionReason].filter(Boolean).join(" "),
+      Boolean(context.adminOverride),
     );
     await governance.completeWithoutModel(context.requestId, payload);
     return { status: "ok", requestId: context.requestId, payload };
@@ -318,8 +344,13 @@ export async function askTrace(env: TraceAIRuntimeEnvironment, context: AskTrace
     const generation = await provider.generateAnswer(input);
     const validation = validateAnswerOutput(generation.output, input.evidenceExcerpts, input.maxOutputTokens);
     const payload = validation.passed
-      ? answerPayload(context.requestId, generation.output, eligibleEvidence, confidence)
-      : safeNonAnswer(context.requestId, confidence, "The generated draft failed citation or structure validation.");
+      ? answerPayload(context.requestId, generation.output, eligibleEvidence, confidence, knowledgeWarning, Boolean(context.adminOverride))
+      : safeNonAnswer(
+        context.requestId,
+        confidence,
+        [knowledgeWarning, "The generated draft failed citation or structure validation."].filter(Boolean).join(" "),
+        Boolean(context.adminOverride),
+      );
     const settlement = usageSettlement(
       config, config.publicModel, generation.usage, inputTokens, input.maxOutputTokens,
       Date.now() - startedAt, generation.providerStatus, validation.passed ? "passed" : "failed",

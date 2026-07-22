@@ -1,6 +1,6 @@
 # TRACE Knowledge Continuity and Story Memory Build Plan
 
-**Status:** Proposed canonical implementation plan
+**Status:** Canonical implementation plan (KC-00 decision lock complete; implementation pending)
 
 **Date:** 22 July 2026
 
@@ -32,11 +32,25 @@ This is retrieval and evidence infrastructure. It is not model fine-tuning, auto
 
 ## 2. Required answer behaviour
 
-TRACE must support four deterministic answer modes.
+TRACE must preserve the two dimensions already defined by ADR 0016. `evidenceMode` describes where the admissible material came from; `conclusionMode` describes what the evidence permits TRACE to conclude. They must never be collapsed into one public enum.
 
-| Mode | When application policy selects it | Required presentation |
+### Evidence mode (ADR 0016)
+
+| `evidenceMode` | Meaning |
+|---|---|
+| `knowledge` | Answer is grounded in approved TRACE knowledge whose external claim/assertion bundle has been resolved. |
+| `researched` | Answer is grounded in an approved, bounded research packet. |
+| `insufficient` | Admitted evidence exists but is too weak, stale, derivative, or conflicting to answer safely. |
+| `out_of_scope` | The question is outside TRACE's supported subject or evidence boundary. |
+| `refused` | The request cannot be answered under safety, privacy, policy, or access rules. |
+
+### Conclusion mode
+
+The application must support four deterministic conclusion modes.
+
+| `conclusionMode` | When application policy selects it | Required presentation |
 |---|---|---|
-| `supported_answer` | The material claims are supported by sufficient admitted, current and independently rooted evidence. | Give the supported answer, confidence, limitations, claim citations, and source summaries. |
+| `supported` | The material claims are supported by sufficient admitted, current and independently rooted evidence. | Give the supported answer, confidence, limitations, claim citations, and source summaries. |
 | `qualified_lean` | Multiple defensible positions exist, but one has materially stronger evidence. | State that there is no definitive answer, describe each position, state which answer TRACE currently leans toward and why, and say what evidence could change the lean. |
 | `multiple_positions` | Several positions are supported and no position has a defensible advantage. | Describe the positions without selecting a winner; show supporting and contradictory sources for each. |
 | `insufficient_evidence` | Evidence is missing, stale, derivative, contradictory without resolution, or below the policy threshold. | Decline to conclude, show what is known, list the best available sources, and identify the missing evidence. |
@@ -50,7 +64,7 @@ The application, not the language model, selects the answer mode and confidence 
 Every non-refusal answer must include:
 
 - a direct answer or explicit non-answer;
-- the answer mode;
+- both `evidenceMode` and `conclusionMode`;
 - TRACE's current lean, if any;
 - a short explanation of why that mode was selected;
 - material claims with claim-level citations;
@@ -64,7 +78,8 @@ Every non-refusal answer must include:
 Required validated output shape:
 
 ```text
-answerMode
+evidenceMode
+conclusionMode
 directAnswer
 lean
 whyLean
@@ -79,7 +94,13 @@ claims[]
   - claimId
   - statement
   - relationship
-  - citationSourceIds[]
+  - citationAssertionIds[]
+citations[]
+  - assertionId
+  - sourceDocumentVersionId
+  - sourceChunkId
+  - startLocator
+  - endLocator
 sourceSummaries[]
   - sourceId
   - sourceName
@@ -98,7 +119,7 @@ freshestEvidenceAt
 whatCouldChange
 ```
 
-All identifiers must resolve to the supplied evidence packet. Unknown identifiers, unsupported claims, or a model-selected answer mode fail validation and return a safe non-answer.
+All identifiers must resolve to the supplied evidence packet. Claim citations must resolve to reviewed `claim_assertions` and their source chunk/locator, not merely to a whole source document. Unknown identifiers, unsupported claims, or a model-selected evidence/conclusion mode fail validation and return a safe non-answer.
 
 ## 3. Non-negotiable trust rules
 
@@ -114,6 +135,8 @@ All identifiers must resolve to the supplied evidence packet. Unknown identifier
 10. New evidence may propose an update, correction, supersession, or knowledge revision, but it must not silently rewrite published text.
 11. Hard-expired knowledge is excluded from normal answering until reviewed or visibly handled as stale.
 12. Full source content remains private and is stored only where retrieval, licence, retention, and copyright policy permit it.
+13. Source identity/tier is source-level metadata; directness, role, and evidentiary treatment are evaluated per claim assertion. One source may be primary for a release date and vendor-reported for a performance claim.
+14. `evidenceMode` and `conclusionMode` are independent application decisions. A model cannot replace either decision with a confidence score or prose.
 
 ## 4. Current baseline and corrections
 
@@ -180,17 +203,22 @@ Initial message types:
 - `canonicalise_claims`;
 - `match_story_and_knowledge`;
 - `recompute_evidence_score`;
+- `embed_search_record`;
 - `upsert_search_index`;
+- `reconcile_source_artifact`;
+- `reconcile_search_index`;
 - `backfill_story`; and
 - `backfill_knowledge_document`.
 
 Permanent failures enter a dead-letter queue and a visible admin repair queue.
 
+Cross-store writes use an outbox/reconciliation pattern because D1, R2, and Vectorize cannot commit atomically. For source capture, create a pending D1 job, write the content-addressed R2 object, verify its hash, commit the D1 source version, and only then mark the job complete. If R2 succeeds and D1 does not, reconciliation must find the orphan and either attach it to a matching pending version or delete it under the retention policy. For indexing, record a pending D1 index operation, upsert the Vectorize record, and mark it indexed only after success. D1 remains authoritative when Vectorize is unavailable, stale, or missing; reconciliation must be safe to retry.
+
 The ingestion Worker owns R2 and queue access. Pages admin routes request capture/review actions through the existing signed internal-service boundary; browser code receives neither an R2 binding nor direct queue production authority.
 
 ### Vectorize: semantic candidate retrieval
 
-Vectorize will index approved chunks, canonical claims, story summaries, and approved knowledge sections. Vector records contain only stable D1 identifiers, record type, language, publication/admission state, and embedding-version metadata.
+Vectorize will index approved chunks, canonical claims, story summaries, and approved knowledge sections. Vector records contain only stable D1 identifiers, record type, language, publication/admission state, and embedding-version metadata. The embedding provider, model, dimensions, multilingual behaviour, chunk policy, input-cost budget, and re-embedding/migration procedure must be locked before KC-09 indexing begins. Create the small, versioned metadata-filter set before inserting vectors; use filters only for candidate discovery and re-check publication and eligibility in D1.
 
 Retrieval flow:
 
@@ -210,7 +238,12 @@ Vectorize is a relevance index, not the source of truth.
 
 ## 6. Additive canonical data model
 
-Do not create a third independent knowledge system. `knowledge_documents` remains the canonical current knowledge-document table. The older `knowledge_pages`/static-page path must be inventoried and either migrated or explicitly retained as a separate static publishing path before cutover.
+Do not create a third independent knowledge system. The following ownership decision is now locked for KC-00:
+
+- **Canonical runtime knowledge:** D1 `knowledge_documents`, `knowledge_document_revisions`, and their governed source/relationship records. Future claim/assertion joins from this plan extend this path; all new structured knowledge must enter through this lifecycle.
+- **Authoring input:** `docs/Knowledge Input/*.md` and the admin knowledge API are inputs to the D1 lifecycle, not a second runtime store. Generated SQL and source-link scripts are migration tooling only.
+- **Legacy compatibility:** the original `knowledge_pages`/`knowledge_page_*` tables in `db/schema.sql` and the `src/data/knowledge/*.ts` static publishing route are retained temporarily for compatibility and public-page migration. They receive no new canonical knowledge writes and are not an Ask TRACE evidence source until imported and reviewed through D1.
+- **Cutover rule:** no new static page or parallel knowledge table may be introduced. KC-08/KC-11 will inventory, map, and migrate legacy pages; existing published static pages may remain visible until an explicit reviewed migration/removal decision.
 
 ### 6.1 Source documents and versions
 
@@ -276,6 +309,8 @@ source_chunks
 - `editor_supplied_document`; and
 - `prohibited`.
 
+The first implementation preserves original-language bytes and records `source_language`; it does not create translated evidence. ADR 0018 translation remains disabled until Phase 7, when a `source_document_representations` table records the original version, representation language/type, content hash, R2 key, translation provider/model, status, reviewer, and review time. A translation is always attached to the same source identity and can never count as another source or provenance group.
+
 ### 6.2 Provenance and independence
 
 Add:
@@ -329,10 +364,14 @@ claim_assertions
 - canonical_claim_id
 - source_document_version_id
 - source_chunk_id
+- start_locator
+- end_locator
 - legacy_claim_id
 - assertion_text
 - relationship
 - source_role
+- directness
+- evidence_treatment
 - admission_state
 - freshness_state
 - provenance_group_id
@@ -348,6 +387,15 @@ claim_assertions
 ```
 
 Assertion relationships include the existing evidence vocabulary: `supports`, `partially_supports`, `qualifies`, `contradicts`, `reports`, `reproduces`, `fails_to_reproduce`, `supersedes`, `corrects`, and `contextualises`.
+
+`source_role`, `directness`, and `evidence_treatment` are assertion-level fields. Keep source identity/tier and publisher treatment on the source registry, but do not infer the evidentiary role of every claim from those source-level labels.
+
+#### Legacy claims cutover
+
+- **Before KC-05:** the existing `claims`/`claim_evidence` tables remain authoritative for current routes.
+- **During KC-05:** map legacy claims and accepted evidence into `canonical_claims` and `claim_assertions`, retaining legacy IDs for compatibility and audit.
+- **After cutover:** all new extraction and review writes target the canonical tables; legacy claims become read-only compatibility data.
+- No indefinite dual-write path is permitted. Every route must have an explicit cutover owner and a migration/read-fallback test.
 
 ### 6.4 Story, knowledge and graph links
 
@@ -369,6 +417,15 @@ knowledge_document_claims
 - section_key
 - relationship
 - display_order
+- reviewed_by
+- reviewed_at
+
+knowledge_document_claim_assertions
+- knowledge_document_id
+- section_key
+- canonical_claim_id
+- claim_assertion_id
+- relationship
 - reviewed_by
 - reviewed_at
 
@@ -410,6 +467,8 @@ Story relationships include `same_event`, `follow_up_to`, `updates`, `contradict
 
 Populate the existing `knowledge_document_relationships` table for story, Guide, briefing, and knowledge relationships. Do not use it as a substitute for claim-level links.
 
+The assertion join is the durable replacement for string-only `source_reference`/`claim_reference` fields. During KC-08, every inherited external citation must resolve through these foreign-key-backed links to an accepted assertion and its source locator.
+
 ## 7. Manual knowledge pages and inherited evidence
 
 Yes: manually entered knowledge pages will be able to link to evidence already held elsewhere.
@@ -421,8 +480,8 @@ The completed workflow will be:
 3. Each source URL is matched to an existing `source_document`; missing admitted sources are queued for capture.
 4. Each material knowledge statement is matched to an existing `canonical_claim` or proposed as a new canonical claim.
 5. The editor reviews the proposed claim and source mappings.
-6. Approved mappings are stored in `knowledge_document_claims` and `knowledge_document_sources`/source-document links.
-7. Ask TRACE may retrieve the knowledge prose as internal synthesis, but it resolves and supplies the underlying admitted external assertions as the actual evidence.
+6. Approved mappings are stored in `knowledge_document_claims` plus the foreign-key-backed `knowledge_document_claim_assertions` join. Existing `knowledge_document_sources` links remain compatibility/audit links while section-level assertion links are migrated.
+7. Ask TRACE may retrieve the knowledge prose as internal synthesis, but it resolves and supplies the underlying admitted external assertions, chunks, and locators as the actual evidence.
 8. If a linked claim is corrected, contradicted, superseded, or stale, the knowledge document enters the review queue automatically.
 
 Manual knowledge therefore becomes a curated interpretation layer over the same evidence graph used by stories. It does not need duplicate copies of the evidence and it never counts itself as corroboration.
@@ -431,6 +490,8 @@ Approval must fail closed when a public knowledge page contains material claims 
 
 - a reviewed link to a canonical claim with eligible evidence; nor
 - an explicit `editorial_synthesis` or `trace_manifest_inference` label with supporting claims and limitations.
+
+Stable headings/section keys, explicit material statements, direct source URLs, separated supporting and contradictory sources, review/freshness dates, and clear inference labels make existing manual pages easiest to map. Editors may continue adding pages now; KC-08 will link them without treating the page prose as corroboration.
 
 ## 8. Evidence score and status policy
 
@@ -471,6 +532,8 @@ Initial status gates:
 
 A story score is a materiality-weighted roll-up of its claim scores. A weak or disputed core claim caps the story status even when secondary claims are strong. Every score snapshot must retain its policy version and component explanation.
 
+The initial weights and thresholds are provisional. KC-07 must keep numeric scores admin-only until a fixed labelled evaluation set has tested vendor-only, derivative, disputed, independently reproduced, stale, and corrected examples against human editorial decisions. Threshold changes create a new policy version and never rewrite historical snapshots. Before that gate, public pages may show qualitative bands such as `provisionally_supported`, `strongly_supported`, or `disputed` with component explanations; they must not display an uncalibrated numeric score or imply that it is the separate TRACE model benchmark score.
+
 ## 9. Governed external-AI use and cost controls
 
 External AI tokens are permitted for source repair and backfill, but only through governed task types.
@@ -482,6 +545,7 @@ Add task types:
 - `summarise_source`;
 - `canonicalise_claim`;
 - `classify_provenance`;
+- `embed_search_record`;
 - `detect_knowledge_impact`; and
 - `synthesise_multi_position_answer`.
 
@@ -492,7 +556,9 @@ Add separately controlled configuration:
 - `TRACE_AI_BACKFILL_ENABLED`;
 - `TRACE_AI_KNOWLEDGE_DAILY_BUDGET_USD`;
 - `TRACE_AI_BACKFILL_TOTAL_BUDGET_USD`;
-- `TRACE_AI_KNOWLEDGE_MAX_CONCURRENCY`; and
+- `TRACE_AI_KNOWLEDGE_MAX_CONCURRENCY`;
+- `TRACE_AI_EMBEDDING_DAILY_BUDGET_USD`;
+- `TRACE_AI_EMBEDDING_BACKFILL_BUDGET_USD`; and
 - the existing global AI kill switch.
 
 Initial maximum output budgets per call:
@@ -514,9 +580,10 @@ Rules:
 5. Store structured output and validation failures. Do not store chain-of-thought.
 6. Require claim locators and source identifiers in every extraction output.
 7. Reject claims whose locators cannot be resolved to supplied content.
-8. Apply separate daily and total backfill budgets with a global kill switch.
-9. Provide a dry-run estimate showing item count, expected calls, maximum tokens, and maximum cost before a backfill batch starts.
-10. Stop the batch on systemic validation, audit, budget, or provider failures.
+8. Keep embedding provider/model, dimensions, language support, chunk policy, version migration, and daily/backfill budgets under the same D1 audit and idempotency controls as extraction.
+9. Apply separate daily and total backfill budgets with a global kill switch.
+10. Provide a dry-run estimate showing item count, expected calls, maximum tokens, and maximum cost before a backfill batch starts.
+11. Stop the batch on systemic validation, audit, budget, or provider failures.
 
 ## 10. Atomic implementation phases
 
@@ -524,21 +591,25 @@ Each task must produce an audit note in `docs/audit/`, update this plan, and pas
 
 ### KC-00 — Decision lock and truthful status
 
-- [ ] **KC-00A:** Accept this document as the canonical Knowledge Continuity workstream and link it from the launch and master build plans.
-- [ ] **KC-00B:** Correct documentation that currently describes knowledge retrieval, Find Related, full-content triage, or evidence upgrades as fully complete.
-- [ ] **KC-00C:** Record the legacy `knowledge_pages`, static TypeScript pages, and current `knowledge_documents` ownership decision; prohibit another parallel knowledge store.
+- [x] **KC-00A:** Accept this document as the canonical Knowledge Continuity workstream and link it from the launch and master build plans.
+- [x] **KC-00B:** Correct documentation that currently describes knowledge retrieval, Find Related, full-content triage, or evidence upgrades as fully complete.
+- [x] **KC-00C:** Record the legacy `knowledge_pages`, static TypeScript pages, and current `knowledge_documents` ownership decision; prohibit another parallel knowledge store.
+- [x] **KC-00D:** Lock the separate ADR 0016 `evidenceMode` and conclusion `conclusionMode` contracts, including assertion/locator citations.
+- [x] **KC-00E:** Lock claim-relative source roles, legacy-claims cutover ownership, and D1/R2/Vectorize outbox/reconciliation rules.
+- [x] **KC-00F:** Lock the embedding decision gate, PDF v1/v2 boundary, ADR 0018 original-language/translation boundary, and admin-only numeric score calibration gate.
 
-Exit: documentation states the real boundaries and names one canonical structured knowledge path.
+Exit: documentation states the real boundaries, names one canonical structured knowledge path, records the amended contracts before schema or retrieval implementation begins, and the decision is evidenced in [`docs/audit/kc-00-decision-lock-and-status-reconciliation.md`](audit/kc-00-decision-lock-and-status-reconciliation.md).
 
-### KC-01 — Trust hotfix before knowledge expansion
+### KC-01 — Trust hotfix before knowledge expansion (implementation in progress; exit verification pending)
 
 - [ ] **KC-01A:** Replace source-count-derived public independence, reproducibility, and source-tier labels with values queried from reviewed evidence records; show `not assessed` until available.
 - [ ] **KC-01B:** Prevent `upgradeClusterEvidence` from upgrading status solely from cluster source-tier counts.
 - [ ] **KC-01C:** Enforce `review_after` warnings and `hard_expiry` exclusion in knowledge retrieval and public knowledge rendering.
 - [ ] **KC-01D:** Make Ask TRACE report that approved internal knowledge could not be used when its external evidence bundle is unresolved.
 - [ ] **KC-01E:** Add regression tests proving repeated derivative coverage cannot create independent corroboration.
+- [ ] **KC-01F:** Remove or suppress uncalibrated public numeric evidence scores; show `not assessed` or a qualitative band until KC-07's fixed evaluation gate passes.
 
-Exit: current public pages and Ask TRACE no longer overstate independence, reproducibility, knowledge eligibility, or freshness.
+Exit: current public pages and Ask TRACE no longer overstate independence, reproducibility, knowledge eligibility, freshness, or numeric score certainty.
 
 ### KC-02 — Canonical schema and migration validation
 
@@ -549,6 +620,7 @@ Exit: current public pages and Ask TRACE no longer overstate independence, repro
 - [ ] **KC-02E:** Add idempotent processing-job/outcome records or safely extend the current job model.
 - [ ] **KC-02F:** Configure separate Preview processing queue and dead-letter queue bindings for the ingestion Worker. Do not attach production consumers in this task.
 - [ ] **KC-02G:** Validate forward migration, duplicate rerun behaviour, foreign keys, rollback/export recovery, legacy production compatibility, and Preview D1 application.
+- [ ] **KC-02H:** Add pending outbox/index-operation state and reconciliation records for R2 capture and Vectorize indexing; prove orphan recovery and stale-index recovery without making Vectorize authoritative.
 
 Exit: additive migrations pass locally and in Preview without publishing or rewriting existing records.
 
@@ -559,10 +631,12 @@ Exit: additive migrations pass locally and in Preview without publishing or rewr
 - [ ] **KC-03C:** Store permitted immutable originals/extractions in private R2 and metadata/hashes in D1.
 - [ ] **KC-03D:** Connect RSS/feed items to source documents and enqueue capture after admission, never before.
 - [ ] **KC-03E:** Add publisher-only manual URL capture using the same pipeline.
-- [ ] **KC-03F:** Add publisher-only document upload for supported text/HTML/Markdown/PDF inputs, with type, size, retention, and untrusted-content controls.
+- [ ] **KC-03F:** Add publisher-only document upload for supported text/HTML/Markdown inputs, with type, size, retention, and untrusted-content controls.
 - [ ] **KC-03G:** Add explicit states for unavailable, paywalled, robots/policy restricted, unsupported, extraction failed, and metadata-only sources.
+- [ ] **KC-03H:** PDF v1 stores the permitted original privately in R2 with metadata and hash, and records `extraction_pending` or `metadata_only`; it does not add a parser to the main ingestion Worker.
+- [ ] **KC-03I:** Run a separate PDF v2 parser/provider spike for accuracy, memory, security, and cost. It must pass before PDF text enters claim extraction, but it must not block ordinary HTML, Markdown, or plain-text capture.
 
-Exit: one admitted feed article and one editor-supplied document can be captured, versioned, retrieved privately, and audited without entering public evidence automatically.
+Exit: one admitted feed article and one editor-supplied ordinary text document can be captured, versioned, retrieved privately, and audited without entering public evidence automatically; PDF remains explicitly metadata-only or pending until its spike passes.
 
 ### KC-04 — Structured extraction and source summaries
 
@@ -579,10 +653,11 @@ Exit: captured content produces reviewable structured claims and a source summar
 
 - [ ] **KC-05A:** Match extracted claims to existing canonical claims using lexical, entity, value, date, and semantic candidates.
 - [ ] **KC-05B:** Let the editor merge with an existing claim, create a new claim, or reject the candidate.
-- [ ] **KC-05C:** Propose provenance relationships and require review for uncertain or high-impact lineage.
+- [ ] **KC-05C:** Propose provenance relationships and claim-relative directness, source role, and evidentiary treatment; require review for uncertain or high-impact lineage.
 - [ ] **KC-05D:** Group derivative coverage under a shared origin.
 - [ ] **KC-05E:** Detect support, qualification, contradiction, reproduction, correction, temporal change, and supersession at claim level.
 - [ ] **KC-05F:** Preserve unresolved conflicts instead of forcing a consensus.
+- [ ] **KC-05G:** Complete the legacy claims mapping and route cutover: canonical tables receive all new writes, while legacy claims become read-only compatibility data with no indefinite dual-write path.
 
 Exit: two derivative articles count as one evidentiary root, while an independent test can count separately and a contradiction remains visible.
 
@@ -603,6 +678,7 @@ Exit: a related result can be durably attached or linked, and the audit record e
 - [ ] **KC-07C:** Store immutable score snapshots and before/after explanations.
 - [ ] **KC-07D:** Add an admin evidence panel showing material claims, roots, roles, conflicts, caps, penalties, and proposed status.
 - [ ] **KC-07E:** Require human approval for high-impact status changes and corrections; allow only policy-approved low-risk metadata recalculation later.
+- [ ] **KC-07F:** Evaluate the versioned score policy against a fixed labelled set and compare score changes with human editorial decisions before permitting public numeric display.
 
 Exit: adding a genuinely independent corroborating source can increase the relevant claim/story score, while adding derivative or unrelated coverage cannot.
 
@@ -612,26 +688,27 @@ Exit: adding a genuinely independent corroborating source can increase the relev
 - [ ] **KC-08B:** Suggest existing canonical claims and source documents.
 - [ ] **KC-08C:** Queue missing admitted source URLs for capture and extraction.
 - [ ] **KC-08D:** Build an admin mapper for knowledge section -> canonical claim -> source assertions.
-- [ ] **KC-08E:** Populate `knowledge_document_claims` and existing knowledge relationships after review.
+- [ ] **KC-08E:** Populate `knowledge_document_claims` and the foreign-key-backed `knowledge_document_claim_assertions` join after review; retain string source/claim references only for migration audit.
 - [ ] **KC-08F:** Strengthen approval so public knowledge requires reviewed evidence mappings or explicit inference/synthesis labels.
-- [ ] **KC-08G:** Resolve mapped external evidence when knowledge is retrieved; retain the knowledge text as zero-weight internal synthesis.
+- [ ] **KC-08G:** Resolve mapped external evidence, accepted assertions, chunks, and locators when knowledge is retrieved; retain the knowledge text as zero-weight internal synthesis.
 - [ ] **KC-08H:** Trigger review when linked evidence changes, expires, conflicts, corrects, or supersedes the knowledge page.
 
 Exit: a manually entered knowledge page can answer through its inherited external evidence and can be invalidated by later evidence without being treated as independent proof.
 
 ### KC-09 — Hybrid retrieval and multi-position Ask TRACE
 
-- [ ] **KC-09A:** Add lexical/entity indexes and Vectorize bindings for Preview first.
-- [ ] **KC-09B:** Create Preview metadata filters and a versioned index namespace before inserting vectors; production index creation remains a later rollout gate.
-- [ ] **KC-09C:** Index source chunks, canonical claims, published stories, approved knowledge sections, Guides, and corrections with versioned embeddings.
-- [ ] **KC-09D:** Resolve all search matches through D1 eligibility and provenance rules.
-- [ ] **KC-09E:** Group evidence into compatible and competing positions.
-- [ ] **KC-09F:** Add deterministic sufficiency, confidence, and answer-mode selection.
-- [ ] **KC-09G:** Extend the validated answer schema with `answerMode`, `lean`, `positions`, `sourceSummaries`, `whyLean`, and `whatCouldChange`.
-- [ ] **KC-09H:** Ensure citations resolve to the supplied claim and source locator.
-- [ ] **KC-09I:** Add refusal and disagreement tests, including the target `qualified_lean` example.
+- [ ] **KC-09A:** Lock the embedding provider, model, dimensions, language support, chunk-size policy, cost budgets, index metadata filters, version namespace, and re-embedding procedure.
+- [ ] **KC-09B:** Add lexical/entity indexes and Vectorize bindings for Preview first. Vectorize is an optional recall improvement, not a prerequisite for the D1/FTS5 knowledge loop.
+- [ ] **KC-09C:** Create Preview metadata filters and a versioned index namespace before inserting vectors; production index creation remains a later rollout gate.
+- [ ] **KC-09D:** Index source chunks, canonical claims, published stories, approved knowledge sections, Guides, and corrections with versioned embeddings.
+- [ ] **KC-09E:** Resolve all search matches through D1 eligibility and provenance rules.
+- [ ] **KC-09F:** Group evidence into compatible and competing positions.
+- [ ] **KC-09G:** Add deterministic sufficiency, confidence, and evidence/conclusion-mode selection.
+- [ ] **KC-09H:** Extend the validated answer schema with `evidenceMode`, `conclusionMode`, `lean`, `positions`, `sourceSummaries`, `whyLean`, and `whatCouldChange`.
+- [ ] **KC-09I:** Ensure citations resolve to the supplied reviewed assertion, source chunk, and start/end locator.
+- [ ] **KC-09J:** Add refusal and disagreement tests, including the target `qualified_lean` example.
 
-Exit: Ask TRACE can return supported, qualified-lean, multiple-position, and insufficient-evidence answers with claim citations and source summaries.
+Exit: Ask TRACE can return the ADR 0016 evidence mode plus supported, qualified-lean, multiple-position, and insufficient-evidence conclusions with assertion-level citations and source summaries.
 
 ### KC-10 — Knowledge-impact proposals and revisions
 
@@ -664,6 +741,7 @@ Exit: every published story and approved knowledge document has an explicit back
 - [ ] **KC-12D:** Add Preview feature flags for capture, AI extraction, scoring, semantic retrieval, knowledge inheritance, and multi-position answers.
 - [ ] **KC-12E:** Run security, migration, retrieval, evidence, cost, accessibility, and performance gates in Preview.
 - [ ] **KC-12F:** Enable production capabilities one at a time with rollback evidence and monitoring.
+- [ ] **KC-12G:** Keep public numeric evidence scores disabled until KC-07F passes; launch with qualitative bands and explanations, then enable numeric snapshots only through a reviewed policy-version rollout.
 
 Exit: the complete system is enabled in bounded stages, and every public claim can be traced through TRACE synthesis to admitted external evidence.
 
@@ -707,6 +785,7 @@ The initial backfill should favour completeness and correctness over minimum tok
 - foreign-key and uniqueness integrity;
 - immutable source versions and score snapshots;
 - D1/R2 reference integrity;
+- R2 orphan reconciliation and Vectorize pending/stale-index recovery;
 - deletion/retention behaviour;
 - legacy claim compatibility; and
 - Preview-to-production binding isolation.
@@ -721,17 +800,26 @@ The initial backfill should favour completeness and correctness over minimum tok
 - independent testing forms another provenance group;
 - opinion attribution does not increase factual corroboration;
 - semantic similarity does not change evidence state;
-- claim citations resolve to supplied source locators; and
+- claim-relative source roles distinguish, for example, release-date evidence from vendor performance claims;
+- claim citations resolve to reviewed assertion IDs and supplied source locators;
+- original-language identity is preserved and translations cannot create a second source; and
 - no cross-entity or cross-version claim leakage.
 
 ### Answer modes
 
-- strong consensus selects `supported_answer`;
+- evidence provenance and conclusion selection remain separate (`evidenceMode` is never replaced by `conclusionMode`);
+- strong consensus selects `supported`;
 - one stronger position with material disagreement selects `qualified_lean`;
 - balanced competing positions select `multiple_positions`;
 - weak, stale, or derivative-only evidence selects `insufficient_evidence`;
 - source summaries preserve source role and material caveats; and
 - model output cannot change application-selected mode or confidence.
+
+### Score calibration and content formats
+
+- public numeric evidence scores remain gated until the fixed labelled evaluation set passes;
+- ordinary HTML, Markdown, and plain-text capture works without PDF parsing; and
+- PDF metadata-only/pending states do not enter claim extraction until the separate parser/provider spike passes.
 
 ### Security and operations
 
@@ -742,6 +830,7 @@ The initial backfill should favour completeness and correctness over minimum tok
 - publisher-only manual capture and review;
 - same-origin mutation controls;
 - queue retry idempotency and dead-letter handling;
+- embedding budget, version migration, and metadata-filter validation;
 - R2 artifacts remain private;
 - AI budget, rate-limit, audit and kill-switch behaviour; and
 - no automatic publication from capture or extraction.

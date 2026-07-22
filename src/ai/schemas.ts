@@ -67,6 +67,7 @@ export function validateEvidenceExcerpt(v: unknown): v is EvidenceExcerpt {
     "sourceId", "sourceKind", "sourceRole", "admissionState", "freshnessState", "independentEvidenceWeight",
     "claimId", "text", "sourceClassification", "sourceName", "sourceUrl",
     "observedAt", "publishedAt", "trustNotes", "relationship", "isDisputed",
+    "externalEvidenceResolved",
   ])
     && isString(e.sourceId, 128)
     && isKnownSourceKind(e.sourceKind)
@@ -83,7 +84,8 @@ export function validateEvidenceExcerpt(v: unknown): v is EvidenceExcerpt {
     && isOptionalString(e.publishedAt, 64)
     && isOptionalString(e.trustNotes, 1_000)
     && isOptionalString(e.relationship, 100)
-    && (e.isDisputed === undefined || isBoolean(e.isDisputed));
+    && (e.isDisputed === undefined || isBoolean(e.isDisputed))
+    && (e.externalEvidenceResolved === undefined || isBoolean(e.externalEvidenceResolved));
 }
 
 export function validateEvidenceExcerpts(excerpts: unknown, minimum = 0): ValidationResult {

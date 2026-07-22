@@ -765,18 +765,15 @@ export async function archiveCluster(
 }
 
 // ============================================================
-// Evidence upgrade — count distinct source tiers per cluster
-// and auto-upgrade evidence status when multiple independent
-// sources corroborate the same story.
+// Evidence upgrade — disabled pending claim-level provenance.
 // ============================================================
 
-const EVIDENCE_UPGRADE_MAP: Record<string, { minTierA: number; minTierB: number; nextStatus: string }> = {
-  // From vendor_reported → provisionally_supported: need 1 Tier B+ source
-  vendor_reported: { minTierA: 0, minTierB: 1, nextStatus: "provisionally_supported" },
-  // From provisionally_supported → strongly_supported: need 1 Tier A + 1 more
-  provisionally_supported: { minTierA: 1, minTierB: 2, nextStatus: "strongly_supported" },
-};
-
+/**
+ * Source counts and registry tiers are discovery metadata, not evidence of
+ * independent corroboration. The old implementation promoted a whole cluster
+ * from those counts alone, so the scheduled call is intentionally a no-op until
+ * KC-05/KC-07 can evaluate reviewed claim assertions and provenance groups.
+ */
 export interface EvidenceUpgradeResult {
   clusterId: number;
   title: string;
@@ -789,52 +786,7 @@ export interface EvidenceUpgradeResult {
 }
 
 export async function upgradeClusterEvidence(
-  db: D1Database,
+  _db: D1Database,
 ): Promise<EvidenceUpgradeResult[]> {
-  const clusters = await db.prepare(`
-    SELECT sc.id, sc.title, sc.evidence_status,
-           COUNT(DISTINCT s.id) as source_count,
-           COUNT(DISTINCT CASE WHEN s.tier = 'A' THEN s.id END) as tier_a,
-           COUNT(DISTINCT CASE WHEN s.tier = 'B' THEN s.id END) as tier_b,
-           COUNT(DISTINCT CASE WHEN s.tier = 'C' THEN s.id END) as tier_c
-    FROM story_clusters sc
-    JOIN story_cluster_members scm ON scm.cluster_id = sc.id
-    JOIN feed_items fi ON fi.id = scm.feed_item_id
-    JOIN sources s ON s.id = fi.source_id
-    WHERE sc.publication_status NOT IN ('withdrawn')
-      AND sc.evidence_status IN ('vendor_reported', 'provisionally_supported')
-    GROUP BY sc.id
-    HAVING source_count >= 2
-  `).all<{
-    id: number; title: string; evidence_status: string;
-    source_count: number; tier_a: number; tier_b: number; tier_c: number;
-  }>();
-
-  const results: EvidenceUpgradeResult[] = [];
-
-  for (const cluster of clusters.results) {
-    const rule = EVIDENCE_UPGRADE_MAP[cluster.evidence_status];
-    if (!rule) continue;
-
-    const totalAB = cluster.tier_a + cluster.tier_b;
-    const satisfiesRule = cluster.tier_a >= rule.minTierA && totalAB >= rule.minTierB;
-    if (!satisfiesRule) continue;
-
-    await db.prepare(
-      `UPDATE story_clusters SET evidence_status = ?, updated_at = datetime('now') WHERE id = ?`
-    ).bind(rule.nextStatus, cluster.id).run();
-
-    results.push({
-      clusterId: cluster.id,
-      title: cluster.title,
-      previousStatus: cluster.evidence_status,
-      newStatus: rule.nextStatus,
-      sourceCount: cluster.source_count,
-      tierA: cluster.tier_a,
-      tierB: cluster.tier_b,
-      tierC: cluster.tier_c,
-    });
-  }
-
-  return results;
+  return [];
 }

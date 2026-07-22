@@ -864,11 +864,10 @@ async function runClaimExtractionPipeline(env: Env) {
 
 // ============================================================
 // Evidence upgrade pipeline (runs after clustering)
-// Auto-upgrades evidence status when multiple independent sources
-// corroborate the same story cluster.
+// Disabled until claim-level provenance and reviewed assertions exist.
 // ============================================================
 async function runEvidenceUpgradePipeline(env: Env) {
-  console.log("Evidence upgrade: starting...");
+  console.log("Evidence upgrade: skipped — claim-level provenance is not implemented");
   const results = await upgradeClusterEvidence(env.DB);
   if (results.length > 0) {
     for (const r of results) {

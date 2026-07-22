@@ -70,8 +70,8 @@ The Cloudflare Pages deploy command (`npx wrangler pages deploy dist`) was remov
 ### 🔴 Critical — Knowledge truth gate
 
 - [x] **Write the canonical Knowledge Continuity plan** — [`TRACE-KNOWLEDGE-CONTINUITY-BUILD-PLAN.md`](TRACE-KNOWLEDGE-CONTINUITY-BUILD-PLAN.md) defines source absorption, evidence inheritance, provenance-aware scoring, multi-position answers, and historical backfill.
-- [ ] **KC-00 status reconciliation** — accept the plan, reconcile the master build plan, and record the static `knowledge_pages` versus D1 `knowledge_documents` ownership decision.
-- [ ] **KC-01 trust hotfix** — remove source-count-derived independence/reproducibility claims, prevent tier-count-only evidence upgrades, enforce knowledge expiry, and make unresolved knowledge evidence visible.
+- [x] **KC-00 contract reconciliation** — accepted and evidenced in [`docs/audit/kc-00-decision-lock-and-status-reconciliation.md`](audit/kc-00-decision-lock-and-status-reconciliation.md). D1 `knowledge_documents` is canonical; legacy `knowledge_pages`/static TypeScript pages are compatibility-only; separate ADR 0016 evidence/conclusion modes, claim-relative roles, legacy cutover, cross-store recovery, embedding, PDF, ADR 0018, citation, and score-display contracts are locked.
+- [ ] **KC-01 trust hotfix** *(implementation in progress; exit verification pending)* — remove source-count-derived independence/reproducibility claims, prevent tier-count-only evidence upgrades, enforce knowledge expiry, make unresolved knowledge evidence visible, and suppress uncalibrated public numeric evidence scores. See [`docs/audit/kc-01-trust-hotfix-evidence.md`](audit/kc-01-trust-hotfix-evidence.md).
 
 ### 🔴 Critical — Worker deploy
 
@@ -87,7 +87,7 @@ The Cloudflare Pages deploy command (`npx wrangler pages deploy dist`) was remov
 
 ### Short-term
 
-- [ ] **Knowledge Continuity KC-02 to KC-04** — add the canonical evidence schema, safe source-content absorption, and structured source/claim extraction.
+- [ ] **Knowledge Continuity KC-02 to KC-04** — add the canonical evidence schema, safe HTML/Markdown/plain-text source absorption, and structured source/claim extraction. PDF v1 remains metadata-only/pending until a separate parser/provider spike passes.
 - [ ] **Story ↔ Knowledge linking (KC-08/KC-10)** — link stories and manual knowledge through reviewed canonical claims and inherited external evidence, not topic overlap alone.
 - [ ] **Feed item classification during publishing** — auto-suggest topics on the review page
 - [ ] **Homepage and feed page layouts** — redesign pass (under discussion)
@@ -97,7 +97,7 @@ The Cloudflare Pages deploy command (`npx wrangler pages deploy dist`) was remov
 
 ### Medium-term
 
-- [ ] **Knowledge Continuity KC-05 to KC-10** — provenance graph, durable related-story workflow, evidence scoring, manual knowledge inheritance, hybrid retrieval, multi-position Ask TRACE, and knowledge-impact proposals.
+- [ ] **Knowledge Continuity KC-05 to KC-10** — provenance graph, durable related-story workflow, evidence scoring, manual knowledge inheritance, and knowledge-impact proposals. Treat KC-02 through KC-08 as the minimum complete D1/R2 knowledge loop; lock the embedding decision before optional Vectorize/multi-position work in KC-09.
 - [ ] **Public Guides** — render approved guides at `/guides/[slug]`, integrate with Ask TRACE
 - [ ] **Guides ↔ Knowledge linking** — cross-reference guides with related knowledge docs
 - [ ] **Social signals → Feed items** — promotion workflow for social posts to become stories
@@ -107,7 +107,7 @@ The Cloudflare Pages deploy command (`npx wrangler pages deploy dist`) was remov
 ### Long-term (post-launch phases)
 
 - [ ] **Knowledge Continuity KC-11/KC-12** — backfill all published stories and approved knowledge, then roll out the public evidence graph in bounded stages.
-- [ ] **Phase 7** — Multilingual ingestion and publication (ADR 0018)
+- [ ] **Phase 7** — Multilingual ingestion and publication (ADR 0018), including source representations, translation provenance, reviewer state, and the rule that translations never count as independent sources. Translation remains disabled before this phase.
 - [ ] **Phase 8** — Sharing and snapshots (ADR 0014)
 - [ ] **Phase 9 completion** — Automatic catalogue updates from feeds, update proposal queue
 - [ ] **Phase 10** — Commercial features (ADR 0011)
@@ -419,6 +419,8 @@ This is not only UI wiring. It requires:
 - deterministic supported, qualified-lean, multiple-position, and insufficient-evidence Ask TRACE modes; and
 - a governed backfill of every published story and approved knowledge document.
 
+The amended contracts add several safeguards to that workstream: ADR 0016 `evidenceMode` remains separate from `conclusionMode`; source role/directness is claim-relative; legacy claims have a finite read-only cutover; D1/R2/Vectorize use retry-safe reconciliation; citation IDs resolve to assertions and locators; PDF extraction is a separate spike; ADR 0018 translation is deferred until source representations are implemented; and public numeric evidence scores wait for calibration against a fixed labelled set.
+
 ### Story ↔ Knowledge linking
 
 A published story about "GPT-5.6 launches" should link to affected model records, earlier release stories, comparisons, and knowledge such as "What is the best closed model for coding?" The existing `knowledge_document_relationships` table can store record-level relationships, but claim-level links and inherited external evidence are also required. Topic overlap may propose a candidate; an accepted canonical claim/evidence relationship establishes the durable link.
@@ -455,6 +457,8 @@ Routes exist (`/models`, `/benchmarks`) but show empty states. Tables exist in s
 6. Docs appear at `/knowledge` and are found by the Ask TRACE retrieval query.
 
 **Current limitation:** approved knowledge prose is correctly classified as zero-weight TRACE internal synthesis, but its underlying external source/claim bundle is not yet resolved. It is therefore filtered before model generation and does not currently improve Ask TRACE answers. Continue adding well-sourced manual knowledge pages: KC-08 will parse and link their material claims to external evidence already held by TRACE, queue missing admitted sources for capture, and make the pages usable without treating TRACE's own prose as corroboration.
+
+The current source-linking script records document-level URLs for migration and audit; it does not yet create the reviewed section → canonical claim → accepted assertion/locator links required for evidence inheritance.
 
 ### Adding how-to guides
 1. Create `.md` files in `docs/guides/` using the YAML frontmatter format

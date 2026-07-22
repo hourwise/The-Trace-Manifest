@@ -1,5 +1,6 @@
 ---
 import BaseLayout from "../../layouts/BaseLayout.astro";
+import { isKnowledgeReviewDue } from "../../lib/server/ask-evidence";
 
 export const prerender = false;
 
@@ -14,13 +15,15 @@ interface D1KnowledgeDoc {
   evidence_status: string;
   section_slug: string;
   direct_answer: string | null;
+  review_after: string | null;
 }
 
 const d1Docs = await db
   .prepare(
-    `SELECT id, canonical_question, knowledge_type, evidence_status, section_slug, direct_answer
+    `SELECT id, canonical_question, knowledge_type, evidence_status, section_slug, direct_answer, review_after
      FROM knowledge_documents
      WHERE status = 'approved' AND visibility IN ('public_knowledge', 'public_guide')
+       AND (hard_expiry IS NULL OR datetime(hard_expiry) > datetime('now'))
      ORDER BY section_slug, knowledge_type, canonical_question`,
   )
   .all<D1KnowledgeDoc>();
@@ -192,7 +195,7 @@ interface UnifiedHub {
   name: string;
   description: string;
   source: "static" | "d1";
-  items: { href: string; badge: string; title: string }[];
+  items: { href: string; badge: string; title: string; reviewDue?: boolean }[];
 }
 
 const unifiedHubs: UnifiedHub[] = [
@@ -216,6 +219,7 @@ const unifiedHubs: UnifiedHub[] = [
       href: `/knowledge/doc/${doc.id}`,
       badge: typeLabel(doc.knowledge_type),
       title: doc.canonical_question,
+      reviewDue: isKnowledgeReviewDue(doc.review_after),
     })),
   })),
 ];
@@ -269,6 +273,7 @@ const totalHubs = unifiedHubs.length;
                 <a href={item.href} style="display:flex;gap:0.4rem;align-items:baseline;">
                   <span class="badge badge-sm" style="font-size:0.58rem;flex-shrink:0;">{item.badge}</span>
                   <span>{item.title.length > 90 ? item.title.slice(0, 90) + "…" : item.title}</span>
+                  {item.reviewDue && <span class="badge badge-sm" style="font-size:0.55rem;flex-shrink:0;background:#fff3cd;color:#856404;border-color:#ffc107;">Review due</span>}
                 </a>
               </li>
             ))}

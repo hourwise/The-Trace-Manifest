@@ -194,6 +194,24 @@ interface KnowledgeEvidenceRow {
   detailed_explanation: string | null;
   section_slug: string;
   approved_at: string | null;
+  review_after: string | null;
+  hard_expiry: string | null;
+}
+
+function boundaryReached(value: string | null | undefined, now = Date.now()): boolean {
+  if (!value) return false;
+  const boundary = new Date(value).getTime();
+  // A malformed hard boundary fails closed; a malformed review boundary is
+  // still surfaced as a warning by the caller rather than treated as current.
+  return !Number.isFinite(boundary) || boundary <= now;
+}
+
+export function isKnowledgeReviewDue(reviewAfter: string | null | undefined, now = Date.now()): boolean {
+  return boundaryReached(reviewAfter, now);
+}
+
+export function isKnowledgeHardExpired(hardExpiry: string | null | undefined, now = Date.now()): boolean {
+  return boundaryReached(hardExpiry, now);
 }
 
 export async function retrieveApprovedKnowledge(
@@ -210,12 +228,14 @@ export async function retrieveApprovedKnowledge(
 
   const result = await db.prepare(`
     SELECT kd.id, kd.canonical_question, kd.knowledge_type, kd.evidence_status,
-           kd.direct_answer, kd.detailed_explanation, kd.section_slug, kd.approved_at
+           kd.direct_answer, kd.detailed_explanation, kd.section_slug, kd.approved_at,
+           kd.review_after, kd.hard_expiry
     FROM knowledge_documents kd
     WHERE kd.status = 'approved'
       AND kd.visibility IN ('public_knowledge', 'public_guide')
       AND kd.approved_by IS NOT NULL
       AND kd.approved_at IS NOT NULL
+      AND (kd.hard_expiry IS NULL OR datetime(kd.hard_expiry) > datetime('now'))
       AND kd.direct_answer IS NOT NULL
       AND (${predicates})
     ORDER BY
@@ -228,6 +248,7 @@ export async function retrieveApprovedKnowledge(
   `).bind(...searchTerms.map(likeTerm), boundedLimit).all<KnowledgeEvidenceRow>();
 
   return result.results.map((row) => {
+    const reviewDue = isKnowledgeReviewDue(row.review_after);
     const text = [
       `TRACE Knowledge: ${row.canonical_question}`,
       row.direct_answer ? `Answer: ${cleanEvidenceText(row.direct_answer, 800)}` : "",
@@ -239,7 +260,7 @@ export async function retrieveApprovedKnowledge(
       sourceKind: "trace_knowledge" as TraceSourceKind,
       sourceRole: "internal_synthesis" as const,
       admissionState: "admitted" as const,
-      freshnessState: freshnessStateFor(row.approved_at ?? new Date().toISOString()),
+      freshnessState: reviewDue ? "stale" : freshnessStateFor(row.approved_at ?? new Date().toISOString()),
       independentEvidenceWeight: 0 as const,
       claimId: `knowledge:${row.id}`,
       text,
@@ -248,9 +269,12 @@ export async function retrieveApprovedKnowledge(
       sourceUrl: undefined,
       observedAt: row.approved_at ?? undefined,
       publishedAt: row.approved_at ?? undefined,
-      trustNotes: `TRACE approved knowledge (${row.evidence_status}). Always verify against primary sources.`,
+      trustNotes: reviewDue
+        ? `TRACE approved knowledge (${row.evidence_status}); review due. Its external evidence bundle is unresolved.`
+        : `TRACE approved knowledge (${row.evidence_status}). Its external evidence bundle is unresolved; always verify against primary sources.`,
       relationship: "supports",
       isDisputed: false,
+      externalEvidenceResolved: false,
     };
   });
 }

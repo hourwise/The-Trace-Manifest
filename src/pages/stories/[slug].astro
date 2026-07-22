@@ -40,11 +40,10 @@ try {
   console.error(JSON.stringify({ message: "Story enrichment query failed" }));
 }
 
-// Evidence rating factors derived from story data
+// KC-01: claim-level independence, corroboration, source tier, and
+// reproducibility are not yet available from reviewed evidence records.
+// Never infer them from the number of feed items in a cluster.
 const hasConflicts = story.evidenceStatus === "disputed";
-const isReproducible = story.sourceCount >= 2 ? true : null;
-const corroborationCount = story.sourceCount;
-const hasIndependentVerification = story.sourceCount >= 2 && story.sourceClass !== "Vendor announcement";
 ---
 
 <BaseLayout
@@ -121,13 +120,9 @@ const hasIndependentVerification = story.sourceCount >= 2 && story.sourceClass !
     <RatingExplanation
       status={story.evidenceStatus}
       sourceClass={story.sourceClass || "Unknown"}
-      sourceTier={story.sourceCount >= 2 ? "A" : "B"}
-      corroborationCount={corroborationCount}
-      hasIndependentVerification={hasIndependentVerification}
       hasConflicts={hasConflicts}
       lastChecked={story.lastCheckedAt}
       publishedDate={story.publishedAt || undefined}
-      isReproducible={isReproducible}
     />
 
     <!-- Sources -->
@@ -138,7 +133,7 @@ const hasIndependentVerification = story.sourceCount >= 2 && story.sourceClass !
           {sources.map(s => (
             <li style="margin-bottom:0.35rem;">
               <a href={s.url}>{s.label}</a>
-              <span class="meta" style="margin-left:0.5rem;">({s.sourceName}, Tier {s.sourceTier})</span>
+              <span class="meta" style="margin-left:0.5rem;">({s.sourceName})</span>
             </li>
           ))}
         </ul>
