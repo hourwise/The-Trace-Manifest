@@ -1,13 +1,13 @@
 # Build-to-launch and post-launch plan
 
 **Audience:** a lower-capability implementation model or a tired human operator  
-**Current baseline:** commit `2687de6` on `main` and `origin/main` (21 July 2026)  
+**Current baseline:** commit `afeb8a2` on `main` (22 July 2026)
 **Purpose:** execute the remaining launch work in small, verifiable steps, then deliver the accepted ADR features in a safe order.
 
-## Current status (21 July 2026)
+## Current status (22 July 2026)
 
 **Part A (launch):** Complete. Site is live at [thetracemanifest.com](https://thetracemanifest.com).  
-**Part B (post-launch):** Phases 1-5 complete. Phase 6 foundation built. Models & Benchmarks catalogue populated (Phase 9 foundation). Source connector overhaul complete. Ingestion pipeline repaired, editorial workflow unified, TRACE aggregate scores live.
+**Part B (post-launch):** Phases 1-4 complete. Phase 5 has a working manual/public foundation but not end-to-end evidence inheritance or Ask TRACE use. Phase 6 foundation is built. Models & Benchmarks catalogue is populated (Phase 9 foundation). Source connector overhaul is complete. Ingestion pipeline is repaired, editorial workflow is unified, and TRACE aggregate benchmark scores are live.
 
 | Phase | Status | Key deliverables |
 |---|---|---|
@@ -15,22 +15,23 @@
 | 2 — Page-Diff Connector | ✅ | HTMLRewriter connector for Anthropic Newsroom + Research |
 | 3 — TRACE Desk | ✅ | Server-rendered desk, state machine, promote-to-story, manual URL normalisation, duplicate detection, candidate matching |
 | 4 — Admin Ask TRACE | ✅ | `/admin/ask`, evidence-grounded research with citations |
-| 5 — Knowledge Builder | ✅ | 30 knowledge docs, gaps queue, drag-drop ingest, public pages, Ask TRACE retrieval, version history, source linking |
+| 5 — Knowledge Builder | ⚠️ Partial | 30 knowledge docs, gaps queue, drag-drop ingest, public pages, version history and document-level source URLs exist. Claim-level evidence inheritance, hard-expiry enforcement, and usable Ask TRACE knowledge context remain incomplete. |
+| 5.5 — Knowledge Continuity & Story Memory | Planned | Full-content absorption, immutable source versions, claim/provenance graph, durable story relationships, knowledge evidence inheritance, story evidence scoring, multi-position answers, and historical backfill. See `docs/TRACE-KNOWLEDGE-CONTINUITY-BUILD-PLAN.md`. |
 | 6 — Guides Lab | 🔄 | Migration + template + ingest + admin page built. 21 guides ingested (draft). Public rendering deferred. |
 | 6.5 — TRACE Briefing | Planned | Manual, versioned editorial editions before candidate automation, AI drafting or scheduling. See `docs/TraceBriefing.md`. |
 | 7-8 | ⏸️ | Multilingual, sharing/snapshots — not started |
 | 9 — Models/Benchmarks | ✅ | 22 models, 10 benchmarks, 11 providers, 14+ benchmark runs. TRACE aggregate scores, model card scores, score normalisation. |
 | 10 | ⏸️ | Commercial features — not started |
-| **Bonus: Public Ask TRACE** | ✅ | Live with 3 questions/day/visitor, knowledge + story evidence |
+| **Bonus: Public Ask TRACE** | ⚠️ Partial | Live with 3 questions/day/visitor and eligible published-story evidence. Approved knowledge is queried but currently excluded before generation because its underlying external evidence is not resolved. |
 | **Bonus: Evidence source linking** | ✅ | 79-source registry, auto-link knowledge doc evidence URLs |
 | **Bonus: Feed topic filtering** | ✅ | 7 topic filters working on `/feed` |
 | **Bonus: Knowledge base public pages** | ✅ | `/knowledge` shows 35 pages across 7 unified hub cards |
 | **Bonus: Source connector overhaul** | ✅ | 25 sources activated or repaired. 4 new connectors built (HF, LMSYS). 69/79 sources have automated ingestion. |
-| **Bonus: Evidence upgrade pipeline** | ✅ | Auto-upgrade evidence based on source tier counts (runs 9 AM daily) |
-| **Bonus: Find Related Coverage** | ✅ | Review page button searches ingested pool for corroborating items |
+| **Bonus: Evidence upgrade pipeline** | ⚠️ Trust fix required | Current source-tier-count upgrades are not claim- or provenance-aware and must not be treated as proof of independent corroboration. |
+| **Bonus: Find Related Coverage** | ⚠️ Partial | Review page searches the ingested pool, but results are read-only suggestions and create no evidence attachment or durable relationship. |
 | **Bonus: TRACE Aggregate Scores** | ✅ | Live 0–100 normalised scores across benchmarks. Displayed on `/benchmarks`, `/models`, and model cards. |
 | **Bonus: Homepage live stats** | ✅ | Published stories, evidence records, models tracked, topics, briefing date — all from live DB queries. |
-| **Bonus: Editorial AI analysis** | ✅ | AI triage populates headline, summary, editorial analysis, and why-it-matters on review page. |
+| **Bonus: Editorial AI analysis** | ⚠️ Partial | AI triage populates editorial fields, normally from stored titles/feed excerpts rather than a persisted full source document. |
 | **Bonus: Review page restructure** | ✅ | Publish section at top; cluster filters (topic, sort, dedup, manual/auto). |
 | **Bonus: RSS image extraction** | 🔄 | Code written — extracts enclosure/media/image URLs. Needs Worker deploy. |
 | **Bonus: Ingestion error reporting** | 🔄 | Structured errors, per-item counters, unsupported-connector filtering. Needs Worker deploy. |
@@ -66,9 +67,15 @@ The Cloudflare Pages deploy command (`npx wrangler pages deploy dist`) was remov
 
 ## Future plans (prioritised)
 
+### 🔴 Critical — Knowledge truth gate
+
+- [x] **Write the canonical Knowledge Continuity plan** — [`TRACE-KNOWLEDGE-CONTINUITY-BUILD-PLAN.md`](TRACE-KNOWLEDGE-CONTINUITY-BUILD-PLAN.md) defines source absorption, evidence inheritance, provenance-aware scoring, multi-position answers, and historical backfill.
+- [ ] **KC-00 status reconciliation** — accept the plan, reconcile the master build plan, and record the static `knowledge_pages` versus D1 `knowledge_documents` ownership decision.
+- [ ] **KC-01 trust hotfix** — remove source-count-derived independence/reproducibility claims, prevent tier-count-only evidence upgrades, enforce knowledge expiry, and make unresolved knowledge evidence visible.
+
 ### 🔴 Critical — Worker deploy
 
-- [ ] **Deploy the Worker** — `npx wrangler deploy -c wrangler.worker.toml`. Activates RSS images, structured errors, connector filtering, counters, candidate auto-creation, audit recording, cluster 200-limit.
+- [ ] **Deploy the Worker after the KC-01 decision** — `npx wrangler deploy -c wrangler.worker.toml`. Activates RSS images, structured errors, connector filtering, counters, candidate auto-creation, audit recording, and the cluster 200-limit. Do not activate or rely on tier-count-only evidence upgrades; include the KC-01 fix or explicitly disable that scheduled step first.
 
 ### Immediate (this session)
 
@@ -80,7 +87,8 @@ The Cloudflare Pages deploy command (`npx wrangler pages deploy dist`) was remov
 
 ### Short-term
 
-- [ ] **Story ↔ Knowledge linking** — auto-suggest related knowledge docs when publishing a story. `knowledge_document_relationships` table exists; needs UI wiring.
+- [ ] **Knowledge Continuity KC-02 to KC-04** — add the canonical evidence schema, safe source-content absorption, and structured source/claim extraction.
+- [ ] **Story ↔ Knowledge linking (KC-08/KC-10)** — link stories and manual knowledge through reviewed canonical claims and inherited external evidence, not topic overlap alone.
 - [ ] **Feed item classification during publishing** — auto-suggest topics on the review page
 - [ ] **Homepage and feed page layouts** — redesign pass (under discussion)
 - [ ] **TRACE Briefing B1 — manual structured edition** — implement the versioned data model, admin editor, public dated/archive pages, homepage card and a reviewed Preview edition. Follow [`TraceBriefing.md`](TraceBriefing.md); do not start automated drafting or scheduling first.
@@ -89,6 +97,7 @@ The Cloudflare Pages deploy command (`npx wrangler pages deploy dist`) was remov
 
 ### Medium-term
 
+- [ ] **Knowledge Continuity KC-05 to KC-10** — provenance graph, durable related-story workflow, evidence scoring, manual knowledge inheritance, hybrid retrieval, multi-position Ask TRACE, and knowledge-impact proposals.
 - [ ] **Public Guides** — render approved guides at `/guides/[slug]`, integrate with Ask TRACE
 - [ ] **Guides ↔ Knowledge linking** — cross-reference guides with related knowledge docs
 - [ ] **Social signals → Feed items** — promotion workflow for social posts to become stories
@@ -97,6 +106,7 @@ The Cloudflare Pages deploy command (`npx wrangler pages deploy dist`) was remov
 
 ### Long-term (post-launch phases)
 
+- [ ] **Knowledge Continuity KC-11/KC-12** — backfill all published stories and approved knowledge, then roll out the public evidence graph in bounded stages.
 - [ ] **Phase 7** — Multilingual ingestion and publication (ADR 0018)
 - [ ] **Phase 8** — Sharing and snapshots (ADR 0014)
 - [ ] **Phase 9 completion** — Automatic catalogue updates from feeds, update proposal queue
@@ -302,7 +312,7 @@ Deliver one phase at a time. Each phase follows: read its ADR -> write the small
 - [x] Record unanswered or weakly answered questions in a gap queue.
 - [x] Deduplicate and prioritise gaps using evidence need, not popularity alone.
 - [x] Draft knowledge documents with source links, version, owner, freshness, and review state.
-- [x] Promote only reviewed documents into the Ask TRACE retrieval corpus.
+- [x] Promote only reviewed documents into the Ask TRACE retrieval-candidate corpus. Their external evidence inheritance and eligibility remain KC-08 work.
 - [x] Keep superseded versions and correction history.
 
 ### Phase 6 - Guides Lab (ADR 0013)
@@ -394,8 +404,24 @@ The briefing is TRACE’s curated editorial front door: a weekday Daily Briefing
 
 These gaps exist between automated systems — they need dedicated build work:
 
+### Knowledge Continuity and Story Memory
+
+[`TRACE-KNOWLEDGE-CONTINUITY-BUILD-PLAN.md`](TRACE-KNOWLEDGE-CONTINUITY-BUILD-PLAN.md) is the canonical plan for this gap. The current system stores feed snippets and rule-extracted claims but does not yet retain a governed full source document, establish independent provenance at claim level, turn related results into durable evidence relationships, or propagate new evidence into knowledge revisions.
+
+This is not only UI wiring. It requires:
+
+- private immutable source capture in R2 with D1 metadata and hashes;
+- asynchronous, idempotent extraction and indexing;
+- canonical claims, source assertions, provenance groups, conflicts and supersessions;
+- reviewer actions for attaching evidence and relating stories;
+- a versioned story evidence score based on material claims rather than source count;
+- manual knowledge pages linked to canonical claims and external evidence already held elsewhere;
+- deterministic supported, qualified-lean, multiple-position, and insufficient-evidence Ask TRACE modes; and
+- a governed backfill of every published story and approved knowledge document.
+
 ### Story ↔ Knowledge linking
-A published story about "GPT-5.6 launches" should auto-link to the knowledge doc "What is the best closed model for coding?" The `knowledge_document_relationships` table exists but is not populated during story publishing. The review/publish flow needs to suggest related knowledge docs based on topic/claim overlap.
+
+A published story about "GPT-5.6 launches" should link to affected model records, earlier release stories, comparisons, and knowledge such as "What is the best closed model for coding?" The existing `knowledge_document_relationships` table can store record-level relationships, but claim-level links and inherited external evidence are also required. Topic overlap may propose a candidate; an accepted canonical claim/evidence relationship establishes the durable link.
 
 ### Feed item classification
 Feed items get `topic` from their source, but story clusters don't always inherit it during publishing. The review page (`/admin/review`) could suggest topics based on the cluster's feed items. Currently, topics are set manually during desk candidate creation.
@@ -426,7 +452,9 @@ Routes exist (`/models`, `/benchmarks`) but show empty states. Tables exist in s
 3. Run `npx wrangler d1 execute trace-manifest-db --remote --file=scripts/batch-ingest-knowledge.sql`
 4. Run `npx wrangler d1 execute trace-manifest-db --remote --command="UPDATE knowledge_documents SET status='approved', visibility='public_knowledge', approved_by='admin', approved_at=datetime('now') WHERE status='draft';"`
 5. Run `node scripts/link-knowledge-sources.mjs` to link evidence URLs to the source registry
-6. Docs appear at `/knowledge` and are retrievable by Ask TRACE
+6. Docs appear at `/knowledge` and are found by the Ask TRACE retrieval query.
+
+**Current limitation:** approved knowledge prose is correctly classified as zero-weight TRACE internal synthesis, but its underlying external source/claim bundle is not yet resolved. It is therefore filtered before model generation and does not currently improve Ask TRACE answers. Continue adding well-sourced manual knowledge pages: KC-08 will parse and link their material claims to external evidence already held by TRACE, queue missing admitted sources for capture, and make the pages usable without treating TRACE's own prose as corroboration.
 
 ### Adding how-to guides
 1. Create `.md` files in `docs/guides/` using the YAML frontmatter format
