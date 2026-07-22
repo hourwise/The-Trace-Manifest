@@ -1,0 +1,78 @@
+---
+import BaseLayout from "../../../layouts/BaseLayout.astro";
+import { authenticateAccessRequest, type AccessEnvironment } from "../../../security/access-auth";
+
+export const prerender = false;
+
+const env = Astro.locals.runtime.env;
+const identity = await authenticateAccessRequest(Astro.request, env as unknown as AccessEnvironment);
+if (!identity || identity.role !== "publisher") {
+  return new Response("Forbidden", { status: 403 });
+}
+
+interface RepairRow {
+  id: string;
+  operation_kind: string;
+  subject_type: string;
+  subject_id: string;
+  state: string;
+  attempt_count: number;
+  last_error: string | null;
+  remote_operation_id: string | null;
+  updated_at: string;
+}
+
+let operations: RepairRow[] = [];
+let loadError: string | null = null;
+try {
+  const result = await (env.DB as D1Database).prepare(`
+    SELECT operation.id, operation.operation_kind, operation.subject_type, operation.subject_id,
+           operation.state, operation.attempt_count, operation.last_error, operation.updated_at,
+           receipt.remote_operation_id
+    FROM knowledge_index_operations operation
+    LEFT JOIN knowledge_index_operation_receipts receipt ON receipt.operation_id = operation.id
+    WHERE operation.state <> 'completed'
+    ORDER BY
+      CASE operation.state WHEN 'reconciliation_required' THEN 0 WHEN 'failed' THEN 1 WHEN 'running' THEN 2 ELSE 3 END,
+      operation.updated_at ASC
+    LIMIT 100
+  `).all<RepairRow>();
+  operations = result.results ?? [];
+} catch {
+  loadError = "Knowledge recovery records are unavailable. Apply the KC-02 migrations before using this view.";
+}
+
+const fmt = (value: string) => new Date(value).toLocaleString("en-GB");
+---
+
+<BaseLayout title="Knowledge Recovery — TRACE Admin" description="Publisher-only view of pending cross-store repair records.">
+  <div class="wrap">
+    <h1>Knowledge recovery</h1>
+    <p class="meta">Publisher-only repair view for the KC-02 D1/R2/Vectorize outbox. It does not publish content or run a repair automatically.</p>
+    <p class="meta" style="margin-bottom:2rem;"><a href="/admin/knowledge">Knowledge Builder</a> · <a href="/admin/jobs">Ingestion jobs</a> · <a href="/admin">Admin home</a></p>
+
+    {loadError ? <div class="card"><p class="meta">{loadError}</p></div> :
+      <section class="card">
+        <h2 style="margin-top:0;">Pending or repair-required operations</h2>
+        <p class="meta">`reconciliation_required` needs an editor decision. `running` Vectorize operations wait for the recorded asynchronous mutation to be confirmed; do not treat Vectorize as the source of truth.</p>
+        <div style="overflow-x:auto;margin-top:1rem;">
+          <table style="width:100%;border-collapse:collapse;font-size:0.84rem;">
+            <thead><tr style="text-align:left;border-bottom:2px solid var(--border);"><th>Operation</th><th>Subject</th><th>State</th><th>Attempts</th><th>Detail</th><th>Remote mutation</th><th>Updated</th></tr></thead>
+            <tbody>
+              {operations.map((operation) => <tr style="vertical-align:top;border-bottom:1px solid var(--border);">
+                <td><code>{operation.operation_kind}</code></td>
+                <td><code>{operation.subject_type}:{operation.subject_id}</code></td>
+                <td>{operation.state}</td>
+                <td>{operation.attempt_count}</td>
+                <td class="meta">{operation.last_error ?? "—"}</td>
+                <td class="meta"><code>{operation.remote_operation_id ?? "—"}</code></td>
+                <td class="meta">{fmt(operation.updated_at)}</td>
+              </tr>)}
+              {operations.length === 0 && <tr><td colspan="7" class="meta" style="padding:2rem;text-align:center;">No pending knowledge recovery operations.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    }
+  </div>
+</BaseLayout>

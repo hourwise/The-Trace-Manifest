@@ -119,8 +119,13 @@ export function sourceRoleFor(sourceKind: TraceSourceKind): TraceSourceRole {
   return "evidence";
 }
 
-export function independentEvidenceWeightFor(sourceKind: TraceSourceKind): 0 | 1 {
-  return sourceKind === "external_primary" || sourceKind === "external_independent" ? 1 : 0;
+/**
+ * KC-01: registry source type is not claim-level provenance. Until KC-05
+ * records reviewed provenance groups, no retrieved source can receive
+ * independent-evidence credit merely because it is classified as Tier A/B.
+ */
+export function independentEvidenceWeightFor(_sourceKind: TraceSourceKind): 0 | 1 {
+  return 0;
 }
 
 export function isAnswerEligibleEvidence(evidence: GovernedEvidenceIdentity): boolean {

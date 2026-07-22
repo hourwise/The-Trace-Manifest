@@ -20,6 +20,7 @@
 | [0016](0016-governed-ask-trace-research-source-admission-and-knowledge-promotion.md) | Accepted | Governed Ask TRACE research, source admission, and knowledge promotion. |
 | [0017](0017-trace-knowledge-builder-question-gap-queue-and-knowledge-document-lifecycle.md) | Accepted | Knowledge Builder, question gaps, approval, expiry, and knowledge-to-guide lifecycle. |
 | [0018](0018-multilingual-source-ingestion-translation-provenance-and-bilingual-publication.md) | Accepted | Multilingual source ingestion, translation provenance, and later bilingual publication. |
+| [0019](ADR%200019%20TRACE%20Open%20Model%20Execution.md) | Accepted | Open Model Execution Intelligence, shared Knowledge Continuity evidence, and Cloudflare-native data architecture. |
 
 ADR status describes the decision, not proof that production deployment or acceptance tests have completed.
 
@@ -34,3 +35,4 @@ ADR status describes the decision, not proof that production deployment or accep
 - ADR 0015 is pre-launch work: TRACE Desk intake must remain publisher-only, audited, source-governed, and unable to publish automatically. Its initial migration and queue must be applied and tested before operational use.
 - ADR 0016 and ADR 0017 define the next governed Ask TRACE and Knowledge Builder increments. They do not permit unrestricted research, unreviewed knowledge promotion, or public Guide publication without supporting source and freshness controls.
 - ADR 0018 is a foundation requirement for foreign-language intake. Translation storage and review are planned before multilingual publication; a translation is never independent evidence.
+- ADR 0019 is a later TRACE Models vertical. It begins only after the required Knowledge Continuity trust and source foundation, reuses the canonical evidence graph, and adds no authority for automatic recommendations or publication.

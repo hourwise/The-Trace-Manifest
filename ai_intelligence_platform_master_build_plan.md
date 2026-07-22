@@ -1,6 +1,6 @@
 ﻿# AI Intelligence Platform — Master Build Plan
 
-**Status:** Implementation in progress — ADR 0009–0018 and launch sequencing reconciled on 16 July 2026; LAUNCH-05R production deployment and anonymous boundary verification are evidenced, while the authenticated publisher-browser check and later launch gates remain pending
+**Status:** Implementation in progress — ADR 0009–0019 and launch sequencing reconciled on 22 July 2026; LAUNCH-05R production deployment and anonymous boundary verification are evidenced, while the authenticated publisher-browser check and later launch gates remain pending
 **Document purpose:** Define the product, architecture, MVP, roadmap, monetisation, governance, and required documentation from the beginning.  
 **Product name:** The Trace Manifest  
 **Editorial identity:** T.R.A.C.E. — Traceable Research, Analysis, Context and Evidence  
@@ -213,7 +213,7 @@ Every model-executed task must:
 
 The executor must stop for human direction if rules conflict or if work requires production migration, deployment, destructive data changes, secrets, public enablement, a new external integration, or a deferred feature gate. The more restrictive rule applies until the conflict is resolved.
 
-### 2.11 ADR 0009–0018 implementation map
+### 2.11 ADR 0009–0019 implementation map
 
 | ADR | Build consequence | Sequence |
 |---|---|---|
@@ -227,6 +227,7 @@ The executor must stop for human direction if rules conflict or if work requires
 | ADR 0016 | Ask TRACE retrieves approved knowledge first and uses only bounded, admitted research when allowed. TRACE publications are context, not corroboration. | Implement after the launch-control gates; no unrestricted browser/search or automatic knowledge promotion. |
 | ADR 0017 | Knowledge Builder turns governed questions and research into reviewable, expiring knowledge and Guides. | Continue through the canonical [`docs/TRACE-KNOWLEDGE-CONTINUITY-BUILD-PLAN.md`](docs/TRACE-KNOWLEDGE-CONTINUITY-BUILD-PLAN.md); the manual/public document foundation is not complete until external evidence inheritance, expiry, story memory, provenance-aware scoring, multi-position answers, and backfill pass their gates. |
 | ADR 0018 | Original-language evidence remains canonical; translations are derived, reviewable representations. | Add language/provenance fields before foreign-language activation; bilingual publishing is deferred. |
+| ADR 0019 | Open Model Execution Intelligence adds exact model artefacts, runtimes, hardware, compatibility, diagnostics, and deterministic recommendations. It inherits Knowledge Continuity evidence rather than creating a parallel evidence system. | Begin only after the required Knowledge Continuity trust and source foundation. Use D1/R2/Queues/Vectorize within their existing authority boundaries; model-generated explanation cannot override deterministic compatibility or evidence state. |
 
 The revised launch scope controls delivery order: launch AI & Agents with manual editorial approval first, then Guides, then separately approved expansion. Later ADRs do not authorise their features to bypass that sequence.
 
@@ -1536,6 +1537,10 @@ The system must support: reviewer identity, review timestamp, approval status, v
 
 The model, provider, pricing-history, benchmark, and benchmark-run schemas and public catalogue views exist. Public catalogue queries now fail closed: only explicitly published, reviewed parent and child records are visible, so the site shows an honest empty state until editorial records pass those gates. Historical seed/extraction routes and deployment claims require a separate production review; no seeded placeholder record is treated as published evidence.
 
+### Future follow-on: Open Model Execution Intelligence (ADR 0019)
+
+The present catalogue is not yet an execution-intelligence system. After the required Knowledge Continuity trust and source foundation, add model-release/variant/artefact/quantisation records; versioned runtime, operating-system, hardware and performance compatibility; reviewed Guides; harness/tool/MCP tests; diagnostic records; and deterministic recommendation snapshots. Reuse the canonical source, claim, provenance, freshness, correction and retrieval records; do not introduce a parallel model-execution knowledge store. The canonical delivery sequence and Cloudflare storage/queue boundary are in [`ADR 0019`](docs/adr/ADR%200019%20TRACE%20Open%20Model%20Execution.md).
+
 ---
 
 ## Phase 5 — Ask TRACE
@@ -2341,6 +2346,11 @@ The canonical accepted set is indexed in `docs/adr/README.md`:
 - ADR 0012 — Durable controls, Access administration and publication boundaries;
 - ADR 0013 — TRACE Guides, TRACE Lab and Ask knowledge integration;
 - ADR 0014 — Context-preserving sharing, snapshots and preview integrity.
+- ADR 0015 — Unified editorial intake, TRACE Desk and controlled taxonomy;
+- ADR 0016 — Governed Ask TRACE research, source admission and knowledge promotion;
+- ADR 0017 — Knowledge Builder, question-gap queue and knowledge-document lifecycle;
+- ADR 0018 — Multilingual source ingestion, translation provenance and bilingual publication; and
+- ADR 0019 — Open Model Execution Intelligence and Cloudflare data architecture.
 
 Do not reuse an existing number or create a differently titled parallel record. Amend the index and all affected plans whenever a new ADR is accepted or renumbered.
 

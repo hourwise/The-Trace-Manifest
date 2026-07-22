@@ -20,13 +20,22 @@ try {
   db.exec(readFileSync("db/migration-0015-editorial-desk.sql", "utf8"));
   db.exec(readFileSync("db/migration-0016-knowledge-builder-foundation.sql", "utf8"));
   db.exec(readFileSync("db/migration-0017-multilingual-source-provenance.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0032-knowledge-continuity.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0032-knowledge-continuity.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0033-knowledge-reconciliation-state.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0033-knowledge-reconciliation-state.sql", "utf8"));
 
   const requiredTables = [
     "ai_requests", "ai_budget_reservations", "ai_usage_ledger", "ai_quota_usage",
     "ai_concurrency_leases", "ai_circuit_breakers", "admin_request_nonces", "admin_audit_log",
     "question_gaps", "question_gap_examples", "knowledge_documents", "knowledge_document_revisions",
     "knowledge_document_sources", "knowledge_document_relationships", "knowledge_generation_jobs",
-    "feed_item_translations",
+    "feed_item_translations", "source_documents", "source_document_versions", "source_chunks",
+    "provenance_groups", "source_provenance_memberships", "canonical_claims", "claim_assertions",
+    "story_claims", "knowledge_document_claims", "knowledge_document_claim_assertions",
+    "story_relationships", "knowledge_change_proposals", "evidence_score_snapshots",
+    "knowledge_processing_jobs", "knowledge_index_operations", "knowledge_index_operation_receipts",
+    "knowledge_reconciliation_runs",
   ];
   const tables = new Set(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((row) => row.name));
   for (const table of requiredTables) if (!tables.has(table)) throw new Error(`Missing table ${table}`);

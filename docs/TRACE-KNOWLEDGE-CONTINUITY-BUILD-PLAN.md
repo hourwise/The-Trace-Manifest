@@ -6,7 +6,7 @@
 
 **Scope:** source absorption, claim-level evidence, story memory, knowledge linking, evidence scoring, retrieval, answer synthesis, and historical backfill
 
-**Governing decisions:** ADR 0004, ADR 0009, ADR 0012, ADR 0015, ADR 0016, ADR 0017, and ADR 0018
+**Governing decisions:** ADR 0004, ADR 0009, ADR 0012, ADR 0015, ADR 0016, ADR 0017, ADR 0018, and ADR 0019
 
 **Related plans:** [`BUILD-TO-LAUNCH-AND-POST-LAUNCH-PLAN.md`](BUILD-TO-LAUNCH-AND-POST-LAUNCH-PLAN.md), [`the_trace_manifest_evidence_linked_knowledge_base_build_plan.md`](the_trace_manifest_evidence_linked_knowledge_base_build_plan.md)
 
@@ -29,6 +29,12 @@ When this workstream is complete, TRACE will be able to:
 - backfill every existing published story and approved knowledge document through the same pipeline.
 
 This is retrieval and evidence infrastructure. It is not model fine-tuning, autonomous publication, or permission for a model to browse without deterministic controls.
+
+### ADR 0019 reuse boundary
+
+ADR 0019's Open Model Execution Intelligence is a later specialist vertical. It reuses this workstream's admitted sources, immutable source versions, claims, provenance, freshness, corrections, evidence eligibility, retrieval, R2 storage, queue/outbox, and Vectorize-reconciliation rules; it must not create a second evidence system.
+
+It does **not** add model-family, artefact, runtime, hardware, diagnostic, recommendation, or execution-test tables to KC-02. Those records begin only after the required Knowledge Continuity trust and source-foundation gates have passed. KC-02H and KC-03 must, however, establish reusable record-type-agnostic storage, queue, idempotency, recovery, and Preview/production-isolation contracts so the later vertical can inherit them safely.
 
 ## 2. Required answer behaviour
 
@@ -600,35 +606,35 @@ Each task must produce an audit note in `docs/audit/`, update this plan, and pas
 
 Exit: documentation states the real boundaries, names one canonical structured knowledge path, records the amended contracts before schema or retrieval implementation begins, and the decision is evidenced in [`docs/audit/kc-00-decision-lock-and-status-reconciliation.md`](audit/kc-00-decision-lock-and-status-reconciliation.md).
 
-### KC-01 — Trust hotfix before knowledge expansion (implementation in progress; exit verification pending)
+### KC-01 — Trust hotfix before knowledge expansion (complete)
 
-- [ ] **KC-01A:** Replace source-count-derived public independence, reproducibility, and source-tier labels with values queried from reviewed evidence records; show `not assessed` until available.
-- [ ] **KC-01B:** Prevent `upgradeClusterEvidence` from upgrading status solely from cluster source-tier counts.
-- [ ] **KC-01C:** Enforce `review_after` warnings and `hard_expiry` exclusion in knowledge retrieval and public knowledge rendering.
-- [ ] **KC-01D:** Make Ask TRACE report that approved internal knowledge could not be used when its external evidence bundle is unresolved.
-- [ ] **KC-01E:** Add regression tests proving repeated derivative coverage cannot create independent corroboration.
-- [ ] **KC-01F:** Remove or suppress uncalibrated public numeric evidence scores; show `not assessed` or a qualitative band until KC-07's fixed evaluation gate passes.
+- [x] **KC-01A:** Replace source-count-derived public independence, reproducibility, and source-tier labels with values queried from reviewed evidence records; show `not assessed` until available.
+- [x] **KC-01B:** Prevent `upgradeClusterEvidence` from upgrading status solely from cluster source-tier counts.
+- [x] **KC-01C:** Enforce `review_after` warnings and `hard_expiry` exclusion in knowledge retrieval and public knowledge rendering.
+- [x] **KC-01D:** Make Ask TRACE report that approved internal knowledge could not be used when its external evidence bundle is unresolved.
+- [x] **KC-01E:** Add regression tests proving repeated derivative coverage cannot create independent corroboration.
+- [x] **KC-01F:** Remove or suppress uncalibrated public numeric evidence scores; show `not assessed` or a qualitative band until KC-07's fixed evaluation gate passes.
 
 Exit: current public pages and Ask TRACE no longer overstate independence, reproducibility, knowledge eligibility, freshness, or numeric score certainty.
 
-### KC-02 — Canonical schema and migration validation
+### KC-02 — Canonical schema and migration validation (in progress)
 
-- [ ] **KC-02A:** Add source-document, immutable version, chunk, retention, and R2-key tables.
-- [ ] **KC-02B:** Add provenance groups and source-provenance membership tables.
-- [ ] **KC-02C:** Add canonical claims and source assertions with legacy-claim compatibility.
-- [ ] **KC-02D:** Add story-claim, knowledge-claim, story-relationship, knowledge-change-proposal, and evidence-score-snapshot tables.
-- [ ] **KC-02E:** Add idempotent processing-job/outcome records or safely extend the current job model.
-- [ ] **KC-02F:** Configure separate Preview processing queue and dead-letter queue bindings for the ingestion Worker. Do not attach production consumers in this task.
-- [ ] **KC-02G:** Validate forward migration, duplicate rerun behaviour, foreign keys, rollback/export recovery, legacy production compatibility, and Preview D1 application.
-- [ ] **KC-02H:** Add pending outbox/index-operation state and reconciliation records for R2 capture and Vectorize indexing; prove orphan recovery and stale-index recovery without making Vectorize authoritative.
+- [x] **KC-02A:** Add source-document, immutable version, chunk, retention, and R2-key tables.
+- [x] **KC-02B:** Add provenance groups and source-provenance membership tables.
+- [x] **KC-02C:** Add canonical claims and source assertions with legacy-claim compatibility.
+- [x] **KC-02D:** Add story-claim, knowledge-claim, story-relationship, knowledge-change-proposal, and evidence-score-snapshot tables.
+- [x] **KC-02E:** Add idempotent processing-job/outcome records or safely extend the current job model.
+- [x] **KC-02F:** Configure separate Preview processing queue and dead-letter queue bindings for the ingestion Worker. Do not attach production consumers in this task.
+- [x] **KC-02G:** Validate forward migration, duplicate rerun behaviour, foreign keys, rollback/export recovery, legacy production compatibility, and Preview D1 application.
+- [x] **KC-02H:** Add pending outbox/index-operation state and reconciliation records for R2 capture and Vectorize indexing; prove orphan recovery and stale-index recovery without making Vectorize authoritative. The contract is record-type agnostic for later ADR 0019 artefact/diagnostic work: queue messages contain only identifiers, hashes, and bounded metadata; consumers are idempotent; repair is visible to administrators; and Preview cannot mutate production resources. *(The runner is not a Queue consumer; KC-03 and KC-09 must connect their admitted capture/index flows to it.)*
 
 Exit: additive migrations pass locally and in Preview without publishing or rewriting existing records.
 
 ### KC-03 — Safe content absorption
 
-- [ ] **KC-03A:** Refactor the safe triage URL fetcher into a shared server-side retrieval service with URL admission, redirect revalidation, time/size limits, content preflight, and audit.
+- [x] **KC-03A:** Refactor the safe triage URL fetcher into a shared server-side retrieval service with URL admission, redirect revalidation, time/size limits, content preflight, and audit. The service is not yet a capture consumer or persistence path; KC-03B–D must use it only after source admission.
 - [ ] **KC-03B:** Add HTML main-content extraction with title, author, publication date, headings, text, and extraction diagnostics.
-- [ ] **KC-03C:** Store permitted immutable originals/extractions in private R2 and metadata/hashes in D1.
+- [ ] **KC-03C:** Store permitted immutable originals/extractions in private R2 and metadata/hashes in D1, preserving the reusable boundary that large source bodies and later ADR 0019 artefacts/logs do not enter D1.
 - [ ] **KC-03D:** Connect RSS/feed items to source documents and enqueue capture after admission, never before.
 - [ ] **KC-03E:** Add publisher-only manual URL capture using the same pipeline.
 - [ ] **KC-03F:** Add publisher-only document upload for supported text/HTML/Markdown inputs, with type, size, retention, and untrusted-content controls.

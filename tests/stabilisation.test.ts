@@ -5,14 +5,16 @@ import { askTrace } from "../src/ai/trace-model-gateway";
 import { validateAnswerDraft, validateAskTraceInput } from "../src/ai/schemas";
 import { validateAnswerOutput } from "../src/ai/validation";
 import { calculateDeterministicConfidence, isKnowledgeHardExpired, isKnowledgeReviewDue, retrieveApprovedKnowledge } from "../src/lib/server/ask-evidence";
-import { isAnswerEligibleEvidence, PUBLIC_ASK_TASK_POLICY, TRACE_POLICY_VERSION } from "../src/ai/task-policy";
+import { independentEvidenceWeightFor, isAnswerEligibleEvidence, PUBLIC_ASK_TASK_POLICY, TRACE_POLICY_VERSION } from "../src/ai/task-policy";
 import { GUIDE_CONTRACT_VERSION, guideFreshness, isGuideEligibleForProceduralRetrieval, validateGuideCommand, validateGuideMetadata } from "../src/guides/contract";
 import { nodeWindowsVerificationCommands } from "../src/guides/drafts/install-node-js-and-npm-on-windows";
 import { validateAskBody } from "../src/pages/api/trace/ask";
 import { handleTriageRequest } from "../src/pages/api/admin/ai-triage";
 import { extractTriageUrlSource, TriageUrlFetchError } from "../src/lib/server/triage-url-source";
+import { retrieveRemoteSource, SourceRetrievalError } from "../src/lib/server/source-retrieval";
 import { signInternalRequest, verifyInternalRequestSignature } from "../src/security/internal-signature";
 import { publishBriefing, publishStory, upgradeClusterEvidence } from "../workers/ingestion/publish";
+import { reconcileKnowledgeIndexOperations } from "../workers/ingestion/knowledge-reconciliation";
 import worker from "../workers/ingestion/index";
 import { SQLiteD1 } from "./sqlite-d1";
 import type { EvidenceExcerpt } from "../src/ai/provider";
@@ -63,11 +65,11 @@ async function governanceTests(): Promise<void> {
 
 const evidence: EvidenceExcerpt[] = [
   {
-    sourceId: "source-1", sourceKind: "external_primary", sourceRole: "evidence", admissionState: "admitted", freshnessState: "current", independentEvidenceWeight: 1,
+    sourceId: "source-1", sourceKind: "external_primary", sourceRole: "evidence", admissionState: "admitted", freshnessState: "current", independentEvidenceWeight: 0,
     claimId: "claim-1", text: "Evidence one", sourceClassification: "Tier A; primary", trustNotes: "Evidence quality: strong", observedAt: "2026-07-13T10:00:00Z",
   },
   {
-    sourceId: "source-2", sourceKind: "external_independent", sourceRole: "evidence", admissionState: "admitted", freshnessState: "current", independentEvidenceWeight: 1,
+    sourceId: "source-2", sourceKind: "external_independent", sourceRole: "evidence", admissionState: "admitted", freshnessState: "current", independentEvidenceWeight: 0,
     claimId: "claim-2", text: "Evidence two", sourceClassification: "Tier B; independent", trustNotes: "Evidence quality: strong", observedAt: "2026-07-14T10:00:00Z",
   },
 ];
@@ -344,6 +346,15 @@ async function kc01TrustTests(): Promise<void> {
     ]);
     assert.equal(derivativeConfidence.label, "insufficient_evidence", "repeated coverage from one source cannot create independent corroboration");
 
+    assert.equal(independentEvidenceWeightFor("external_independent"), 0,
+      "registry classification alone cannot grant independent-evidence credit before provenance groups exist");
+    const crossOutletDerivativeConfidence = calculateDeterministicConfidence([
+      { ...derivativeExcerpt, sourceId: "source:901", independentEvidenceWeight: 0 },
+      { ...derivativeExcerpt, sourceId: "source:902", claimId: "claim:derivative-outlet-two", independentEvidenceWeight: 0 },
+    ]);
+    assert.equal(crossOutletDerivativeConfidence.label, "insufficient_evidence",
+      "derivative coverage from two outlets cannot satisfy the independent-source gate before provenance is reviewed");
+
     database.sqlite.exec(`
       INSERT INTO knowledge_documents
         (id, canonical_question, canonical_hash, section_slug, knowledge_type, status, visibility,
@@ -372,6 +383,114 @@ async function kc01TrustTests(): Promise<void> {
     assert.equal(isKnowledgeReviewDue("2000-01-01", Date.parse("2026-07-22T00:00:00Z")), true);
     assert.equal(isKnowledgeHardExpired("2000-01-01", Date.parse("2026-07-22T00:00:00Z")), true);
     assert.equal(isKnowledgeHardExpired("2099-01-01", Date.parse("2026-07-22T00:00:00Z")), false);
+  } finally {
+    database.close();
+  }
+}
+
+async function kc02SchemaTests(): Promise<void> {
+  const database = new SQLiteD1();
+  try {
+    const requiredTables = [
+      "source_documents", "source_document_versions", "source_chunks",
+      "provenance_groups", "source_provenance_memberships", "canonical_claims", "claim_assertions",
+      "story_claims", "knowledge_document_claims", "knowledge_document_claim_assertions",
+      "story_relationships", "knowledge_change_proposals", "evidence_score_snapshots",
+      "knowledge_processing_jobs", "knowledge_index_operations", "knowledge_index_operation_receipts",
+      "knowledge_reconciliation_runs",
+    ];
+    const tables = await database.prepare(
+      `SELECT name FROM sqlite_master WHERE type = 'table' AND name IN (${requiredTables.map(() => "?").join(", ")})`,
+    ).bind(...requiredTables).all<{ name: string }>();
+    assert.deepEqual(new Set(tables.results.map((row) => row.name)), new Set(requiredTables),
+      "KC-02 installs every canonical evidence, provenance, relationship, job, and outbox table");
+
+    database.sqlite.exec(readFileSync("db/migration-0032-knowledge-continuity.sql", "utf8"));
+    database.sqlite.exec(readFileSync("db/migration-0033-knowledge-reconciliation-state.sql", "utf8"));
+    assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM claims").first<{ count: number }>())?.count, 0,
+      "KC-02 duplicate reruns are additive and leave legacy claims readable");
+
+    database.sqlite.exec("PRAGMA foreign_keys = ON");
+    assert.throws(() => database.sqlite.exec(`
+      INSERT INTO source_document_versions (id, source_document_id, content_hash, retrieved_url, retrieved_at)
+      VALUES ('kc02-orphan-version', 'missing-document', 'hash', 'https://example.test/source', datetime('now'));
+    `), /FOREIGN KEY/, "source versions cannot outlive their source document");
+    assert.throws(() => database.sqlite.exec(`
+      INSERT INTO claim_assertions (id, canonical_claim_id, assertion_text, relationship, source_role, directness,
+        evidence_treatment, admission_state, extraction_method)
+      VALUES ('kc02-invalid-assertion', 'missing-claim', 'Unsupported assertion', 'supports', 'evidence', 'direct',
+        'factual_support', 'admitted', 'rule');
+    `), /FOREIGN KEY|CHECK/, "assertions require a canonical claim and a source-version or legacy-claim link");
+  } finally {
+    database.close();
+  }
+}
+
+async function kc02ReconciliationTests(): Promise<void> {
+  const database = new SQLiteD1();
+  try {
+    database.sqlite.exec(`
+      INSERT INTO source_documents (id, canonical_url, canonical_url_hash, media_kind, copyright_storage_mode)
+      VALUES ('doc-1', 'https://example.test/source', 'doc-hash-1', 'html', 'private_full_text');
+      INSERT INTO source_document_versions
+        (id, source_document_id, content_hash, retrieved_url, retrieved_at, r2_original_key)
+      VALUES ('version-1', 'doc-1', 'content-hash-1', 'https://example.test/source', datetime('now'),
+        'sources/doc-1/content-hash-1/original');
+      INSERT INTO source_chunks (id, source_document_version_id, chunk_index, text_excerpt, text_hash, embedding_state)
+      VALUES ('chunk-1', 'version-1', 0, 'Bounded source excerpt.', 'chunk-hash-1', 'stale');
+      INSERT INTO knowledge_index_operations
+        (id, operation_kind, subject_type, subject_id, desired_content_hash, idempotency_key)
+      VALUES ('r2-operation', 'r2_put', 'source_document_version', 'version-1', 'content-hash-1', 'r2-idempotency-1');
+    `);
+
+    const storedObjects = new Map<string, { customMetadata?: Record<string, string> }>([
+      ["sources/doc-1/content-hash-1/original", { customMetadata: { content_hash: "content-hash-1" } }],
+    ]);
+    const rawStore = {
+      head: async (key: string) => storedObjects.get(key) ?? null,
+      delete: async (key: string | string[]) => { for (const item of Array.isArray(key) ? key : [key]) storedObjects.delete(item); },
+    } as unknown as Pick<R2Bucket, "head" | "delete">;
+
+    const r2Summary = await reconcileKnowledgeIndexOperations({ DB: database.asD1(), RAW_STORE: rawStore });
+    assert.deepEqual(r2Summary, { completed: 1, deferred: 0, repairRequired: 0, failed: 0 },
+      "a pending R2 operation attaches an already-written object to its matching source version");
+    assert.equal((await database.prepare("SELECT state FROM knowledge_index_operations WHERE id = 'r2-operation'").first<{ state: string }>())?.state, "completed");
+    assert.equal((await database.prepare("SELECT extraction_status FROM source_document_versions WHERE id = 'version-1'").first<{ extraction_status: string }>())?.extraction_status, "captured");
+
+    database.sqlite.exec(`
+      INSERT INTO knowledge_index_operations
+        (id, operation_kind, subject_type, subject_id, idempotency_key)
+      VALUES ('vector-operation', 'vector_delete', 'source_chunk', 'chunk-1', 'vector-idempotency-1');
+    `);
+    let processedMutation = "not-yet-confirmed";
+    let deleteCalls = 0;
+    const vectorIndex = {
+      async deleteByIds(ids: string[]) {
+        deleteCalls++;
+        assert.deepEqual(ids, ["chunk-1"], "stale vector recovery deletes only the canonical chunk identifier");
+        return { mutationId: "mutation-1" };
+      },
+      async getByIds(ids: string[]) {
+        assert.deepEqual(ids, ["chunk-1"], "Vectorize confirmation checks only the canonical chunk identifier");
+        return processedMutation === "mutation-1" ? [] : [{ id: "chunk-1" }];
+      },
+    };
+    const vectorEnvironment = { DB: database.asD1(), RAW_STORE: rawStore, KNOWLEDGE_VECTOR_INDEX: vectorIndex };
+    const submitted = await reconcileKnowledgeIndexOperations(vectorEnvironment);
+    assert.deepEqual(submitted, { completed: 0, deferred: 1, repairRequired: 0, failed: 0 },
+      "a Vectorize delete remains pending confirmation after its asynchronous mutation is submitted");
+    assert.equal(deleteCalls, 1);
+    assert.equal((await database.prepare("SELECT state FROM knowledge_index_operations WHERE id = 'vector-operation'").first<{ state: string }>())?.state, "running");
+    assert.equal((await database.prepare("SELECT remote_operation_id FROM knowledge_index_operation_receipts WHERE operation_id = 'vector-operation'").first<{ remote_operation_id: string }>())?.remote_operation_id, "mutation-1");
+
+    processedMutation = "mutation-1";
+    const confirmed = await reconcileKnowledgeIndexOperations(vectorEnvironment);
+    assert.deepEqual(confirmed, { completed: 1, deferred: 0, repairRequired: 0, failed: 0 },
+      "a stale vector is marked deleted only after Vectorize confirms the recorded mutation");
+    assert.equal(deleteCalls, 1, "retrying confirmation does not submit a duplicate Vectorize deletion");
+    assert.equal((await database.prepare("SELECT embedding_state FROM source_chunks WHERE id = 'chunk-1'").first<{ embedding_state: string }>())?.embedding_state, "deleted");
+    assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM knowledge_reconciliation_runs WHERE operation_id IN ('r2-operation', 'vector-operation')").first<{ count: number }>())?.count, 3,
+      "every reconciliation outcome is recorded for administrator repair review");
   } finally {
     database.close();
   }
@@ -464,6 +583,7 @@ async function boundaryTests(): Promise<void> {
 async function triageUrlSourceTests(): Promise<void> {
   const originalFetch = globalThis.fetch;
   const requestedUrls: string[] = [];
+  const retrievalAuditCodes: string[] = [];
   try {
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
@@ -484,8 +604,12 @@ async function triageUrlSourceTests(): Promise<void> {
       `, { headers: { "Content-Type": "text/html; charset=utf-8" } });
     }) as typeof fetch;
 
-    const source = await extractTriageUrlSource("https://example.test/redirect");
+    const source = await extractTriageUrlSource("https://example.test/redirect", (event) => {
+      retrievalAuditCodes.push(`${event.phase}:${event.code}`);
+    });
     assert.deepEqual(requestedUrls, ["https://example.test/redirect", "https://example.test/post"]);
+    assert.deepEqual(retrievalAuditCodes, ["admitted:retrieved", "redirected:retrieved", "retrieved:retrieved"],
+      "shared retrieval emits non-sensitive audit events across admission, redirect, and completion");
     assert.equal(source.finalUrl, "https://example.test/post");
     assert.equal(source.title, "Alice reports an issue");
     assert.equal(source.authorDisplayName, "Alice Example");
@@ -499,6 +623,17 @@ async function triageUrlSourceTests(): Promise<void> {
       "private-network targets are rejected before any fetch",
     );
     assert.equal(requestedUrls.length, 2, "rejected private URLs never reach fetch");
+
+    await assert.rejects(
+      () => retrieveRemoteSource("https://example.test/stalled", {
+        allowedContentTypes: ["text/html"], maximumBytes: 1_024, timeoutMs: 10, maxRedirects: 0,
+        userAgent: "TRACE test", fetcher: (async () => new Response(new ReadableStream<Uint8Array>({ start() {} }), {
+          headers: { "Content-Type": "text/html" },
+        })) as typeof fetch,
+      }),
+      (error: unknown) => error instanceof SourceRetrievalError && error.code === "response_timeout" && error.status === 503,
+      "the shared retrieval deadline also bounds a response body that stalls after headers",
+    );
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -511,4 +646,6 @@ await gatewayTests();
 await publicationAndIngestionTests();
 await deskBoundaryTests();
 await kc01TrustTests();
+await kc02SchemaTests();
+await kc02ReconciliationTests();
 console.log("Stabilisation tests passed.");

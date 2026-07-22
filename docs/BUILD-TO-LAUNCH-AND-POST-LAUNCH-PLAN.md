@@ -1,7 +1,7 @@
 # Build-to-launch and post-launch plan
 
 **Audience:** a lower-capability implementation model or a tired human operator  
-**Current baseline:** commit `afeb8a2` on `main` (22 July 2026)
+**Current baseline:** commit `2cc2715` on `main` (22 July 2026)
 **Purpose:** execute the remaining launch work in small, verifiable steps, then deliver the accepted ADR features in a safe order.
 
 ## Current status (22 July 2026)
@@ -21,6 +21,7 @@
 | 6.5 — TRACE Briefing | Planned | Manual, versioned editorial editions before candidate automation, AI drafting or scheduling. See `docs/TraceBriefing.md`. |
 | 7-8 | ⏸️ | Multilingual, sharing/snapshots — not started |
 | 9 — Models/Benchmarks | ✅ | 22 models, 10 benchmarks, 11 providers, 14+ benchmark runs. TRACE aggregate scores, model card scores, score normalisation. |
+| 9.5 — Open Model Execution Intelligence | Planned | ADR 0019 follow-on: exact artefacts, runtimes, hardware, compatibility, diagnostics, and deterministic recommendations. Starts only after the required Knowledge Continuity source foundation; it reuses that evidence system rather than duplicating it. |
 | 10 | ⏸️ | Commercial features — not started |
 | **Bonus: Public Ask TRACE** | ⚠️ Partial | Live with 3 questions/day/visitor and eligible published-story evidence. Approved knowledge is queried but currently excluded before generation because its underlying external evidence is not resolved. |
 | **Bonus: Evidence source linking** | ✅ | 79-source registry, auto-link knowledge doc evidence URLs |
@@ -71,7 +72,7 @@ The Cloudflare Pages deploy command (`npx wrangler pages deploy dist`) was remov
 
 - [x] **Write the canonical Knowledge Continuity plan** — [`TRACE-KNOWLEDGE-CONTINUITY-BUILD-PLAN.md`](TRACE-KNOWLEDGE-CONTINUITY-BUILD-PLAN.md) defines source absorption, evidence inheritance, provenance-aware scoring, multi-position answers, and historical backfill.
 - [x] **KC-00 contract reconciliation** — accepted and evidenced in [`docs/audit/kc-00-decision-lock-and-status-reconciliation.md`](audit/kc-00-decision-lock-and-status-reconciliation.md). D1 `knowledge_documents` is canonical; legacy `knowledge_pages`/static TypeScript pages are compatibility-only; separate ADR 0016 evidence/conclusion modes, claim-relative roles, legacy cutover, cross-store recovery, embedding, PDF, ADR 0018, citation, and score-display contracts are locked.
-- [ ] **KC-01 trust hotfix** *(implementation in progress; exit verification pending)* — remove source-count-derived independence/reproducibility claims, prevent tier-count-only evidence upgrades, enforce knowledge expiry, make unresolved knowledge evidence visible, and suppress uncalibrated public numeric evidence scores. See [`docs/audit/kc-01-trust-hotfix-evidence.md`](audit/kc-01-trust-hotfix-evidence.md).
+- [x] **KC-01 trust hotfix** — source-count-derived independence/reproducibility claims and tier-count-only upgrades are disabled; knowledge expiry/unresolved-evidence warnings are enforced; public numeric evidence scores are suppressed. See [`docs/audit/kc-01-trust-hotfix-evidence.md`](audit/kc-01-trust-hotfix-evidence.md).
 
 ### 🔴 Critical — Worker deploy
 
@@ -381,6 +382,19 @@ The briefing is TRACE’s curated editorial front door: a weekday Daily Briefing
 - [ ] Add product/model/benchmark catalogues with provenance and freshness.
 - [ ] Add deterministic eligibility rules and human override/audit records.
 - [ ] Keep automatic publication disabled until quality, rollback, and correction gates pass.
+
+### Phase 9.5 - Open Model Execution Intelligence (ADR 0019)
+
+**Status:** Planned. The accepted ADR is [`ADR 0019: TRACE Open Model Execution Intelligence and Cloudflare Data Architecture`](adr/ADR%200019%20TRACE%20Open%20Model%20Execution.md). This is a follow-on to the current Models/Benchmarks catalogue, not a replacement for it.
+
+**Dependency:** Do not begin specialist model-execution schema until the required Knowledge Continuity trust and source-foundation work is complete. KC owns the source, claim, provenance, freshness, correction, retrieval, R2, queue, and reconciliation semantics. TRACE Models must reference those records instead of copying them.
+
+- [ ] Add model-family, release, variant, artefact, quantisation, file, licence, and publisher records.
+- [ ] Add versioned runtime/backend/format/OS compatibility, hardware profiles, deterministic memory calculations, and observed-performance records.
+- [ ] Add reviewed Guides, harness/structured-output/tool/MCP tests, known issues, diagnostic signatures, fixes, and workarounds as separate structured records.
+- [ ] Add deterministic recommendations and immutable recommendation snapshots; TRACE explanation may describe, but must never override, compatibility, calculation, or evidence state.
+- [ ] Use D1 as relational authority, R2 for large source bodies/artefacts/logs, Queues for idempotent asynchronous work, and Vectorize only for non-authoritative candidate retrieval. Keep Preview and production resources isolated.
+- [ ] Backfill and publish only reviewed, evidence-linked records; unsupported combinations must return an explicit unsupported or insufficient-evidence result.
 
 ### Phase 10 - commercial features (ADR 0011)
 

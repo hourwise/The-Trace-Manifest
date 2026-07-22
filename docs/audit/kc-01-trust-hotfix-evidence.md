@@ -1,13 +1,14 @@
 # KC-01 — Trust Hotfix Evidence
 
 **Date:** 22 July 2026  
-**Status:** Implementation in progress; exit verification pending  
+**Status:** Complete; local exit verification passed
 **Scope:** Local code and regression-test changes only  
 **Remote deployment/D1 mutation:** None
 
 ## Implemented controls
 
 - `workers/ingestion/publish.ts` no longer promotes story clusters from source counts or registry tiers. `workers/ingestion/index.ts` records the scheduled step as skipped until claim-level provenance exists.
+- Ask TRACE no longer grants independent-evidence credit from a registry source classification. Until KC-05 persists reviewed provenance groups, different Tier-A/B source IDs cannot satisfy the independent-source gate merely by being distinct outlets.
 - `src/pages/stories/[slug].astro` no longer derives reproducibility, corroboration, independent verification, or source tier from the number of feed items. `RatingExplanation` shows `Not assessed` until reviewed claim-level evidence is available.
 - Public story source rows no longer display registry tiers as if they were claim-level evidence.
 - `retrieveApprovedKnowledge` excludes hard-expired/invalid-expiry documents, marks review-due documents stale, and carries the review warning.
