@@ -1,6 +1,6 @@
 # TRACE Knowledge Continuity and Story Memory Build Plan
 
-**Status:** Canonical implementation plan (KC-02, KC-03A–E, and KC-04A–C deterministic structure/summary continuity complete; KC-04D–F remain)
+**Status:** Canonical implementation plan (KC-02, KC-03A–E, KC-04A–F, and KC-05A–F structured extraction/metadata/review continuity complete; KC-05G is next)
 
 **Date:** 23 July 2026
 
@@ -644,25 +644,25 @@ Exit: additive migrations pass locally and in Preview without publishing or rewr
 
 Exit: one admitted feed article and one editor-supplied ordinary text document can be captured, versioned, retrieved privately, and audited without entering public evidence automatically; PDF remains explicitly metadata-only or pending until its spike passes. KC-03A evidence: [`kc-03a-shared-source-retrieval-evidence.md`](audit/kc-03a-shared-source-retrieval-evidence.md). KC-03B evidence: [`kc-03b-html-extraction-evidence.md`](audit/kc-03b-html-extraction-evidence.md). KC-03C evidence: [`kc-03c-private-source-capture-evidence.md`](audit/kc-03c-private-source-capture-evidence.md). KC-03D evidence: [`kc-03d-feed-capture-queue-evidence.md`](audit/kc-03d-feed-capture-queue-evidence.md). KC-03E evidence: [`kc-03e-capture-consumer-manual-url-evidence.md`](audit/kc-03e-capture-consumer-manual-url-evidence.md).
 
-### KC-04 — Structured extraction and source summaries (in progress; KC-04A–C complete)
+### KC-04 — Structured extraction and source summaries (complete; KC-04A–F complete)
 
 - [x] **KC-04A:** Define and validate structured schemas for entities, material claims, attributed opinions, dates, model versions, benchmark results, caveats, and source summary.
 - [x] **KC-04B:** Run deterministic extraction first and reserve governed AI extraction as the second pass where needed; the deterministic pass records zero external-AI cost.
 - [x] **KC-04C:** Require every extracted item to reference a source chunk/locator.
-- [ ] **KC-04D:** Store model, prompt, policy, extraction, source-version, usage, validation, and audit metadata.
-- [ ] **KC-04E:** Add editor review states: accepted, amended, rejected, duplicate, unsupported, and needs more research.
-- [ ] **KC-04F:** Add idempotency and cache tests proving unchanged content does not incur another external-AI charge.
+- [x] **KC-04D:** Store model, prompt, policy, extraction, source-version, usage, validation, idempotency, correlation, and audit metadata in a durable extraction-run envelope linked to its structured outputs. Deterministic runs remain zero-cost and no external AI is enabled by this task.
+- [x] **KC-04E:** Add publisher-only editor review states: accepted, amended, rejected, duplicate, unsupported, and needs more research. Every transition is attributable, validated against the current state, retained in review history, and written to the admin audit log; amendments remain bounded and review-gated.
+- [x] **KC-04F:** Add an idempotency/cache gate before governed-AI provider invocation and tests proving unchanged content returns the completed run without a second provider call or external-AI charge. Failed runs remain retryable; changed source/model/prompt/policy identity creates a distinct run.
 
 Exit: captured content produces reviewable structured claims and a source summary with resolvable locators and recorded AI cost.
 
 ### KC-05 — Provenance, canonical claims, and conflict graph
 
-- [ ] **KC-05A:** Match extracted claims to existing canonical claims using lexical, entity, value, date, and semantic candidates.
-- [ ] **KC-05B:** Let the editor merge with an existing claim, create a new claim, or reject the candidate.
-- [ ] **KC-05C:** Propose provenance relationships and claim-relative directness, source role, and evidentiary treatment; require review for uncertain or high-impact lineage.
-- [ ] **KC-05D:** Group derivative coverage under a shared origin.
-- [ ] **KC-05E:** Detect support, qualification, contradiction, reproduction, correction, temporal change, and supersession at claim level.
-- [ ] **KC-05F:** Preserve unresolved conflicts instead of forcing a consensus.
+- [x] **KC-05A:** Create idempotent, review-gated match candidates from extracted material/benchmark claims using lexical, entity, value, date, and deterministic semantic-proxy signals. Exclude the extraction’s own canonical claim; do not merge, create provenance, or change scores. Real embedding/Vectorize semantic recall remains KC-09.
+- [x] **KC-05B:** Add publisher-only, attributable decisions to merge a candidate into an existing canonical claim, accept the extraction's own claim as new, or reject the match. Accepted decisions resolve the source assertion and supersede competing proposals; no provenance group or evidence score is created automatically.
+- [x] **KC-05C:** Create deterministic, review-gated provenance proposals with relationship, directness, source role, evidence treatment, confidence, rationale, and mandatory-review flags for uncertain/high-materiality lineage. Publisher accept/reject review updates assertion metadata only; provenance groups/memberships and evidence scores remain untouched.
+- [x] **KC-05D:** Create deterministic, exact-content shared-origin group proposals with mandatory publisher review. Accepted proposals create the reviewed provenance group/root and derivative memberships and link source assertions; evidence scores remain unchanged.
+- [x] **KC-05E:** Create deterministic, review-gated claim relationship proposals for support, qualification, contradiction, reproduction, correction, temporal change, and supersession. Accepted proposals add a reviewed relation assertion; claim state and evidence scores remain unchanged.
+- [x] **KC-05F:** Preserve explicit unresolved conflict cases from reviewed contradiction, correction, supersession, and temporal-change relationships. Publisher acknowledge/resolve/dismiss/reopen decisions are attributable; no side is selected and no claim state or evidence score changes automatically.
 - [ ] **KC-05G:** Complete the legacy claims mapping and route cutover: canonical tables receive all new writes, while legacy claims become read-only compatibility data with no indefinite dual-write path.
 
 Exit: two derivative articles count as one evidentiary root, while an independent test can count separately and a contradiction remains visible.

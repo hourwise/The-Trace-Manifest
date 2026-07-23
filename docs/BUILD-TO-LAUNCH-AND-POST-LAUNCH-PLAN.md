@@ -7,7 +7,7 @@
 ## Current status (23 July 2026)
 
 **Part A (launch):** Complete. Site is live at [thetracemanifest.com](https://thetracemanifest.com).  
-**Part B (post-launch):** Phases 1-4 complete. Phase 5 has a working manual/public foundation but not end-to-end evidence inheritance or Ask TRACE use; hard-expiry enforcement is now present. Knowledge Continuity KC-02 schema foundations and KC-03A–E retrieval/extraction/capture/feed/manual continuity are complete; structured claim extraction and evidence inheritance remain ahead. Phase 6 foundation is built. Models & Benchmarks catalogue is populated (Phase 9 foundation). Source connector overhaul is complete. Ingestion pipeline is repaired, editorial workflow is unified, and TRACE aggregate benchmark scores are live.
+**Part B (post-launch):** Phases 1-4 complete. Phase 5 has a working manual/public foundation but not end-to-end evidence inheritance or Ask TRACE use; hard-expiry enforcement is now present. Knowledge Continuity KC-02 schema foundations, KC-03A–E retrieval/extraction/capture/feed/manual continuity, and KC-04A–F structured extraction/review/cache are complete; evidence inheritance remains ahead. Phase 6 foundation is built. Models & Benchmarks catalogue is populated (Phase 9 foundation). Source connector overhaul is complete. Ingestion pipeline is repaired, editorial workflow is unified, and TRACE aggregate benchmark scores are live.
 
 | Phase | Status | Key deliverables |
 |---|---|---|
@@ -16,7 +16,7 @@
 | 3 — TRACE Desk | ✅ | Server-rendered desk, state machine, promote-to-story, manual URL normalisation, duplicate detection, candidate matching |
 | 4 — Admin Ask TRACE | ✅ | `/admin/ask`, evidence-grounded research with citations |
 | 5 — Knowledge Builder | ⚠️ Partial | 30 knowledge docs, gaps queue, drag-drop ingest, public pages, version history and document-level source URLs exist. Claim-level evidence inheritance, hard-expiry enforcement, and usable Ask TRACE knowledge context remain incomplete. |
-| 5.5 — Knowledge Continuity & Story Memory | 🔄 In progress | KC-02 schema foundation and KC-03A–E retrieval/extraction/capture/feed/manual continuity complete. Structured claims, claim/provenance graph, durable story relationships, knowledge evidence inheritance, story evidence scoring, multi-position answers, and historical backfill remain. See `docs/TRACE-KNOWLEDGE-CONTINUITY-BUILD-PLAN.md`. |
+| 5.5 — Knowledge Continuity & Story Memory | 🔄 In progress | KC-02 schema foundation, KC-03A–E retrieval/extraction/capture/feed/manual continuity, and KC-04A–F structured extraction/review/cache complete. Structured claims/provenance graph, durable story relationships, knowledge evidence inheritance, story evidence scoring, multi-position answers, and historical backfill remain. See `docs/TRACE-KNOWLEDGE-CONTINUITY-BUILD-PLAN.md`. |
 | 6 — Guides Lab | 🔄 | Migration + template + ingest + admin page built. 21 guides ingested (draft). Public rendering deferred. |
 | 6.5 — TRACE Briefing | Planned | Manual, versioned editorial editions before candidate automation, AI drafting or scheduling. See `docs/TraceBriefing.md`. |
 | 7-8 | ⏸️ | Multilingual, sharing/snapshots — not started |
@@ -88,7 +88,7 @@ The Cloudflare Pages deploy command (`npx wrangler pages deploy dist`) was remov
 
 ### Short-term
 
-- [ ] **Knowledge Continuity KC-04D–F** — add governed extraction metadata, editor review transitions, and unchanged-content cache/cost tests. KC-04A–C now persist deterministic locator-backed chunks, proposed structured candidates, canonical claim assertions, and source summaries; PDF v1 remains metadata-only/pending until a separate parser/provider spike passes.
+- [x] **Knowledge Continuity KC-04F** — add unchanged-content cache/cost tests. KC-04A–F now persist deterministic locator-backed chunks, proposed structured candidates, canonical claim assertions, source summaries, durable extraction-run metadata, publisher review transitions, and a pre-provider governed-AI cache gate; PDF v1 remains metadata-only/pending until a separate parser/provider spike passes.
 - [ ] **Story ↔ Knowledge linking (KC-08/KC-10)** — link stories and manual knowledge through reviewed canonical claims and inherited external evidence, not topic overlap alone.
 - [ ] **Feed item classification during publishing** — auto-suggest topics on the review page
 - [ ] **Homepage and feed page layouts** — redesign pass (under discussion)
@@ -98,7 +98,7 @@ The Cloudflare Pages deploy command (`npx wrangler pages deploy dist`) was remov
 
 ### Medium-term
 
-- [ ] **Knowledge Continuity KC-05 to KC-10** — provenance graph, durable related-story workflow, evidence scoring, manual knowledge inheritance, and knowledge-impact proposals. Treat KC-02 through KC-08 as the minimum complete D1/R2 knowledge loop; lock the embedding decision before optional Vectorize/multi-position work in KC-09.
+- [ ] **Knowledge Continuity KC-05 to KC-10** — KC-05A creates deterministic claim-match candidates, KC-05B provides publisher decisions, KC-05C adds review-gated claim provenance metadata, KC-05D adds shared-origin grouping, KC-05E adds reviewed claim relationship assertions, and KC-05F preserves unresolved conflict cases without selecting a winner; remaining work covers legacy cutover, durable related-story workflow, evidence scoring, manual knowledge inheritance, and knowledge-impact proposals. Treat KC-02 through KC-08 as the minimum complete D1/R2 knowledge loop; lock the embedding decision before optional Vectorize/multi-position work in KC-09.
 - [ ] **Public Guides** — render approved guides at `/guides/[slug]`, integrate with Ask TRACE
 - [ ] **Guides ↔ Knowledge linking** — cross-reference guides with related knowledge docs
 - [ ] **Social signals → Feed items** — promotion workflow for social posts to become stories

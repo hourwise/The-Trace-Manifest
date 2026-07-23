@@ -7,8 +7,17 @@
  */
 
 import type { ExtractedHtmlDocument, HtmlExtractionBlock } from "./source-extraction";
+import {
+  claimKnowledgeExtractionRun,
+  failKnowledgeExtractionRun,
+  settleKnowledgeExtractionRun,
+} from "./knowledge-extraction-cache";
+import { generateClaimMatchCandidates } from "./claim-match-candidates";
 
 export const STRUCTURED_EXTRACTION_VERSION = "deterministic_structure_v1";
+export const STRUCTURED_EXTRACTION_POLICY_VERSION = "kc-04a-v1";
+export const STRUCTURED_EXTRACTION_PROMPT_VERSION = "none";
+const STRUCTURED_EXTRACTION_TASK = "extract_source_structure" as const;
 
 export type StructuredExtractionKind =
   | "entity"
@@ -23,7 +32,9 @@ export interface StructuredExtractionResult {
   chunksCreated: number;
   candidatesCreated: number;
   claimsCreated: number;
+  matchCandidatesCreated: number;
   summaryCreated: boolean;
+  extractionRunId: string;
 }
 
 interface Candidate {
@@ -48,8 +59,79 @@ export async function extractStructuredSource(
     sourceDocumentVersionId: string;
     sourceContentHash: string;
     extraction: ExtractedHtmlDocument;
+    correlationId?: string;
   },
 ): Promise<StructuredExtractionResult> {
+  const run = await beginExtractionRun(db, input);
+  if (run.alreadyCompleted) {
+    return {
+      chunksCreated: 0,
+      candidatesCreated: 0,
+      claimsCreated: 0,
+      matchCandidatesCreated: 0,
+      summaryCreated: false,
+      extractionRunId: run.id,
+    };
+  }
+  if (run.inProgress) throw new Error("extraction_run_in_progress");
+
+  try {
+    const result = await persistStructuredExtraction(db, input, run.id);
+    await settleKnowledgeExtractionRun(db, run.id, {
+      inputTokens: 0,
+      outputTokens: 0,
+      cachedTokens: 0,
+      estimatedCostMicrousd: 0,
+      actualCostMicrousd: null,
+      costBasis: "none",
+      validationState: "valid",
+      validation: {
+      schema: "source_extraction_v1",
+      locatorChecks: "passed",
+      chunksCreated: result.chunksCreated,
+      candidatesCreated: result.candidatesCreated,
+      claimsCreated: result.claimsCreated,
+      matchCandidatesCreated: result.matchCandidatesCreated,
+      summaryCreated: result.summaryCreated,
+      },
+    });
+    return { ...result, extractionRunId: run.id };
+  } catch (error) {
+    await failKnowledgeExtractionRun(db, run.id, classifyExtractionError(error)).catch(() => undefined);
+    throw error;
+  }
+}
+
+interface ExtractionRunHandle {
+  id: string;
+  alreadyCompleted: boolean;
+  inProgress: boolean;
+}
+
+async function beginExtractionRun(
+  db: D1Database,
+  input: { sourceDocumentVersionId: string; sourceContentHash: string; correlationId?: string },
+): Promise<ExtractionRunHandle> {
+  const claim = await claimKnowledgeExtractionRun(db, {
+    sourceDocumentVersionId: input.sourceDocumentVersionId,
+    sourceContentHash: input.sourceContentHash,
+    taskType: STRUCTURED_EXTRACTION_TASK,
+    extractionMethod: "deterministic",
+    extractionVersion: STRUCTURED_EXTRACTION_VERSION,
+    modelProvider: null,
+    modelIdentifier: null,
+    promptVersion: STRUCTURED_EXTRACTION_PROMPT_VERSION,
+    policyVersion: STRUCTURED_EXTRACTION_POLICY_VERSION,
+    correlationId: input.correlationId ?? `kc04-${input.sourceDocumentVersionId}`,
+  });
+  return { id: claim.runId, alreadyCompleted: claim.status === "cached", inProgress: claim.status === "in_progress" };
+}
+
+async function persistStructuredExtraction(
+  db: D1Database,
+  input: { sourceDocumentVersionId: string; sourceContentHash: string; extraction: ExtractedHtmlDocument },
+  extractionRunId: string,
+): Promise<Omit<StructuredExtractionResult, "extractionRunId">> {
   const chunks = await buildChunks(input.sourceDocumentVersionId, input.extraction.blocks);
   let chunksCreated = 0;
   for (const chunk of chunks) {
@@ -66,6 +148,7 @@ export async function extractStructuredSource(
 
   let candidatesCreated = 0;
   let claimsCreated = 0;
+  let matchCandidatesCreated = 0;
   for (const chunk of chunks) {
     for (const candidate of candidatesForChunk(chunk.text)) {
       const candidateId = `extraction-${await sha256(`${input.sourceDocumentVersionId}:${chunk.id}:${candidate.kind}:${candidate.text}`)}`;
@@ -75,14 +158,19 @@ export async function extractStructuredSource(
           (id, source_document_version_id, source_chunk_id, extraction_kind, payload_json,
            start_locator, end_locator, extraction_method, extraction_version,
            policy_version, usage_json, cost_microusd, idempotency_key)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 'deterministic', ?, 'kc-04a-v1', ?, 0, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'deterministic', ?, ?, ?, 0, ?)
       `).bind(
         candidateId, input.sourceDocumentVersionId, chunk.id, candidate.kind,
         JSON.stringify(candidate.payload), chunk.locator, chunk.locator,
-        STRUCTURED_EXTRACTION_VERSION, JSON.stringify({ provider: "none", inputTokens: 0, outputTokens: 0 }), idempotencyKey,
+        STRUCTURED_EXTRACTION_VERSION, STRUCTURED_EXTRACTION_POLICY_VERSION,
+        JSON.stringify({ provider: "none", inputTokens: 0, outputTokens: 0, cachedTokens: 0, costMicrousd: 0 }), idempotencyKey,
       ).run();
       if (Number(inserted.meta.changes ?? 0) === 0) continue;
       candidatesCreated++;
+      await db.prepare(`
+        INSERT OR IGNORE INTO knowledge_extraction_run_outputs (extraction_run_id, output_type, output_id)
+        VALUES (?, 'source_extraction', ?)
+      `).bind(extractionRunId, candidateId).run();
 
       if (candidate.kind === "material_claim" || candidate.kind === "benchmark_result") {
         const canonicalClaimId = `canonical-${await sha256(`${input.sourceDocumentVersionId}:${candidate.text}`)}`;
@@ -110,6 +198,8 @@ export async function extractStructuredSource(
           chunk.id, chunk.locator, chunk.locator, claimText, STRUCTURED_EXTRACTION_VERSION,
         ).run();
         claimsCreated++;
+        const matchResult = await generateClaimMatchCandidates(db, { sourceExtractionId: candidateId });
+        matchCandidatesCreated += matchResult.candidatesCreated;
       }
     }
   }
@@ -119,19 +209,30 @@ export async function extractStructuredSource(
     INSERT OR IGNORE INTO source_summaries
       (id, source_document_version_id, summary_text, extraction_method, extraction_version,
        policy_version, usage_json, cost_microusd, source_content_hash)
-    VALUES (?, ?, ?, 'deterministic', ?, 'kc-04a-v1', ?, 0, ?)
+    VALUES (?, ?, ?, 'deterministic', ?, ?, ?, 0, ?)
   `).bind(
     `summary-${input.sourceDocumentVersionId}`, input.sourceDocumentVersionId, summary,
-    STRUCTURED_EXTRACTION_VERSION, JSON.stringify({ provider: "none", inputTokens: 0, outputTokens: 0 }),
+    STRUCTURED_EXTRACTION_VERSION, STRUCTURED_EXTRACTION_POLICY_VERSION,
+    JSON.stringify({ provider: "none", inputTokens: 0, outputTokens: 0, cachedTokens: 0, costMicrousd: 0 }),
     input.sourceContentHash,
   ).run();
+  await db.prepare(`
+    INSERT OR IGNORE INTO knowledge_extraction_run_outputs (extraction_run_id, output_type, output_id)
+    VALUES (?, 'source_summary', ?)
+  `).bind(extractionRunId, `summary-${input.sourceDocumentVersionId}`).run();
 
   return {
     chunksCreated,
     candidatesCreated,
     claimsCreated,
+    matchCandidatesCreated,
     summaryCreated: Number(summaryResult.meta.changes ?? 0) > 0,
   };
+}
+
+function classifyExtractionError(error: unknown): string {
+  if (error instanceof Error && /constraint|foreign key|unique/i.test(error.message)) return "metadata_constraint_failed";
+  return "structured_extraction_failed";
 }
 
 async function buildChunks(versionId: string, blocks: HtmlExtractionBlock[]): Promise<SourceChunkRow[]> {

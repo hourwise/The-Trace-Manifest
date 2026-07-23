@@ -1,0 +1,183 @@
+---
+// KC-04E: publisher-only review queue for structured source extractions.
+import BaseLayout from "../../../layouts/BaseLayout.astro";
+import { authenticateAccessRequest, type AccessEnvironment } from "../../../security/access-auth";
+
+export const prerender = false;
+
+const env = Astro.locals.runtime.env;
+const identity = await authenticateAccessRequest(Astro.request, env as unknown as AccessEnvironment);
+if (!identity || identity.role !== "publisher") return new Response("Forbidden", { status: 403 });
+
+const db = env.DB as D1Database;
+
+interface ExtractionRow {
+  id: string;
+  source_document_version_id: string;
+  canonical_url: string;
+  extraction_kind: string;
+  payload_json: string;
+  start_locator: string;
+  end_locator: string;
+  extraction_method: string;
+  extraction_version: string;
+  reviewer_state: string;
+  created_at: string;
+  run_state: string | null;
+}
+
+interface SummaryRow {
+  id: string;
+  source_document_version_id: string;
+  canonical_url: string;
+  summary_text: string;
+  extraction_method: string;
+  extraction_version: string;
+  summary_state: string;
+  created_at: string;
+  run_state: string | null;
+}
+
+const extractionRows = await db.prepare(`
+  SELECT extraction.id, extraction.source_document_version_id, document.canonical_url,
+         extraction.extraction_kind, extraction.payload_json, extraction.start_locator,
+         extraction.end_locator, extraction.extraction_method, extraction.extraction_version,
+         extraction.reviewer_state, extraction.created_at, run.state AS run_state
+  FROM source_extractions extraction
+  JOIN source_document_versions version ON version.id = extraction.source_document_version_id
+  JOIN source_documents document ON document.id = version.source_document_id
+  LEFT JOIN knowledge_extraction_run_outputs output
+    ON output.output_type = 'source_extraction' AND output.output_id = extraction.id
+  LEFT JOIN knowledge_extraction_runs run ON run.id = output.extraction_run_id
+  WHERE extraction.reviewer_state IN ('proposed','accepted','amended','needs_research')
+  ORDER BY CASE extraction.reviewer_state WHEN 'proposed' THEN 0 WHEN 'needs_research' THEN 1 ELSE 2 END,
+           extraction.created_at DESC
+  LIMIT 100
+`).all<ExtractionRow>();
+
+const summaryRows = await db.prepare(`
+  SELECT summary.id, summary.source_document_version_id, document.canonical_url,
+         summary.summary_text, summary.extraction_method, summary.extraction_version,
+         summary.summary_state, summary.created_at, run.state AS run_state
+  FROM source_summaries summary
+  JOIN source_document_versions version ON version.id = summary.source_document_version_id
+  JOIN source_documents document ON document.id = version.source_document_id
+  LEFT JOIN knowledge_extraction_run_outputs output
+    ON output.output_type = 'source_summary' AND output.output_id = summary.id
+  LEFT JOIN knowledge_extraction_runs run ON run.id = output.extraction_run_id
+  WHERE summary.summary_state IN ('proposed','accepted','amended','needs_research')
+  ORDER BY CASE summary.summary_state WHEN 'proposed' THEN 0 WHEN 'needs_research' THEN 1 ELSE 2 END,
+           summary.created_at DESC
+  LIMIT 100
+`).all<SummaryRow>();
+
+const extractions = extractionRows.results ?? [];
+const summaries = summaryRows.results ?? [];
+const label = (value: string) => value.replace(/_/g, " ");
+function payloadText(value: string): string {
+  try { return JSON.stringify(JSON.parse(value), null, 2); } catch { return value; }
+}
+---
+
+<BaseLayout title="Extraction Review — TRACE Knowledge Builder" description="Publisher review queue for structured source extraction candidates.">
+  <div class="wrap">
+    <h1>Structured extraction review</h1>
+    <p class="meta">Publisher-only review of source candidates and summaries. Nothing here becomes public evidence automatically.</p>
+    <p style="margin:1rem 0 2rem;"><a href="/admin/knowledge" style="color:var(--color-accent);">&larr; Knowledge Builder</a> &nbsp;|&nbsp; <a href="/admin" style="color:var(--color-accent);">Admin</a></p>
+
+    {extractions.length === 0 && summaries.length === 0 ? (
+      <div class="card"><p class="meta">No structured extraction items are waiting for review.</p></div>
+    ) : (
+      <div class="queue">
+        {extractions.map((item) => (
+          <form class="card review-form" data-target-type="source_extraction" data-target-id={item.id}>
+            <div class="heading-row">
+              <h2>{label(item.extraction_kind)}</h2>
+              <span class="badge">{label(item.reviewer_state)}</span>
+            </div>
+            <p class="meta">Source: <code>{item.canonical_url}</code> · locator <code>{item.start_locator}</code> · {item.extraction_method} {item.extraction_version}</p>
+            <label>Candidate payload
+              <textarea class="amendment" name="amended-payload" rows="5">{payloadText(item.payload_json)}</textarea>
+            </label>
+            <label>Review note
+              <textarea name="review-note" rows="2" maxlength="2000" placeholder="Why was this state chosen?"></textarea>
+            </label>
+            <div class="actions">
+              <select name="next-state" aria-label="Next review state">
+                <option value="accepted">Accepted</option><option value="amended">Amended</option>
+                <option value="rejected">Rejected</option><option value="duplicate">Duplicate</option>
+                <option value="unsupported">Unsupported</option><option value="needs_research">Needs more research</option>
+              </select>
+              <button type="submit" class="btn">Save review</button><span class="result" role="status"></span>
+            </div>
+          </form>
+        ))}
+        {summaries.map((item) => (
+          <form class="card review-form" data-target-type="source_summary" data-target-id={item.id}>
+            <div class="heading-row"><h2>Source summary</h2><span class="badge">{label(item.summary_state)}</span></div>
+            <p class="meta">Source: <code>{item.canonical_url}</code> · {item.extraction_method} {item.extraction_version}</p>
+            <label>Summary text
+              <textarea class="amendment" name="summary-text" rows="5" maxlength="2000">{item.summary_text}</textarea>
+            </label>
+            <label>Review note
+              <textarea name="review-note" rows="2" maxlength="2000" placeholder="Why was this state chosen?"></textarea>
+            </label>
+            <div class="actions">
+              <select name="next-state" aria-label="Next review state">
+                <option value="accepted">Accepted</option><option value="amended">Amended</option>
+                <option value="rejected">Rejected</option><option value="needs_research">Needs more research</option>
+              </select>
+              <button type="submit" class="btn">Save review</button><span class="result" role="status"></span>
+            </div>
+          </form>
+        ))}
+      </div>
+    )}
+  </div>
+</BaseLayout>
+
+<script>
+  document.querySelectorAll(".review-form").forEach((form) => {
+    const reviewForm = form as HTMLFormElement;
+    reviewForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const result = reviewForm.querySelector(".result") as HTMLElement;
+      const state = (reviewForm.querySelector("[name=next-state]") as unknown as HTMLSelectElement).value;
+      const body: Record<string, unknown> = {
+        targetType: reviewForm.dataset.targetType,
+        targetId: reviewForm.dataset.targetId,
+        nextState: state,
+        reviewNote: (reviewForm.querySelector("[name=review-note]") as HTMLTextAreaElement).value,
+      };
+      if (state === "amended") {
+        if (body.targetType === "source_extraction") {
+          try { body.amendedPayload = JSON.parse((reviewForm.querySelector("[name=amended-payload]") as HTMLTextAreaElement).value); }
+          catch { result.textContent = "Amended payload must be valid JSON."; return; }
+        } else {
+          body.summaryText = (reviewForm.querySelector("[name=summary-text]") as HTMLTextAreaElement).value;
+        }
+      }
+      result.textContent = "Saving…";
+      try {
+        const response = await fetch("/api/admin/knowledge/review-extraction", {
+          method: "PATCH", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+        });
+        const payload = await response.json() as { error?: string };
+        result.textContent = response.ok ? "Saved. Reloading…" : (payload.error ?? "Review failed.");
+        if (response.ok) setTimeout(() => location.reload(), 500);
+      } catch { result.textContent = "Review service unavailable."; }
+    });
+  });
+</script>
+
+<style>
+.queue { display:grid; gap:1rem; }
+.heading-row { display:flex; justify-content:space-between; gap:1rem; align-items:center; }
+.heading-row h2 { font-size:1.05rem; margin:0; text-transform:capitalize; }
+label { display:block; margin-top:0.75rem; font-size:0.85rem; font-weight:600; }
+textarea { display:block; width:100%; box-sizing:border-box; margin-top:0.25rem; padding:0.5rem; font:inherit; font-size:0.82rem; border:1px solid var(--color-border); border-radius:4px; background:var(--color-bg-muted); }
+.actions { display:flex; align-items:center; gap:0.75rem; margin-top:0.75rem; }
+select { padding:0.45rem; border:1px solid var(--color-border); border-radius:4px; background:var(--color-bg); }
+.result { font-size:0.85rem; color:var(--color-muted); }
+.badge { display:inline-block; padding:0.15rem 0.5rem; border-radius:4px; font-size:0.75rem; background:var(--color-bg-muted); border:1px solid var(--color-border); }
+</style>

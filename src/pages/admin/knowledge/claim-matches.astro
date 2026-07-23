@@ -1,0 +1,127 @@
+---
+// KC-05B: publisher-only decisions for claim-match candidates.
+import BaseLayout from "../../../layouts/BaseLayout.astro";
+import { authenticateAccessRequest, type AccessEnvironment } from "../../../security/access-auth";
+
+export const prerender = false;
+
+const env = Astro.locals.runtime.env;
+const identity = await authenticateAccessRequest(Astro.request, env as unknown as AccessEnvironment);
+if (!identity || identity.role !== "publisher") return new Response("Forbidden", { status: 403 });
+
+interface MatchRow {
+  id: string;
+  source_extraction_id: string;
+  source_text: string;
+  canonical_url: string;
+  candidate_canonical_claim_id: string;
+  candidate_text: string;
+  match_kind: string;
+  match_score: number;
+  component_json: string;
+  created_at: string;
+}
+
+const rows = await (env.DB as D1Database).prepare(`
+  SELECT candidate.id, candidate.source_extraction_id,
+         json_extract(extraction.payload_json, '$.text') AS source_text,
+         document.canonical_url, candidate.candidate_canonical_claim_id,
+         claim.canonical_text AS candidate_text, candidate.match_kind,
+         candidate.match_score, candidate.component_json, candidate.created_at
+  FROM knowledge_claim_match_candidates candidate
+  JOIN source_extractions extraction ON extraction.id = candidate.source_extraction_id
+  JOIN source_document_versions version ON version.id = extraction.source_document_version_id
+  JOIN source_documents document ON document.id = version.source_document_id
+  JOIN canonical_claims claim ON claim.id = candidate.candidate_canonical_claim_id
+  WHERE candidate.state = 'proposed'
+  ORDER BY candidate.match_score DESC, candidate.created_at DESC
+  LIMIT 100
+`).all<MatchRow>();
+
+const matches = rows.results ?? [];
+const label = (value: string) => value.replace(/_/g, " ");
+---
+
+<BaseLayout title="Claim Match Review — TRACE Knowledge Builder" description="Publisher review queue for canonical claim match candidates.">
+  <div class="wrap">
+    <h1>Claim-match review</h1>
+    <p class="meta">Publisher-only decisions for proposed canonical claim matches. Merge and create-new decisions accept the source assertion; reject leaves it pending. Nothing creates provenance or evidence scores automatically.</p>
+    <p style="margin:1rem 0 2rem;"><a href="/admin/knowledge" style="color:var(--color-accent);">&larr; Knowledge Builder</a> &nbsp;|&nbsp; <a href="/admin/knowledge/extractions" style="color:var(--color-accent);">Extraction review</a> &nbsp;|&nbsp; <a href="/admin" style="color:var(--color-accent);">Admin</a></p>
+
+    {matches.length === 0 ? (
+      <div class="card"><p class="meta">No claim-match candidates are waiting for review.</p></div>
+    ) : (
+      <div class="queue">
+        {matches.map((item) => (
+          <form class="card match-form" data-candidate-id={item.id}>
+            <div class="heading-row">
+              <h2>{label(item.match_kind)} candidate <span class="score">{Math.round(item.match_score * 100)}%</span></h2>
+              <code>{item.id}</code>
+            </div>
+            <p class="meta">Source: <code>{item.canonical_url}</code> · extraction <code>{item.source_extraction_id}</code></p>
+            <div class="comparison">
+              <div><h3>Extracted claim</h3><p>{item.source_text}</p></div>
+              <div><h3>Existing canonical claim</h3><p>{item.candidate_text}</p><small>Target: <code>{item.candidate_canonical_claim_id}</code></small></div>
+            </div>
+            <details><summary>Match components</summary><pre>{item.component_json}</pre></details>
+            <label>Review note
+              <textarea name="review-note" rows="2" maxlength="2000" placeholder="Why was this decision chosen?"></textarea>
+            </label>
+            <div class="actions">
+              <select name="decision" aria-label="Claim match decision">
+                <option value="merge_existing">Merge into existing claim</option>
+                <option value="create_new">Accept as a new canonical claim</option>
+                <option value="reject">Reject this match</option>
+              </select>
+              <button type="submit" class="btn">Save decision</button><span class="result" role="status"></span>
+            </div>
+          </form>
+        ))}
+      </div>
+    )}
+  </div>
+</BaseLayout>
+
+<script>
+  document.querySelectorAll(".match-form").forEach((form) => {
+    const reviewForm = form as HTMLFormElement;
+    reviewForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const result = reviewForm.querySelector(".result") as HTMLElement;
+      const decision = (reviewForm.querySelector("[name=decision]") as unknown as HTMLSelectElement).value;
+      const body = {
+        candidateId: reviewForm.dataset.candidateId,
+        decision,
+        reviewNote: (reviewForm.querySelector("[name=review-note]") as HTMLTextAreaElement).value,
+      };
+      result.textContent = "Saving…";
+      try {
+        const response = await fetch("/api/admin/knowledge/review-claim-match", {
+          method: "PATCH", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+        });
+        const payload = await response.json() as { error?: string };
+        result.textContent = response.ok ? "Saved. Reloading…" : (payload.error ?? "Review failed.");
+        if (response.ok) setTimeout(() => location.reload(), 500);
+      } catch { result.textContent = "Review service unavailable."; }
+    });
+  });
+</script>
+
+<style>
+.queue { display:grid; gap:1rem; }
+.heading-row { display:flex; justify-content:space-between; gap:1rem; align-items:center; }
+.heading-row h2 { font-size:1.05rem; margin:0; text-transform:capitalize; }
+.score { font-size:0.8rem; color:var(--color-accent); }
+.comparison { display:grid; grid-template-columns:1fr 1fr; gap:1rem; margin:1rem 0; }
+.comparison > div { padding:0.75rem; background:var(--color-bg-muted); border:1px solid var(--color-border); border-radius:4px; }
+.comparison h3 { font-size:0.85rem; margin:0 0 0.4rem; }
+.comparison p { margin:0; font-size:0.9rem; }
+label { display:block; margin-top:0.75rem; font-size:0.85rem; font-weight:600; }
+textarea { display:block; width:100%; box-sizing:border-box; margin-top:0.25rem; padding:0.5rem; font:inherit; border:1px solid var(--color-border); border-radius:4px; background:var(--color-bg-muted); }
+details { font-size:0.8rem; }
+pre { white-space:pre-wrap; background:var(--color-bg-muted); padding:0.5rem; }
+.actions { display:flex; align-items:center; gap:0.75rem; margin-top:0.75rem; }
+select { padding:0.45rem; border:1px solid var(--color-border); border-radius:4px; background:var(--color-bg); }
+.result { font-size:0.85rem; color:var(--color-muted); }
+@media (max-width:640px) { .comparison { grid-template-columns:1fr; } .actions { align-items:stretch; flex-direction:column; } }
+</style>

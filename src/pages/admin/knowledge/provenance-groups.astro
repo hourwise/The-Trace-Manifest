@@ -1,0 +1,89 @@
+---
+// KC-05D: publisher-only review queue for shared-origin grouping proposals.
+import BaseLayout from "../../../layouts/BaseLayout.astro";
+import { authenticateAccessRequest, type AccessEnvironment } from "../../../security/access-auth";
+
+export const prerender = false;
+const env = Astro.locals.runtime.env;
+const identity = await authenticateAccessRequest(Astro.request, env as unknown as AccessEnvironment);
+if (!identity || identity.role !== "publisher") return new Response("Forbidden", { status: 403 });
+
+interface GroupRow {
+  id: string;
+  source_document_id: string;
+  root_source_document_id: string;
+  origin_key: string;
+  proposed_relationship: string;
+  confidence: number;
+  explanation: string;
+  source_url: string;
+  root_url: string;
+}
+
+const rows = await (env.DB as D1Database).prepare(`
+  SELECT proposal.id, proposal.source_document_id, proposal.root_source_document_id,
+         proposal.origin_key, proposal.proposed_relationship, proposal.confidence,
+         proposal.explanation, source.canonical_url AS source_url,
+         root.canonical_url AS root_url
+  FROM knowledge_provenance_group_proposals proposal
+  JOIN source_documents source ON source.id = proposal.source_document_id
+  JOIN source_documents root ON root.id = proposal.root_source_document_id
+  WHERE proposal.state = 'proposed'
+  ORDER BY proposal.created_at DESC
+  LIMIT 100
+`).all<GroupRow>();
+const proposals = rows.results ?? [];
+const label = (value: string) => value.replace(/_/g, " ");
+---
+
+<BaseLayout title="Provenance Group Review — TRACE Knowledge Builder" description="Publisher review queue for shared-origin provenance groups.">
+  <div class="wrap">
+    <h1>Shared-origin grouping</h1>
+    <p class="meta">These proposals identify exact-content derivative coverage. Accepting creates a reviewed provenance group and source memberships, then links source assertions to that group. Evidence scores are not recalculated here.</p>
+    <p style="margin:1rem 0 2rem;"><a href="/admin/knowledge" style="color:var(--color-accent);">&larr; Knowledge Builder</a> &nbsp;|&nbsp; <a href="/admin/knowledge/provenance" style="color:var(--color-accent);">Claim provenance</a> &nbsp;|&nbsp; <a href="/admin" style="color:var(--color-accent);">Admin</a></p>
+
+    {proposals.length === 0 ? (
+      <div class="card"><p class="meta">No shared-origin proposals are waiting for review.</p></div>
+    ) : (
+      <div class="queue">
+        {proposals.map((item) => (
+          <form class="card group-form" data-proposal-id={item.id}>
+            <div class="heading-row"><h2>{label(item.proposed_relationship)} derivative</h2><code>{item.id}</code></div>
+            <p class="meta">Origin key <code>{item.origin_key}</code> · confidence {Math.round(item.confidence * 100)}%</p>
+            <div class="comparison"><div><strong>Source document</strong><p><code>{item.source_url}</code></p><small>{item.source_document_id}</small></div><div><strong>Proposed origin</strong><p><code>{item.root_url}</code></p><small>{item.root_source_document_id}</small></div></div>
+            <p class="rationale">{item.explanation}</p>
+            <label>Review note<textarea name="review-note" rows="2" maxlength="2000" placeholder="Confirm or reject the shared origin."></textarea></label>
+            <div class="actions"><select name="decision" aria-label="Grouping decision"><option value="accept">Accept shared-origin group</option><option value="reject">Reject proposal</option></select><button type="submit" class="btn">Save decision</button><span class="result" role="status"></span></div>
+          </form>
+        ))}
+      </div>
+    )}
+  </div>
+</BaseLayout>
+
+<script>
+  document.querySelectorAll(".group-form").forEach((form) => {
+    const reviewForm = form as HTMLFormElement;
+    reviewForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const result = reviewForm.querySelector(".result") as HTMLElement;
+      const decision = (reviewForm.querySelector("[name=decision]") as unknown as HTMLSelectElement).value;
+      const body = { proposalId: reviewForm.dataset.proposalId, decision, reviewNote: (reviewForm.querySelector("[name=review-note]") as HTMLTextAreaElement).value };
+      result.textContent = "Saving…";
+      try {
+        const response = await fetch("/api/admin/knowledge/review-provenance-group", { method: "PATCH", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+        const payload = await response.json() as { error?: string };
+        result.textContent = response.ok ? "Saved. Reloading…" : (payload.error ?? "Review failed.");
+        if (response.ok) setTimeout(() => location.reload(), 500);
+      } catch { result.textContent = "Review service unavailable."; }
+    });
+  });
+</script>
+
+<style>
+.queue { display:grid; gap:1rem; }.heading-row { display:flex; justify-content:space-between; gap:1rem; align-items:center; }.heading-row h2 { font-size:1.05rem; margin:0; text-transform:capitalize; }
+.comparison { display:grid; grid-template-columns:1fr 1fr; gap:1rem; margin:1rem 0; }.comparison > div { padding:0.75rem; background:var(--color-bg-muted); border:1px solid var(--color-border); border-radius:4px; }.comparison p { margin:0.4rem 0; }
+.rationale { font-size:0.88rem; color:var(--color-muted); } label { display:block; margin-top:0.75rem; font-size:0.85rem; font-weight:600; } textarea { display:block; width:100%; box-sizing:border-box; margin-top:0.25rem; padding:0.5rem; font:inherit; border:1px solid var(--color-border); border-radius:4px; background:var(--color-bg-muted); }
+.actions { display:flex; align-items:center; gap:0.75rem; margin-top:0.75rem; } select { padding:0.45rem; border:1px solid var(--color-border); border-radius:4px; background:var(--color-bg); }.result { font-size:0.85rem; color:var(--color-muted); }
+@media (max-width:640px) { .comparison { grid-template-columns:1fr; } .heading-row { align-items:flex-start; flex-direction:column; } .actions { align-items:stretch; flex-direction:column; } }
+</style>

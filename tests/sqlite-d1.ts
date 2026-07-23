@@ -56,6 +56,14 @@ export class SQLiteD1 {
     this.sqlite.exec(readFileSync("db/migration-0032-knowledge-continuity.sql", "utf8"));
     this.sqlite.exec(readFileSync("db/migration-0033-knowledge-reconciliation-state.sql", "utf8"));
     this.sqlite.exec(readFileSync("db/migration-0034-structured-source-extraction.sql", "utf8"));
+    this.sqlite.exec(readFileSync("db/migration-0035-extraction-run-metadata.sql", "utf8"));
+    this.sqlite.exec(readFileSync("db/migration-0036-extraction-review-history.sql", "utf8"));
+    this.sqlite.exec(readFileSync("db/migration-0037-claim-match-candidates.sql", "utf8"));
+    this.sqlite.exec(readFileSync("db/migration-0038-claim-match-review.sql", "utf8"));
+    this.sqlite.exec(readFileSync("db/migration-0039-claim-provenance-proposals.sql", "utf8"));
+    this.sqlite.exec(readFileSync("db/migration-0040-provenance-group-proposals.sql", "utf8"));
+    this.sqlite.exec(readFileSync("db/migration-0041-claim-relationship-proposals.sql", "utf8"));
+    this.sqlite.exec(readFileSync("db/migration-0042-claim-conflict-cases.sql", "utf8"));
   }
 
   prepare(query: string): SQLiteD1Statement {

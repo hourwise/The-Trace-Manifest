@@ -14,6 +14,18 @@ import { extractTriageUrlSource, TriageUrlFetchError } from "../src/lib/server/t
 import { retrieveRemoteSource, SourceRetrievalError } from "../src/lib/server/source-retrieval";
 import { extractHtmlDocument } from "../src/lib/server/source-extraction";
 import { extractStructuredSource } from "../src/lib/server/source-structured-extraction";
+import { ExtractionReviewError, reviewKnowledgeExtraction } from "../src/lib/server/knowledge-extraction-review";
+import { claimKnowledgeExtractionRun, failKnowledgeExtractionRun, settleKnowledgeExtractionRun } from "../src/lib/server/knowledge-extraction-cache";
+import { generateClaimMatchCandidates } from "../src/lib/server/claim-match-candidates";
+import { ClaimMatchReviewError, reviewClaimMatchCandidate } from "../src/lib/server/claim-match-review";
+import { generateClaimProvenanceProposal } from "../src/lib/server/claim-provenance-proposals";
+import { ClaimProvenanceReviewError, reviewClaimProvenanceProposal } from "../src/lib/server/claim-provenance-review";
+import { generateProvenanceGroupProposals } from "../src/lib/server/provenance-group-proposals";
+import { ProvenanceGroupReviewError, reviewProvenanceGroupProposal } from "../src/lib/server/provenance-group-review";
+import { generateClaimRelationshipProposals } from "../src/lib/server/claim-relationship-proposals";
+import { ClaimRelationshipReviewError, reviewClaimRelationshipProposal } from "../src/lib/server/claim-relationship-review";
+import { generateClaimConflictCase } from "../src/lib/server/claim-conflict-cases";
+import { ClaimConflictReviewError, reviewClaimConflictCase } from "../src/lib/server/claim-conflict-review";
 import { captureAdmittedSource, SourceCaptureError } from "../src/lib/server/source-capture";
 import { signInternalRequest, verifyInternalRequestSignature } from "../src/security/internal-signature";
 import { publishBriefing, publishStory, upgradeClusterEvidence } from "../workers/ingestion/publish";
@@ -851,6 +863,11 @@ async function kc04StructuredExtractionTests(): Promise<void> {
       INSERT INTO source_document_versions
         (id, source_document_id, content_hash, retrieved_url, retrieved_at, extraction_status)
       VALUES ('kc04-version', 'kc04-doc', 'kc04-content-hash', 'https://example.test/kc04', datetime('now'), 'captured');
+      INSERT INTO canonical_claims
+        (id, canonical_text, claim_class, claim_domain, predicate_key, object_json, current_state, materiality)
+      VALUES ('canonical-existing', 'The Orion model achieved 91% accuracy on the benchmark.',
+              'benchmark_result', 'benchmark', 'benchmark_result', '{"text":"The Orion model achieved 91% accuracy on the benchmark."}',
+              'active', 'standard');
     `);
     const extraction = extractHtmlDocument(`<html><body><article>
       <h1>Model release</h1>
@@ -859,18 +876,367 @@ async function kc04StructuredExtractionTests(): Promise<void> {
     </article></body></html>`);
     const first = await extractStructuredSource(database.asD1(), {
       sourceDocumentVersionId: "kc04-version", sourceContentHash: "kc04-content-hash", extraction,
+      correlationId: "kc04-metadata-test",
     });
     const second = await extractStructuredSource(database.asD1(), {
       sourceDocumentVersionId: "kc04-version", sourceContentHash: "kc04-content-hash", extraction,
+      correlationId: "kc04-metadata-test",
     });
     assert.ok(first.chunksCreated >= 2, "deterministic extraction persists source chunks");
     assert.ok(first.candidatesCreated >= 2, "deterministic extraction emits typed candidates");
     assert.ok(first.claimsCreated >= 1, "material candidates produce proposed canonical claim assertions");
+    assert.ok(first.matchCandidatesCreated >= 1, "material candidates produce review-gated match proposals");
     assert.equal(second.candidatesCreated, 0, "unchanged source extraction is idempotent");
+    const match = await database.prepare(`
+      SELECT candidate_canonical_claim_id, match_kind, match_score, component_json, state
+      FROM knowledge_claim_match_candidates WHERE source_document_version_id = 'kc04-version'
+    `).first<{ candidate_canonical_claim_id: string; match_kind: string; match_score: number; component_json: string; state: string }>();
+    assert.equal(match?.candidate_canonical_claim_id, "canonical-existing", "match proposals target existing canonical claims");
+    assert.ok(["lexical", "entity", "value", "date", "semantic"].includes(match?.match_kind ?? ""));
+    assert.ok((match?.match_score ?? 0) > 0, "match proposals carry deterministic scores");
+    assert.match(match?.component_json ?? "", /lexical/);
+    assert.equal(match?.state, "proposed", "match proposals remain review-gated");
+    const rerunMatches = await generateClaimMatchCandidates(database.asD1(), { sourceExtractionId: (await database.prepare(
+      "SELECT id FROM source_extractions WHERE extraction_kind = 'benchmark_result' LIMIT 1",
+    ).first<{ id: string }>())?.id ?? "" });
+    assert.equal(rerunMatches.candidatesCreated, 0, "match proposal generation is idempotent");
     assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM source_extractions WHERE start_locator IS NOT NULL AND end_locator IS NOT NULL").first<{ count: number }>())?.count, first.candidatesCreated);
     assert.equal((await database.prepare("SELECT reviewer_state, admission_state FROM claim_assertions LIMIT 1").first<{ reviewer_state: string; admission_state: string }>())?.reviewer_state, "proposed");
     assert.equal((await database.prepare("SELECT cost_microusd FROM source_summaries WHERE source_document_version_id = 'kc04-version'").first<{ cost_microusd: number }>())?.cost_microusd, 0,
       "deterministic extraction records zero external-AI cost");
+    const run = await database.prepare(`
+      SELECT source_document_version_id, source_content_hash, task_type, extraction_method,
+             extraction_version, prompt_version, prompt_hash, policy_version, usage_json,
+             cost_basis, validation_state, audit_json, correlation_id, state
+      FROM knowledge_extraction_runs WHERE id = ?
+    `).bind(first.extractionRunId).first<Record<string, string>>();
+    assert.equal(run?.source_document_version_id, "kc04-version", "run records the source version");
+    assert.equal(run?.source_content_hash, "kc04-content-hash", "run records the immutable source hash");
+    assert.equal(run?.task_type, "extract_source_structure");
+    assert.equal(run?.extraction_method, "deterministic");
+    assert.equal(run?.prompt_version, "none");
+    assert.ok(run?.prompt_hash, "run records a prompt identity hash even for deterministic work");
+    assert.equal(run?.policy_version, "kc-04a-v1");
+    assert.equal(run?.cost_basis, "none");
+    assert.equal(run?.validation_state, "valid");
+    assert.equal(run?.correlation_id, "kc04-metadata-test");
+    assert.equal(run?.state, "completed");
+    const linkedOutputs = (await database.prepare("SELECT COUNT(*) AS count FROM knowledge_extraction_run_outputs WHERE extraction_run_id = ?").bind(first.extractionRunId).first<{ count: number }>())?.count;
+    assert.equal(linkedOutputs, first.candidatesCreated + 1, "run links every structured candidate and its summary");
+    assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM knowledge_extraction_runs").first<{ count: number }>())?.count, 1,
+      "unchanged source reuses the completed metadata envelope");
+
+    const aiCacheInput = {
+      sourceDocumentVersionId: "kc04-version",
+      sourceContentHash: "kc04-content-hash",
+      taskType: "extract_source_structure" as const,
+      extractionMethod: "governed_ai" as const,
+      extractionVersion: "governed_structure_v1",
+      modelProvider: "deepseek",
+      modelIdentifier: "deepseek-v4-flash",
+      promptVersion: "kc04f-structure-prompt-v1",
+      policyVersion: "kc-04f-v1",
+      correlationId: "kc04f-cache-test",
+    };
+    let providerCalls = 0;
+    const firstClaim = await claimKnowledgeExtractionRun(database.asD1(), aiCacheInput);
+    if (firstClaim.status === "owned") {
+      providerCalls++;
+      await settleKnowledgeExtractionRun(database.asD1(), firstClaim.runId, {
+        inputTokens: 120, outputTokens: 80, cachedTokens: 0,
+        estimatedCostMicrousd: 150, actualCostMicrousd: 125,
+        costBasis: "provider_usage", validationState: "valid", validation: { schema: "passed" },
+      });
+    }
+    const cachedClaim = await claimKnowledgeExtractionRun(database.asD1(), aiCacheInput);
+    if (cachedClaim.status === "owned") providerCalls++;
+    assert.equal(cachedClaim.status, "cached", "completed governed extraction is returned from the cache gate");
+    assert.equal(providerCalls, 1, "unchanged content does not invoke the provider a second time");
+    assert.equal(cachedClaim.cachedCostMicrousd, 125, "cache hit exposes the original settled cost without charging again");
+    assert.equal((await database.prepare(`
+      SELECT COUNT(*) AS count, SUM(actual_cost_microusd) AS actual_cost
+      FROM knowledge_extraction_runs WHERE extraction_method = 'governed_ai'
+    `).first<{ count: number; actual_cost: number }>())?.count, 1, "one governed run is stored for one cache identity");
+    assert.equal((await database.prepare(`
+      SELECT SUM(actual_cost_microusd) AS actual_cost
+      FROM knowledge_extraction_runs WHERE extraction_method = 'governed_ai'
+    `).first<{ actual_cost: number }>())?.actual_cost, 125, "the unchanged retry adds no second external-AI cost");
+    const inProgressInput = { ...aiCacheInput, promptVersion: "kc04f-in-progress-prompt-v1" };
+    const ownedRun = await claimKnowledgeExtractionRun(database.asD1(), inProgressInput);
+    const concurrentClaim = await claimKnowledgeExtractionRun(database.asD1(), inProgressInput);
+    assert.equal(ownedRun.status, "owned");
+    assert.equal(concurrentClaim.status, "in_progress", "a concurrent retry cannot claim a running provider job");
+    await failKnowledgeExtractionRun(database.asD1(), ownedRun.runId, "provider_timeout");
+    assert.equal((await claimKnowledgeExtractionRun(database.asD1(), inProgressInput)).status, "owned", "failed runs remain retryable");
+
+    const candidateId = (await database.prepare("SELECT id FROM source_extractions LIMIT 1").first<{ id: string }>())?.id!;
+    const review = async (targetType: "source_extraction" | "source_summary", targetId: string, nextState: any, amendedValueJson?: string) =>
+      reviewKnowledgeExtraction(database.asD1(), {
+        targetType, targetId, nextState, amendedValueJson,
+        reviewerEmail: "publisher@example.com", reviewerRole: "publisher", requestId: crypto.randomUUID(),
+      });
+    await review("source_extraction", candidateId, "accepted");
+    await review("source_extraction", candidateId, "amended", JSON.stringify({ text: "An amended reviewed candidate", deterministic: true }));
+    await review("source_extraction", candidateId, "needs_research");
+    await review("source_extraction", candidateId, "rejected");
+    await review("source_extraction", candidateId, "proposed");
+    await review("source_extraction", candidateId, "duplicate");
+    await review("source_extraction", candidateId, "proposed");
+    await review("source_extraction", candidateId, "unsupported");
+    await review("source_extraction", candidateId, "proposed");
+    assert.equal((await database.prepare("SELECT reviewer_state, reviewed_by, payload_json FROM source_extractions WHERE id = ?").bind(candidateId).first<{ reviewer_state: string; reviewed_by: string; payload_json: string }>())?.reviewer_state, "proposed");
+    assert.equal(JSON.parse((await database.prepare("SELECT payload_json FROM source_extractions WHERE id = ?").bind(candidateId).first<{ payload_json: string }>())!.payload_json).text, "An amended reviewed candidate");
+
+    const summaryId = `summary-kc04-version`;
+    await review("source_summary", summaryId, "accepted");
+    await review("source_summary", summaryId, "amended", JSON.stringify({ summaryText: "An amended source summary" }));
+    await review("source_summary", summaryId, "rejected");
+    await review("source_summary", summaryId, "proposed");
+    await assert.rejects(
+      () => review("source_summary", summaryId, "duplicate"),
+      (error: unknown) => error instanceof ExtractionReviewError && error.code === "state_not_supported",
+      "source summaries reject extraction-only review states",
+    );
+    assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM knowledge_extraction_reviews").first<{ count: number }>())?.count, 13,
+      "every review transition is retained in attributable history");
+    assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM admin_audit_log WHERE action = 'review_knowledge_extraction' AND outcome = 'succeeded'").first<{ count: number }>())?.count, 13,
+      "every successful review transition is audited");
+  } finally {
+    database.close();
+  }
+}
+
+async function kc05bClaimMatchReviewTests(): Promise<void> {
+  const database = new SQLiteD1();
+  try {
+    database.sqlite.exec(`
+      INSERT INTO source_documents (id, canonical_url, canonical_url_hash, media_kind, copyright_storage_mode, admission_state)
+      VALUES ('kc05b-doc', 'https://example.test/kc05b', 'kc05b-url-hash', 'html', 'private_full_text', 'admitted');
+      INSERT INTO source_document_versions
+        (id, source_document_id, content_hash, retrieved_url, retrieved_at, extraction_status)
+      VALUES ('kc05b-version', 'kc05b-doc', 'kc05b-content-hash', 'https://example.test/kc05b', datetime('now'), 'captured');
+      INSERT INTO source_chunks
+        (id, source_document_version_id, chunk_index, text_excerpt, text_hash, start_locator, end_locator)
+      VALUES ('kc05b-chunk', 'kc05b-version', 0, 'KC05B test source claim.', 'kc05b-text-hash', 'html:1', 'html:1');
+
+      INSERT INTO canonical_claims (id, canonical_text, claim_class, claim_domain, predicate_key, object_json, current_state, materiality)
+      VALUES
+        ('kc05b-own-merge', 'Merge source claim', 'community_report', 'general', 'report', '{}', 'active', 'standard'),
+        ('kc05b-target-merge', 'Existing target claim', 'community_report', 'general', 'report', '{}', 'active', 'standard'),
+        ('kc05b-own-new', 'New source claim', 'community_report', 'general', 'report', '{}', 'active', 'standard'),
+        ('kc05b-target-new', 'Unselected target claim', 'community_report', 'general', 'report', '{}', 'active', 'standard'),
+        ('kc05b-own-reject', 'Rejected source claim', 'community_report', 'general', 'report', '{}', 'active', 'standard'),
+        ('kc05b-target-reject', 'Rejected target claim', 'community_report', 'general', 'report', '{}', 'active', 'standard');
+
+      INSERT INTO source_extractions
+        (id, source_document_version_id, source_chunk_id, extraction_kind, payload_json,
+         start_locator, end_locator, extraction_method, extraction_version, idempotency_key)
+      VALUES
+        ('kc05b-extraction-merge', 'kc05b-version', 'kc05b-chunk', 'material_claim', '{"text":"Merge source claim"}', 'html:1', 'html:1', 'deterministic', 'test', 'kc05b-idem-merge'),
+        ('kc05b-extraction-new', 'kc05b-version', 'kc05b-chunk', 'material_claim', '{"text":"New source claim"}', 'html:1', 'html:1', 'deterministic', 'test', 'kc05b-idem-new'),
+        ('kc05b-extraction-reject', 'kc05b-version', 'kc05b-chunk', 'material_claim', '{"text":"Rejected source claim"}', 'html:1', 'html:1', 'deterministic', 'test', 'kc05b-idem-reject');
+
+      INSERT INTO claim_assertions
+        (id, canonical_claim_id, source_document_version_id, source_chunk_id, start_locator, end_locator,
+         assertion_text, relationship, source_role, directness, evidence_treatment, admission_state,
+         extraction_method, extraction_version, confidence, reviewer_state)
+      VALUES
+        ('assertion-kc05b-extraction-merge', 'kc05b-own-merge', 'kc05b-version', 'kc05b-chunk', 'html:1', 'html:1', 'Merge source claim', 'reports', 'reported_claim', 'unknown', 'context_only', 'pending', 'deterministic', 'test', 0.35, 'proposed'),
+        ('assertion-kc05b-extraction-new', 'kc05b-own-new', 'kc05b-version', 'kc05b-chunk', 'html:1', 'html:1', 'New source claim', 'reports', 'reported_claim', 'unknown', 'context_only', 'pending', 'deterministic', 'test', 0.35, 'proposed'),
+        ('assertion-kc05b-extraction-reject', 'kc05b-own-reject', 'kc05b-version', 'kc05b-chunk', 'html:1', 'html:1', 'Rejected source claim', 'reports', 'reported_claim', 'unknown', 'context_only', 'pending', 'deterministic', 'test', 0.35, 'proposed');
+
+      INSERT INTO knowledge_claim_match_candidates
+        (id, source_extraction_id, source_document_version_id, candidate_canonical_claim_id,
+         match_kind, match_score, component_json, algorithm_version, idempotency_key)
+      VALUES
+        ('kc05b-match-merge', 'kc05b-extraction-merge', 'kc05b-version', 'kc05b-target-merge', 'lexical', 0.9, '{"lexical":0.9}', 'test', 'kc05b-match-idem-merge'),
+        ('kc05b-match-new', 'kc05b-extraction-new', 'kc05b-version', 'kc05b-target-new', 'lexical', 0.8, '{"lexical":0.8}', 'test', 'kc05b-match-idem-new'),
+        ('kc05b-match-reject', 'kc05b-extraction-reject', 'kc05b-version', 'kc05b-target-reject', 'lexical', 0.7, '{"lexical":0.7}', 'test', 'kc05b-match-idem-reject');
+    `);
+
+    const reviewInput = (candidateId: string, decision: "merge_existing" | "create_new" | "reject") => ({
+      candidateId, decision, reviewerEmail: "publisher@example.com", reviewerRole: "publisher" as const,
+      reviewNote: `KC05B ${decision}`, requestId: crypto.randomUUID(),
+    });
+    const merge = await reviewClaimMatchCandidate(database.asD1(), reviewInput("kc05b-match-merge", "merge_existing"));
+    assert.equal(merge.resolvedCanonicalClaimId, "kc05b-target-merge", "merge resolves to the selected canonical claim");
+    assert.equal((await database.prepare("SELECT canonical_claim_id, reviewer_state FROM claim_assertions WHERE id = 'assertion-kc05b-extraction-merge'").first<{ canonical_claim_id: string; reviewer_state: string }>())?.canonical_claim_id, "kc05b-target-merge");
+    assert.equal((await database.prepare("SELECT current_state FROM canonical_claims WHERE id = 'kc05b-own-merge'").first<{ current_state: string }>())?.current_state, "superseded");
+    assert.ok(merge.provenanceProposalId, "accepted claim decisions create a provenance proposal");
+    const duplicateProposal = await generateClaimProvenanceProposal(database.asD1(), { claimAssertionId: "assertion-kc05b-extraction-merge" });
+    assert.equal(duplicateProposal.created, false, "provenance proposal generation is idempotent");
+    const provenanceAccept = await reviewClaimProvenanceProposal(database.asD1(), {
+      proposalId: merge.provenanceProposalId!, decision: "accept", reviewerEmail: "publisher@example.com",
+      reviewerRole: "publisher", reviewNote: "Confirmed source lineage.", requestId: crypto.randomUUID(),
+    });
+    assert.equal(provenanceAccept.decision, "accept");
+    assert.equal((await database.prepare("SELECT directness, source_role, evidence_treatment FROM claim_assertions WHERE id = 'assertion-kc05b-extraction-merge'").first<{ directness: string; source_role: string; evidence_treatment: string }>())?.source_role, "reported_claim");
+
+    const create = await reviewClaimMatchCandidate(database.asD1(), reviewInput("kc05b-match-new", "create_new"));
+    assert.equal(create.resolvedCanonicalClaimId, "kc05b-own-new", "create-new keeps the extraction's canonical claim");
+    assert.equal((await database.prepare("SELECT canonical_claim_id, reviewer_state FROM claim_assertions WHERE id = 'assertion-kc05b-extraction-new'").first<{ canonical_claim_id: string; reviewer_state: string }>())?.reviewer_state, "accepted");
+    await reviewClaimProvenanceProposal(database.asD1(), {
+      proposalId: create.provenanceProposalId!, decision: "reject", reviewerEmail: "publisher@example.com",
+      reviewerRole: "publisher", reviewNote: "Lineage needs more evidence.", requestId: crypto.randomUUID(),
+    });
+
+    await reviewClaimMatchCandidate(database.asD1(), reviewInput("kc05b-match-reject", "reject"));
+    assert.equal((await database.prepare("SELECT state FROM knowledge_claim_match_candidates WHERE id = 'kc05b-match-reject'").first<{ state: string }>())?.state, "rejected");
+    assert.equal((await database.prepare("SELECT reviewer_state FROM claim_assertions WHERE id = 'assertion-kc05b-extraction-reject'").first<{ reviewer_state: string }>())?.reviewer_state, "proposed", "reject leaves the source assertion pending");
+    assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM knowledge_claim_match_reviews").first<{ count: number }>())?.count, 3, "every decision is retained in attributable history");
+    assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM knowledge_claim_provenance_reviews").first<{ count: number }>())?.count, 2, "provenance review decisions are retained in attributable history");
+    assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM provenance_groups").first<{ count: number }>())?.count, 0, "provenance proposals do not create groups automatically");
+    assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM source_provenance_memberships").first<{ count: number }>())?.count, 0, "provenance proposals do not create memberships automatically");
+    assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM admin_audit_log WHERE action = 'review_knowledge_claim_match' AND outcome = 'succeeded'").first<{ count: number }>())?.count, 3, "every claim-match decision is audited");
+    await assert.rejects(
+      () => reviewClaimMatchCandidate(database.asD1(), reviewInput("kc05b-match-reject", "reject")),
+      (error: unknown) => error instanceof ClaimMatchReviewError && error.code === "candidate_already_reviewed",
+      "reviewed candidates cannot be decided twice",
+    );
+    await assert.rejects(
+      () => reviewClaimProvenanceProposal(database.asD1(), {
+        proposalId: merge.provenanceProposalId!, decision: "accept", reviewerEmail: "publisher@example.com",
+        reviewerRole: "publisher", requestId: crypto.randomUUID(),
+      }),
+      (error: unknown) => error instanceof ClaimProvenanceReviewError && error.code === "proposal_already_reviewed",
+      "reviewed provenance proposals cannot be decided twice",
+    );
+  } finally {
+    database.close();
+  }
+}
+
+async function kc05dProvenanceGroupTests(): Promise<void> {
+  const database = new SQLiteD1();
+  try {
+    database.sqlite.exec(`
+      INSERT INTO source_documents (id, canonical_url, canonical_url_hash, media_kind, copyright_storage_mode, admission_state)
+      VALUES
+        ('kc05d-root', 'https://example.test/root', 'kc05d-root-hash', 'html', 'private_full_text', 'admitted'),
+        ('kc05d-derivative', 'https://example.test/derivative', 'kc05d-derivative-hash', 'html', 'private_full_text', 'admitted');
+      INSERT INTO source_document_versions
+        (id, source_document_id, content_hash, retrieved_url, retrieved_at, extraction_status)
+      VALUES
+        ('kc05d-root-version', 'kc05d-root', 'kc05d-shared-content', 'https://example.test/root', '2026-07-20T00:00:00Z', 'captured'),
+        ('kc05d-derivative-version', 'kc05d-derivative', 'kc05d-shared-content', 'https://example.test/derivative', '2026-07-21T00:00:00Z', 'captured');
+      INSERT INTO source_chunks
+        (id, source_document_version_id, chunk_index, text_excerpt, text_hash, start_locator, end_locator)
+      VALUES ('kc05d-chunk', 'kc05d-derivative-version', 0, 'Shared derivative source.', 'kc05d-chunk-hash', 'html:1', 'html:1');
+      INSERT INTO canonical_claims
+        (id, canonical_text, claim_class, claim_domain, predicate_key, object_json, current_state, materiality)
+      VALUES ('kc05d-claim', 'Shared derivative claim', 'community_report', 'general', 'report', '{}', 'active', 'standard');
+      INSERT INTO source_extractions
+        (id, source_document_version_id, source_chunk_id, extraction_kind, payload_json,
+         start_locator, end_locator, extraction_method, extraction_version, idempotency_key)
+      VALUES ('kc05d-extraction', 'kc05d-derivative-version', 'kc05d-chunk', 'material_claim', '{"text":"Shared derivative claim"}', 'html:1', 'html:1', 'deterministic', 'test', 'kc05d-extraction-idem');
+      INSERT INTO claim_assertions
+        (id, canonical_claim_id, source_document_version_id, source_chunk_id, start_locator, end_locator,
+         assertion_text, relationship, source_role, directness, evidence_treatment, admission_state,
+         extraction_method, extraction_version, confidence, reviewer_state)
+      VALUES ('assertion-kc05d-extraction', 'kc05d-claim', 'kc05d-derivative-version', 'kc05d-chunk', 'html:1', 'html:1', 'Shared derivative claim', 'reports', 'reported_claim', 'unknown', 'context_only', 'pending', 'deterministic', 'test', 0.35, 'proposed');
+    `);
+    const generated = await generateProvenanceGroupProposals(database.asD1(), { sourceDocumentVersionId: "kc05d-derivative-version" });
+    assert.equal(generated.proposalsCreated, 2, "exact-content duplicates produce root and derivative group proposals");
+    const rerun = await generateProvenanceGroupProposals(database.asD1(), { sourceDocumentVersionId: "kc05d-derivative-version" });
+    assert.equal(rerun.proposalsCreated, 0, "shared-origin proposal generation is idempotent");
+    const derivativeProposal = await database.prepare("SELECT id FROM knowledge_provenance_group_proposals WHERE source_document_id = 'kc05d-derivative'").first<{ id: string }>();
+    const rootProposal = await database.prepare("SELECT id FROM knowledge_provenance_group_proposals WHERE source_document_id = 'kc05d-root'").first<{ id: string }>();
+    const accepted = await reviewProvenanceGroupProposal(database.asD1(), {
+      proposalId: derivativeProposal!.id, decision: "accept", reviewerEmail: "publisher@example.com",
+      reviewerRole: "publisher", reviewNote: "Exact content confirms shared origin.", requestId: crypto.randomUUID(),
+    });
+    assert.ok(accepted.provenanceGroupId, "accepted grouping creates a provenance group");
+    assert.equal(accepted.membershipCreated, true, "accepted grouping creates the derivative membership");
+    assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM source_provenance_memberships WHERE provenance_group_id = ?").bind(accepted.provenanceGroupId).first<{ count: number }>())?.count, 2, "accepted grouping includes root and derivative memberships");
+    assert.equal((await database.prepare("SELECT provenance_group_id FROM claim_assertions WHERE id = 'assertion-kc05d-extraction'").first<{ provenance_group_id: string }>())?.provenance_group_id, accepted.provenanceGroupId, "accepted grouping links source assertions");
+    await reviewProvenanceGroupProposal(database.asD1(), {
+      proposalId: rootProposal!.id, decision: "reject", reviewerEmail: "publisher@example.com",
+      reviewerRole: "publisher", requestId: crypto.randomUUID(),
+    });
+    assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM knowledge_provenance_group_reviews").first<{ count: number }>())?.count, 2, "group decisions are retained in review history");
+    await assert.rejects(
+      () => reviewProvenanceGroupProposal(database.asD1(), {
+        proposalId: rootProposal!.id, decision: "accept", reviewerEmail: "publisher@example.com",
+        reviewerRole: "publisher", requestId: crypto.randomUUID(),
+      }),
+      (error: unknown) => error instanceof ProvenanceGroupReviewError && error.code === "proposal_already_reviewed",
+      "reviewed grouping proposals cannot be decided twice",
+    );
+  } finally {
+    database.close();
+  }
+}
+
+async function kc05eClaimRelationshipTests(): Promise<void> {
+  const database = new SQLiteD1();
+  try {
+    database.sqlite.exec(`
+      INSERT INTO source_documents (id, canonical_url, canonical_url_hash, media_kind, copyright_storage_mode, admission_state)
+      VALUES ('kc05e-doc', 'https://example.test/kc05e', 'kc05e-url-hash', 'html', 'private_full_text', 'admitted');
+      INSERT INTO source_document_versions
+        (id, source_document_id, content_hash, retrieved_url, retrieved_at, extraction_status)
+      VALUES ('kc05e-version', 'kc05e-doc', 'kc05e-content-hash', 'https://example.test/kc05e', datetime('now'), 'captured');
+      INSERT INTO source_chunks
+        (id, source_document_version_id, chunk_index, text_excerpt, text_hash, start_locator, end_locator)
+      VALUES ('kc05e-chunk', 'kc05e-version', 0, 'The Orion benchmark result was corrected and now reaches 91 percent accuracy.', 'kc05e-chunk-hash', 'html:1', 'html:1');
+      INSERT INTO canonical_claims
+        (id, canonical_text, claim_class, claim_domain, predicate_key, object_json, current_state, materiality)
+      VALUES
+        ('kc05e-source-claim', 'The Orion benchmark result was corrected and now reaches 91 percent accuracy.', 'community_report', 'benchmark', 'benchmark_result', '{}', 'active', 'standard'),
+        ('kc05e-target-claim', 'The Orion benchmark result reaches 91 percent accuracy.', 'benchmark_result', 'benchmark', 'benchmark_result', '{}', 'active', 'standard');
+      INSERT INTO claim_assertions
+        (id, canonical_claim_id, source_document_version_id, source_chunk_id, start_locator, end_locator,
+         assertion_text, relationship, source_role, directness, evidence_treatment, admission_state,
+         extraction_method, extraction_version, confidence, reviewer_state)
+      VALUES ('kc05e-source-assertion', 'kc05e-source-claim', 'kc05e-version', 'kc05e-chunk', 'html:1', 'html:1', 'The Orion benchmark result was corrected and now reaches 91 percent accuracy.', 'reports', 'reported_claim', 'direct', 'context_only', 'pending', 'deterministic', 'test', 0.35, 'proposed');
+    `);
+    const generated = await generateClaimRelationshipProposals(database.asD1(), { sourceAssertionId: "kc05e-source-assertion" });
+    assert.equal(generated.proposalsCreated, 1, "similar claims produce a relationship proposal");
+    const proposal = await database.prepare("SELECT id, relationship, confidence FROM knowledge_claim_relationship_proposals LIMIT 1").first<{ id: string; relationship: string; confidence: number }>();
+    assert.equal(proposal?.relationship, "corrects", "correction language is classified deterministically");
+    assert.ok((proposal?.confidence ?? 0) > 0.25);
+    const rerun = await generateClaimRelationshipProposals(database.asD1(), { sourceAssertionId: "kc05e-source-assertion" });
+    assert.equal(rerun.proposalsCreated, 0, "relationship proposal generation is idempotent");
+    const review = await reviewClaimRelationshipProposal(database.asD1(), {
+      proposalId: proposal!.id, decision: "accept", reviewerEmail: "publisher@example.com",
+      reviewerRole: "publisher", reviewNote: "Confirmed correction relationship.", requestId: crypto.randomUUID(),
+    });
+    assert.ok(review.createdAssertionId, "accepted relationship creates a reviewed assertion");
+    assert.equal((await database.prepare("SELECT canonical_claim_id, relationship, reviewer_state FROM claim_assertions WHERE id = ?").bind(review.createdAssertionId).first<{ canonical_claim_id: string; relationship: string; reviewer_state: string }>())?.canonical_claim_id, "kc05e-target-claim");
+    assert.equal((await database.prepare("SELECT relationship FROM claim_assertions WHERE id = ?").bind(review.createdAssertionId).first<{ relationship: string }>())?.relationship, "corrects");
+    assert.equal((await database.prepare("SELECT current_state FROM canonical_claims WHERE id = 'kc05e-target-claim'").first<{ current_state: string }>())?.current_state, "active", "relationship review does not mutate claim state");
+    assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM knowledge_claim_relationship_reviews").first<{ count: number }>())?.count, 1);
+    assert.ok(review.conflictCaseId, "conflicting relationship creates an explicit conflict case");
+    assert.equal((await database.prepare("SELECT status FROM knowledge_claim_conflict_cases WHERE id = ?").bind(review.conflictCaseId).first<{ status: string }>())?.status, "unresolved", "conflicts remain unresolved by default");
+    const duplicateConflict = await generateClaimConflictCase(database.asD1(), { relationshipProposalId: proposal!.id });
+    assert.equal(duplicateConflict.created, false, "conflict case generation is idempotent");
+    await reviewClaimConflictCase(database.asD1(), {
+      conflictCaseId: review.conflictCaseId!, decision: "acknowledge", reviewerEmail: "publisher@example.com",
+      reviewerRole: "publisher", reviewNote: "Both claims remain visible.", requestId: crypto.randomUUID(),
+    });
+    assert.equal((await database.prepare("SELECT status FROM knowledge_claim_conflict_cases WHERE id = ?").bind(review.conflictCaseId).first<{ status: string }>())?.status, "acknowledged");
+    await reviewClaimConflictCase(database.asD1(), {
+      conflictCaseId: review.conflictCaseId!, decision: "reopen", reviewerEmail: "publisher@example.com",
+      reviewerRole: "publisher", reviewNote: "Keep unresolved for further research.", requestId: crypto.randomUUID(),
+    });
+    assert.equal((await database.prepare("SELECT status FROM knowledge_claim_conflict_cases WHERE id = ?").bind(review.conflictCaseId).first<{ status: string }>())?.status, "unresolved");
+    assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM knowledge_claim_conflict_reviews").first<{ count: number }>())?.count, 2, "conflict review history is retained");
+    await assert.rejects(
+      () => reviewClaimRelationshipProposal(database.asD1(), {
+        proposalId: proposal!.id, decision: "reject", reviewerEmail: "publisher@example.com",
+        reviewerRole: "publisher", requestId: crypto.randomUUID(),
+      }),
+      (error: unknown) => error instanceof ClaimRelationshipReviewError && error.code === "proposal_already_reviewed",
+      "reviewed relationship proposals cannot be decided twice",
+    );
+    await assert.rejects(
+      () => reviewClaimConflictCase(database.asD1(), {
+        conflictCaseId: review.conflictCaseId!, decision: "resolve", reviewerEmail: "publisher@example.com",
+        reviewerRole: "publisher", requestId: crypto.randomUUID(),
+      }),
+      (error: unknown) => error instanceof ClaimConflictReviewError && error.code === "resolution_note_required",
+      "conflict resolution requires an attributable explanation",
+    );
   } finally {
     database.close();
   }
@@ -883,6 +1249,9 @@ await kc03cCaptureTests();
 await kc03dQueueTests();
 await kc03eConsumerTests();
 await kc04StructuredExtractionTests();
+await kc05bClaimMatchReviewTests();
+await kc05dProvenanceGroupTests();
+await kc05eClaimRelationshipTests();
 await governanceTests();
 await gatewayTests();
 await publicationAndIngestionTests();

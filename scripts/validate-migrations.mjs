@@ -26,6 +26,22 @@ try {
   db.exec(readFileSync("db/migration-0033-knowledge-reconciliation-state.sql", "utf8"));
   db.exec(readFileSync("db/migration-0034-structured-source-extraction.sql", "utf8"));
   db.exec(readFileSync("db/migration-0034-structured-source-extraction.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0035-extraction-run-metadata.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0035-extraction-run-metadata.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0036-extraction-review-history.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0036-extraction-review-history.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0037-claim-match-candidates.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0037-claim-match-candidates.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0038-claim-match-review.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0038-claim-match-review.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0039-claim-provenance-proposals.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0039-claim-provenance-proposals.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0040-provenance-group-proposals.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0040-provenance-group-proposals.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0041-claim-relationship-proposals.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0041-claim-relationship-proposals.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0042-claim-conflict-cases.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0042-claim-conflict-cases.sql", "utf8"));
 
   const requiredTables = [
     "ai_requests", "ai_budget_reservations", "ai_usage_ledger", "ai_quota_usage",
@@ -38,6 +54,14 @@ try {
     "story_relationships", "knowledge_change_proposals", "evidence_score_snapshots",
     "knowledge_processing_jobs", "knowledge_index_operations", "knowledge_index_operation_receipts",
     "knowledge_reconciliation_runs",
+    "knowledge_extraction_runs", "knowledge_extraction_run_outputs",
+    "knowledge_extraction_reviews",
+    "knowledge_claim_match_candidates",
+    "knowledge_claim_match_reviews",
+    "knowledge_claim_provenance_proposals", "knowledge_claim_provenance_reviews",
+    "knowledge_provenance_group_proposals", "knowledge_provenance_group_reviews",
+    "knowledge_claim_relationship_proposals", "knowledge_claim_relationship_reviews",
+    "knowledge_claim_conflict_cases", "knowledge_claim_conflict_reviews",
   ];
   const tables = new Set(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((row) => row.name));
   for (const table of requiredTables) if (!tables.has(table)) throw new Error(`Missing table ${table}`);

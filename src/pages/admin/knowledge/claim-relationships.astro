@@ -1,0 +1,84 @@
+---
+// KC-05E: publisher-only review queue for claim relationship proposals.
+import BaseLayout from "../../../layouts/BaseLayout.astro";
+import { authenticateAccessRequest, type AccessEnvironment } from "../../../security/access-auth";
+
+export const prerender = false;
+const env = Astro.locals.runtime.env;
+const identity = await authenticateAccessRequest(Astro.request, env as unknown as AccessEnvironment);
+if (!identity || identity.role !== "publisher") return new Response("Forbidden", { status: 403 });
+
+interface RelationshipRow {
+  id: string;
+  source_assertion_id: string;
+  source_canonical_claim_id: string;
+  source_text: string;
+  target_canonical_claim_id: string;
+  target_text: string;
+  relationship: string;
+  confidence: number;
+  rationale: string;
+}
+const rows = await (env.DB as D1Database).prepare(`
+  SELECT proposal.id, proposal.source_assertion_id,
+         proposal.source_canonical_claim_id, source_claim.canonical_text AS source_text,
+         proposal.target_canonical_claim_id, target_claim.canonical_text AS target_text,
+         proposal.relationship, proposal.confidence, proposal.rationale
+  FROM knowledge_claim_relationship_proposals proposal
+  JOIN canonical_claims source_claim ON source_claim.id = proposal.source_canonical_claim_id
+  JOIN canonical_claims target_claim ON target_claim.id = proposal.target_canonical_claim_id
+  WHERE proposal.state = 'proposed'
+  ORDER BY proposal.confidence DESC, proposal.created_at DESC
+  LIMIT 100
+`).all<RelationshipRow>();
+const proposals = rows.results ?? [];
+const label = (value: string) => value.replace(/_/g, " ");
+---
+
+<BaseLayout title="Claim Relationship Review — TRACE Knowledge Builder" description="Publisher review queue for claim relationship proposals.">
+  <div class="wrap">
+    <h1>Claim relationship review</h1>
+    <p class="meta">Review proposed support, qualification, contradiction, reproduction, correction, temporal-change, and supersession relationships. Acceptance records a reviewed relation assertion without changing claim state or evidence scores.</p>
+    <p style="margin:1rem 0 2rem;"><a href="/admin/knowledge" style="color:var(--color-accent);">&larr; Knowledge Builder</a> &nbsp;|&nbsp; <a href="/admin/knowledge/provenance-groups" style="color:var(--color-accent);">Shared origins</a> &nbsp;|&nbsp; <a href="/admin" style="color:var(--color-accent);">Admin</a></p>
+    {proposals.length === 0 ? <div class="card"><p class="meta">No claim relationship proposals are waiting for review.</p></div> : (
+      <div class="queue">
+        {proposals.map((item) => (
+          <form class="card relation-form" data-proposal-id={item.id}>
+            <div class="heading-row"><h2>{label(item.relationship)} <span>{Math.round(item.confidence * 100)}%</span></h2><code>{item.id}</code></div>
+            <p class="meta">Source assertion <code>{item.source_assertion_id}</code></p>
+            <div class="comparison"><div><strong>Source claim</strong><p>{item.source_text}</p><small><code>{item.source_canonical_claim_id}</code></small></div><div><strong>Target claim</strong><p>{item.target_text}</p><small><code>{item.target_canonical_claim_id}</code></small></div></div>
+            <p class="rationale">{item.rationale}</p>
+            <label>Review note<textarea name="review-note" rows="2" maxlength="2000" placeholder="Confirm or reject this relationship."></textarea></label>
+            <div class="actions"><select name="decision" aria-label="Relationship decision"><option value="accept">Accept relationship</option><option value="reject">Reject proposal</option></select><button type="submit" class="btn">Save decision</button><span class="result" role="status"></span></div>
+          </form>
+        ))}
+      </div>
+    )}
+  </div>
+</BaseLayout>
+
+<script>
+  document.querySelectorAll(".relation-form").forEach((form) => {
+    const reviewForm = form as HTMLFormElement;
+    reviewForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const result = reviewForm.querySelector(".result") as HTMLElement;
+      const decision = (reviewForm.querySelector("[name=decision]") as unknown as HTMLSelectElement).value;
+      const body = { proposalId: reviewForm.dataset.proposalId, decision, reviewNote: (reviewForm.querySelector("[name=review-note]") as HTMLTextAreaElement).value };
+      result.textContent = "Saving…";
+      try {
+        const response = await fetch("/api/admin/knowledge/review-claim-relationship", { method: "PATCH", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+        const payload = await response.json() as { error?: string };
+        result.textContent = response.ok ? "Saved. Reloading…" : (payload.error ?? "Review failed.");
+        if (response.ok) setTimeout(() => location.reload(), 500);
+      } catch { result.textContent = "Review service unavailable."; }
+    });
+  });
+</script>
+
+<style>
+.queue { display:grid; gap:1rem; }.heading-row { display:flex; justify-content:space-between; gap:1rem; align-items:center; }.heading-row h2 { font-size:1.05rem; margin:0; text-transform:capitalize; }.heading-row span { color:var(--color-accent); font-size:0.8rem; }
+.comparison { display:grid; grid-template-columns:1fr 1fr; gap:1rem; margin:1rem 0; }.comparison > div { padding:0.75rem; background:var(--color-bg-muted); border:1px solid var(--color-border); border-radius:4px; }.comparison p { margin:0.4rem 0; }.rationale { font-size:0.88rem; color:var(--color-muted); }
+label { display:block; margin-top:0.75rem; font-size:0.85rem; font-weight:600; } textarea { display:block; width:100%; box-sizing:border-box; margin-top:0.25rem; padding:0.5rem; font:inherit; border:1px solid var(--color-border); border-radius:4px; background:var(--color-bg-muted); }.actions { display:flex; align-items:center; gap:0.75rem; margin-top:0.75rem; } select { padding:0.45rem; border:1px solid var(--color-border); border-radius:4px; background:var(--color-bg); }.result { font-size:0.85rem; color:var(--color-muted); }
+@media (max-width:640px) { .comparison { grid-template-columns:1fr; } .heading-row { align-items:flex-start; flex-direction:column; } .actions { align-items:stretch; flex-direction:column; } }
+</style>

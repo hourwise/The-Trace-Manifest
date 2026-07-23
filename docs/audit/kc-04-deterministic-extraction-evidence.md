@@ -20,4 +20,4 @@
 
 ## Deferred KC-04D–F work
 
-Governed AI extraction, provider/model/prompt usage ledger integration, editor review UI/transitions, and proof that an unchanged source does not incur a second external-AI charge remain the next bounded slice. Deterministic candidates are intentionally not treated as corroboration until KC-05 review/provenance work is complete.
+The deterministic output fields in migration 0034 are now supplemented by the KC-04D extraction-run metadata envelope in migration 0035. Editor review UI/transitions and proof that an unchanged source does not incur a second external-AI charge remain the next bounded slice. Deterministic candidates are intentionally not treated as corroboration until KC-05 review/provenance work is complete.

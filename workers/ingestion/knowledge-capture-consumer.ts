@@ -106,6 +106,7 @@ export async function processKnowledgeCaptureMessage(
         sourceDocumentVersionId: capture.sourceDocumentVersionId,
         sourceContentHash: capture.contentHash,
         extraction,
+        correlationId: message.correlationId,
       });
     }
     await env.DB.prepare(`
