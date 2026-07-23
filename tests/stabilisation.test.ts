@@ -12,9 +12,12 @@ import { validateAskBody } from "../src/pages/api/trace/ask";
 import { handleTriageRequest } from "../src/pages/api/admin/ai-triage";
 import { extractTriageUrlSource, TriageUrlFetchError } from "../src/lib/server/triage-url-source";
 import { retrieveRemoteSource, SourceRetrievalError } from "../src/lib/server/source-retrieval";
+import { extractHtmlDocument } from "../src/lib/server/source-extraction";
+import { captureAdmittedSource, SourceCaptureError } from "../src/lib/server/source-capture";
 import { signInternalRequest, verifyInternalRequestSignature } from "../src/security/internal-signature";
 import { publishBriefing, publishStory, upgradeClusterEvidence } from "../workers/ingestion/publish";
 import { reconcileKnowledgeIndexOperations } from "../workers/ingestion/knowledge-reconciliation";
+import { admitAndQueueFeedCapture } from "../workers/ingestion/knowledge-capture-queue";
 import worker from "../workers/ingestion/index";
 import { SQLiteD1 } from "./sqlite-d1";
 import type { EvidenceExcerpt } from "../src/ai/provider";
@@ -639,8 +642,140 @@ async function triageUrlSourceTests(): Promise<void> {
   }
 }
 
+function sourceExtractionTests(): void {
+  const html = `<!doctype html><html><head>
+    <title>Fallback title</title>
+    <meta property="og:title" content="Structured report" />
+    <meta name="author" content="Alice Example" />
+    <meta property="article:published_time" content="2026-07-20T12:00:00Z" />
+    <script type="application/ld+json">{"@type":"NewsArticle","headline":"JSON-LD headline","datePublished":"2026-07-19","author":{"name":"JSON Author"}}</script>
+  </head><body><nav>navigation noise</nav><main>
+    <h1>Structured report</h1><p>First paragraph with &amp; detail.</p>
+    <h2>Evidence</h2><p>Second paragraph.</p><ul><li>One item</li></ul>
+    <script>secret()</script>
+  </main><footer>footer noise</footer></body></html>`;
+  const extracted = extractHtmlDocument(html);
+  assert.equal(extracted.extractionState, "extracted");
+  assert.equal(extracted.title, "Structured report");
+  assert.equal(extracted.author, "Alice Example");
+  assert.equal(extracted.publishedAt, "2026-07-20T12:00:00Z");
+  assert.deepEqual(extracted.headings.map((heading) => heading.level), [1, 2]);
+  assert.match(extracted.text, /First paragraph with & detail/);
+  assert.doesNotMatch(extracted.text, /navigation noise|secret|footer noise/);
+  assert.equal(extracted.diagnostics.container, "main");
+  assert.ok(extracted.diagnostics.removedElements.script >= 1);
+  assert.ok(extracted.blocks.every((block) => /^html:\d+-\d+$/.test(block.locator)));
+
+  const capped = extractHtmlDocument(html, { maxTextCharacters: 20 });
+  assert.equal(capped.diagnostics.truncated, true);
+  assert.ok(capped.text.length <= 20);
+
+  const metadataOnly = extractHtmlDocument("<html><head><meta name='description' content='Only metadata'></head><body><script>x</script></body></html>");
+  assert.equal(metadataOnly.extractionState, "metadata_only");
+  assert.ok(metadataOnly.diagnostics.warnings.length > 0);
+}
+
+async function kc03cCaptureTests(): Promise<void> {
+  const database = new SQLiteD1();
+  try {
+    const stored = new Map<string, { body: string; customMetadata?: Record<string, string> }>();
+    const rawStore = {
+      put: async (key: string, body: string | ArrayBuffer | ArrayBufferView | ReadableStream, options?: R2PutOptions) => {
+        const value = typeof body === "string" ? body : "binary";
+        stored.set(key, { body: value, customMetadata: options?.customMetadata });
+      },
+      head: async (key: string) => stored.has(key) ? { customMetadata: stored.get(key)?.customMetadata } : null,
+      delete: async (keys: string | string[]) => { for (const key of Array.isArray(keys) ? keys : [keys]) stored.delete(key); },
+    } as unknown as Pick<R2Bucket, "put" | "delete"> & { head: R2Bucket["head"] };
+    const body = "<html><head><title>Captured source</title></head><body><article><h1>Captured source</h1><p>Immutable source body.</p></article></body></html>";
+    const extraction = extractHtmlDocument(body);
+    const input = {
+      canonicalUrl: "https://example.test/captured#fragment",
+      retrievedUrl: "https://example.test/captured",
+      contentType: "text/html",
+      body,
+      extraction,
+      mediaKind: "html" as const,
+      admissionState: "admitted" as const,
+      copyrightStorageMode: "private_full_text" as const,
+      sourceId: null,
+      httpStatus: 200,
+      retrievedAt: "2026-07-23T10:00:00Z",
+    };
+    const first = await captureAdmittedSource({ DB: database.asD1(), RAW_STORE: rawStore }, input);
+    const second = await captureAdmittedSource({ DB: database.asD1(), RAW_STORE: rawStore }, input);
+    assert.deepEqual(second, first, "repeating a capture returns the same content-addressed identifiers");
+    assert.equal(stored.size, 2, "the original and structured extraction are kept in private R2");
+    assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM source_documents").first<{ count: number }>())?.count, 1);
+    assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM source_document_versions").first<{ count: number }>())?.count, 1);
+    assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM knowledge_index_operations").first<{ count: number }>())?.count, 1);
+    const version = await database.prepare("SELECT r2_original_key, r2_extracted_key, extraction_status FROM source_document_versions").first<{ r2_original_key: string; r2_extracted_key: string; extraction_status: string }>();
+    assert.equal(version?.r2_original_key, first.r2OriginalKey);
+    assert.equal(version?.r2_extracted_key, first.r2ExtractedKey);
+    assert.equal(version?.extraction_status, "captured");
+    const reconciled = await reconcileKnowledgeIndexOperations({ DB: database.asD1(), RAW_STORE: rawStore });
+    assert.deepEqual(reconciled, { completed: 1, deferred: 0, repairRequired: 0, failed: 0 },
+      "the R2 outbox verifies both the immutable original and structured extraction before completion");
+
+    const metadataOnly = await captureAdmittedSource({ DB: database.asD1(), RAW_STORE: rawStore }, {
+      ...input, canonicalUrl: "https://example.test/metadata", copyrightStorageMode: "metadata_only",
+    });
+    assert.equal(metadataOnly.r2OriginalKey, null);
+    assert.equal(metadataOnly.extractionStatus, "metadata_only");
+    assert.equal(stored.size, 2, "metadata-only capture does not write an unpermitted original");
+
+    await assert.rejects(
+      () => captureAdmittedSource({ DB: database.asD1(), RAW_STORE: rawStore }, { ...input, admissionState: "admitted", body: "" }),
+      (error: unknown) => error instanceof SourceCaptureError && error.code === "invalid_input",
+    );
+  } finally {
+    database.close();
+  }
+}
+
+async function kc03dQueueTests(): Promise<void> {
+  const database = new SQLiteD1();
+  try {
+    const messages: unknown[] = [];
+    const queue = { send: async (message: unknown) => { messages.push(message); } };
+    const environment = { DB: database.asD1(), KNOWLEDGE_PROCESSING_QUEUE: queue };
+    const first = await admitAndQueueFeedCapture(environment, {
+      feedItemId: 42, sourceId: 7, url: "https://example.test/story/?utm_source=feed#fragment",
+    });
+    const second = await admitAndQueueFeedCapture(environment, {
+      feedItemId: 42, sourceId: 7, url: "https://example.test/story/?utm_source=feed#fragment",
+    });
+    assert.equal(first.queued, true);
+    assert.equal(first.reason, "queued");
+    assert.equal(second.reason, "already_queued", "repeated feed delivery does not enqueue duplicate capture jobs");
+    assert.equal(messages.length, 1);
+    assert.doesNotMatch(JSON.stringify(messages[0]), /article body|content_excerpt|summary/,
+      "capture queue messages contain identifiers and policy metadata, never article bodies");
+    assert.equal((await database.prepare("SELECT admission_state FROM source_documents").first<{ admission_state: string }>())?.admission_state, "admitted");
+    assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM knowledge_processing_jobs").first<{ count: number }>())?.count, 1);
+
+    const failingDatabase = new SQLiteD1();
+    try {
+      let fail = true;
+      const retryQueue = { send: async (message: unknown) => { if (fail) { fail = false; throw new Error("queue unavailable"); } messages.push(message); } };
+      const retryEnvironment = { DB: failingDatabase.asD1(), KNOWLEDGE_PROCESSING_QUEUE: retryQueue };
+      const failed = await admitAndQueueFeedCapture(retryEnvironment, { feedItemId: 43, sourceId: 7, url: "https://example.test/retry" });
+      assert.equal(failed.reason, "queue_send_failed");
+      const retried = await admitAndQueueFeedCapture(retryEnvironment, { feedItemId: 43, sourceId: 7, url: "https://example.test/retry" });
+      assert.equal(retried.reason, "queued", "failed queue production remains retryable through the D1 job state");
+    } finally {
+      failingDatabase.close();
+    }
+  } finally {
+    database.close();
+  }
+}
+
 await boundaryTests();
 await triageUrlSourceTests();
+sourceExtractionTests();
+await kc03cCaptureTests();
+await kc03dQueueTests();
 await governanceTests();
 await gatewayTests();
 await publicationAndIngestionTests();

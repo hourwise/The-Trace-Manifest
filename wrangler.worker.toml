@@ -45,9 +45,10 @@ database_id = "f312f662-2252-4005-8103-1a40d546e16b"
 binding = "RAW_STORE"
 bucket_name = "trace-manifest-raw-preview"
 
-# KC-02: Preview-only producer bindings. No consumer is attached until KC-03
-# implements the capture handler; the second queue is reserved for that
-# consumer's future dead-letter routing and receives no production binding.
+# KC-03D: Preview-only producer bindings. Feed admission may enqueue bounded
+# capture messages in Preview; no consumer is attached until the capture
+# handler and retry policy are implemented. The second queue is reserved for
+# that consumer's future dead-letter routing and receives no production binding.
 [[env.preview.queues.producers]]
 binding = "KNOWLEDGE_PROCESSING_QUEUE"
 queue = "trace-manifest-kc-processing-preview"

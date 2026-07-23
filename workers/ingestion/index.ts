@@ -27,6 +27,7 @@ import {
 import type { Source, FetchedFeedItem } from "./types";
 import { verifyInternalRequestSignature } from "../../src/security/internal-signature";
 import type { OperatorRole } from "../../src/security/access-auth";
+import { admitAndQueueFeedCapture } from "./knowledge-capture-queue";
 
 // ============================================================
 // Signed internal-service authentication
@@ -122,6 +123,7 @@ async function readBoundedAdminBody(request: Request): Promise<string | null> {
 export interface Env {
   DB: D1Database;
   RAW_STORE: R2Bucket;
+  KNOWLEDGE_PROCESSING_QUEUE?: Queue;
   TRACE_INTERNAL_SERVICE_SECRET: string;
   GITHUB_TOKEN?: string;
 }
@@ -495,6 +497,18 @@ async function processSource(env: Env, source: Source, jobType: string): Promise
 
       if (isDup) {
         outcome.duplicates++;
+        const existing = await env.DB.prepare(
+          "SELECT id, source_id, url FROM feed_items WHERE url_hash = ? LIMIT 1"
+        ).bind(urlHash).first<{ id: number; source_id: number; url: string }>();
+        if (existing) {
+          try {
+            await admitAndQueueFeedCapture(env, {
+              feedItemId: existing.id, sourceId: existing.source_id, url: existing.url,
+            });
+          } catch (error) {
+            console.warn(JSON.stringify({ stage: "knowledge_capture_admission", feedItemId: existing.id, error: error instanceof Error ? error.message : "unknown" }));
+          }
+        }
         // Try to link to existing candidate
         const linked = await linkItemToExistingCandidate(env, urlHash);
         if (linked) outcome.candidatesLinked++;
@@ -502,7 +516,7 @@ async function processSource(env: Env, source: Source, jobType: string): Promise
       }
 
       // Persist the new item
-      await env.DB.prepare(
+      const insertedFeedItem = await env.DB.prepare(
         `INSERT INTO feed_items (source_id, external_id, url, url_hash, title, summary, content_excerpt, author, published_at, fetched_at, raw_metadata, ingestion_status)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, 'raw')`
       ).bind(
@@ -511,6 +525,15 @@ async function processSource(env: Env, source: Source, jobType: string): Promise
         item.published_at, rawMetadata
       ).run();
       outcome.created++;
+
+      const feedItemId = Number(insertedFeedItem.meta.last_row_id ?? 0);
+      if (feedItemId > 0) {
+        try {
+          await admitAndQueueFeedCapture(env, { feedItemId, sourceId: source.id, url: item.url });
+        } catch (error) {
+          console.warn(JSON.stringify({ stage: "knowledge_capture_admission", feedItemId, error: error instanceof Error ? error.message : "unknown" }));
+        }
+      }
 
       // Create or link story candidate from accepted item
       const candidateResult = await createCandidateFromItem(env, {

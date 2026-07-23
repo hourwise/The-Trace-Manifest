@@ -21,6 +21,7 @@ interface SourceDocumentVersion {
   id: string;
   content_hash: string;
   r2_original_key: string | null;
+  r2_extracted_key: string | null;
 }
 
 interface VectorDeleteIndex {
@@ -107,7 +108,7 @@ async function reconcileR2Put(
     return markRepairRequired(env, operation, trigger, "r2_put_subject_invalid");
   }
   const version = await env.DB.prepare(`
-    SELECT id, content_hash, r2_original_key
+    SELECT id, content_hash, r2_original_key, r2_extracted_key
     FROM source_document_versions WHERE id = ?
   `).bind(operation.subject_id).first<SourceDocumentVersion>();
   if (!version || !version.r2_original_key) {
@@ -122,6 +123,14 @@ async function reconcileR2Put(
   const storedHash = object.customMetadata?.content_hash;
   if (storedHash && operation.desired_content_hash && storedHash !== operation.desired_content_hash) {
     return markRepairRequired(env, operation, trigger, "r2_object_hash_mismatch");
+  }
+  if (version.r2_extracted_key) {
+    const extractedObject = await env.RAW_STORE.head(version.r2_extracted_key);
+    if (!extractedObject) return markRepairRequired(env, operation, trigger, "r2_extraction_missing");
+    const sourceHash = extractedObject.customMetadata?.source_content_hash;
+    if (sourceHash && operation.desired_content_hash && sourceHash !== operation.desired_content_hash) {
+      return markRepairRequired(env, operation, trigger, "r2_extraction_hash_mismatch");
+    }
   }
 
   await env.DB.prepare(`
