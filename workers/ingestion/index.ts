@@ -27,7 +27,8 @@ import {
 import type { Source, FetchedFeedItem } from "./types";
 import { verifyInternalRequestSignature } from "../../src/security/internal-signature";
 import type { OperatorRole } from "../../src/security/access-auth";
-import { admitAndQueueFeedCapture } from "./knowledge-capture-queue";
+import { admitAndQueueFeedCapture, admitAndQueueManualCapture } from "./knowledge-capture-queue";
+import { consumeKnowledgeCaptureBatch } from "./knowledge-capture-consumer";
 
 // ============================================================
 // Signed internal-service authentication
@@ -44,7 +45,7 @@ const WRITE_ADMIN_ROUTES = new Set([
   "/admin/extract-claims", "/admin/detect-conflicts", "/admin/correct",
   "/admin/seed-models", "/admin/extract-model-data", "/admin/publish-story",
   "/admin/withdraw-story", "/admin/publish-briefing", "/admin/archive-cluster",
-  "/admin/candidates", "/admin/social-signals",
+  "/admin/candidates", "/admin/social-signals", "/admin/knowledge/capture-url",
 ]);
 const MAX_ADMIN_BODY_BYTES = 64 * 1024;
 
@@ -177,6 +178,10 @@ export default {
   },
 
   // HTTP handler — CORS + admin API with auth
+  async queue(batch: MessageBatch<import("./knowledge-capture-queue").KnowledgeCaptureMessage>, env: Env) {
+    await consumeKnowledgeCaptureBatch(batch, env);
+  },
+
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     const path = url.pathname;
@@ -978,6 +983,8 @@ async function handleAdminRoute(
       return handleSeedModelData(env);
     case "/admin/extract-model-data":
       return handleModelDataExtraction(env);
+    case "/admin/knowledge/capture-url":
+      return handleManualKnowledgeCapture(request, env, operator);
     case "/admin/publish-story":
       return handlePublishStory(request, env, operator);
     case "/admin/withdraw-story":
@@ -1238,6 +1245,33 @@ async function handleManualIngest(request: Request, env: Env, _ctx: ExecutionCon
     },
     { status: failed || skipped || rejected ? 207 : 200 },
   );
+}
+
+async function handleManualKnowledgeCapture(request: Request, env: Env, operator: InternalOperator): Promise<Response> {
+  const body = await readAdminObject(request, ["url", "storageMode"]);
+  if (!body || !requiredText(body.url, 1, 2_048) || !optionalHttpUrl(body.url)) {
+    return Response.json({ error: "A public HTTP(S) URL is required." }, { status: 400 });
+  }
+  const storageMode = body.storageMode === undefined ? "private_full_text" : body.storageMode;
+  if (storageMode !== "private_full_text" && storageMode !== "editor_supplied_document") {
+    return Response.json({ error: "storageMode must be private_full_text or editor_supplied_document." }, { status: 400 });
+  }
+  const result = await admitAndQueueManualCapture(env, {
+    url: body.url,
+    copyrightStorageMode: storageMode,
+    correlationId: `manual-${operator.requestId}`,
+  });
+  if (result.reason === "queue_unbound") {
+    return Response.json({ error: "Knowledge capture Queue is not enabled for this environment." }, { status: 503 });
+  }
+  if (result.reason === "queue_send_failed") {
+    return Response.json({ error: "Knowledge capture was admitted but could not be queued for processing." }, { status: 503 });
+  }
+  return Response.json({
+    status: result.reason === "queued" ? "queued" : "already_queued",
+    sourceDocumentId: result.sourceDocumentId,
+    jobId: result.jobId,
+  }, { status: 202 });
 }
 
 async function handleSourceList(env: Env): Promise<Response> {

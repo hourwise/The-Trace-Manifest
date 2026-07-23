@@ -57,6 +57,13 @@ queue = "trace-manifest-kc-processing-preview"
 binding = "KNOWLEDGE_PROCESSING_DLQ"
 queue = "trace-manifest-kc-processing-preview-dlq"
 
+[[env.preview.queues.consumers]]
+queue = "trace-manifest-kc-processing-preview"
+max_batch_size = 5
+max_batch_timeout = 10
+max_retries = 3
+dead_letter_queue = "trace-manifest-kc-processing-preview-dlq"
+
 [env.preview.triggers]
 crons = []
 

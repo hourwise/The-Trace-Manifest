@@ -38,6 +38,7 @@ export interface RetrievedRemoteSource {
   byteLength: number;
   body: string;
   redirectCount: number;
+  responseStatus: number;
 }
 
 export interface SourceRetrievalOptions {
@@ -222,7 +223,7 @@ export async function retrieveRemoteSource(
         phase: "retrieved", code: "retrieved", redirectCount, responseStatus: response.status,
         contentType, byteLength: content.byteLength,
       });
-      return { initialUrl: initialUrl.href, finalUrl: currentUrl.href, contentType, redirectCount, ...content };
+      return { initialUrl: initialUrl.href, finalUrl: currentUrl.href, contentType, redirectCount, responseStatus: response.status, ...content };
     }
   } finally {
     clearTimeout(timeout);

@@ -24,6 +24,8 @@ try {
   db.exec(readFileSync("db/migration-0032-knowledge-continuity.sql", "utf8"));
   db.exec(readFileSync("db/migration-0033-knowledge-reconciliation-state.sql", "utf8"));
   db.exec(readFileSync("db/migration-0033-knowledge-reconciliation-state.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0034-structured-source-extraction.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0034-structured-source-extraction.sql", "utf8"));
 
   const requiredTables = [
     "ai_requests", "ai_budget_reservations", "ai_usage_ledger", "ai_quota_usage",

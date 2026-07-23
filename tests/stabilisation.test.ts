@@ -13,11 +13,14 @@ import { handleTriageRequest } from "../src/pages/api/admin/ai-triage";
 import { extractTriageUrlSource, TriageUrlFetchError } from "../src/lib/server/triage-url-source";
 import { retrieveRemoteSource, SourceRetrievalError } from "../src/lib/server/source-retrieval";
 import { extractHtmlDocument } from "../src/lib/server/source-extraction";
+import { extractStructuredSource } from "../src/lib/server/source-structured-extraction";
 import { captureAdmittedSource, SourceCaptureError } from "../src/lib/server/source-capture";
 import { signInternalRequest, verifyInternalRequestSignature } from "../src/security/internal-signature";
 import { publishBriefing, publishStory, upgradeClusterEvidence } from "../workers/ingestion/publish";
 import { reconcileKnowledgeIndexOperations } from "../workers/ingestion/knowledge-reconciliation";
 import { admitAndQueueFeedCapture } from "../workers/ingestion/knowledge-capture-queue";
+import { admitAndQueueManualCapture } from "../workers/ingestion/knowledge-capture-queue";
+import { processKnowledgeCaptureMessage, consumeKnowledgeCaptureBatch, KnowledgeCaptureConsumerError } from "../workers/ingestion/knowledge-capture-consumer";
 import worker from "../workers/ingestion/index";
 import { SQLiteD1 } from "./sqlite-d1";
 import type { EvidenceExcerpt } from "../src/ai/provider";
@@ -199,7 +202,11 @@ async function publicationAndIngestionTests(): Promise<void> {
 async function deskBoundaryTests(): Promise<void> {
   const database = new SQLiteD1();
   const secret = "d".repeat(32);
-  const env = { DB: database.asD1(), RAW_STORE: {} as R2Bucket, TRACE_INTERNAL_SERVICE_SECRET: secret };
+  const queuedManualMessages: unknown[] = [];
+  const env = {
+    DB: database.asD1(), RAW_STORE: {} as R2Bucket, TRACE_INTERNAL_SERVICE_SECRET: secret,
+    KNOWLEDGE_PROCESSING_QUEUE: { send: async (message: unknown) => { queuedManualMessages.push(message); } } as unknown as Queue,
+  };
   const context = { waitUntil() {}, passThroughOnException() {}, props: {} } as unknown as ExecutionContext;
 
   const request = async (
@@ -230,6 +237,13 @@ async function deskBoundaryTests(): Promise<void> {
       method: "POST", body: JSON.stringify({ intakeType: "lead", lead: "Unauthenticated intake" }),
     }), env, context);
     assert.equal(anonymous.status, 401, "unsigned candidate intake is rejected");
+
+    const manualCaptureBody = JSON.stringify({ url: "https://manual.example/article" });
+    assert.equal((await request("reader", "POST", "/admin/knowledge/capture-url", manualCaptureBody)).status, 403,
+      "readers cannot trigger publisher source capture");
+    const manualCapture = await request("publisher", "POST", "/admin/knowledge/capture-url", manualCaptureBody);
+    assert.equal(manualCapture.status, 202, "publishers can queue a manual source capture");
+    assert.equal(queuedManualMessages.length, 1);
 
     const candidateBody = JSON.stringify({ intakeType: "lead", lead: "A governed candidate for Desk boundary testing." });
     assert.equal((await request("reader", "GET", "/admin/candidates")).status, 403, "readers cannot view the Desk queue");
@@ -400,7 +414,7 @@ async function kc02SchemaTests(): Promise<void> {
       "story_claims", "knowledge_document_claims", "knowledge_document_claim_assertions",
       "story_relationships", "knowledge_change_proposals", "evidence_score_snapshots",
       "knowledge_processing_jobs", "knowledge_index_operations", "knowledge_index_operation_receipts",
-      "knowledge_reconciliation_runs",
+      "knowledge_reconciliation_runs", "source_extractions", "source_summaries",
     ];
     const tables = await database.prepare(
       `SELECT name FROM sqlite_master WHERE type = 'table' AND name IN (${requiredTables.map(() => "?").join(", ")})`,
@@ -771,11 +785,104 @@ async function kc03dQueueTests(): Promise<void> {
   }
 }
 
+async function kc03eConsumerTests(): Promise<void> {
+  const database = new SQLiteD1();
+  try {
+    const messages: any[] = [];
+    const stored = new Map<string, { body: string; customMetadata?: Record<string, string> }>();
+    const rawStore = {
+      put: async (key: string, body: string | ArrayBuffer | ArrayBufferView | ReadableStream, options?: R2PutOptions) => {
+        stored.set(key, { body: typeof body === "string" ? body : "binary", customMetadata: options?.customMetadata });
+      },
+      head: async (key: string) => stored.has(key) ? { customMetadata: stored.get(key)?.customMetadata } : null,
+      delete: async (keys: string | string[]) => { for (const key of Array.isArray(keys) ? keys : [keys]) stored.delete(key); },
+    } as unknown as R2Bucket;
+    const queue = { send: async (message: unknown) => { messages.push(message); } };
+    const environment = { DB: database.asD1(), KNOWLEDGE_PROCESSING_QUEUE: queue };
+    const admission = await admitAndQueueManualCapture(environment, {
+      url: "https://example.test/consumer", copyrightStorageMode: "private_full_text", correlationId: "consumer-test",
+    });
+    const message = messages[0];
+    const html = "<html><head><title>Consumer source</title></head><body><article><h1>Consumer source</h1><p>Retrieved article text.</p></article></body></html>";
+    const fetcher = (async () => new Response(html, { status: 200, headers: { "Content-Type": "text/html" } })) as typeof fetch;
+    assert.equal(await processKnowledgeCaptureMessage({ DB: database.asD1(), RAW_STORE: rawStore }, message, fetcher), "completed");
+    assert.equal((await database.prepare("SELECT state FROM knowledge_processing_jobs WHERE id = ?").bind(admission.jobId).first<{ state: string }>())?.state, "completed");
+    assert.equal((await database.prepare("SELECT extraction_status FROM source_document_versions").first<{ extraction_status: string }>())?.extraction_status, "captured");
+    assert.equal(await processKnowledgeCaptureMessage({ DB: database.asD1(), RAW_STORE: rawStore }, message, fetcher), "already_completed");
+
+    const chunksBeforeMetadataOnly = (await database.prepare("SELECT COUNT(*) AS count FROM source_chunks").first<{ count: number }>())?.count ?? 0;
+    const metadataAdmission = await admitAndQueueFeedCapture(environment, {
+      feedItemId: 99, sourceId: 7, url: "https://example.test/metadata-only",
+    });
+    const metadataMessage = messages.find((item) => item.sourceDocumentId === metadataAdmission.sourceDocumentId);
+    await processKnowledgeCaptureMessage({ DB: database.asD1(), RAW_STORE: rawStore }, metadataMessage, fetcher);
+    assert.equal((await database.prepare("SELECT extraction_status FROM source_document_versions WHERE source_document_id = ?").bind(metadataAdmission.sourceDocumentId).first<{ extraction_status: string }>())?.extraction_status, "metadata_only");
+    assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM source_chunks").first<{ count: number }>())?.count, chunksBeforeMetadataOnly,
+      "metadata-only sources do not leak retained text into D1 chunks");
+
+    const failedAdmission = await admitAndQueueManualCapture(environment, {
+      url: "https://example.test/restricted", copyrightStorageMode: "private_full_text", correlationId: "consumer-failure-test",
+    });
+    const restrictedFetcher = (async () => new Response(null, { status: 403, headers: { "Content-Type": "text/html" } })) as typeof fetch;
+    await assert.rejects(
+      () => processKnowledgeCaptureMessage({ DB: database.asD1(), RAW_STORE: rawStore }, messages.find((item) => item.sourceDocumentId === failedAdmission.sourceDocumentId), restrictedFetcher),
+      (error: unknown) => error instanceof KnowledgeCaptureConsumerError && error.code === "response_status_rejected" && error.retryable === false,
+      "permanent HTTP rejection is recorded as non-transient and bounded by the configured Queue retry/DLQ policy",
+    );
+    let retries = 0;
+    let acknowledgements = 0;
+    await consumeKnowledgeCaptureBatch({
+      queue: "test", messages: [{ body: { ...messages.find((item) => item.sourceDocumentId === failedAdmission.sourceDocumentId), sourceDocumentId: "missing-source" },
+        ack: () => { acknowledgements++; }, retry: () => { retries++; } }],
+    } as unknown as MessageBatch<any>, { DB: database.asD1(), RAW_STORE: rawStore });
+    assert.equal(retries, 1, "failed queue messages are retried for bounded DLQ handling");
+    assert.equal(acknowledgements, 0);
+  } finally {
+    database.close();
+  }
+}
+
+async function kc04StructuredExtractionTests(): Promise<void> {
+  const database = new SQLiteD1();
+  try {
+    database.sqlite.exec(`
+      INSERT INTO source_documents (id, canonical_url, canonical_url_hash, media_kind, copyright_storage_mode, admission_state)
+      VALUES ('kc04-doc', 'https://example.test/kc04', 'kc04-url-hash', 'html', 'private_full_text', 'admitted');
+      INSERT INTO source_document_versions
+        (id, source_document_id, content_hash, retrieved_url, retrieved_at, extraction_status)
+      VALUES ('kc04-version', 'kc04-doc', 'kc04-content-hash', 'https://example.test/kc04', datetime('now'), 'captured');
+    `);
+    const extraction = extractHtmlDocument(`<html><body><article>
+      <h1>Model release</h1>
+      <p>The Orion model was released on 2026-07-23 and achieved 91% accuracy on the benchmark.</p>
+      <p>According to the authors, the release may reduce latency, but this result needs independent verification.</p>
+    </article></body></html>`);
+    const first = await extractStructuredSource(database.asD1(), {
+      sourceDocumentVersionId: "kc04-version", sourceContentHash: "kc04-content-hash", extraction,
+    });
+    const second = await extractStructuredSource(database.asD1(), {
+      sourceDocumentVersionId: "kc04-version", sourceContentHash: "kc04-content-hash", extraction,
+    });
+    assert.ok(first.chunksCreated >= 2, "deterministic extraction persists source chunks");
+    assert.ok(first.candidatesCreated >= 2, "deterministic extraction emits typed candidates");
+    assert.ok(first.claimsCreated >= 1, "material candidates produce proposed canonical claim assertions");
+    assert.equal(second.candidatesCreated, 0, "unchanged source extraction is idempotent");
+    assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM source_extractions WHERE start_locator IS NOT NULL AND end_locator IS NOT NULL").first<{ count: number }>())?.count, first.candidatesCreated);
+    assert.equal((await database.prepare("SELECT reviewer_state, admission_state FROM claim_assertions LIMIT 1").first<{ reviewer_state: string; admission_state: string }>())?.reviewer_state, "proposed");
+    assert.equal((await database.prepare("SELECT cost_microusd FROM source_summaries WHERE source_document_version_id = 'kc04-version'").first<{ cost_microusd: number }>())?.cost_microusd, 0,
+      "deterministic extraction records zero external-AI cost");
+  } finally {
+    database.close();
+  }
+}
+
 await boundaryTests();
 await triageUrlSourceTests();
 sourceExtractionTests();
 await kc03cCaptureTests();
 await kc03dQueueTests();
+await kc03eConsumerTests();
+await kc04StructuredExtractionTests();
 await governanceTests();
 await gatewayTests();
 await publicationAndIngestionTests();

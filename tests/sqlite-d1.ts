@@ -55,6 +55,7 @@ export class SQLiteD1 {
     this.sqlite.exec(readFileSync("db/migration-0017-multilingual-source-provenance.sql", "utf8"));
     this.sqlite.exec(readFileSync("db/migration-0032-knowledge-continuity.sql", "utf8"));
     this.sqlite.exec(readFileSync("db/migration-0033-knowledge-reconciliation-state.sql", "utf8"));
+    this.sqlite.exec(readFileSync("db/migration-0034-structured-source-extraction.sql", "utf8"));
   }
 
   prepare(query: string): SQLiteD1Statement {

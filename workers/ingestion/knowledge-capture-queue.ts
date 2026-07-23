@@ -12,8 +12,8 @@ export interface KnowledgeCaptureMessage {
   kind: "capture_source_document";
   version: "kc03d_v1";
   sourceDocumentId: string;
-  feedItemId: number;
-  sourceId: number;
+  feedItemId: number | null;
+  sourceId: number | null;
   canonicalUrl: string;
   urlHash: string;
   mediaKind: "html";
@@ -27,6 +27,12 @@ export interface FeedCaptureAdmission {
   url: string;
   copyrightStorageMode?: SourceCaptureStorageMode;
   correlationId?: string;
+}
+
+export interface ManualCaptureAdmission {
+  url: string;
+  copyrightStorageMode: "private_full_text" | "editor_supplied_document";
+  correlationId: string;
 }
 
 export interface FeedCaptureQueueEnvironment {
@@ -46,8 +52,41 @@ export async function admitAndQueueFeedCapture(
   env: FeedCaptureQueueEnvironment,
   input: FeedCaptureAdmission,
 ): Promise<FeedCaptureQueueResult> {
+  return admitAndQueueSourceCapture(env, {
+    feedItemId: input.feedItemId,
+    sourceId: input.sourceId,
+    url: input.url,
+    copyrightStorageMode: input.copyrightStorageMode,
+    correlationId: input.correlationId,
+  });
+}
+
+/** Admits a publisher-supplied URL into the same capture job path. */
+export async function admitAndQueueManualCapture(
+  env: FeedCaptureQueueEnvironment,
+  input: ManualCaptureAdmission,
+): Promise<FeedCaptureQueueResult> {
+  return admitAndQueueSourceCapture(env, {
+    feedItemId: null,
+    sourceId: null,
+    url: input.url,
+    copyrightStorageMode: input.copyrightStorageMode,
+    correlationId: input.correlationId,
+  });
+}
+
+async function admitAndQueueSourceCapture(
+  env: FeedCaptureQueueEnvironment,
+  input: {
+    feedItemId: number | null;
+    sourceId: number | null;
+    url: string;
+    copyrightStorageMode?: SourceCaptureStorageMode;
+    correlationId?: string;
+  },
+): Promise<FeedCaptureQueueResult> {
   const canonicalUrl = normaliseSourceUrl(input.url);
-  if (!canonicalUrl || !Number.isInteger(input.feedItemId) || input.feedItemId < 1 || !Number.isInteger(input.sourceId) || input.sourceId < 1) {
+  if (!canonicalUrl || (input.feedItemId !== null && (!Number.isInteger(input.feedItemId) || input.feedItemId < 1)) || (input.sourceId !== null && (!Number.isInteger(input.sourceId) || input.sourceId < 1))) {
     throw new Error("feed_capture_admission_invalid");
   }
   const urlHash = await hashURL(canonicalUrl);
