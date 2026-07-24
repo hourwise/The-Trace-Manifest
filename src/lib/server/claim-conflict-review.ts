@@ -1,4 +1,5 @@
 export type ClaimConflictReviewDecision = "acknowledge" | "resolve" | "dismiss" | "reopen";
+import { recalculateEvidenceScores } from "./evidence-recalculation";
 
 export interface ClaimConflictReviewInput {
   conflictCaseId: string;
@@ -23,7 +24,7 @@ export class ClaimConflictReviewError extends Error {
   }
 }
 
-interface ConflictRow { id: string; status: string; }
+interface ConflictRow { id: string; status: string; source_claim_id: string; target_claim_id: string; }
 const transitions: Record<string, ReadonlySet<ClaimConflictReviewDecision>> = {
   unresolved: new Set(["acknowledge", "resolve", "dismiss"]),
   acknowledged: new Set(["resolve", "dismiss", "reopen"]),
@@ -36,7 +37,7 @@ export async function reviewClaimConflictCase(
   db: D1Database,
   input: ClaimConflictReviewInput,
 ): Promise<ClaimConflictReviewResult> {
-  const conflict = await db.prepare("SELECT id, status FROM knowledge_claim_conflict_cases WHERE id = ?")
+  const conflict = await db.prepare("SELECT id, status, source_claim_id, target_claim_id FROM knowledge_claim_conflict_cases WHERE id = ?")
     .bind(input.conflictCaseId).first<ConflictRow>();
   if (!conflict) throw new ClaimConflictReviewError("conflict_not_found", "Claim conflict case not found.", 404);
   if (!transitions[conflict.status]?.has(input.decision)) throw new ClaimConflictReviewError("invalid_transition", `Cannot ${input.decision} a ${conflict.status} conflict.`, 409);
@@ -62,5 +63,9 @@ export async function reviewClaimConflictCase(
   `).bind(`${input.requestId}:succeeded`, input.reviewerEmail, conflict.id, input.requestId, `decision:${input.decision}`));
   const results = await db.batch(statements);
   if (Number(results[0]?.meta.changes ?? 0) !== 1) throw new ClaimConflictReviewError("review_conflict", "The conflict changed before this review was saved.", 409);
+  await recalculateEvidenceScores(db, {
+    claimIds: [conflict.source_claim_id, conflict.target_claim_id],
+    triggeringEvent: "conflict_reviewed",
+  });
   return { conflictCaseId: conflict.id, previousStatus: conflict.status, status, decision: input.decision };
 }

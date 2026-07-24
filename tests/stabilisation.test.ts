@@ -4,7 +4,7 @@ import { DurableAIGovernance } from "../src/ai/durable-governance";
 import { askTrace } from "../src/ai/trace-model-gateway";
 import { validateAnswerDraft, validateAskTraceInput } from "../src/ai/schemas";
 import { validateAnswerOutput } from "../src/ai/validation";
-import { calculateDeterministicConfidence, isKnowledgeHardExpired, isKnowledgeReviewDue, retrieveApprovedKnowledge } from "../src/lib/server/ask-evidence";
+import { calculateDeterministicConfidence, isKnowledgeHardExpired, isKnowledgeReviewDue, retrieveApprovedKnowledge, retrievePublishedEvidence } from "../src/lib/server/ask-evidence";
 import { independentEvidenceWeightFor, isAnswerEligibleEvidence, PUBLIC_ASK_TASK_POLICY, TRACE_POLICY_VERSION } from "../src/ai/task-policy";
 import { GUIDE_CONTRACT_VERSION, guideFreshness, isGuideEligibleForProceduralRetrieval, validateGuideCommand, validateGuideMetadata } from "../src/guides/contract";
 import { nodeWindowsVerificationCommands } from "../src/guides/drafts/install-node-js-and-npm-on-windows";
@@ -26,6 +26,8 @@ import { generateClaimRelationshipProposals } from "../src/lib/server/claim-rela
 import { ClaimRelationshipReviewError, reviewClaimRelationshipProposal } from "../src/lib/server/claim-relationship-review";
 import { generateClaimConflictCase } from "../src/lib/server/claim-conflict-cases";
 import { ClaimConflictReviewError, reviewClaimConflictCase } from "../src/lib/server/claim-conflict-review";
+import { writeCanonicalClaim } from "../src/lib/server/canonical-claim-write";
+import { EVIDENCE_SCORE_POLICY_VERSION, scoreCanonicalClaim, scoreStory } from "../src/lib/server/evidence-scoring";
 import { captureAdmittedSource, SourceCaptureError } from "../src/lib/server/source-capture";
 import { signInternalRequest, verifyInternalRequestSignature } from "../src/security/internal-signature";
 import { publishBriefing, publishStory, upgradeClusterEvidence } from "../workers/ingestion/publish";
@@ -318,6 +320,22 @@ async function deskBoundaryTests(): Promise<void> {
         (301, 'OpenAI Helios model release', 'ai-agents', 'A new OpenAI Helios model release.', 'draft', 'provisionally_supported', datetime('now'), datetime('now')),
         (302, 'Helios model release needs wider testing', 'ai-agents', 'A related cluster about testing the Helios model release.', 'review', 'provisionally_supported', datetime('now'), datetime('now')),
         (303, 'Published analysis of the Helios model release', 'ai-agents', 'Published TRACE coverage of the Helios model release.', 'published', 'strongly_supported', datetime('now'), datetime('now'));
+      INSERT INTO canonical_claims (id, canonical_text, claim_class, claim_domain)
+        VALUES ('kc06-claim-helios', 'Helios is a newly released model.', 'specification_defined', 'model_release');
+      INSERT INTO story_claims (story_cluster_id, canonical_claim_id, role, materiality, display_order)
+        VALUES (301, 'kc06-claim-helios', 'primary', 'standard', 1);
+      INSERT INTO knowledge_documents
+        (id, canonical_question, canonical_hash, section_slug, knowledge_type, status, visibility,
+         evidence_status, direct_answer, document_json, policy_version, approved_by, approved_at, created_by)
+        VALUES ('kc06-knowledge', 'What is the Helios release?', 'kc06-knowledge-hash', 'ai-agents',
+                'current_status', 'approved', 'public_knowledge', 'provisionally_supported',
+                'The Helios release is tracked here.', '{}', 'kc06-v1', 'publisher@example.com', datetime('now'), 'publisher@example.com');
+      INSERT INTO knowledge_document_claims
+        (knowledge_document_id, canonical_claim_id, section_key, relationship, reviewed_by, reviewed_at)
+        VALUES ('kc06-knowledge', 'kc06-claim-helios', 'summary', 'supports', 'publisher@example.com', datetime('now'));
+      INSERT INTO knowledge_document_relationships
+        (id, knowledge_document_id, related_type, related_id, relationship)
+        VALUES ('kc06-knowledge-story', 'kc06-knowledge', 'story_cluster', '301', 'updates');
       UPDATE story_clusters SET slug = 'published-helios-analysis', published_at = datetime('now'), reviewed_by = 'publisher@example.com', reviewed_at = datetime('now') WHERE id = 303;
       INSERT INTO story_cluster_members (cluster_id, feed_item_id, is_primary) VALUES (301, 301, 1);
     `);
@@ -330,6 +348,44 @@ async function deskBoundaryTests(): Promise<void> {
       relatedPayload.items.some((item) => item.kind === "published_story" && item.id === 303 && item.url === "/stories/published-helios-analysis"),
       "related published stories are returned with their public URL",
     );
+
+    const reviewBody = JSON.stringify({
+      sourceStoryId: 301, targetStoryId: 302, action: "same_event", explanation: "Both records describe the same Helios release event.", confidence: 0.85,
+    });
+    assert.equal((await request("reader", "POST", "/admin/related-items", reviewBody)).status, 403,
+      "readers cannot accept related-story actions");
+    const acceptedReview = await request("publisher", "POST", "/admin/related-items", reviewBody);
+    assert.equal(acceptedReview.status, 201, "publisher can accept a related-story action");
+    assert.deepEqual(await acceptedReview.json(), {
+      status: "accepted", action: "same_event", reviewId: (await database.prepare("SELECT id FROM story_related_item_reviews LIMIT 1").first<{ id: string }>())?.id,
+      relationshipRecorded: true, attachmentRecorded: false, evidenceEligibility: null, evidenceEligibilityReason: null, evidenceScoreChanged: false,
+    }, "accepted related-story review records its durable relationship and score boundary");
+    assert.equal(
+      (await database.prepare("SELECT relationship, created_by FROM story_relationships WHERE source_story_id = 301 AND target_story_id = 302").first<{ relationship: string; created_by: string }>())?.relationship,
+      "same_event",
+    );
+    const reviewedRelated = await request("publisher", "GET", "/admin/related-items?clusterId=301");
+    const reviewedPayload = await reviewedRelated.json() as { items: Array<{ id: number; kind: string; clusterId: number | null; affectedRecords: { knowledgePages: Array<{ id: string }> } }> };
+    assert.ok(
+      reviewedPayload.items.some((item) => item.kind === "cluster" && item.clusterId === 302 && item.affectedRecords.knowledgePages.some((page) => page.id === "kc06-knowledge")),
+      "accepted related story surfaces affected public knowledge pages",
+    );
+    const replayedReview = await request("publisher", "POST", "/admin/related-items", reviewBody);
+    assert.equal(replayedReview.status, 200, "repeating the same related action is idempotent");
+    assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM story_related_item_reviews").first<{ count: number }>())?.count, 1);
+
+    const beforeEvidenceStatus = await database.prepare("SELECT evidence_status FROM story_clusters WHERE id = 301").first<{ evidence_status: string }>();
+    const evidenceReview = await request("publisher", "POST", "/admin/related-items", JSON.stringify({
+      sourceStoryId: 301, targetFeedItemId: 302, canonicalClaimId: "kc06-claim-helios", action: "attach_evidence", confidence: 1,
+    }));
+    assert.equal(evidenceReview.status, 201, "publisher can record an evidence attachment review");
+    assert.equal((await database.prepare("SELECT state FROM story_related_item_reviews WHERE target_feed_item_id = 302").first<{ state: string }>())?.state, "accepted");
+    assert.equal((await database.prepare("SELECT canonical_claim_id FROM story_claim_evidence_attachments WHERE feed_item_id = 302").first<{ canonical_claim_id: string }>())?.canonical_claim_id, "kc06-claim-helios");
+    assert.equal((await database.prepare("SELECT eligibility_state FROM story_claim_evidence_attachments WHERE feed_item_id = 302").first<{ eligibility_state: string }>())?.eligibility_state, "eligible");
+    assert.equal((await database.prepare("SELECT evidence_status FROM story_clusters WHERE id = 301").first<{ evidence_status: string }>())?.evidence_status, beforeEvidenceStatus?.evidence_status,
+      "accepted eligible evidence recalculates the story without weakening its existing band");
+    assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM evidence_score_snapshots WHERE story_cluster_id = 301").first<{ count: number }>())?.count, 1,
+      "accepted eligible evidence creates one recalculation snapshot");
   } finally {
     database.close();
   }
@@ -425,8 +481,10 @@ async function kc02SchemaTests(): Promise<void> {
       "provenance_groups", "source_provenance_memberships", "canonical_claims", "claim_assertions",
       "story_claims", "knowledge_document_claims", "knowledge_document_claim_assertions",
       "story_relationships", "knowledge_change_proposals", "evidence_score_snapshots",
+      "canonical_claim_score_snapshots",
       "knowledge_processing_jobs", "knowledge_index_operations", "knowledge_index_operation_receipts",
       "knowledge_reconciliation_runs", "source_extractions", "source_summaries",
+      "legacy_claim_cutover", "legacy_claim_evidence_map",
     ];
     const tables = await database.prepare(
       `SELECT name FROM sqlite_master WHERE type = 'table' AND name IN (${requiredTables.map(() => "?").join(", ")})`,
@@ -452,6 +510,136 @@ async function kc02SchemaTests(): Promise<void> {
     `), /FOREIGN KEY|CHECK/, "assertions require a canonical claim and a source-version or legacy-claim link");
   } finally {
     database.close();
+  }
+}
+
+function kc07aEvidenceScoringTests(): void {
+  const primaryAssertion = {
+    admissionState: "admitted" as const, reviewerState: "accepted" as const,
+    freshnessState: "current" as const, relationship: "supports" as const,
+    sourceRole: "evidence" as const, directness: "direct" as const,
+    evidenceTreatment: "factual_support" as const, provenanceGroupId: "root-primary",
+    provenanceOriginType: "primary" as const, confidence: 1,
+  };
+  const independentAssertion = {
+    ...primaryAssertion,
+    relationship: "reproduces" as const,
+    provenanceGroupId: "root-independent",
+    provenanceOriginType: "independent_test" as const,
+    directness: "indirect" as const,
+    confidence: 1,
+  };
+  const stronglySupported = scoreCanonicalClaim({
+    id: "kc07-strong", currentState: "active", materiality: "high", claimClass: "observed_implementation_behaviour",
+    assertions: [primaryAssertion, independentAssertion],
+  });
+  assert.equal(stronglySupported.policyVersion, EVIDENCE_SCORE_POLICY_VERSION);
+  assert.equal(stronglySupported.evidenceStatus, "confirmed", "two current primary/independent roots can pass the confirmed gate");
+  assert.equal(stronglySupported.score, 100, "the maximum component roll-up is capped at 100");
+  assert.equal(stronglySupported.components.eligibleProvenanceRoots, 2);
+
+  const vendor = scoreCanonicalClaim({
+    id: "kc07-vendor", currentState: "active", materiality: "standard", claimClass: "official_vendor_claim",
+    assertions: [{ ...primaryAssertion, provenanceGroupId: "vendor-root", provenanceOriginType: "vendor_statement" as const }],
+  });
+  assert.equal(vendor.evidenceStatus, "vendor_reported", "vendor-only factual claims retain the vendor status cap");
+
+  const disputed = scoreCanonicalClaim({
+    id: "kc07-disputed", currentState: "active", materiality: "critical", claimClass: "observed_implementation_behaviour",
+    assertions: [primaryAssertion], conflicts: [{ unresolved: true, materiality: "critical" }],
+  });
+  assert.equal(disputed.evidenceStatus, "disputed", "an unresolved material conflict overrides the raw score");
+  assert.equal(disputed.components.consistency, 0);
+
+  const story = scoreStory([
+    { id: "kc07-strong", currentState: "active", materiality: "critical", claimClass: "observed_implementation_behaviour", assertions: [primaryAssertion, independentAssertion] },
+    { id: "kc07-vendor", currentState: "active", materiality: "standard", claimClass: "official_vendor_claim", assertions: [{ ...primaryAssertion, provenanceGroupId: "vendor-root", provenanceOriginType: "vendor_statement" as const }] },
+  ]);
+  assert.equal(story.policyVersion, EVIDENCE_SCORE_POLICY_VERSION);
+  assert.equal(story.score, 88.5, "story score uses materiality-weighted claim scores");
+  assert.equal(story.evidenceStatus, "confirmed", "story status rolls up the weighted claim policy");
+}
+
+async function kc05gLegacyCutoverTests(): Promise<void> {
+  const database = new SQLiteD1(false);
+  try {
+    database.sqlite.exec(`
+      INSERT INTO sources (id, name, url, section, tier, treatment, ingestion_type)
+      VALUES (901, 'Legacy source', 'https://legacy.example', 'A', 'A', 'primary-technical', 'manual');
+      INSERT INTO feed_items (id, source_id, url, url_hash, title, summary, content_excerpt, ingestion_status)
+      VALUES (901, 901, 'https://legacy.example/article', 'legacy-url-hash', 'Legacy article',
+              'Legacy summary', 'Legacy content', 'published');
+      INSERT INTO story_clusters
+        (id, title, evidence_status, published_at, is_published, reviewed_by, reviewed_at)
+      VALUES (901, 'Legacy story', 'confirmed', datetime('now'), 1, 'publisher@example.com', datetime('now'));
+      INSERT INTO story_cluster_members (cluster_id, feed_item_id, is_primary) VALUES (901, 901, 1);
+      INSERT INTO claims
+        (id, cluster_id, feed_item_id, claim_text, claim_class, claim_domain,
+         severity, evidence_quality, confidence_score, extraction_method, extraction_version)
+      VALUES (901, 901, 901, 'The legacy model shipped.', 'official_vendor_claim',
+              'model_release', 'high', 'strong', 0.8, 'rule_based', 'legacy-test-v1');
+      INSERT INTO claim_evidence
+        (id, claim_id, feed_item_id, relationship, evidence_summary, source_tier, is_primary_source)
+      VALUES (901, 901, 901, 'reports', 'Legacy source reported the release.', 'A', 1);
+    `);
+    database.sqlite.exec(readFileSync("db/migration-0043-legacy-claims-cutover.sql", "utf8"));
+    database.sqlite.exec(readFileSync("db/migration-0043-legacy-claims-cutover.sql", "utf8"));
+
+    assert.equal((await database.prepare("SELECT state FROM legacy_claim_cutover WHERE legacy_claim_id = 901").first<{ state: string }>())?.state, "mapped");
+    assert.equal((await database.prepare("SELECT canonical_claim_id FROM legacy_claim_cutover WHERE legacy_claim_id = 901").first<{ canonical_claim_id: string }>())?.canonical_claim_id, "legacy-claim-901");
+    assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM claim_assertions WHERE legacy_claim_id = 901").first<{ count: number }>())?.count, 2,
+      "legacy claim and accepted evidence each map to canonical assertions");
+    assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM legacy_claim_evidence_map WHERE legacy_claim_id = 901").first<{ count: number }>())?.count, 1);
+    assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM story_claims WHERE story_cluster_id = 901").first<{ count: number }>())?.count, 1);
+    assert.throws(() => database.sqlite.exec(`
+      INSERT INTO claims (feed_item_id, claim_text, claim_class, claim_domain, extraction_version)
+      VALUES (901, 'Must fail', 'community_report', 'general', 'test');
+    `), /read-only/, "legacy claims reject post-cutover writes");
+    assert.throws(() => database.sqlite.exec("DELETE FROM claim_evidence WHERE id = 901"), /read-only/, "legacy evidence rejects post-cutover writes");
+  } finally {
+    database.close();
+  }
+
+  const database2 = new SQLiteD1();
+  try {
+    database2.sqlite.exec(`
+      INSERT INTO sources (id, name, url, section, tier, treatment, ingestion_type)
+      VALUES (902, 'Canonical source', 'https://canonical.example', 'A', 'A', 'primary-technical', 'manual');
+    `);
+    const input = {
+      feedItemId: 902, clusterId: null, sourceId: 902,
+      sourceUrl: "https://canonical.example/article", title: "Canonical article",
+      content: "Canonical content", claimText: "The canonical model shipped.",
+      claimClass: "official_vendor_claim", claimDomain: "model_release",
+      materiality: "high" as const, confidence: 0.8,
+      extractionMethod: "rule_based", extractionVersion: "kc-05g-test-v1",
+    };
+    const first = await writeCanonicalClaim(database2.asD1(), input);
+    const second = await writeCanonicalClaim(database2.asD1(), input);
+    assert.equal(first.inserted, true, "new extraction writes a canonical assertion");
+    assert.equal(second.inserted, false, "canonical extraction writes are idempotent");
+    assert.equal((await database2.prepare("SELECT COUNT(*) AS count FROM canonical_claims").first<{ count: number }>())?.count, 1);
+    assert.equal((await database2.prepare("SELECT COUNT(*) AS count FROM claims").first<{ count: number }>())?.count, 0,
+      "new extraction does not dual-write the legacy claims table");
+    assert.equal((await database2.prepare("SELECT COUNT(*) AS count FROM claim_evidence").first<{ count: number }>())?.count, 0,
+      "new extraction does not dual-write legacy evidence");
+    database2.sqlite.exec(`
+      INSERT INTO story_clusters
+        (id, title, slug, summary, evidence_status, publication_status, published_at,
+         is_published, reviewed_by, reviewed_at)
+      VALUES (902, 'Canonical story', 'canonical-story', 'Canonical summary',
+              'confirmed', 'published', datetime('now'), 1, 'publisher@example.com', datetime('now'));
+      INSERT INTO story_claims (story_cluster_id, canonical_claim_id, role, materiality)
+      VALUES (902, '${first.canonicalClaimId}', 'primary', 'high');
+      UPDATE claim_assertions SET admission_state = 'admitted', reviewer_state = 'accepted',
+        reviewed_by = 'publisher@example.com', reviewed_at = datetime('now')
+      WHERE id = '${first.assertionId}';
+    `);
+    const evidence = await retrievePublishedEvidence(database2.asD1(), "canonical model shipped", 4);
+    assert.equal(evidence.length, 1, "Ask TRACE retrieves the reviewed canonical assertion");
+    assert.equal(evidence[0]?.claimId, `claim:${first.assertionId}`);
+  } finally {
+    database2.close();
   }
 }
 
@@ -1258,5 +1446,7 @@ await publicationAndIngestionTests();
 await deskBoundaryTests();
 await kc01TrustTests();
 await kc02SchemaTests();
+kc07aEvidenceScoringTests();
+await kc05gLegacyCutoverTests();
 await kc02ReconciliationTests();
 console.log("Stabilisation tests passed.");

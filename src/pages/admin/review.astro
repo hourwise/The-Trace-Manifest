@@ -600,7 +600,7 @@ try {
         try {
           const res = await adminFetch(`/api/admin/related-items?clusterId=${clusterId}`);
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          const data: { clusterItemCount: number; items: Array<{ id: number; title: string; sourceName: string; sourceTier: string; kind: "ingested_coverage" | "cluster" | "published_story"; clusterId: number | null; url: string | null; publishedAt: string | null; score: number; matchReasons: string[] }> } = await res.json();
+          const data: { clusterItemCount: number; items: Array<{ id: number; title: string; sourceName: string; sourceTier: string; kind: "ingested_coverage" | "cluster" | "published_story"; clusterId: number | null; url: string | null; publishedAt: string | null; score: number; matchReasons: string[]; review: { action: string; state: "accepted" | "rejected"; reviewedBy: string; reviewedAt: string } | null; affectedRecords: { publishedStories: Array<{ id: number; title: string; url: string | null }>; knowledgePages: Array<{ id: string; title: string; visibility: string; url: string }> } }> } = await res.json();
 
           if (data.items.length === 0) {
             relatedDiv.innerHTML = '<p class="meta">No related items found in the ingested pool. This story may be unique.</p>';
@@ -612,6 +612,22 @@ try {
                 const title = item.url
                   ? `<a href="${escapeHTML(safeExternalUrl(item.url))}" target="_blank" rel="noopener" style="font-weight:600;">${escapeHTML(item.title.slice(0, 90))}${item.title.length > 90 ? '…' : ''}</a>`
                   : `<span style="font-weight:600;">${escapeHTML(item.title.slice(0, 90))}${item.title.length > 90 ? '…' : ''}</span>`;
+                const targetAttribute = item.kind === "ingested_coverage"
+                  ? `data-target-feed="${item.id}"`
+                  : `data-target-story="${item.clusterId ?? item.id}"`;
+                const actionOptions = item.kind === "ingested_coverage"
+                  ? '<option value="attach_evidence">Attach evidence</option><option value="reject">Reject</option>'
+                  : '<option value="same_event">Same event</option><option value="follow_up">Follow-up</option><option value="related_context">Related context</option><option value="contradiction">Contradiction</option><option value="correction">Correction</option><option value="supersession">Supersession</option><option value="comparison">Comparison</option><option value="reject">Reject</option>';
+                const claimSelector = item.kind === "ingested_coverage"
+                  ? `<select data-related-claim style="font-size:0.7rem;padding:0.2rem;" ${item.claimOptions.length === 0 ? "disabled" : ""}><option value="">${item.claimOptions.length === 0 ? "No canonical claims" : "Select claim…"}</option>${item.claimOptions.map(claim => `<option value="${escapeHTML(claim.id)}">${escapeHTML(claim.text.slice(0, 70))}</option>`).join("")}</select>`
+                  : "";
+                const reviewLabel = item.review
+                  ? `<span class="badge" style="font-size:0.6rem;color:${item.review.state === "accepted" ? "var(--ev-confirmed)" : "var(--ev-disputed)"};">${escapeHTML(item.review.state)}: ${escapeHTML(item.review.action)}</span>`
+                  : `<span style="display:flex;gap:0.35rem;align-items:center;flex-wrap:wrap;">${claimSelector}<select data-related-action ${targetAttribute} style="font-size:0.7rem;padding:0.2rem;"><option value="">Review action…</option>${actionOptions}</select><button type="button" class="btn btn-secondary" data-related-review ${targetAttribute} style="font-size:0.7rem;padding:0.2rem 0.45rem;">Apply</button></span>`;
+                const affected = item.affectedRecords;
+                const affectedLabel = affected && (affected.publishedStories.length > 0 || affected.knowledgePages.length > 0)
+                  ? `<div class="meta" style="font-size:0.7rem;margin-top:0.25rem;"><strong>Affected:</strong> ${affected.publishedStories.map(story => story.url ? `<a href="${escapeHTML(story.url)}">${escapeHTML(story.title)}</a>` : escapeHTML(story.title)).join(", ")}${affected.knowledgePages.length > 0 ? `${affected.publishedStories.length > 0 ? " · " : ""}knowledge: ${affected.knowledgePages.map(page => `<a href="${escapeHTML(page.url)}">${escapeHTML(page.title)}</a>`).join(", ")}` : ""}</div>`
+                  : "";
                 return `
                 <div style="padding:0.4rem 0;border-bottom:1px solid var(--border-light);font-size:0.82rem;">
                   <div style="display:flex;gap:0.5rem;align-items:baseline;flex-wrap:wrap;">
@@ -623,9 +639,45 @@ try {
                   <div class="meta" style="font-size:0.7rem;margin-top:0.15rem;">
                     ${escapeHTML(item.sourceName)} · ${item.matchReasons.map(escapeHTML).join(" · ")} ${item.publishedAt ? '· ' + escapeHTML(item.publishedAt.slice(0, 10)) : ''}
                   </div>
+                  <div style="margin-top:0.35rem;">${reviewLabel}</div>
+                  ${affectedLabel}
                 </div>
               `;
               }).join("");
+
+            relatedDiv.querySelectorAll<HTMLButtonElement>("[data-related-review]").forEach((reviewButton) => {
+              reviewButton.addEventListener("click", async () => {
+                const row = reviewButton.closest("div[style*='border-bottom']");
+                const actionSelect = row?.querySelector<HTMLSelectElement>("[data-related-action]");
+                const action = actionSelect?.value ?? "";
+                if (!action) { status("Choose a related-item action first.", true); return; }
+                const sourceStoryId = parseInt(String(clusterId));
+                const targetStoryId = reviewButton.dataset.targetStory ? parseInt(reviewButton.dataset.targetStory) : undefined;
+                const targetFeedItemId = reviewButton.dataset.targetFeed ? parseInt(reviewButton.dataset.targetFeed) : undefined;
+                const canonicalClaimId = row?.querySelector<HTMLSelectElement>("[data-related-claim]")?.value || undefined;
+                if (action === "attach_evidence" && !canonicalClaimId) { status("Select a canonical claim before attaching evidence.", true); return; }
+                let explanation = "";
+                if (["contradiction", "correction", "supersession"].includes(action)) {
+                  explanation = window.prompt("Explain this editorial relationship (at least 10 characters):", "")?.trim() ?? "";
+                  if (explanation.length < 10) { status("An explanation of at least 10 characters is required.", true); return; }
+                }
+                reviewButton.disabled = true;
+                try {
+                  const reviewResponse = await adminFetch("/api/admin/related-items", {
+                    method: "POST",
+                    body: JSON.stringify({ sourceStoryId, targetStoryId, targetFeedItemId, canonicalClaimId, action, explanation }),
+                  });
+                  const reviewData = await reviewResponse.json() as { error?: string; status?: string };
+                  if (!reviewResponse.ok) throw new Error(reviewData.error || `HTTP ${reviewResponse.status}`);
+                  const reviewRow = reviewButton.parentElement;
+                  if (reviewRow) reviewRow.innerHTML = `<span class="badge" style="font-size:0.6rem;color:${reviewData.status === "accepted" ? "var(--ev-confirmed)" : "var(--ev-disputed)"};">${escapeHTML(reviewData.status ?? "reviewed")}: ${escapeHTML(action)}</span>`;
+                  status(action === "attach_evidence" ? "Evidence review recorded; evidence score unchanged." : "Related story review recorded.", false);
+                } catch (error: any) {
+                  reviewButton.disabled = false;
+                  status(error.message || "Related review failed.", true);
+                }
+              });
+            });
           }
           status(`Found ${data.items.length} related item(s).`, false);
         } catch (e: any) {

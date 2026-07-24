@@ -8,3 +8,7 @@ export const prerender = false;
 export const GET: APIRoute = async ({ request, locals }) => {
   return handleAdminProxyRequest(request, "related-items", locals.runtime.env);
 };
+
+export const POST: APIRoute = async ({ request, locals }) => {
+  return handleAdminProxyRequest(request, "related-items", locals.runtime.env);
+};

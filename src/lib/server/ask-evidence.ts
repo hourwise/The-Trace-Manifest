@@ -4,12 +4,12 @@ import {
 } from "../../ai/task-policy";
 
 interface EvidenceRow {
-  source_id: number;
+  source_id: string | number;
   source_name: string;
   source_url: string;
   source_tier: string;
   source_treatment: string;
-  claim_id: number;
+  claim_id: string;
   claim_text: string;
   evidence_quality: string;
   is_disputed: number;
@@ -72,20 +72,34 @@ export async function retrievePublishedEvidence(
   const searchTerms = terms(question);
   if (searchTerms.length === 0) return [];
   const boundedLimit = Math.max(1, Math.min(Number.isInteger(limit) ? limit : 8, 12));
-  const searchable = "LOWER(c.claim_text || ' ' || fi.title || ' ' || COALESCE(fi.content_excerpt, ''))";
+  const searchable = "LOWER(cc.canonical_text || ' ' || COALESCE(fi.title, '') || ' ' || COALESCE(fi.content_excerpt, '') || ' ' || COALESCE(sd.canonical_url, ''))";
   const predicates = searchTerms.map(() => `${searchable} LIKE ? ESCAPE '\\'`).join(" OR ");
   const result = await db.prepare(`
-    SELECT s.id AS source_id, s.name AS source_name, fi.url AS source_url,
-           s.tier AS source_tier, s.treatment AS source_treatment,
-           c.id AS claim_id, c.claim_text, c.evidence_quality, c.is_disputed,
-           ce.relationship, ce.evidence_summary, fi.title AS item_title,
+    SELECT COALESCE(s.id, legacy_s.id, sd.id) AS source_id,
+           COALESCE(s.name, legacy_s.name, 'Captured source') AS source_name,
+           COALESCE(sd.canonical_url, fi.url) AS source_url,
+           COALESCE(s.tier, legacy_s.tier, 'C') AS source_tier,
+           COALESCE(s.treatment, legacy_s.treatment, 'unclassified') AS source_treatment,
+           ca.id AS claim_id, cc.canonical_text AS claim_text,
+           CASE cc.current_state WHEN 'disputed' THEN 'disputed'
+             WHEN 'corrected' THEN 'disputed' WHEN 'superseded' THEN 'disputed'
+             ELSE 'unrated' END AS evidence_quality,
+           CASE WHEN cc.current_state = 'disputed' THEN 1 ELSE 0 END AS is_disputed,
+           ca.relationship, ca.assertion_text AS evidence_summary,
+           COALESCE(fi.title, sv.title, cc.canonical_text) AS item_title,
            fi.content_excerpt, fi.fetched_at AS observed_at,
            fi.published_at AS source_published_at, sc.published_at AS story_published_at
-    FROM claims c
-    JOIN story_clusters sc ON sc.id = c.cluster_id
-    JOIN claim_evidence ce ON ce.claim_id = c.id
-    JOIN feed_items fi ON fi.id = ce.feed_item_id
-    JOIN sources s ON s.id = fi.source_id
+    FROM claim_assertions ca
+    JOIN canonical_claims cc ON cc.id = ca.canonical_claim_id
+    JOIN story_claims story_claim ON story_claim.canonical_claim_id = cc.id
+    JOIN story_clusters sc ON sc.id = story_claim.story_cluster_id
+    LEFT JOIN source_document_versions sv ON sv.id = ca.source_document_version_id
+    LEFT JOIN source_documents sd ON sd.id = sv.source_document_id
+    LEFT JOIN sources s ON s.id = sd.source_id
+    LEFT JOIN legacy_claim_evidence_map legacy_map ON legacy_map.assertion_id = ca.id
+    LEFT JOIN claim_evidence ce ON ce.id = legacy_map.legacy_evidence_id
+    LEFT JOIN feed_items fi ON fi.id = ce.feed_item_id
+    LEFT JOIN sources legacy_s ON legacy_s.id = fi.source_id
     WHERE sc.publication_status = 'published'
       AND sc.published_at IS NOT NULL
       AND datetime(sc.published_at) <= datetime('now')
@@ -93,13 +107,15 @@ export async function retrievePublishedEvidence(
       AND sc.reviewed_by IS NOT NULL AND sc.reviewed_at IS NOT NULL
       AND sc.summary IS NOT NULL AND trim(sc.summary) <> ''
       AND sc.evidence_status NOT IN ('unverified','outdated','superseded')
-      AND fi.ingestion_status = 'published'
-      AND c.is_corrected = 0
-      AND c.claim_class <> 'legacy_unclassified'
+      AND (fi.id IS NULL OR fi.ingestion_status = 'published')
+      AND ca.admission_state = 'admitted'
+      AND ca.reviewer_state = 'accepted'
+      AND cc.current_state NOT IN ('corrected', 'superseded', 'retired')
+      AND (legacy_map.assertion_id IS NOT NULL OR sv.id IS NOT NULL)
       AND (${predicates})
-    ORDER BY c.is_disputed ASC,
+    ORDER BY is_disputed ASC,
       CASE s.tier WHEN 'A' THEN 0 WHEN 'B' THEN 1 ELSE 2 END,
-      CASE c.evidence_quality WHEN 'very_strong' THEN 0 WHEN 'strong' THEN 1 WHEN 'moderate' THEN 2 ELSE 3 END,
+      CASE evidence_quality WHEN 'very_strong' THEN 0 WHEN 'strong' THEN 1 WHEN 'moderate' THEN 2 ELSE 3 END,
       COALESCE(fi.published_at, fi.fetched_at) DESC
     LIMIT ?
   `).bind(...searchTerms.map(likeTerm), boundedLimit).all<EvidenceRow>();

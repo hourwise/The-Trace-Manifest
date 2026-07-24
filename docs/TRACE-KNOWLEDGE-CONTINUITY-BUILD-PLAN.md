@@ -1,6 +1,6 @@
 # TRACE Knowledge Continuity and Story Memory Build Plan
 
-**Status:** Canonical implementation plan (KC-02, KC-03A–E, KC-04A–F, and KC-05A–F structured extraction/metadata/review continuity complete; KC-05G is next)
+**Status:** Canonical implementation plan (KC-02, KC-03A–E, KC-04A–F, KC-05A–G, KC-06A–E, and KC-07A–B complete locally; KC-07C is next)
 
 **Date:** 23 July 2026
 
@@ -663,24 +663,24 @@ Exit: captured content produces reviewable structured claims and a source summar
 - [x] **KC-05D:** Create deterministic, exact-content shared-origin group proposals with mandatory publisher review. Accepted proposals create the reviewed provenance group/root and derivative memberships and link source assertions; evidence scores remain unchanged.
 - [x] **KC-05E:** Create deterministic, review-gated claim relationship proposals for support, qualification, contradiction, reproduction, correction, temporal change, and supersession. Accepted proposals add a reviewed relation assertion; claim state and evidence scores remain unchanged.
 - [x] **KC-05F:** Preserve explicit unresolved conflict cases from reviewed contradiction, correction, supersession, and temporal-change relationships. Publisher acknowledge/resolve/dismiss/reopen decisions are attributable; no side is selected and no claim state or evidence score changes automatically.
-- [ ] **KC-05G:** Complete the legacy claims mapping and route cutover: canonical tables receive all new writes, while legacy claims become read-only compatibility data with no indefinite dual-write path.
+- [x] **KC-05G:** Complete the legacy claims mapping and route cutover: canonical tables receive all new writes, while legacy claims become read-only compatibility data with no indefinite dual-write path.
 
 Exit: two derivative articles count as one evidentiary root, while an independent test can count separately and a contradiction remains visible.
 
 ### KC-06 — Find Related becomes an editorial workflow
 
-- [ ] **KC-06A:** Replace the current read-only list with candidates from entity, lexical, claim, date, provenance, and semantic matching.
-- [ ] **KC-06B:** Add explicit reviewer actions: same event, attach evidence, follow-up, related context, contradiction, correction, supersession, comparison, or reject.
-- [ ] **KC-06C:** Persist accepted story relationships and claim/evidence attachments with reviewer identity.
-- [ ] **KC-06D:** Do not alter evidence score until an eligible claim-level attachment is accepted.
-- [ ] **KC-06E:** Surface existing published stories and knowledge pages affected by the accepted relationship.
+- [x] **KC-06A:** Replace the current read-only list with candidates from entity, lexical, claim, date, provenance, and semantic matching. The Worker endpoint and admin UI now expose ranked, explainable candidates. See [`docs/audit/kc-06-related-workflow-evidence.md`](audit/kc-06-related-workflow-evidence.md).
+- [x] **KC-06B:** Add explicit publisher actions: same event, attach evidence, follow-up, related context, contradiction, correction, supersession, comparison, or reject. Migration 0044 records idempotent decisions and accepted story relationships. See [`docs/audit/kc-06-related-workflow-evidence.md`](audit/kc-06-related-workflow-evidence.md).
+- [x] **KC-06C:** Persist accepted story relationships and claim/evidence attachments with reviewer identity. Accepted story actions and canonical-claim/feed-item evidence attachments are attributable and idempotent; no score is recalculated.
+- [x] **KC-06D:** Do not alter evidence score until an eligible claim-level attachment is accepted. The related-review path records explicit attachment eligibility and never mutates story status or creates a score snapshot; score recalculation remains KC-07 work.
+- [x] **KC-06E:** Surface existing published stories and approved, non-expired knowledge pages affected by an accepted relationship or claim-level evidence attachment. Results include stable story and knowledge-document links.
 
 Exit: a related result can be durably attached or linked, and the audit record explains why it did or did not affect evidence.
 
 ### KC-07 — Evidence scoring and automatic recalculation
 
-- [ ] **KC-07A:** Implement the versioned claim score and story roll-up policy from section 8.
-- [ ] **KC-07B:** Recompute after accepted evidence, correction, provenance change, conflict resolution, expiry, withdrawal, or supersession.
+- [x] **KC-07A:** Implement the versioned claim score and story roll-up policy from section 8. Policy `kc-07a-v1` is pure, deterministic, materiality-weighted, and snapshot-schema-backed; automatic recalculation remains KC-07B.
+- [x] **KC-07B:** Recompute after accepted evidence, correction, provenance change, conflict resolution, expiry, withdrawal, or supersession. The D1-backed recalculation service invokes `kc-07a-v1`, persists claim/story score snapshots, updates qualitative story status, and is wired into review, correction, publication-status, and scheduled expiry paths. See [`docs/audit/kc-07b-automatic-recalculation-evidence.md`](audit/kc-07b-automatic-recalculation-evidence.md).
 - [ ] **KC-07C:** Store immutable score snapshots and before/after explanations.
 - [ ] **KC-07D:** Add an admin evidence panel showing material claims, roots, roles, conflicts, caps, penalties, and proposed status.
 - [ ] **KC-07E:** Require human approval for high-impact status changes and corrections; allow only policy-approved low-risk metadata recalculation later.

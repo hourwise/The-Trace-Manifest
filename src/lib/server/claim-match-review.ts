@@ -1,5 +1,6 @@
 import { generateClaimProvenanceProposal } from "./claim-provenance-proposals";
 import { generateClaimRelationshipProposals } from "./claim-relationship-proposals";
+import { recalculateEvidenceScores } from "./evidence-recalculation";
 
 export type ClaimMatchDecision = "merge_existing" | "create_new" | "reject";
 
@@ -147,6 +148,12 @@ export async function reviewClaimMatchCandidate(
   const relationshipProposals = resolvedCanonicalClaimId
     ? await generateClaimRelationshipProposals(db, { sourceAssertionId: `assertion-${candidate.source_extraction_id}` })
     : { proposalsCreated: 0 };
+  if (resolvedCanonicalClaimId) {
+    await recalculateEvidenceScores(db, {
+      claimIds: [resolvedCanonicalClaimId, candidate.source_canonical_claim_id],
+      triggeringEvent: "claim_match_accepted",
+    });
+  }
   return {
     candidateId: candidate.id,
     previousState: candidate.state,

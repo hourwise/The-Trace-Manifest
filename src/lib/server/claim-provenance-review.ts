@@ -1,4 +1,5 @@
 export type ClaimProvenanceReviewDecision = "accept" | "reject";
+import { recalculateEvidenceScores } from "./evidence-recalculation";
 
 export interface ClaimProvenanceReviewInput {
   proposalId: string;
@@ -84,6 +85,17 @@ export async function reviewClaimProvenanceProposal(
   const results = await db.batch(statements);
   if (Number(results[0]?.meta.changes ?? 0) !== 1) {
     throw new ClaimProvenanceReviewError("review_conflict", "The provenance proposal changed before this review was saved.", 409);
+  }
+  if (input.decision === "accept") {
+    const assertion = await db.prepare(
+      "SELECT canonical_claim_id FROM claim_assertions WHERE id = ?",
+    ).bind(proposal.claim_assertion_id).first<{ canonical_claim_id: string }>();
+    if (assertion) {
+      await recalculateEvidenceScores(db, {
+        claimIds: [assertion.canonical_claim_id],
+        triggeringEvent: "provenance_changed",
+      });
+    }
   }
   return { proposalId: proposal.id, previousState: proposal.state, decision: input.decision, assertionId: proposal.claim_assertion_id };
 }

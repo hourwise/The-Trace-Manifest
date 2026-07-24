@@ -15,7 +15,7 @@ const PUBLISH_ROUTES = new Set([
   "ingest", "classify", "dedup", "cluster", "extract-claims", "detect-conflicts",
   "correct", "seed-models", "extract-model-data", "publish-story", "withdraw-story",
   "publish-briefing", "archive-cluster",
-  "candidates", "social-signals",
+  "candidates", "social-signals", "related-items",
 ]);
 
 interface ProxyEnvironment {

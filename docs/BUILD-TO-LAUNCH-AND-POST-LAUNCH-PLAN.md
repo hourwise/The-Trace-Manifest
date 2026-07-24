@@ -98,7 +98,7 @@ The Cloudflare Pages deploy command (`npx wrangler pages deploy dist`) was remov
 
 ### Medium-term
 
-- [ ] **Knowledge Continuity KC-05 to KC-10** — KC-05A creates deterministic claim-match candidates, KC-05B provides publisher decisions, KC-05C adds review-gated claim provenance metadata, KC-05D adds shared-origin grouping, KC-05E adds reviewed claim relationship assertions, and KC-05F preserves unresolved conflict cases without selecting a winner; remaining work covers legacy cutover, durable related-story workflow, evidence scoring, manual knowledge inheritance, and knowledge-impact proposals. Treat KC-02 through KC-08 as the minimum complete D1/R2 knowledge loop; lock the embedding decision before optional Vectorize/multi-position work in KC-09.
+- [ ] **Knowledge Continuity KC-05 to KC-10** — KC-05A–F provide deterministic claim matching, publisher decisions, provenance, shared-origin grouping, reviewed relationships, and unresolved conflict preservation; KC-05G now maps legacy claims/evidence, freezes compatibility tables, and routes new writes through canonical claims/assertions. Remaining work covers the durable related-story workflow, evidence scoring, manual knowledge inheritance, and knowledge-impact proposals. Treat KC-02 through KC-08 as the minimum complete D1/R2 knowledge loop; lock the embedding decision before optional Vectorize/multi-position work in KC-09.
 - [ ] **Public Guides** — render approved guides at `/guides/[slug]`, integrate with Ask TRACE
 - [ ] **Guides ↔ Knowledge linking** — cross-reference guides with related knowledge docs
 - [ ] **Social signals → Feed items** — promotion workflow for social posts to become stories

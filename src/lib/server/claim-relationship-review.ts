@@ -1,4 +1,5 @@
 import { generateClaimConflictCase } from "./claim-conflict-cases";
+import { recalculateEvidenceScores } from "./evidence-recalculation";
 
 export type ClaimRelationshipReviewDecision = "accept" | "reject";
 
@@ -109,5 +110,11 @@ export async function reviewClaimRelationshipProposal(
   const conflictCase = input.decision === "accept"
     ? await generateClaimConflictCase(db, { relationshipProposalId: proposal.id })
     : { conflictCaseId: null };
+  if (input.decision === "accept") {
+    await recalculateEvidenceScores(db, {
+      claimIds: [proposal.target_canonical_claim_id],
+      triggeringEvent: conflictCase.conflictCaseId ? "conflict_created" : "accepted_evidence",
+    });
+  }
   return { proposalId: proposal.id, previousState: proposal.state, decision: input.decision, createdAssertionId, conflictCaseId: conflictCase.conflictCaseId };
 }

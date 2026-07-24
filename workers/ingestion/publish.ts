@@ -4,6 +4,7 @@
 // All public-facing queries must go through the published data contract.
 
 import type { Env } from "./index";
+import { recalculateEvidenceScores } from "../../src/lib/server/evidence-recalculation";
 
 // ============================================================
 // Types
@@ -353,6 +354,11 @@ export async function updateStoryStatus(
   )
     .bind(newStatus, reason, reason, now, clusterId)
     .run();
+
+  await recalculateEvidenceScores(env.DB, {
+    storyIds: [clusterId],
+    triggeringEvent: newStatus === "superseded" ? "story_superseded" : "story_withdrawn",
+  });
 
   return { success: true };
 }
@@ -760,6 +766,11 @@ export async function archiveCluster(
   if (Number(changed.meta.changes ?? 0) !== 1) {
     return { success: false, error: "Only draft or review clusters can be archived." };
   }
+
+  await recalculateEvidenceScores(env.DB, {
+    storyIds: [clusterId],
+    triggeringEvent: "story_archived",
+  });
 
   return { success: true };
 }

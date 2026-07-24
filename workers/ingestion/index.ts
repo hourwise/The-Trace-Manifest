@@ -29,11 +29,28 @@ import { verifyInternalRequestSignature } from "../../src/security/internal-sign
 import type { OperatorRole } from "../../src/security/access-auth";
 import { admitAndQueueFeedCapture, admitAndQueueManualCapture } from "./knowledge-capture-queue";
 import { consumeKnowledgeCaptureBatch } from "./knowledge-capture-consumer";
+import { recalculateEvidenceScores, recalculateExpiredEvidence } from "../../src/lib/server/evidence-recalculation";
 
 // ============================================================
 // Signed internal-service authentication
 // ============================================================
 interface InternalOperator { email: string; role: OperatorRole; requestId: string }
+
+const RELATED_ITEM_ACTIONS = [
+  "same_event", "attach_evidence", "follow_up", "related_context",
+  "contradiction", "correction", "supersession", "comparison", "reject",
+] as const;
+type RelatedItemAction = typeof RELATED_ITEM_ACTIONS[number];
+
+const RELATED_ACTION_RELATIONSHIPS: Partial<Record<RelatedItemAction, string>> = {
+  same_event: "same_event",
+  follow_up: "follow_up_to",
+  related_context: "related_context",
+  contradiction: "contradicts",
+  correction: "corrects",
+  supersession: "supersedes",
+  comparison: "compares_with",
+};
 
 const READ_ADMIN_ROUTES = new Set([
   "/admin/sources", "/admin/sources/health", "/admin/jobs", "/admin/cron-runs",
@@ -45,6 +62,7 @@ const WRITE_ADMIN_ROUTES = new Set([
   "/admin/extract-claims", "/admin/detect-conflicts", "/admin/correct",
   "/admin/seed-models", "/admin/extract-model-data", "/admin/publish-story",
   "/admin/withdraw-story", "/admin/publish-briefing", "/admin/archive-cluster",
+  "/admin/related-items",
   "/admin/candidates", "/admin/social-signals", "/admin/knowledge/capture-url",
 ]);
 const MAX_ADMIN_BODY_BYTES = 64 * 1024;
@@ -156,6 +174,7 @@ export default {
           await runEvidenceUpgradePipeline(env);
           await runClaimExtractionPipeline(env);
           await runConflictDetectionPipeline(env);
+          await recalculateExpiredEvidence(env.DB);
           await runModelDataPipeline(env);
           break;
         case "0 18 * * *":
@@ -1000,7 +1019,9 @@ async function handleAdminRoute(
     case "/admin/archive-cluster":
       return handleArchiveCluster(request, env);
     case "/admin/related-items":
-      return handleRelatedItems(request, env);
+      return request.method === "GET"
+        ? handleRelatedItems(request, env)
+        : handleRelatedItemReview(request, env, operator);
     case "/admin/candidates":
       return request.method === "GET"
         ? handleCandidateList(env)
@@ -1566,12 +1587,14 @@ async function handleRelatedItems(request: Request, env: Env): Promise<Response>
 
   try {
     const currentCluster = await env.DB.prepare(`
-      SELECT id, title, topic, summary, editorial_analysis, why_it_matters
+      SELECT id, slug, title, topic, summary, editorial_analysis, why_it_matters,
+             publication_status, published_at, created_at
       FROM story_clusters
       WHERE id = ?
     `).bind(clusterId).first<{
       id: number; title: string; topic: string | null; summary: string | null;
       editorial_analysis: string | null; why_it_matters: string | null;
+      slug: string | null; publication_status: string; published_at: string | null; created_at: string;
     }>();
     if (!currentCluster) return Response.json({ error: "Cluster not found." }, { status: 404 });
 
@@ -1606,7 +1629,10 @@ async function handleRelatedItems(request: Request, env: Env): Promise<Response>
     const clusterItemIds = new Set(clusterSources.results.map(r => r.id));
     const [feedCandidates, relatedClusters] = await Promise.all([
       env.DB.prepare(`
-        SELECT fi.id, fi.title, fi.content_excerpt, fi.url, fi.published_at,
+        SELECT fi.id, fi.title, fi.content_excerpt, fi.url, fi.published_at, fi.fetched_at,
+               (SELECT scm.cluster_id FROM story_cluster_members scm
+                WHERE scm.feed_item_id = fi.id
+                ORDER BY scm.is_primary DESC LIMIT 1) AS cluster_id,
                s.name AS source_name, s.tier AS source_tier
         FROM feed_items fi
         JOIN sources s ON fi.source_id = s.id
@@ -1616,11 +1642,12 @@ async function handleRelatedItems(request: Request, env: Env): Promise<Response>
         LIMIT 500
       `).all<{
         id: number; title: string; content_excerpt: string | null; url: string;
-        published_at: string | null; source_name: string; source_tier: string;
+        published_at: string | null; fetched_at: string; cluster_id: number | null;
+        source_name: string; source_tier: string;
       }>(),
       env.DB.prepare(`
         SELECT id, slug, title, topic, summary, editorial_analysis, why_it_matters,
-               publication_status, published_at
+               publication_status, published_at, created_at
         FROM story_clusters
         WHERE id <> ? AND publication_status NOT IN ('withdrawn', 'superseded')
         ORDER BY COALESCE(published_at, updated_at, created_at) DESC
@@ -1628,21 +1655,178 @@ async function handleRelatedItems(request: Request, env: Env): Promise<Response>
       `).bind(clusterId).all<{
         id: number; slug: string | null; title: string; topic: string | null;
         summary: string | null; editorial_analysis: string | null; why_it_matters: string | null;
-        publication_status: string; published_at: string | null;
+        publication_status: string; published_at: string | null; created_at: string;
       }>(),
     ]);
+
+    type RelatedProfile = {
+      entities: Set<number>;
+      claims: Map<string, string>;
+      provenanceGroups: Set<string>;
+    };
+    const emptyProfile = (): RelatedProfile => ({
+      entities: new Set<number>(),
+      claims: new Map<string, string>(),
+      provenanceGroups: new Set<string>(),
+    });
+    const clusterIds = [...new Set([
+      clusterId,
+      ...(relatedClusters.results ?? []).map((row) => row.id),
+      ...(feedCandidates.results ?? []).map((row) => row.cluster_id).filter((id): id is number => id !== null),
+    ])];
+    const feedItemIds = (feedCandidates.results ?? []).map((row) => row.id);
+    const clusterPlaceholders = clusterIds.map(() => "?").join(",");
+    const feedItemPlaceholders = feedItemIds.map(() => "?").join(",");
+    const [entityRows, claimRows, provenanceRows, feedClaimRows, feedProvenanceRows] = await Promise.all([
+      env.DB.prepare(`
+        SELECT cluster_id, entity_id FROM story_entities
+        WHERE cluster_id IN (${clusterPlaceholders})
+      `).bind(...clusterIds).all<{ cluster_id: number; entity_id: number }>(),
+      env.DB.prepare(`
+        SELECT sc.story_cluster_id AS cluster_id, sc.canonical_claim_id AS claim_id,
+               cc.canonical_text
+        FROM story_claims sc
+        JOIN canonical_claims cc ON cc.id = sc.canonical_claim_id
+        WHERE sc.story_cluster_id IN (${clusterPlaceholders})
+      `).bind(...clusterIds).all<{ cluster_id: number; claim_id: string; canonical_text: string }>(),
+      env.DB.prepare(`
+        SELECT sc.story_cluster_id AS cluster_id, ca.provenance_group_id
+        FROM story_claims sc
+        JOIN claim_assertions ca ON ca.canonical_claim_id = sc.canonical_claim_id
+        WHERE sc.story_cluster_id IN (${clusterPlaceholders})
+          AND ca.provenance_group_id IS NOT NULL
+          AND ca.admission_state = 'admitted'
+          AND ca.reviewer_state IN ('accepted', 'amended')
+      `).bind(...clusterIds).all<{ cluster_id: number; provenance_group_id: string }>(),
+      feedItemIds.length > 0
+        ? env.DB.prepare(`
+            SELECT c.feed_item_id, m.canonical_claim_id AS claim_id, cc.canonical_text
+            FROM claims c
+            JOIN legacy_claim_cutover m ON m.legacy_claim_id = c.id AND m.state = 'mapped'
+            JOIN canonical_claims cc ON cc.id = m.canonical_claim_id
+            WHERE c.feed_item_id IN (${feedItemPlaceholders})
+          `).bind(...feedItemIds).all<{ feed_item_id: number; claim_id: string; canonical_text: string }>()
+        : Promise.resolve({ results: [] as { feed_item_id: number; claim_id: string; canonical_text: string }[] }),
+      feedItemIds.length > 0
+        ? env.DB.prepare(`
+            SELECT c.feed_item_id, ca.provenance_group_id
+            FROM claims c
+            JOIN legacy_claim_cutover m ON m.legacy_claim_id = c.id AND m.state = 'mapped'
+            JOIN claim_assertions ca ON ca.canonical_claim_id = m.canonical_claim_id
+            WHERE c.feed_item_id IN (${feedItemPlaceholders})
+              AND ca.provenance_group_id IS NOT NULL
+              AND ca.admission_state = 'admitted'
+              AND ca.reviewer_state IN ('accepted', 'amended')
+          `).bind(...feedItemIds).all<{ feed_item_id: number; provenance_group_id: string }>()
+        : Promise.resolve({ results: [] as { feed_item_id: number; provenance_group_id: string }[] }),
+    ]);
+
+    const clusterProfiles = new Map<number, RelatedProfile>();
+    const feedProfiles = new Map<number, RelatedProfile>();
+    for (const id of clusterIds) clusterProfiles.set(id, emptyProfile());
+    for (const id of feedItemIds) feedProfiles.set(id, emptyProfile());
+    for (const row of entityRows.results ?? []) clusterProfiles.get(row.cluster_id)?.entities.add(row.entity_id);
+    for (const row of claimRows.results ?? []) clusterProfiles.get(row.cluster_id)?.claims.set(row.claim_id, row.canonical_text);
+    for (const row of provenanceRows.results ?? []) clusterProfiles.get(row.cluster_id)?.provenanceGroups.add(row.provenance_group_id);
+    for (const row of feedClaimRows.results ?? []) feedProfiles.get(row.feed_item_id)?.claims.set(row.claim_id, row.canonical_text);
+    for (const row of feedProvenanceRows.results ?? []) feedProfiles.get(row.feed_item_id)?.provenanceGroups.add(row.provenance_group_id);
+
+    const currentProfile = clusterProfiles.get(clusterId) ?? emptyProfile();
+    for (const claimText of currentProfile.claims.values()) {
+      for (const word of tokenizeForSearch(claimText)) clusterWords.add(word);
+    }
+    const reviewRows = await env.DB.prepare(`
+      SELECT target_story_id, target_feed_item_id, action, state, reviewed_by, reviewed_at
+      FROM story_related_item_reviews
+      WHERE source_story_id = ?
+      ORDER BY reviewed_at DESC
+    `).bind(clusterId).all<{
+      target_story_id: number | null; target_feed_item_id: number | null;
+      action: RelatedItemAction; state: "accepted" | "rejected";
+      reviewed_by: string; reviewed_at: string;
+    }>();
+    const latestReviews = new Map<string, (typeof reviewRows.results)[number]>();
+    for (const review of reviewRows.results ?? []) {
+      const key = relatedCandidateKey(review.target_story_id, review.target_feed_item_id);
+      if (!latestReviews.has(key)) latestReviews.set(key, review);
+    }
+    const [affectedStoryRows, affectedKnowledgeRelationshipRows, affectedKnowledgeClaimRows] = await Promise.all([
+      env.DB.prepare(`
+        SELECT id, slug, title, publication_status
+        FROM story_clusters
+        WHERE id IN (${clusterPlaceholders}) AND publication_status = 'published'
+      `).bind(...clusterIds).all<{ id: number; slug: string | null; title: string; publication_status: string }>(),
+      env.DB.prepare(`
+        SELECT kdr.related_id AS story_id, kd.id, kd.canonical_question, kd.visibility
+        FROM knowledge_document_relationships kdr
+        JOIN knowledge_documents kd ON kd.id = kdr.knowledge_document_id
+        WHERE kdr.related_type = 'story_cluster'
+          AND kdr.related_id IN (${clusterPlaceholders})
+          AND kd.status = 'approved'
+          AND kd.visibility IN ('public_knowledge', 'public_guide')
+          AND (kd.hard_expiry IS NULL OR datetime(kd.hard_expiry) > datetime('now'))
+      `).bind(...clusterIds.map(String)).all<{ story_id: string; id: string; canonical_question: string; visibility: string }>(),
+      env.DB.prepare(`
+        SELECT sc.story_cluster_id AS story_id, kd.id, kd.canonical_question, kd.visibility
+        FROM story_claims sc
+        JOIN knowledge_document_claims kdc ON kdc.canonical_claim_id = sc.canonical_claim_id
+        JOIN knowledge_documents kd ON kd.id = kdc.knowledge_document_id
+        WHERE sc.story_cluster_id IN (${clusterPlaceholders})
+          AND kd.status = 'approved'
+          AND kd.visibility IN ('public_knowledge', 'public_guide')
+          AND (kd.hard_expiry IS NULL OR datetime(kd.hard_expiry) > datetime('now'))
+      `).bind(...clusterIds).all<{ story_id: number; id: string; canonical_question: string; visibility: string }>(),
+    ]);
+    const publishedStoriesById = new Map((affectedStoryRows.results ?? []).map((row) => [row.id, row]));
+    const knowledgeByStoryId = new Map<number, Map<string, { id: string; title: string; visibility: string }>>();
+    const addKnowledge = (storyId: number, row: { id: string; canonical_question: string; visibility: string }) => {
+      const pages = knowledgeByStoryId.get(storyId) ?? new Map<string, { id: string; title: string; visibility: string }>();
+      pages.set(row.id, { id: row.id, title: row.canonical_question, visibility: row.visibility });
+      knowledgeByStoryId.set(storyId, pages);
+    };
+    for (const row of affectedKnowledgeRelationshipRows.results ?? []) addKnowledge(Number(row.story_id), row);
+    for (const row of affectedKnowledgeClaimRows.results ?? []) addKnowledge(row.story_id, row);
+
+    const affectedRecordsFor = (
+      targetStoryId: number | null,
+      targetFeedItemId: number | null,
+      review: { state: "accepted" | "rejected"; action: RelatedItemAction } | null,
+    ) => {
+      if (!review || review.state !== "accepted") return { publishedStories: [], knowledgePages: [] };
+      const storyIds = targetFeedItemId !== null ? [clusterId] : [clusterId, targetStoryId as number];
+      const publishedStories = storyIds
+        .map((id) => publishedStoriesById.get(id))
+        .filter((row): row is { id: number; slug: string | null; title: string; publication_status: string } => Boolean(row))
+        .map((row) => ({ id: row.id, title: row.title, url: row.slug ? `/stories/${encodeURIComponent(row.slug)}` : null }));
+      const knowledgePages = [...new Map(storyIds.flatMap((id) => [...(knowledgeByStoryId.get(id)?.values() ?? [])]).map((page) => [page.id, page])).values()]
+        .map((page) => ({ ...page, url: `/knowledge/doc/${encodeURIComponent(page.id)}` }));
+      return { publishedStories, knowledgePages };
+    };
 
     interface RelatedItem {
       id: number; title: string; sourceName: string; sourceTier: string;
       kind: "ingested_coverage" | "cluster" | "published_story";
       clusterId: number | null; url: string | null; publishedAt: string | null;
       score: number; matchReasons: string[];
+      claimOptions: Array<{ id: string; text: string }>;
+      review: { action: RelatedItemAction; state: "accepted" | "rejected"; reviewedBy: string; reviewedAt: string } | null;
+      affectedRecords: { publishedStories: Array<{ id: number; title: string; url: string | null }>; knowledgePages: Array<{ id: string; title: string; visibility: string; url: string }> };
     }
 
     const scored: RelatedItem[] = [];
     for (const row of feedCandidates.results ?? []) {
       if (clusterItemIds.has(row.id)) continue;
-      const match = scoreRelatedContent(clusterWords, row.title, row.content_excerpt, currentCluster.topic, null);
+      const match = scoreRelatedContent(
+        clusterWords,
+        row.title,
+        row.content_excerpt,
+        currentCluster.topic,
+        null,
+        currentCluster.published_at ?? currentCluster.created_at,
+        row.published_at ?? row.fetched_at,
+        currentProfile,
+        feedProfiles.get(row.id) ?? emptyProfile(),
+      );
       if (match.score >= 20) {
         scored.push({
           id: row.id, title: row.title,
@@ -1650,6 +1834,12 @@ async function handleRelatedItems(request: Request, env: Env): Promise<Response>
           kind: "ingested_coverage", clusterId: null,
           url: row.url, publishedAt: row.published_at, score: match.score,
           matchReasons: match.reasons,
+          claimOptions: [...currentProfile.claims].map(([id, text]) => ({ id, text })),
+          affectedRecords: affectedRecordsFor(null, row.id, latestReviews.get(relatedCandidateKey(null, row.id)) ?? null),
+          review: (() => {
+            const review = latestReviews.get(relatedCandidateKey(null, row.id));
+            return review ? { action: review.action, state: review.state, reviewedBy: review.reviewed_by, reviewedAt: review.reviewed_at } : null;
+          })(),
         });
       }
     }
@@ -1661,6 +1851,10 @@ async function handleRelatedItems(request: Request, env: Env): Promise<Response>
         [row.summary, row.editorial_analysis, row.why_it_matters].filter(Boolean).join("\n"),
         currentCluster.topic,
         row.topic,
+        currentCluster.published_at ?? currentCluster.created_at,
+        row.published_at ?? row.created_at,
+        currentProfile,
+        clusterProfiles.get(row.id) ?? emptyProfile(),
       );
       if (match.score < 20) continue;
       const publishedStory = row.publication_status === "published";
@@ -1674,6 +1868,12 @@ async function handleRelatedItems(request: Request, env: Env): Promise<Response>
         publishedAt: row.published_at,
         score: match.score,
         matchReasons: match.reasons,
+        claimOptions: [...currentProfile.claims].map(([id, text]) => ({ id, text })),
+        affectedRecords: affectedRecordsFor(row.id, null, latestReviews.get(relatedCandidateKey(row.id, null)) ?? null),
+        review: (() => {
+          const review = latestReviews.get(relatedCandidateKey(row.id, null));
+          return review ? { action: review.action, state: review.state, reviewedBy: review.reviewed_by, reviewedAt: review.reviewed_at } : null;
+        })(),
       });
     }
 
@@ -1685,12 +1885,202 @@ async function handleRelatedItems(request: Request, env: Env): Promise<Response>
   }
 }
 
+function isRelatedItemAction(value: unknown): value is RelatedItemAction {
+  return typeof value === "string" && (RELATED_ITEM_ACTIONS as readonly string[]).includes(value);
+}
+
+function assessRelatedEvidenceEligibility(
+  ingestionStatus: string | null,
+  claimState: string | null,
+): { state: "eligible" | "pending" | "ineligible"; reason: string } {
+  if (["corrected", "superseded", "retired"].includes(claimState ?? "")) {
+    return { state: "ineligible", reason: `The canonical claim is ${claimState} and cannot receive current support.` };
+  }
+  if (["archived", "rejected", "duplicate"].includes(ingestionStatus ?? "")) {
+    return { state: "ineligible", reason: `The feed item is ${ingestionStatus} and is not eligible evidence.` };
+  }
+  if (ingestionStatus === "raw" || ingestionStatus === null) {
+    return { state: "pending", reason: "The feed item requires classification before score eligibility can be assessed." };
+  }
+  if (!["classified", "clustered", "published"].includes(ingestionStatus)) {
+    return { state: "pending", reason: `The feed item is ${ingestionStatus} and has not reached an eligible review state.` };
+  }
+  return { state: "eligible", reason: "The claim is active and the feed item is admitted to the reviewed ingestion pool." };
+}
+
+function relatedCandidateKey(targetStoryId: number | null, targetFeedItemId: number | null): string {
+  return targetStoryId !== null ? `story:${targetStoryId}` : `feed:${targetFeedItemId}`;
+}
+
+async function handleRelatedItemReview(
+  request: Request,
+  env: Env,
+  operator: InternalOperator,
+): Promise<Response> {
+  if (request.method !== "POST") return Response.json({ error: "Method not allowed" }, { status: 405 });
+
+  const body = await readAdminObject(request, [
+    "sourceStoryId", "targetStoryId", "targetFeedItemId", "canonicalClaimId", "action", "explanation", "confidence",
+  ]);
+  if (!body || !positiveInteger(body.sourceStoryId) || !isRelatedItemAction(body.action)) {
+    return Response.json({ error: "sourceStoryId and a valid action are required." }, { status: 400 });
+  }
+  const sourceStoryId = body.sourceStoryId as number;
+  const targetStoryId = body.targetStoryId === undefined ? null : body.targetStoryId;
+  const targetFeedItemId = body.targetFeedItemId === undefined ? null : body.targetFeedItemId;
+  const canonicalClaimId = body.canonicalClaimId === undefined ? null : body.canonicalClaimId;
+  if ((targetStoryId !== null && !positiveInteger(targetStoryId))
+    || (targetFeedItemId !== null && !positiveInteger(targetFeedItemId))
+    || (targetStoryId !== null && targetFeedItemId !== null)
+    || (targetStoryId === null && targetFeedItemId === null)) {
+    return Response.json({ error: "Exactly one target story or feed item is required." }, { status: 400 });
+  }
+  if (canonicalClaimId !== null && (typeof canonicalClaimId !== "string" || canonicalClaimId.length < 1 || canonicalClaimId.length > 200)) {
+    return Response.json({ error: "canonicalClaimId is invalid." }, { status: 400 });
+  }
+  if (body.explanation !== undefined && !optionalText(body.explanation, 2_000)) {
+    return Response.json({ error: "explanation is too long." }, { status: 400 });
+  }
+  const explanation = typeof body.explanation === "string" ? body.explanation.trim() : "";
+  if (["contradiction", "correction", "supersession"].includes(body.action) && explanation.length < 10) {
+    return Response.json({ error: "An explanation of at least 10 characters is required for this action." }, { status: 400 });
+  }
+  const confidence = body.confidence === undefined ? 0.5 : body.confidence;
+  if (typeof confidence !== "number" || !Number.isFinite(confidence) || confidence < 0 || confidence > 1) {
+    return Response.json({ error: "confidence must be between 0 and 1." }, { status: 400 });
+  }
+
+  let targetFeedIngestionStatus: string | null = null;
+  let selectedClaimState: string | null = null;
+  try {
+    const source = await env.DB.prepare("SELECT id FROM story_clusters WHERE id = ?")
+      .bind(sourceStoryId).first<{ id: number }>();
+    if (!source) return Response.json({ error: "Source story not found." }, { status: 404 });
+
+    if (targetStoryId !== null) {
+      if (targetStoryId === sourceStoryId) return Response.json({ error: "A story cannot relate to itself." }, { status: 400 });
+      const target = await env.DB.prepare("SELECT id FROM story_clusters WHERE id = ?")
+        .bind(targetStoryId).first<{ id: number }>();
+      if (!target) return Response.json({ error: "Target story not found." }, { status: 404 });
+    } else {
+      const target = await env.DB.prepare("SELECT id, ingestion_status FROM feed_items WHERE id = ?")
+        .bind(targetFeedItemId).first<{ id: number; ingestion_status: string }>();
+      if (!target) return Response.json({ error: "Target feed item not found." }, { status: 404 });
+      targetFeedIngestionStatus = target.ingestion_status;
+    }
+
+    if (body.action !== "reject" && body.action !== "attach_evidence" && targetStoryId === null) {
+      return Response.json({ error: "This action requires a story candidate." }, { status: 400 });
+    }
+    if (body.action === "attach_evidence") {
+      if (targetFeedItemId === null || canonicalClaimId === null) {
+        return Response.json({ error: "Attaching evidence requires a feed item and a canonical claim from the source story." }, { status: 400 });
+      }
+      const sourceClaim = await env.DB.prepare(`
+        SELECT sc.canonical_claim_id, cc.current_state
+        FROM story_claims sc
+        JOIN canonical_claims cc ON cc.id = sc.canonical_claim_id
+        WHERE sc.story_cluster_id = ? AND sc.canonical_claim_id = ?
+      `).bind(sourceStoryId, canonicalClaimId).first<{ canonical_claim_id: string; current_state: string }>();
+      if (!sourceClaim) return Response.json({ error: "The selected canonical claim does not belong to the source story." }, { status: 400 });
+      selectedClaimState = sourceClaim.current_state;
+    }
+
+    const attachmentEligibility = body.action === "attach_evidence"
+      ? assessRelatedEvidenceEligibility(targetFeedIngestionStatus, selectedClaimState)
+      : null;
+
+    const targetPredicate = targetStoryId !== null
+      ? "target_story_id = ? AND target_feed_item_id IS NULL"
+      : "target_story_id IS NULL AND target_feed_item_id = ?";
+    const targetValue = targetStoryId ?? targetFeedItemId;
+    const existing = await env.DB.prepare(`
+      SELECT id, action, state, reviewed_by, reviewed_at
+      FROM story_related_item_reviews
+      WHERE source_story_id = ? AND ${targetPredicate} AND action = ?
+      LIMIT 1
+    `).bind(sourceStoryId, targetValue, body.action).first<{
+      id: string; action: RelatedItemAction; state: "accepted" | "rejected";
+      reviewed_by: string; reviewed_at: string;
+    }>();
+    if (existing) {
+      return Response.json({
+        status: existing.state,
+        action: existing.action,
+        reviewId: existing.id,
+        alreadyReviewed: true,
+      });
+    }
+
+    const reviewId = crypto.randomUUID();
+    const state = body.action === "reject" ? "rejected" : "accepted";
+    const relationship = targetStoryId !== null ? RELATED_ACTION_RELATIONSHIPS[body.action] : undefined;
+    const statements = [] as D1PreparedStatement[];
+    if (body.action === "attach_evidence" && targetFeedItemId !== null && canonicalClaimId !== null) {
+      statements.push(env.DB.prepare(`
+        INSERT OR IGNORE INTO story_claim_evidence_attachments
+          (id, story_cluster_id, canonical_claim_id, feed_item_id, relationship, explanation,
+           eligibility_state, eligibility_reason, reviewed_by, reviewed_at)
+        VALUES (?, ?, ?, ?, 'supports', ?, ?, ?, ?, datetime('now'))
+      `).bind(
+        crypto.randomUUID(), sourceStoryId, canonicalClaimId, targetFeedItemId,
+        explanation || null, attachmentEligibility?.state, attachmentEligibility?.reason, operator.email,
+      ));
+    }
+    if (relationship && targetStoryId !== null) {
+      statements.push(env.DB.prepare(`
+        INSERT OR IGNORE INTO story_relationships
+          (id, source_story_id, target_story_id, relationship, explanation, confidence, created_by, reviewed_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+      `).bind(
+        crypto.randomUUID(), sourceStoryId, targetStoryId, relationship,
+        explanation || null, confidence, operator.email,
+      ));
+    }
+    statements.push(env.DB.prepare(`
+      INSERT INTO story_related_item_reviews
+        (id, source_story_id, target_story_id, target_feed_item_id, action, state,
+         explanation, confidence, reviewed_by, reviewed_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    `).bind(
+      reviewId, sourceStoryId, targetStoryId, targetFeedItemId, body.action, state,
+      explanation || null, confidence, operator.email,
+    ));
+    await env.DB.batch(statements);
+
+    if (body.action === "attach_evidence" && attachmentEligibility?.state === "eligible" && canonicalClaimId !== null) {
+      await recalculateEvidenceScores(env.DB, {
+        claimIds: [canonicalClaimId],
+        triggeringEvent: "accepted_evidence",
+      });
+    }
+
+    return Response.json({
+      status: state,
+      action: body.action,
+      reviewId,
+      relationshipRecorded: Boolean(relationship && targetStoryId !== null),
+      attachmentRecorded: body.action === "attach_evidence",
+      evidenceEligibility: attachmentEligibility?.state ?? null,
+      evidenceEligibilityReason: attachmentEligibility?.reason ?? null,
+      evidenceScoreChanged: body.action === "attach_evidence" && attachmentEligibility?.state === "eligible",
+    }, { status: 201 });
+  } catch (error: any) {
+    console.error(JSON.stringify({ message: "Related item review failed", sourceStoryId, error: redactError(error) }));
+    return Response.json({ error: "Related item review is unavailable." }, { status: 500 });
+  }
+}
+
 function scoreRelatedContent(
   searchTerms: Set<string>,
   title: string,
   supportingText: string | null,
   currentTopic: string | null,
   candidateTopic: string | null,
+  currentDate: string | null,
+  candidateDate: string | null,
+  currentProfile: { entities: Set<number>; claims: Map<string, string>; provenanceGroups: Set<string> },
+  candidateProfile: { entities: Set<number>; claims: Map<string, string>; provenanceGroups: Set<string> },
 ): { score: number; reasons: string[] } {
   const titleTerms = new Set(tokenizeForSearch(title));
   const textTerms = new Set([
@@ -1718,7 +2108,52 @@ function scoreRelatedContent(
     reasons.push(`same topic (${currentTopic})`);
   }
 
+  const sharedEntities = [...currentProfile.entities].filter((id) => candidateProfile.entities.has(id));
+  if (sharedEntities.length > 0) {
+    score += Math.min(25, 15 + (sharedEntities.length - 1) * 5);
+    reasons.push(`shared entities (${sharedEntities.length})`);
+  }
+
+  const sharedClaims = [...currentProfile.claims.keys()].filter((id) => candidateProfile.claims.has(id));
+  if (sharedClaims.length > 0) {
+    score += Math.min(30, 20 + (sharedClaims.length - 1) * 5);
+    reasons.push(`shared canonical claims (${sharedClaims.length})`);
+  }
+
+  const sharedProvenance = [...currentProfile.provenanceGroups].filter((id) => candidateProfile.provenanceGroups.has(id));
+  if (sharedProvenance.length > 0) {
+    score += 15;
+    reasons.push(`shared provenance group (${sharedProvenance.length})`);
+  }
+
+  const dateDistance = dateDistanceDays(currentDate, candidateDate);
+  if (dateDistance !== null && dateDistance <= 30) {
+    score += dateDistance <= 7 ? 10 : 5;
+    reasons.push(`date proximity (${dateDistance}d)`);
+  }
+
+  const semanticSimilarity = tokenCosineSimilarity(searchTerms, textTerms);
+  if (semanticSimilarity >= 0.2) {
+    score += Math.min(20, Math.round(semanticSimilarity * 30));
+    reasons.push(`semantic proxy (${Math.round(semanticSimilarity * 100)}%)`);
+  }
+
   return { score: Math.min(score, 100), reasons };
+}
+
+function dateDistanceDays(left: string | null, right: string | null): number | null {
+  if (!left || !right) return null;
+  const leftTime = Date.parse(left);
+  const rightTime = Date.parse(right);
+  if (!Number.isFinite(leftTime) || !Number.isFinite(rightTime)) return null;
+  return Math.floor(Math.abs(leftTime - rightTime) / 86_400_000);
+}
+
+function tokenCosineSimilarity(left: Set<string>, right: Set<string>): number {
+  if (left.size === 0 || right.size === 0) return 0;
+  let intersection = 0;
+  for (const token of left) if (right.has(token)) intersection++;
+  return intersection / Math.sqrt(left.size * right.size);
 }
 
 function tokenizeForSearch(text: string): string[] {

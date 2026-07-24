@@ -1,4 +1,5 @@
 export type ProvenanceGroupReviewDecision = "accept" | "reject";
+import { recalculateEvidenceScores } from "./evidence-recalculation";
 
 export interface ProvenanceGroupReviewInput {
   proposalId: string;
@@ -105,6 +106,17 @@ export async function reviewProvenanceGroupProposal(
   ));
   const results = await db.batch(statements);
   if (Number(results[0]?.meta.changes ?? 0) !== 1) throw new ProvenanceGroupReviewError("review_conflict", "The provenance group proposal changed before this review was saved.", 409);
+  if (input.decision === "accept" && provenanceGroupId) {
+    const affected = await db.prepare(`
+      SELECT DISTINCT canonical_claim_id
+      FROM claim_assertions
+      WHERE provenance_group_id = ?
+    `).bind(provenanceGroupId).all<{ canonical_claim_id: string }>();
+    await recalculateEvidenceScores(db, {
+      claimIds: (affected.results ?? []).map((row) => row.canonical_claim_id),
+      triggeringEvent: "provenance_changed",
+    });
+  }
   return {
     proposalId: proposal.id,
     previousState: proposal.state,

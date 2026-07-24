@@ -46,7 +46,7 @@ class SQLiteD1Statement {
 export class SQLiteD1 {
   readonly sqlite = new DatabaseSync(":memory:");
 
-  constructor() {
+  constructor(applyLegacyClaimsCutover = true) {
     this.sqlite.exec(readFileSync("db/schema.sql", "utf8"));
     this.sqlite.exec(readFileSync("db/migration-5e-publication.sql", "utf8"));
     this.sqlite.exec(readFileSync("db/migration-stabilisation-security.sql", "utf8"));
@@ -64,6 +64,11 @@ export class SQLiteD1 {
     this.sqlite.exec(readFileSync("db/migration-0040-provenance-group-proposals.sql", "utf8"));
     this.sqlite.exec(readFileSync("db/migration-0041-claim-relationship-proposals.sql", "utf8"));
     this.sqlite.exec(readFileSync("db/migration-0042-claim-conflict-cases.sql", "utf8"));
+    if (applyLegacyClaimsCutover) {
+      this.sqlite.exec(readFileSync("db/migration-0043-legacy-claims-cutover.sql", "utf8"));
+    }
+    this.sqlite.exec(readFileSync("db/migration-0044-story-related-item-reviews.sql", "utf8"));
+    this.sqlite.exec(readFileSync("db/migration-0045-claim-score-snapshots.sql", "utf8"));
   }
 
   prepare(query: string): SQLiteD1Statement {

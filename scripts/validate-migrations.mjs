@@ -42,6 +42,12 @@ try {
   db.exec(readFileSync("db/migration-0041-claim-relationship-proposals.sql", "utf8"));
   db.exec(readFileSync("db/migration-0042-claim-conflict-cases.sql", "utf8"));
   db.exec(readFileSync("db/migration-0042-claim-conflict-cases.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0043-legacy-claims-cutover.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0043-legacy-claims-cutover.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0044-story-related-item-reviews.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0044-story-related-item-reviews.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0045-claim-score-snapshots.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0045-claim-score-snapshots.sql", "utf8"));
 
   const requiredTables = [
     "ai_requests", "ai_budget_reservations", "ai_usage_ledger", "ai_quota_usage",
@@ -62,6 +68,9 @@ try {
     "knowledge_provenance_group_proposals", "knowledge_provenance_group_reviews",
     "knowledge_claim_relationship_proposals", "knowledge_claim_relationship_reviews",
     "knowledge_claim_conflict_cases", "knowledge_claim_conflict_reviews",
+    "legacy_claim_cutover", "legacy_claim_evidence_map",
+    "story_related_item_reviews", "story_claim_evidence_attachments",
+    "canonical_claim_score_snapshots",
   ];
   const tables = new Set(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((row) => row.name));
   for (const table of requiredTables) if (!tables.has(table)) throw new Error(`Missing table ${table}`);

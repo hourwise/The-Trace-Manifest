@@ -5,6 +5,8 @@
 // Runs within Worker CPU limits; no external AI dependency.
 
 import type { FeedItem } from "./types";
+import { writeCanonicalClaim } from "../../src/lib/server/canonical-claim-write";
+import { generateClaimRelationshipProposals } from "../../src/lib/server/claim-relationship-proposals";
 import type {
   ExtractedClaim,
   ClaimClass,
@@ -15,27 +17,6 @@ import type {
 // Algorithm identity
 // ============================================================
 const ALGORITHM_VERSION = "rule-extraction-v1";
-
-function legacyClaimTypeFor(domain: ClaimDomain): "factual" | "benchmark" | "pricing" | "security" | "licence" | "capability" | "regulatory" | "other" {
-  switch (domain) {
-    case "benchmark": return "benchmark";
-    case "pricing": return "pricing";
-    case "security": return "security";
-    case "licence": return "licence";
-    case "regulation": return "regulatory";
-    case "model_capability": return "capability";
-    case "model_release":
-    case "research":
-    case "product":
-    case "funding":
-    case "hardware": return "factual";
-    case "general": return "other";
-  }
-}
-
-function hasLegacyConstraint(error: unknown, table: "claims" | "claim_evidence", column: string): boolean {
-  return error instanceof Error && error.message.includes(`NOT NULL constraint failed: ${table}.${column}`);
-}
 
 /** Returns a usable cluster ID, creating a placeholder cluster for unclustered items.
  *  Result is cached in-memory for the duration of the extraction run. */
@@ -493,81 +474,34 @@ export async function runClaimExtraction(
       continue;
     }
 
-    // Store claims and evidence
+    // Store claims and source assertions in the canonical graph. Legacy
+    // claims/claim_evidence are frozen by KC-05G and must never receive new
+    // writes.
     let hadFailure = false;
     for (const claim of claims) {
       try {
-        // Insert the claim (schema requires claim_type)
-        let meta: D1Meta;
-        try {
-          ({ meta } = await db.prepare(
-            `INSERT INTO claims
-             (cluster_id, feed_item_id, claim_text, claim_type, claim_class, claim_domain,
-              severity, evidence_quality, confidence_score, extraction_method, extraction_version, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'rule_based', ?, datetime('now'))`
-          ).bind(
-            effectiveClusterId,
-            item.id,
-            claim.claimText,
-            legacyClaimTypeFor(claim.claimDomain),
-            claim.claimClass,
-            claim.claimDomain,
-            claim.severity,
-            claim.evidenceQuality,
-            claim.confidenceScore,
-            ALGORITHM_VERSION,
-          ).run());
-        } catch (error) {
-          // Fallback for schema without claim_type column
-          if (!hasLegacyConstraint(error, "claims", "claim_type")) throw error;
-          ({ meta } = await db.prepare(
-            `INSERT INTO claims
-             (cluster_id, feed_item_id, claim_text, claim_class, claim_domain,
-              severity, evidence_quality, confidence_score, extraction_method, extraction_version, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'rule_based', ?, datetime('now'))`
-          ).bind(
-            effectiveClusterId,
-            item.id,
-            claim.claimText,
-            claim.claimClass,
-            claim.claimDomain,
-            claim.severity,
-            claim.evidenceQuality,
-            claim.confidenceScore,
-            ALGORITHM_VERSION,
-          ).run());
-        }
-
-        const claimId = meta.last_row_id;
-        claimsExtracted++;
-
-        // Create initial evidence record — the source item itself is evidence
-        try {
-          await db.prepare(
-            `INSERT INTO claim_evidence
-             (claim_id, feed_item_id, evidence_type, relationship, evidence_summary, source_tier, is_primary_source)
-             VALUES (?, ?, 'vendor_claim', 'reports', ?, ?, 1)`
-          ).bind(
-            claimId,
-            item.id,
-            `Original source: ${claim.supportingPhrase}`,
-            row.source_tier ?? "C",
-          ).run();
-        } catch (error) {
-          // Fallback for schema without evidence_type column
-          if (!hasLegacyConstraint(error, "claim_evidence", "evidence_type")) throw error;
-          await db.prepare(
-            `INSERT INTO claim_evidence
-             (claim_id, feed_item_id, evidence_type, relationship, evidence_summary, source_tier, is_primary_source)
-             VALUES (?, ?, 'vendor_claim', 'reports', ?, ?, 1)`
-          ).bind(
-            claimId,
-            item.id,
-            `Original source: ${claim.supportingPhrase}`,
-            row.source_tier ?? "C",
-          ).run();
-        }
-
+        const materiality = claim.severity === "extraordinary"
+          ? "critical" : claim.severity === "high" ? "high"
+            : claim.severity === "low" ? "low" : "standard";
+        const written = await writeCanonicalClaim(db, {
+          feedItemId: item.id,
+          clusterId: effectiveClusterId,
+          sourceId: row.source_id,
+          sourceUrl: item.url,
+          sourceUrlHash: item.url_hash,
+          title: item.title,
+          author: item.author,
+          publishedAt: item.published_at,
+          content: item.content_excerpt ?? item.summary,
+          claimText: claim.claimText,
+          claimClass: claim.claimClass,
+          claimDomain: claim.claimDomain,
+          materiality,
+          confidence: claim.confidenceScore,
+          extractionMethod: "rule_based",
+          extractionVersion: ALGORITHM_VERSION,
+        });
+        if (written.inserted) claimsExtracted++;
         evidenceCreated++;
       } catch (err) {
         hadFailure = true;
@@ -624,73 +558,29 @@ async function recordPipelineStage(
 }
 
 // ============================================================
-// Claim conflict detection — run after extraction to find
-// contradictory claims within the same cluster
+// Claim relationship discovery — run after extraction. KC-05G routes this
+// work into review-gated canonical relationship proposals; the legacy
+// claim_conflicts table is compatibility-only and is never mutated.
 // ============================================================
 export async function detectClaimConflicts(
   db: D1Database,
 ): Promise<{ conflictsDetected: number }> {
-  // Find clusters with multiple claims
-  const { results: clusters } = await db.prepare(
-    `SELECT c.id as cluster_id, COUNT(*) as claim_count
-     FROM claims c
-     WHERE c.created_at >= datetime('now', '-3 days')
-     AND c.is_disputed = 0
-     GROUP BY c.cluster_id
-     HAVING COUNT(*) >= 2`
-  ).all<{ cluster_id: number; claim_count: number }>();
-
-  if (clusters.length === 0) {
-    return { conflictsDetected: 0 };
-  }
-
+  const { results } = await db.prepare(
+    `SELECT DISTINCT assertion.id
+     FROM claim_assertions assertion
+     JOIN canonical_claims claim ON claim.id = assertion.canonical_claim_id
+     WHERE assertion.created_at >= datetime('now', '-3 days')
+       AND assertion.reviewer_state <> 'rejected'
+       AND claim.current_state <> 'retired'`
+  ).all<{ id: string }>();
   let conflictsDetected = 0;
-
-  for (const cluster of clusters) {
-    const { results: claimPairs } = await db.prepare(
-      `SELECT c1.id as claim_a_id, c2.id as claim_b_id,
-              c1.claim_text as text_a, c2.claim_text as text_b,
-              c1.claim_class as class_a, c2.claim_class as class_b,
-              c1.claim_domain as domain_a, c2.claim_domain as domain_b
-       FROM claims c1
-       JOIN claims c2 ON c1.cluster_id = c2.cluster_id AND c1.id < c2.id
-       WHERE c1.cluster_id = ?
-       AND c1.claim_domain = c2.claim_domain
-       AND c1.claim_class != c2.claim_class`
-    ).bind(cluster.cluster_id).all<{
-      claim_a_id: number; claim_b_id: number;
-      text_a: string; text_b: string;
-      class_a: string; class_b: string;
-      domain_a: string; domain_b: string;
-    }>();
-
-    if (!claimPairs) continue;
-
-    for (const pair of claimPairs) {
-      // Heuristic conflict detection:
-      // 1. Different claim classes on the same domain (e.g., vendor claim vs independent finding)
-      // 2. Opposite-sentiment phrases
-
-      const conflictType = detectConflictType(pair.text_a, pair.text_b, pair.class_a, pair.class_b);
-
-      if (conflictType) {
-        const severity = assessConflictSeverity(pair.class_a, pair.class_b, conflictType);
-
-        await db.prepare(
-          `INSERT INTO claim_conflicts (claim_a_id, claim_b_id, conflict_type, severity)
-           VALUES (?, ?, ?, ?)`
-        ).bind(pair.claim_a_id, pair.claim_b_id, conflictType, severity).run();
-
-        // Mark both claims as disputed
-        await db.prepare(
-          "UPDATE claims SET is_disputed = 1, updated_at = datetime('now') WHERE id IN (?, ?)"
-        ).bind(pair.claim_a_id, pair.claim_b_id).run();
-
-        conflictsDetected++;
-      }
-    }
+  for (const assertion of results ?? []) {
+    const generated = await generateClaimRelationshipProposals(db, {
+      sourceAssertionId: assertion.id,
+      maxCandidates: 10,
+    });
+    conflictsDetected += generated.proposalsCreated;
   }
-
   return { conflictsDetected };
 }
 

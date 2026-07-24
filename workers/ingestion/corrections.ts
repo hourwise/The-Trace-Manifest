@@ -3,6 +3,7 @@
 // Implements product principle 2.5: "Updates, corrections, and score changes
 // should be visible. The site should not silently rewrite history."
 // Runs within Worker CPU limits; no external AI dependency.
+import { recalculateEvidenceScores } from "../../src/lib/server/evidence-recalculation";
 
 // ============================================================
 // Types
@@ -107,6 +108,11 @@ export async function recordClusterCorrection(
   ]);
   const correctionId = inserted.meta.last_row_id;
 
+  await recalculateEvidenceScores(db, {
+    storyIds: [input.clusterId],
+    triggeringEvent: "correction_recorded",
+  });
+
   console.log(`Correction ${correctionId}: cluster ${input.clusterId} — ${input.correctionType}`);
 
   return { correctionId, updatedStatus: targetStatus };
@@ -123,15 +129,29 @@ export async function recordClaimCorrection(
     throw new Error("claimId is required for claim corrections");
   }
 
-  // Get current claim info
+  // Resolve the legacy identifier through the KC-05G mapping. The numeric
+  // claim_id remains on the correction ledger for compatibility, but the
+  // canonical claim/assertion graph is the only claim state that changes.
   const claim = await db.prepare(`
-    SELECT c.claim_text, c.evidence_quality, c.cluster_id, sc.publication_status
-    FROM claims c
-    JOIN story_clusters sc ON sc.id = c.cluster_id
-    WHERE c.id = ?
+    SELECT cc.id AS canonical_claim_id, ca.id AS assertion_id,
+           cc.canonical_text, cc.current_state,
+           sc.id AS cluster_id, sc.publication_status
+    FROM legacy_claim_cutover map
+    JOIN canonical_claims cc ON cc.id = map.canonical_claim_id
+    JOIN claim_assertions ca
+      ON ca.canonical_claim_id = cc.id
+     AND ca.legacy_claim_id = map.legacy_claim_id
+     AND ca.id = 'legacy-claim-assertion-' || map.legacy_claim_id
+    JOIN story_claims story_claim ON story_claim.canonical_claim_id = cc.id
+    JOIN story_clusters sc ON sc.id = story_claim.story_cluster_id
+    WHERE map.legacy_claim_id = ? AND map.state = 'mapped'
+    ORDER BY sc.published_at DESC
+    LIMIT 1
   `).bind(input.claimId).first<{
-    claim_text: string;
-    evidence_quality: string;
+    canonical_claim_id: string;
+    assertion_id: string;
+    canonical_text: string;
+    current_state: string;
     cluster_id: number;
     publication_status: string;
   }>();
@@ -139,8 +159,9 @@ export async function recordClaimCorrection(
     throw new Error("Corrections may only be recorded against claims in a published story.");
   }
 
-  const previousEvidenceStatus = input.previousEvidenceStatus ?? claim?.evidence_quality ?? null;
+  const previousEvidenceStatus = input.previousEvidenceStatus ?? claim?.current_state ?? null;
   const targetStatus = input.updatedEvidenceStatus ?? "corrected";
+  const correctionAssertionId = `canonical-correction-${crypto.randomUUID()}`;
 
   const [inserted] = await db.batch([
     db.prepare(
@@ -154,14 +175,38 @@ export async function recordClaimCorrection(
       input.reason, input.evidenceUrl ?? null, input.impact ?? null, input.correctedBy,
     ),
     db.prepare(
-      `UPDATE claims SET is_corrected = 1, evidence_quality = 'disputed', updated_at = datetime('now') WHERE id = ?`
-    ).bind(input.claimId),
+      `UPDATE canonical_claims
+       SET current_state = CASE
+         WHEN ? = 'superseded' THEN 'superseded'
+         WHEN ? = 'corrected' THEN 'corrected'
+         ELSE 'disputed'
+       END, updated_at = datetime('now')
+       WHERE id = ?`
+    ).bind(targetStatus, targetStatus, claim.canonical_claim_id),
+    db.prepare(
+      `INSERT INTO claim_assertions
+       (id, canonical_claim_id, legacy_claim_id, assertion_text, relationship,
+        source_role, directness, evidence_treatment, admission_state,
+        freshness_state, extraction_method, extraction_version, confidence,
+        reviewer_state, reviewed_by, reviewed_at)
+       VALUES (?, ?, ?, ?, 'corrects', 'reported_claim', 'unknown',
+               'factual_support', 'admitted', 'current', 'publisher_correction',
+               'kc-05g', 1, 'accepted', ?, datetime('now'))`
+    ).bind(
+      correctionAssertionId, claim.canonical_claim_id, input.claimId,
+      input.updatedStatement, input.correctedBy,
+    ),
     db.prepare(
       `UPDATE story_clusters SET evidence_status = ?, updated_at = datetime('now')
        WHERE id = ? AND evidence_status NOT IN ('corrected', 'superseded', 'outdated')`
     ).bind(targetStatus, claim.cluster_id),
   ]);
   const correctionId = inserted.meta.last_row_id;
+
+  await recalculateEvidenceScores(db, {
+    claimIds: [claim.canonical_claim_id],
+    triggeringEvent: targetStatus === "superseded" ? "story_superseded" : "correction_recorded",
+  });
 
   console.log(`Correction ${correctionId}: claim ${input.claimId} — ${input.correctionType}`);
 
