@@ -3,6 +3,7 @@
 
 import { hashURL } from "./dedup";
 import { normaliseSourceUrl, type SourceCaptureStorageMode } from "../../src/lib/server/source-capture";
+import { parseKnowledgeMarkdown, type KnowledgeMarkdownEvidenceUrl } from "../../src/lib/server/knowledge-markdown";
 
 export interface KnowledgeCaptureQueue {
   send(message: KnowledgeCaptureMessage): Promise<unknown>;
@@ -31,8 +32,31 @@ export interface FeedCaptureAdmission {
 
 export interface ManualCaptureAdmission {
   url: string;
+  sourceId?: number | null;
   copyrightStorageMode: "private_full_text" | "editor_supplied_document";
   correlationId: string;
+}
+
+export interface KnowledgeDocumentCaptureAdmission {
+  knowledgeDocumentId: string;
+  copyrightStorageMode?: "private_full_text" | "editor_supplied_document";
+  correlationId?: string;
+}
+
+export interface KnowledgeDocumentCaptureResult {
+  knowledgeDocumentId: string;
+  urlsFound: number;
+  queued: number;
+  alreadyQueued: number;
+  skippedRejected: number;
+  queueUnavailable: number;
+  failures: number;
+  sources: Array<{
+    url: string;
+    sourceDocumentId: string | null;
+    jobId: string | null;
+    status: "queued" | "already_queued" | "skipped_rejected" | "queue_unbound" | "failed";
+  }>;
 }
 
 export interface FeedCaptureQueueEnvironment {
@@ -68,11 +92,79 @@ export async function admitAndQueueManualCapture(
 ): Promise<FeedCaptureQueueResult> {
   return admitAndQueueSourceCapture(env, {
     feedItemId: null,
-    sourceId: null,
+    sourceId: input.sourceId ?? null,
     url: input.url,
     copyrightStorageMode: input.copyrightStorageMode,
     correlationId: input.correlationId,
   });
+}
+
+/** Queues every unresolved evidence URL in one knowledge document idempotently. */
+export async function admitAndQueueKnowledgeDocumentCapture(
+  env: FeedCaptureQueueEnvironment,
+  input: KnowledgeDocumentCaptureAdmission,
+): Promise<KnowledgeDocumentCaptureResult> {
+  if (!/^[A-Za-z0-9_-]{4,240}$/.test(input.knowledgeDocumentId)) {
+    throw new Error("knowledge_document_capture_invalid");
+  }
+  const document = await env.DB.prepare(
+    "SELECT document_json FROM knowledge_documents WHERE id = ?",
+  ).bind(input.knowledgeDocumentId).first<{ document_json: string }>();
+  if (!document) throw new Error("knowledge_document_not_found");
+
+  const evidenceUrls = extractDocumentEvidenceUrls(document.document_json);
+  const uniqueUrls = [...new Map(evidenceUrls.map((source) => [source.url, source])).values()];
+  const result: KnowledgeDocumentCaptureResult = {
+    knowledgeDocumentId: input.knowledgeDocumentId,
+    urlsFound: uniqueUrls.length,
+    queued: 0,
+    alreadyQueued: 0,
+    skippedRejected: 0,
+    queueUnavailable: 0,
+    failures: 0,
+    sources: [],
+  };
+
+  for (const source of uniqueUrls) {
+    const existing = await env.DB.prepare(`
+      SELECT id, admission_state, source_id
+      FROM source_documents
+      WHERE canonical_url_hash = ?
+      LIMIT 1
+    `).bind(await hashURL(source.url)).first<{ id: string; admission_state: string; source_id: number | null }>();
+    if (existing?.admission_state === "rejected") {
+      result.skippedRejected++;
+      result.sources.push({ url: source.url, sourceDocumentId: existing.id, jobId: null, status: "skipped_rejected" });
+      continue;
+    }
+
+    const sourceId = existing?.source_id ?? await sourceRegistryId(env.DB, source.url);
+    try {
+      const admission = await admitAndQueueManualCapture(env, {
+        url: source.url,
+        sourceId,
+        copyrightStorageMode: input.copyrightStorageMode ?? "private_full_text",
+        correlationId: input.correlationId ?? `knowledge-${input.knowledgeDocumentId}`,
+      });
+      if (admission.reason === "queued") result.queued++;
+      else if (admission.reason === "already_queued" || admission.reason === "already_processing") result.alreadyQueued++;
+      else if (admission.reason === "queue_unbound") result.queueUnavailable++;
+      result.sources.push({
+        url: source.url,
+        sourceDocumentId: admission.sourceDocumentId,
+        jobId: admission.jobId,
+        status: admission.reason === "queued" ? "queued"
+          : admission.reason === "queue_unbound" ? "queue_unbound"
+          : admission.reason === "queue_send_failed" ? "failed"
+          : "already_queued",
+      });
+      if (admission.reason === "queue_send_failed") result.failures++;
+    } catch {
+      result.failures++;
+      result.sources.push({ url: source.url, sourceDocumentId: existing?.id ?? null, jobId: null, status: "failed" });
+    }
+  }
+  return result;
 }
 
 async function admitAndQueueSourceCapture(
@@ -163,4 +255,33 @@ async function admitAndQueueSourceCapture(
     `).bind(jobId).run();
     return { sourceDocumentId, queued: false, reason: "queue_send_failed", jobId };
   }
+}
+
+function extractDocumentEvidenceUrls(documentJson: string): KnowledgeMarkdownEvidenceUrl[] {
+  try {
+    const document = JSON.parse(documentJson) as { body?: unknown; evidenceUrls?: unknown };
+    if (Array.isArray(document.evidenceUrls)) {
+      const stored = document.evidenceUrls.filter((source): source is KnowledgeMarkdownEvidenceUrl =>
+        !!source && typeof source === "object" && typeof (source as { url?: unknown }).url === "string",
+      );
+      if (stored.length) return stored;
+    }
+    if (typeof document.body === "string") {
+      const parsed = parseKnowledgeMarkdown(`---\nplaceholder: true\n---\n${document.body}`);
+      if (!("error" in parsed)) return parsed.evidenceUrls;
+    }
+  } catch {
+    // Malformed legacy documents produce no queue work and remain reviewable.
+  }
+  return [];
+}
+
+async function sourceRegistryId(db: D1Database, url: string): Promise<number | null> {
+  let hostname = "";
+  try { hostname = new URL(url).hostname.replace(/^www\./, ""); } catch { return null; }
+  const sources = await db.prepare("SELECT id, url FROM sources WHERE active = 1 LIMIT 500").all<{ id: number; url: string }>();
+  const match = (sources.results ?? []).find((source) => {
+    try { return new URL(source.url).hostname.replace(/^www\./, "") === hostname; } catch { return false; }
+  });
+  return match?.id ?? null;
 }

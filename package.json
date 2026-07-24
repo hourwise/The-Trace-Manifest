@@ -14,11 +14,13 @@
     "typecheck": "astro check && tsc --noEmit -p workers/tsconfig.json",
     "test": "tsx workers/ingestion/__tests__/run-tests.ts && tsx tests/stabilisation.test.ts",
     "test:security": "node scripts/security-check.mjs",
+    "test:evidence-policy": "tsx scripts/evaluate-evidence-policy.ts",
+    "test:knowledge-markdown": "tsx scripts/check-knowledge-markdown.ts",
     "test:discovery-feeds": "tsx scripts/check-discovery-feeds.ts",
     "test:migrations": "node scripts/validate-migrations.mjs && node scripts/validate-legacy-production-migration.mjs",
     "test:diff": "node scripts/diff-check.mjs",
     "audit:production": "npm audit --omit=dev --audit-level=critical",
-    "ci": "npm run test:diff && npm run typecheck && npm test && npm run test:migrations && npm run test:security && npm run build"
+    "ci": "npm run test:diff && npm run typecheck && npm test && npm run test:migrations && npm run test:security && npm run test:evidence-policy && npm run test:knowledge-markdown && npm run build"
   },
   "dependencies": {
     "@astrojs/check": "^0.9.9",

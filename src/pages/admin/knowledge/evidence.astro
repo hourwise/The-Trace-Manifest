@@ -1,0 +1,334 @@
+---
+// KC-07D: publisher-only evidence score inspection panel.
+import BaseLayout from "../../../layouts/BaseLayout.astro";
+import { authenticateAccessRequest, type AccessEnvironment } from "../../../security/access-auth";
+
+export const prerender = false;
+
+const env = Astro.locals.runtime.env;
+const identity = await authenticateAccessRequest(Astro.request, env as unknown as AccessEnvironment);
+if (!identity || identity.role !== "publisher") return new Response("Forbidden", { status: 403 });
+
+const db = env.DB as D1Database;
+const requestedStoryId = Number(new URL(Astro.request.url).searchParams.get("storyId"));
+const storyId = Number.isInteger(requestedStoryId) && requestedStoryId > 0 ? requestedStoryId : null;
+
+interface StoryRow {
+  snapshot_id: string;
+  story_cluster_id: number;
+  title: string;
+  slug: string | null;
+  publication_status: string;
+  current_evidence_status: string;
+  score: number;
+  snapshot_evidence_status: string;
+  component_json: string;
+  policy_version: string;
+  triggering_event: string;
+  created_at: string;
+  before_score: number | null;
+  before_evidence_status: string | null;
+  before_component_json: string | null;
+  explanation: string | null;
+}
+
+interface ClaimRow {
+  story_cluster_id: number;
+  canonical_claim_id: string;
+  canonical_text: string;
+  claim_class: string;
+  current_state: string;
+  claim_materiality: string;
+  role: string;
+  materiality: string;
+  snapshot_id: string | null;
+  score: number | null;
+  evidence_status: string | null;
+  component_json: string | null;
+  policy_version: string | null;
+  triggering_event: string | null;
+  created_at: string | null;
+  before_score: number | null;
+  before_evidence_status: string | null;
+  before_component_json: string | null;
+  explanation: string | null;
+}
+
+interface AssertionRow {
+  canonical_claim_id: string;
+  id: string;
+  assertion_text: string;
+  relationship: string;
+  source_role: string;
+  directness: string;
+  evidence_treatment: string;
+  admission_state: string;
+  reviewer_state: string;
+  freshness_state: string;
+  provenance_group_id: string | null;
+  provenance_origin_type: string | null;
+  confidence: number;
+  source_url: string | null;
+}
+
+interface ConflictRow {
+  claim_id: string;
+  conflict_id: string;
+  conflict_kind: string;
+  status: string;
+  confidence: number;
+  explanation: string;
+  other_claim_id: string;
+  other_claim_text: string;
+}
+
+interface ApprovalRow {
+  id: string;
+  target_id: string;
+  previous_status: string | null;
+  proposed_status: string;
+  reason: string;
+  requested_at: string;
+}
+
+const storySql = `
+  WITH ranked AS (
+    SELECT snapshot.*, ROW_NUMBER() OVER (
+      PARTITION BY snapshot.story_cluster_id
+      ORDER BY snapshot.created_at DESC, snapshot.rowid DESC
+    ) AS rank
+    FROM evidence_score_snapshots snapshot
+    ${storyId ? "WHERE snapshot.story_cluster_id = ?" : ""}
+  )
+  SELECT ranked.id AS snapshot_id, ranked.story_cluster_id, cluster.title,
+         cluster.slug, cluster.publication_status,
+         cluster.evidence_status AS current_evidence_status, ranked.score,
+         ranked.evidence_status AS snapshot_evidence_status, ranked.component_json,
+         ranked.policy_version, ranked.triggering_event, ranked.created_at,
+         explanation.before_score, explanation.before_evidence_status,
+         explanation.before_component_json, explanation.explanation
+  FROM ranked
+  JOIN story_clusters cluster ON cluster.id = ranked.story_cluster_id
+  LEFT JOIN evidence_score_snapshot_explanations explanation
+    ON explanation.snapshot_kind = 'story' AND explanation.snapshot_id = ranked.id
+  WHERE ranked.rank = 1
+  ORDER BY ranked.created_at DESC
+  LIMIT 50
+`;
+const storyRows = await db.prepare(storySql).bind(...(storyId ? [storyId] : [])).all<StoryRow>();
+const stories = storyRows.results ?? [];
+const pendingApprovals = (await db.prepare(`
+  SELECT id, target_id, previous_status, proposed_status, reason, requested_at
+  FROM evidence_change_approvals
+  WHERE change_kind = 'status_change' AND target_type = 'story_cluster' AND state = 'pending'
+  ORDER BY requested_at ASC
+  LIMIT 100
+`).all<ApprovalRow>()).results ?? [];
+const storyIds = stories.map((story) => story.story_cluster_id);
+const placeholders = storyIds.map(() => "?").join(", ");
+
+const claims = storyIds.length === 0 ? [] : (await db.prepare(`
+  WITH ranked AS (
+    SELECT snapshot.*, ROW_NUMBER() OVER (
+      PARTITION BY snapshot.canonical_claim_id
+      ORDER BY snapshot.created_at DESC, snapshot.rowid DESC
+    ) AS rank
+    FROM canonical_claim_score_snapshots snapshot
+  )
+  SELECT story_claim.story_cluster_id, story_claim.canonical_claim_id,
+         claim.canonical_text, claim.claim_class, claim.current_state,
+         claim.materiality AS claim_materiality, story_claim.role,
+         story_claim.materiality, ranked.id AS snapshot_id, ranked.score,
+         ranked.evidence_status, ranked.component_json, ranked.policy_version,
+         ranked.triggering_event, ranked.created_at, explanation.before_score,
+         explanation.before_evidence_status, explanation.before_component_json,
+         explanation.explanation
+  FROM story_claims story_claim
+  JOIN canonical_claims claim ON claim.id = story_claim.canonical_claim_id
+  LEFT JOIN ranked ON ranked.canonical_claim_id = story_claim.canonical_claim_id
+                   AND ranked.rank = 1
+  LEFT JOIN evidence_score_snapshot_explanations explanation
+    ON explanation.snapshot_kind = 'claim' AND explanation.snapshot_id = ranked.id
+  WHERE story_claim.story_cluster_id IN (${placeholders})
+  ORDER BY CASE story_claim.materiality WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'standard' THEN 2 ELSE 3 END,
+           story_claim.display_order ASC
+`).bind(...storyIds).all<ClaimRow>()).results ?? [];
+
+const claimIds = [...new Set(claims.map((claim) => claim.canonical_claim_id))];
+const claimPlaceholders = claimIds.map(() => "?").join(", ");
+const assertions = claimIds.length === 0 ? [] : (await db.prepare(`
+  SELECT assertion.canonical_claim_id, assertion.id, assertion.assertion_text,
+         assertion.relationship, assertion.source_role, assertion.directness,
+         assertion.evidence_treatment, assertion.admission_state,
+         assertion.reviewer_state, assertion.freshness_state,
+         assertion.provenance_group_id, groups.origin_type AS provenance_origin_type,
+         assertion.confidence, documents.canonical_url AS source_url
+  FROM claim_assertions assertion
+  LEFT JOIN provenance_groups groups ON groups.id = assertion.provenance_group_id
+  LEFT JOIN source_document_versions versions ON versions.id = assertion.source_document_version_id
+  LEFT JOIN source_documents documents ON documents.id = versions.source_document_id
+  WHERE assertion.canonical_claim_id IN (${claimPlaceholders})
+  ORDER BY assertion.canonical_claim_id, assertion.created_at DESC
+`).bind(...claimIds).all<AssertionRow>()).results ?? [];
+
+const conflicts = claimIds.length === 0 ? [] : (await db.prepare(`
+  SELECT CASE WHEN conflict.source_claim_id IN (${claimPlaceholders})
+              THEN conflict.source_claim_id ELSE conflict.target_claim_id END AS claim_id,
+         conflict.id AS conflict_id, conflict.conflict_kind, conflict.status,
+         conflict.confidence, conflict.explanation,
+         CASE WHEN conflict.source_claim_id IN (${claimPlaceholders})
+              THEN conflict.target_claim_id ELSE conflict.source_claim_id END AS other_claim_id,
+         CASE WHEN conflict.source_claim_id IN (${claimPlaceholders})
+              THEN target.canonical_text ELSE source.canonical_text END AS other_claim_text
+  FROM knowledge_claim_conflict_cases conflict
+  JOIN canonical_claims source ON source.id = conflict.source_claim_id
+  JOIN canonical_claims target ON target.id = conflict.target_claim_id
+  WHERE conflict.source_claim_id IN (${claimPlaceholders})
+     OR conflict.target_claim_id IN (${claimPlaceholders})
+  ORDER BY conflict.status, conflict.confidence DESC
+`).bind(...claimIds, ...claimIds, ...claimIds, ...claimIds).all<ConflictRow>()).results ?? [];
+
+const assertionsByClaim = new Map<string, AssertionRow[]>();
+for (const assertion of assertions) assertionsByClaim.set(assertion.canonical_claim_id, [...(assertionsByClaim.get(assertion.canonical_claim_id) ?? []), assertion]);
+const conflictsByClaim = new Map<string, ConflictRow[]>();
+for (const conflict of conflicts) conflictsByClaim.set(conflict.claim_id, [...(conflictsByClaim.get(conflict.claim_id) ?? []), conflict]);
+const claimsByStory = new Map<number, ClaimRow[]>();
+for (const claim of claims) claimsByStory.set(claim.story_cluster_id, [...(claimsByStory.get(claim.story_cluster_id) ?? []), claim]);
+
+function label(value: string | null | undefined): string {
+  return (value ?? "unknown").replace(/_/g, " ");
+}
+
+function jsonObject(value: string | null): Record<string, unknown> {
+  if (!value) return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+  } catch { return {}; }
+}
+
+function componentSummary(value: string | null): string {
+  const entries = Object.entries(jsonObject(value));
+  return entries.length === 0 ? "No component detail recorded." : entries.map(([key, item]) => `${label(key)}: ${typeof item === "object" ? JSON.stringify(item) : String(item)}`).join(" · ");
+}
+
+function scoreDisplay(score: number | null): string {
+  return score === null ? "No snapshot" : score.toFixed(2);
+}
+
+function capPenaltySummary(claim: ClaimRow): string[] {
+  const components = jsonObject(claim.component_json);
+  const notes: string[] = [];
+  const penalty = Number(components.unresolvedConflictPenalty ?? 0);
+  if (penalty > 0) notes.push(`unresolved conflict penalty: ${penalty}`);
+  if (["disputed", "corrected", "superseded", "retired"].includes(claim.current_state)) notes.push(`claim-state cap: ${label(claim.current_state)}`);
+  if (notes.length === 0) notes.push("no active score penalty or claim-state cap");
+  return notes;
+}
+
+function sourceLabel(assertion: AssertionRow): string {
+  return assertion.source_url ?? assertion.provenance_group_id ?? assertion.id;
+}
+---
+
+<BaseLayout title="Evidence Scores — TRACE Knowledge Builder" description="Publisher-only evidence score and provenance inspection panel.">
+  <div class="wrap">
+    <h1>Evidence score panel</h1>
+    <p class="meta">Publisher-only inspection of material claims, evidence roots, roles, conflicts, score components, caps, penalties, and the proposed qualitative status. This panel never changes a score or publishes a story.</p>
+    <p style="margin:1rem 0 2rem;"><a href="/admin/knowledge" style="color:var(--color-accent);">&larr; Knowledge Builder</a> &nbsp;|&nbsp; <a href="/admin/knowledge/conflicts" style="color:var(--color-accent);">Conflicts</a> &nbsp;|&nbsp; <a href="/admin" style="color:var(--color-accent);">Admin</a></p>
+
+    {pendingApprovals.length > 0 && <section class="card approval-queue">
+      <h2>Pending high-impact status approvals</h2>
+      <p class="meta">Automatic recalculation has proposed these material status changes. Review the evidence panel below before approving or rejecting them.</p>
+      {pendingApprovals.map((approval) => <div class="approval-row" data-approval-id={approval.id}>
+        <div><strong>Story #{approval.target_id}</strong><span class="meta">{label(approval.previous_status)} → {label(approval.proposed_status)} · requested {approval.requested_at}</span><p>{approval.reason}</p></div>
+        <div class="approval-actions"><button type="button" class="btn" data-approval-decision="approve">Approve</button><button type="button" class="btn btn-secondary" data-approval-decision="reject">Reject</button><span class="meta" data-approval-result></span></div>
+      </div>)}
+    </section>}
+
+    {stories.length === 0 ? (
+      <div class="card"><p class="meta">No story score snapshots are available yet. Accepted evidence or another KC-07 recalculation will create the first panel entry.</p></div>
+    ) : stories.map((story) => (
+      <section class="card story-panel" id={`story-${story.story_cluster_id}`}>
+        <div class="heading-row">
+          <div><h2>{story.title}</h2><p class="meta">Story <code>{story.story_cluster_id}</code> · {label(story.publication_status)}{story.slug ? ` · ${story.slug}` : ""}</p></div>
+          <div class="score-block"><strong>{scoreDisplay(story.score)}</strong><span class="badge">{label(story.snapshot_evidence_status)}</span></div>
+        </div>
+        <div class="status-grid">
+          <div><strong>Current story status</strong><span>{label(story.current_evidence_status)}</span></div>
+          <div><strong>Proposed snapshot status</strong><span>{label(story.snapshot_evidence_status)}</span></div>
+          <div><strong>Policy / event</strong><span><code>{story.policy_version}</code> · {label(story.triggering_event)}</span></div>
+          <div><strong>Snapshot time</strong><span>{story.created_at}</span></div>
+        </div>
+        <details class="explanation" open>
+          <summary>Before / after explanation</summary>
+          <p>{story.explanation ?? "No explanation was recorded for this snapshot."}</p>
+          <div class="before-after"><div><strong>Before</strong><span>{story.before_score === null ? "No prior snapshot" : `${scoreDisplay(story.before_score)} · ${label(story.before_evidence_status)}`}</span></div><div><strong>After</strong><span>{scoreDisplay(story.score)} · {label(story.snapshot_evidence_status)}</span></div></div>
+          <pre>{componentSummary(story.component_json)}</pre>
+        </details>
+
+        <h3>Material and supporting claims</h3>
+        {(claimsByStory.get(story.story_cluster_id) ?? []).length === 0 ? <p class="meta">No canonical claims are linked to this story.</p> : (
+          <div class="claim-list">
+            {(claimsByStory.get(story.story_cluster_id) ?? []).map((claim) => {
+              const claimAssertions = assertionsByClaim.get(claim.canonical_claim_id) ?? [];
+              const claimConflicts = conflictsByClaim.get(claim.canonical_claim_id) ?? [];
+              const roots = [...new Set(claimAssertions.map((item) => item.provenance_group_id).filter(Boolean))];
+              const roles = [...new Set(claimAssertions.map((item) => item.source_role))];
+              return <article class="claim-card">
+                <div class="heading-row"><h4>{claim.canonical_text}</h4><span class="badge">{label(claim.materiality)} · {label(claim.role)}</span></div>
+                <p class="meta"><code>{claim.canonical_claim_id}</code> · {label(claim.claim_class)} · state: {label(claim.current_state)} · score: <strong>{scoreDisplay(claim.score)}</strong> · {claim.evidence_status ? label(claim.evidence_status) : "no snapshot"}</p>
+                <div class="claim-facts"><span><strong>Provenance roots</strong>{roots.length}</span><span><strong>Evidence roles</strong>{roles.length > 0 ? roles.map(label).join(", ") : "none"}</span><span><strong>Caps / penalties</strong>{capPenaltySummary(claim).join("; ")}</span></div>
+                <details><summary>Score explanation and components</summary>
+                  <p>{claim.explanation ?? "No claim explanation was recorded."}</p>
+                  <div class="before-after"><div><strong>Before</strong><span>{claim.before_score === null ? "No prior snapshot" : `${scoreDisplay(claim.before_score)} · ${label(claim.before_evidence_status)}`}</span></div><div><strong>After</strong><span>{scoreDisplay(claim.score)} · {label(claim.evidence_status)}</span></div></div>
+                  <pre>{componentSummary(claim.component_json)}</pre>
+                </details>
+                <details><summary>Evidence roots and assertions ({claimAssertions.length})</summary>
+                  {claimAssertions.length === 0 ? <p class="meta">No assertions are linked.</p> : <ul class="assertions">{claimAssertions.map((assertion) => <li><div><strong>{label(assertion.source_role)}</strong> · {label(assertion.relationship)} · {label(assertion.directness)} · {label(assertion.freshness_state)}</div><div class="meta">{sourceLabel(assertion)} · provenance {assertion.provenance_group_id ?? "unassigned"}{assertion.provenance_origin_type ? ` · ${label(assertion.provenance_origin_type)}` : ""} · {label(assertion.admission_state)} / {label(assertion.reviewer_state)} · confidence {Math.round(assertion.confidence * 100)}%</div><p>{assertion.assertion_text}</p></li>)}</ul>}
+                </details>
+                <details><summary>Conflicts ({claimConflicts.length})</summary>
+                  {claimConflicts.length === 0 ? <p class="meta">No recorded conflicts.</p> : <ul class="assertions">{claimConflicts.map((conflict) => <li><strong>{label(conflict.conflict_kind)}</strong> · {label(conflict.status)} · confidence {Math.round(conflict.confidence * 100)}%<p>{conflict.explanation}</p><div class="meta">Other claim: {conflict.other_claim_text} (<code>{conflict.other_claim_id}</code>)</div></li>)}</ul>}
+                </details>
+              </article>;
+            })}
+          </div>
+        )}
+      </section>
+    ))}
+  </div>
+</BaseLayout>
+
+<script>
+  document.querySelectorAll("[data-approval-decision]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const row = button.closest("[data-approval-id]") as HTMLElement | null;
+      const result = row?.querySelector("[data-approval-result]") as HTMLElement | null;
+      const approvalId = row?.dataset.approvalId;
+      const decision = (button as HTMLButtonElement).dataset.approvalDecision;
+      if (!approvalId || !decision) return;
+      const reviewNote = window.prompt(decision === "reject" ? "Explain why this status change is rejected (at least 10 characters):" : "Optional approval note:", "")?.trim() ?? "";
+      if (decision === "reject" && reviewNote.length < 10) {
+        if (result) result.textContent = "A rejection note of at least 10 characters is required.";
+        return;
+      }
+      if (result) result.textContent = "Saving…";
+      try {
+        const response = await fetch("/api/admin/approve-evidence-status", {
+          method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ approvalId, decision, reviewNote }),
+        });
+        const payload = await response.json() as { error?: string };
+        if (result) result.textContent = response.ok ? "Saved. Reloading…" : (payload.error ?? "Approval failed.");
+        if (response.ok) setTimeout(() => location.reload(), 500);
+      } catch { if (result) result.textContent = "Approval service unavailable."; }
+    });
+  });
+</script>
+
+<style>
+.story-panel { margin-bottom:1.5rem; }.heading-row { display:flex; justify-content:space-between; gap:1rem; align-items:flex-start; }.heading-row h2,.heading-row h4 { margin:0; }.heading-row h4 { font-size:1rem; }.score-block { display:flex; align-items:center; gap:0.5rem; white-space:nowrap; }.score-block strong { font-size:1.25rem; }.badge { display:inline-block; padding:0.15rem 0.5rem; border:1px solid var(--color-border); border-radius:4px; font-size:0.75rem; background:var(--color-bg-muted); }.status-grid,.claim-facts,.before-after { display:grid; grid-template-columns:repeat(4,1fr); gap:0.6rem; margin:1rem 0; }.status-grid > div,.claim-facts > span,.before-after > div { display:flex; flex-direction:column; gap:0.2rem; padding:0.6rem; background:var(--color-bg-muted); border:1px solid var(--color-border); border-radius:4px; font-size:0.8rem; }.status-grid strong,.claim-facts strong,.before-after strong { font-size:0.72rem; text-transform:uppercase; color:var(--color-muted); }.explanation { margin:1rem 0; }.explanation p { margin-bottom:0.5rem; }.explanation pre,.claim-card pre { white-space:pre-wrap; overflow-wrap:anywhere; padding:0.6rem; background:var(--color-bg-muted); border-radius:4px; font-size:0.75rem; }.claim-list { display:grid; gap:0.75rem; }.claim-card { padding:0.85rem; border:1px solid var(--color-border); border-radius:5px; }.claim-card details { margin-top:0.65rem; }.assertions { margin:0.5rem 0 0; padding-left:1.2rem; }.assertions li { margin-bottom:0.75rem; }.assertions p { margin:0.25rem 0 0; font-size:0.85rem; }.meta { color:var(--color-muted); font-size:0.82rem; } code { overflow-wrap:anywhere; } h3 { margin-top:1.5rem; }
+.approval-queue { margin-bottom:1.5rem; }.approval-row { display:flex; justify-content:space-between; align-items:flex-start; gap:1rem; padding:0.75rem 0; border-top:1px solid var(--color-border); }.approval-row > div:first-child { flex:1; }.approval-row .meta { display:block; margin-top:0.2rem; }.approval-row p { margin:0.35rem 0 0; font-size:0.85rem; }.approval-actions { display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap; }.approval-actions .btn { font-size:0.8rem; }
+@media (max-width:760px) { .heading-row { flex-direction:column; }.status-grid,.claim-facts,.before-after { grid-template-columns:1fr 1fr; }.score-block { align-self:flex-start; } }
+@media (max-width:480px) { .status-grid,.claim-facts,.before-after { grid-template-columns:1fr; }.approval-row { flex-direction:column; }.approval-actions { align-items:stretch; flex-direction:column; } }
+</style>

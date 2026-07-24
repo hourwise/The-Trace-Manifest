@@ -1,8 +1,8 @@
 # TRACE Knowledge Continuity and Story Memory Build Plan
 
-**Status:** Canonical implementation plan (KC-02, KC-03A–E, KC-04A–F, KC-05A–G, KC-06A–E, and KC-07A–B complete locally; KC-07C is next)
+**Status:** Canonical implementation plan (KC-02, KC-03A–E, KC-04A–F, KC-05A–G, KC-06A–E, KC-07A–F, and KC-08A–D complete locally; KC-08E is next)
 
-**Date:** 23 July 2026
+**Date:** 24 July 2026
 
 **Scope:** source absorption, claim-level evidence, story memory, knowledge linking, evidence scoring, retrieval, answer synthesis, and historical backfill
 
@@ -681,19 +681,19 @@ Exit: a related result can be durably attached or linked, and the audit record e
 
 - [x] **KC-07A:** Implement the versioned claim score and story roll-up policy from section 8. Policy `kc-07a-v1` is pure, deterministic, materiality-weighted, and snapshot-schema-backed; automatic recalculation remains KC-07B.
 - [x] **KC-07B:** Recompute after accepted evidence, correction, provenance change, conflict resolution, expiry, withdrawal, or supersession. The D1-backed recalculation service invokes `kc-07a-v1`, persists claim/story score snapshots, updates qualitative story status, and is wired into review, correction, publication-status, and scheduled expiry paths. See [`docs/audit/kc-07b-automatic-recalculation-evidence.md`](audit/kc-07b-automatic-recalculation-evidence.md).
-- [ ] **KC-07C:** Store immutable score snapshots and before/after explanations.
-- [ ] **KC-07D:** Add an admin evidence panel showing material claims, roots, roles, conflicts, caps, penalties, and proposed status.
-- [ ] **KC-07E:** Require human approval for high-impact status changes and corrections; allow only policy-approved low-risk metadata recalculation later.
-- [ ] **KC-07F:** Evaluate the versioned score policy against a fixed labelled set and compare score changes with human editorial decisions before permitting public numeric display.
+- [x] **KC-07C:** Store immutable claim/story score snapshots and append-only before/after explanations. Migration 0046 records the prior state, recalculated state, policy/event, and deterministic component-change explanation; database triggers reject snapshot or explanation rewrites/deletes. See [`docs/audit/kc-07c-immutable-score-explanations-evidence.md`](audit/kc-07c-immutable-score-explanations-evidence.md).
+- [x] **KC-07D:** Add the publisher-only `/admin/knowledge/evidence` panel showing material claims, provenance roots and roles, conflicts, caps/penalties, score components, immutable before/after explanations, and proposed versus current status. The panel is inspection-only and cannot change scores or publish stories. See [`docs/audit/kc-07d-admin-evidence-panel-evidence.md`](audit/kc-07d-admin-evidence-panel-evidence.md).
+- [x] **KC-07E:** Require human approval for high-impact status changes and corrections; allow only policy-approved low-risk metadata recalculation later. Migration 0047 stores pending/approved/rejected status-change approvals, high-impact automatic transitions remain proposals until publisher approval, and correction writes require an authenticated publisher approval note. See [`docs/audit/kc-07e-human-approval-evidence.md`](audit/kc-07e-human-approval-evidence.md).
+- [x] **KC-07F:** Evaluate the versioned score policy against a fixed labelled set and compare score changes with human editorial decisions before permitting public numeric display. The `kc-07f-v1` evaluator covers vendor-only, derivative, independently reproduced, disputed, stale, and corrected cases plus increase/decrease/stable direction checks; all current labels pass while `PUBLIC_EVIDENCE_NUMERIC_SCORES_ENABLED` remains false. See [`docs/audit/kc-07f-policy-evaluation-evidence.md`](audit/kc-07f-policy-evaluation-evidence.md).
 
 Exit: adding a genuinely independent corroborating source can increase the relevant claim/story score, while adding derivative or unrelated coverage cannot.
 
 ### KC-08 — Manual knowledge-to-evidence linking
 
-- [ ] **KC-08A:** Parse material claims and evidence URLs from new and existing knowledge Markdown.
-- [ ] **KC-08B:** Suggest existing canonical claims and source documents.
-- [ ] **KC-08C:** Queue missing admitted source URLs for capture and extraction.
-- [ ] **KC-08D:** Build an admin mapper for knowledge section -> canonical claim -> source assertions.
+- [x] **KC-08A:** Parse material claims and evidence URLs from new and existing knowledge Markdown. The shared deterministic parser records section relationships and Markdown line locators, persists derived `materialClaims`/`evidenceUrls` metadata for newly ingested documents, and scans all 30 existing Knowledge Input files (967 claims and 146 URLs). See [`docs/audit/kc-08a-knowledge-markdown-evidence.md`](audit/kc-08a-knowledge-markdown-evidence.md).
+- [x] **KC-08B:** Suggest existing canonical claims and source documents. The publisher-only read path uses deterministic lexical/entity/value/date signals (`kc-08b-v1`) to rank canonical claims and exact URL, source-registry, or same-domain source-document matches; suggestions are returned without creating mappings or changing evidence state. See [`docs/audit/kc-08b-knowledge-link-suggestions-evidence.md`](audit/kc-08b-knowledge-link-suggestions-evidence.md).
+- [x] **KC-08C:** Queue missing admitted source URLs for capture and extraction. The publisher-only `/api/admin/knowledge/capture-missing` path sends unresolved Markdown evidence URLs through the existing idempotent source-document Queue, skips rejected sources, preserves bounded messages, and never creates claims or mappings. See [`docs/audit/kc-08c-knowledge-source-capture-evidence.md`](audit/kc-08c-knowledge-source-capture-evidence.md).
+- [x] **KC-08D:** Build an admin mapper for knowledge section -> canonical claim -> source assertions. The publisher-only `/admin/knowledge/mappings` page and same-origin mapping API save attributable mappings only after the selected canonical claim and each assertion pass non-retired, accepted, admitted, current, non-internal-synthesis checks. See [`docs/audit/kc-08d-knowledge-evidence-mapper-evidence.md`](audit/kc-08d-knowledge-evidence-mapper-evidence.md).
 - [ ] **KC-08E:** Populate `knowledge_document_claims` and the foreign-key-backed `knowledge_document_claim_assertions` join after review; retain string source/claim references only for migration audit.
 - [ ] **KC-08F:** Strengthen approval so public knowledge requires reviewed evidence mappings or explicit inference/synthesis labels.
 - [ ] **KC-08G:** Resolve mapped external evidence, accepted assertions, chunks, and locators when knowledge is retrieved; retain the knowledge text as zero-weight internal synthesis.

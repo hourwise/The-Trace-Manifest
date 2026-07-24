@@ -600,7 +600,7 @@ try {
         try {
           const res = await adminFetch(`/api/admin/related-items?clusterId=${clusterId}`);
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          const data: { clusterItemCount: number; items: Array<{ id: number; title: string; sourceName: string; sourceTier: string; kind: "ingested_coverage" | "cluster" | "published_story"; clusterId: number | null; url: string | null; publishedAt: string | null; score: number; matchReasons: string[]; review: { action: string; state: "accepted" | "rejected"; reviewedBy: string; reviewedAt: string } | null; affectedRecords: { publishedStories: Array<{ id: number; title: string; url: string | null }>; knowledgePages: Array<{ id: string; title: string; visibility: string; url: string }> } }> } = await res.json();
+          const data: { clusterItemCount: number; items: Array<{ id: number; title: string; sourceName: string; sourceTier: string; kind: "ingested_coverage" | "cluster" | "published_story"; clusterId: number | null; url: string | null; publishedAt: string | null; score: number; matchReasons: string[]; claimOptions: Array<{ id: string; text: string }>; review: { action: string; state: "accepted" | "rejected"; reviewedBy: string; reviewedAt: string } | null; affectedRecords: { publishedStories: Array<{ id: number; title: string; url: string | null }>; knowledgePages: Array<{ id: string; title: string; visibility: string; url: string }> } }> } = await res.json();
 
           if (data.items.length === 0) {
             relatedDiv.innerHTML = '<p class="meta">No related items found in the ingested pool. This story may be unique.</p>';
@@ -619,7 +619,7 @@ try {
                   ? '<option value="attach_evidence">Attach evidence</option><option value="reject">Reject</option>'
                   : '<option value="same_event">Same event</option><option value="follow_up">Follow-up</option><option value="related_context">Related context</option><option value="contradiction">Contradiction</option><option value="correction">Correction</option><option value="supersession">Supersession</option><option value="comparison">Comparison</option><option value="reject">Reject</option>';
                 const claimSelector = item.kind === "ingested_coverage"
-                  ? `<select data-related-claim style="font-size:0.7rem;padding:0.2rem;" ${item.claimOptions.length === 0 ? "disabled" : ""}><option value="">${item.claimOptions.length === 0 ? "No canonical claims" : "Select claim…"}</option>${item.claimOptions.map(claim => `<option value="${escapeHTML(claim.id)}">${escapeHTML(claim.text.slice(0, 70))}</option>`).join("")}</select>`
+                  ? `<select data-related-claim style="font-size:0.7rem;padding:0.2rem;" ${item.claimOptions.length === 0 ? "disabled" : ""}><option value="">${item.claimOptions.length === 0 ? "No canonical claims" : "Select claim…"}</option>${item.claimOptions.map((claim: { id: string; text: string }) => `<option value="${escapeHTML(claim.id)}">${escapeHTML(claim.text.slice(0, 70))}</option>`).join("")}</select>`
                   : "";
                 const reviewLabel = item.review
                   ? `<span class="badge" style="font-size:0.6rem;color:${item.review.state === "accepted" ? "var(--ev-confirmed)" : "var(--ev-disputed)"};">${escapeHTML(item.review.state)}: ${escapeHTML(item.review.action)}</span>`
@@ -648,13 +648,13 @@ try {
             relatedDiv.querySelectorAll<HTMLButtonElement>("[data-related-review]").forEach((reviewButton) => {
               reviewButton.addEventListener("click", async () => {
                 const row = reviewButton.closest("div[style*='border-bottom']");
-                const actionSelect = row?.querySelector<HTMLSelectElement>("[data-related-action]");
+                const actionSelect = row?.querySelector("[data-related-action]") as unknown as HTMLSelectElement | null;
                 const action = actionSelect?.value ?? "";
                 if (!action) { status("Choose a related-item action first.", true); return; }
                 const sourceStoryId = parseInt(String(clusterId));
                 const targetStoryId = reviewButton.dataset.targetStory ? parseInt(reviewButton.dataset.targetStory) : undefined;
                 const targetFeedItemId = reviewButton.dataset.targetFeed ? parseInt(reviewButton.dataset.targetFeed) : undefined;
-                const canonicalClaimId = row?.querySelector<HTMLSelectElement>("[data-related-claim]")?.value || undefined;
+                const canonicalClaimId = (row?.querySelector("[data-related-claim]") as unknown as HTMLSelectElement | null)?.value || undefined;
                 if (action === "attach_evidence" && !canonicalClaimId) { status("Select a canonical claim before attaching evidence.", true); return; }
                 let explanation = "";
                 if (["contradiction", "correction", "supersession"].includes(action)) {
@@ -798,6 +798,7 @@ Content-Type: application/json
   "previousEvidenceStatus": "vendor_reported",    // optional
   "updatedEvidenceStatus": "corrected",           // optional, defaults to "corrected"
   "reason": "Why the correction was made",
+  "humanApprovalNote": "Publisher approval note explaining why this high-impact correction is authorised",
   "evidenceUrl": "https://...",                   // optional
   "impact": "What changed as a result"            // optional
 {'}'}</code></pre>

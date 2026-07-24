@@ -28,11 +28,17 @@ import { generateClaimConflictCase } from "../src/lib/server/claim-conflict-case
 import { ClaimConflictReviewError, reviewClaimConflictCase } from "../src/lib/server/claim-conflict-review";
 import { writeCanonicalClaim } from "../src/lib/server/canonical-claim-write";
 import { EVIDENCE_SCORE_POLICY_VERSION, scoreCanonicalClaim, scoreStory } from "../src/lib/server/evidence-scoring";
+import { recalculateEvidenceScores } from "../src/lib/server/evidence-recalculation";
+import { evaluateEvidencePolicy, PUBLIC_EVIDENCE_NUMERIC_SCORES_ENABLED } from "../src/lib/server/evidence-evaluation";
+import { evidencePolicyEvaluationFixtures } from "../src/lib/server/evidence-evaluation-fixtures";
+import { parseKnowledgeMarkdown } from "../src/lib/server/knowledge-markdown";
+import { KNOWLEDGE_LINK_SUGGESTION_VERSION, suggestKnowledgeLinks } from "../src/lib/server/knowledge-link-suggestions";
+import { KnowledgeDocumentMappingError, mapKnowledgeDocumentClaim } from "../src/lib/server/knowledge-document-mapping";
 import { captureAdmittedSource, SourceCaptureError } from "../src/lib/server/source-capture";
 import { signInternalRequest, verifyInternalRequestSignature } from "../src/security/internal-signature";
 import { publishBriefing, publishStory, upgradeClusterEvidence } from "../workers/ingestion/publish";
 import { reconcileKnowledgeIndexOperations } from "../workers/ingestion/knowledge-reconciliation";
-import { admitAndQueueFeedCapture } from "../workers/ingestion/knowledge-capture-queue";
+import { admitAndQueueFeedCapture, admitAndQueueKnowledgeDocumentCapture } from "../workers/ingestion/knowledge-capture-queue";
 import { admitAndQueueManualCapture } from "../workers/ingestion/knowledge-capture-queue";
 import { processKnowledgeCaptureMessage, consumeKnowledgeCaptureBatch, KnowledgeCaptureConsumerError } from "../workers/ingestion/knowledge-capture-consumer";
 import worker from "../workers/ingestion/index";
@@ -386,6 +392,23 @@ async function deskBoundaryTests(): Promise<void> {
       "accepted eligible evidence recalculates the story without weakening its existing band");
     assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM evidence_score_snapshots WHERE story_cluster_id = 301").first<{ count: number }>())?.count, 1,
       "accepted eligible evidence creates one recalculation snapshot");
+    const explanationRows = await database.prepare(`
+      SELECT snapshot_kind, before_score, before_component_json, after_score,
+             after_component_json, triggering_event, explanation
+      FROM evidence_score_snapshot_explanations
+      WHERE subject_id IN ('kc06-claim-helios', '301')
+      ORDER BY created_at ASC
+    `).all<{ snapshot_kind: string; before_score: number | null; before_component_json: string | null; after_score: number; after_component_json: string; triggering_event: string; explanation: string }>();
+    assert.equal(explanationRows.results?.length, 2, "claim and story snapshots each retain an explanation");
+    assert.ok(explanationRows.results?.every((row) => row.before_score === null && row.before_component_json === null),
+      "first snapshots retain an explicit empty before-state");
+    assert.ok(explanationRows.results?.every((row) => row.after_component_json.length > 0 && row.explanation.includes("Initial")),
+      "first snapshots retain after components and a deterministic explanation");
+    const snapshotId = (await database.prepare("SELECT id FROM evidence_score_snapshots WHERE story_cluster_id = 301").first<{ id: string }>())?.id;
+    assert.throws(() => database.sqlite.exec(`UPDATE evidence_score_snapshots SET score = 0 WHERE id = '${snapshotId}'`), /immutable/,
+      "story score snapshots cannot be rewritten");
+    assert.throws(() => database.sqlite.exec("DELETE FROM evidence_score_snapshot_explanations"), /immutable/,
+      "score explanations cannot be deleted");
   } finally {
     database.close();
   }
@@ -558,6 +581,11 @@ function kc07aEvidenceScoringTests(): void {
   assert.equal(story.policyVersion, EVIDENCE_SCORE_POLICY_VERSION);
   assert.equal(story.score, 88.5, "story score uses materiality-weighted claim scores");
   assert.equal(story.evidenceStatus, "confirmed", "story status rolls up the weighted claim policy");
+
+  const evaluation = evaluateEvidencePolicy(evidencePolicyEvaluationFixtures());
+  assert.equal(evaluation.pass, true, "fixed labelled evidence policy set passes status, decision, band, and change-direction checks");
+  assert.equal(evaluation.publicNumericScoresEnabled, PUBLIC_EVIDENCE_NUMERIC_SCORES_ENABLED);
+  assert.deepEqual(evaluation.failures, []);
 }
 
 async function kc05gLegacyCutoverTests(): Promise<void> {
@@ -967,6 +995,25 @@ async function kc03dQueueTests(): Promise<void> {
       "capture queue messages contain identifiers and policy metadata, never article bodies");
     assert.equal((await database.prepare("SELECT admission_state FROM source_documents").first<{ admission_state: string }>())?.admission_state, "admitted");
     assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM knowledge_processing_jobs").first<{ count: number }>())?.count, 1);
+
+    database.sqlite.exec(`
+      INSERT INTO knowledge_documents
+        (id, canonical_question, canonical_hash, section_slug, knowledge_type, document_json, policy_version, created_by)
+      VALUES (
+        'knowledge-kc08c', 'Which sources need capture?', 'kc08c-hash', 'ai-agents', 'explainer',
+        '{"body":"## Evidence\\n\\n- [Existing](https://example.test/story/)\\n- [Missing](https://missing.example/new)","evidenceUrls":[{"url":"https://example.test/story/","name":"Existing","description":"","sectionKey":"evidence","relationship":"supports","line":3},{"url":"https://missing.example/new","name":"Missing","description":"","sectionKey":"evidence","relationship":"supports","line":4}]}',
+        'test-policy', 'test-editor'
+      );
+    `);
+    const knowledgeCapture = await admitAndQueueKnowledgeDocumentCapture(environment, { knowledgeDocumentId: "knowledge-kc08c" });
+    assert.equal(knowledgeCapture.urlsFound, 2);
+    assert.equal(knowledgeCapture.alreadyQueued, 1, "existing source capture jobs are not duplicated");
+    assert.equal(knowledgeCapture.queued, 1, "missing evidence URLs are admitted and queued for capture");
+    assert.equal(messages.length, 2);
+    const repeatedKnowledgeCapture = await admitAndQueueKnowledgeDocumentCapture(environment, { knowledgeDocumentId: "knowledge-kc08c" });
+    assert.equal(repeatedKnowledgeCapture.queued, 0);
+    assert.equal(repeatedKnowledgeCapture.alreadyQueued, 2, "repeating a knowledge capture request is idempotent");
+    assert.equal(messages.length, 2);
 
     const failingDatabase = new SQLiteD1();
     try {
@@ -1430,6 +1477,169 @@ async function kc05eClaimRelationshipTests(): Promise<void> {
   }
 }
 
+async function kc07eApprovalTests(): Promise<void> {
+  const database = new SQLiteD1();
+  try {
+    database.sqlite.exec(`
+      INSERT INTO story_clusters (id, title, evidence_status, publication_status)
+        VALUES (707, 'Approval-gated status change', 'vendor_reported', 'draft');
+      INSERT INTO canonical_claims (id, canonical_text, claim_class, claim_domain, current_state, materiality)
+        VALUES ('kc07e-claim', 'The approval-gated claim is disputed.', 'editorial_synthesis', 'general', 'disputed', 'critical');
+      INSERT INTO story_claims (story_cluster_id, canonical_claim_id, role, materiality, display_order)
+        VALUES (707, 'kc07e-claim', 'primary', 'critical', 1);
+    `);
+    const result = await recalculateEvidenceScores(database.asD1(), {
+      storyIds: [707], triggeringEvent: "conflict_created",
+    });
+    assert.equal(result.approvalRequests, 1, "high-impact score transitions create an approval request");
+    assert.equal((await database.prepare("SELECT evidence_status FROM story_clusters WHERE id = 707").first<{ evidence_status: string }>())?.evidence_status, "vendor_reported",
+      "high-impact status transitions do not mutate the story before approval");
+    const approval = await database.prepare(`
+      SELECT change_kind, target_type, previous_status, proposed_status, state, requested_by
+      FROM evidence_change_approvals WHERE target_id = '707'
+    `).first<{ change_kind: string; target_type: string; previous_status: string; proposed_status: string; state: string; requested_by: string }>();
+    assert.deepEqual(approval ? { ...approval } : approval, {
+      change_kind: "status_change", target_type: "story_cluster", previous_status: "vendor_reported",
+      proposed_status: "disputed", state: "pending", requested_by: "system:recalculation",
+    }, "approval queue records the proposed status and trigger owner");
+  } finally {
+    database.close();
+  }
+}
+
+function kc08aKnowledgeMarkdownTests(): void {
+  const parsed = parseKnowledgeMarkdown(`---
+canonical_question: "How should a knowledge page be reviewed?"
+section: ai-agents
+knowledge_type: explainer
+---
+
+## Direct answer
+
+Knowledge pages should keep material statements separate from supporting evidence.
+
+## Detailed explanation
+
+Each material statement should resolve to a reviewed canonical claim before publication.
+
+## Evidence
+
+- [TRACE policy](https://example.com/policy) — defines the review boundary.
+- https://example.com/secondary
+
+## Important limitations
+
+Unresolved evidence must keep the page out of the public retrieval corpus.
+`);
+  assert.ok(!("error" in parsed), "knowledge Markdown parser accepts the documented frontmatter format");
+  if ("error" in parsed) return;
+  assert.equal(parsed.evidenceUrls.length, 2, "evidence Markdown yields both linked and bare URLs");
+  assert.equal(parsed.evidenceUrls[0]?.sectionKey, "evidence");
+  assert.equal(parsed.evidenceUrls[0]?.relationship, "supports");
+  assert.equal(parsed.materialClaims.length, 3, "material claims are extracted from answer, explanation, and limitations");
+  assert.ok(parsed.materialClaims.some((claim) => claim.relationship === "answers"));
+  assert.ok(parsed.materialClaims.some((claim) => claim.relationship === "qualifies"));
+  assert.ok(parsed.materialClaims.every((claim) => claim.locator.startsWith("markdown:")), "claims retain deterministic Markdown locators");
+}
+
+async function kc08bKnowledgeLinkSuggestionTests(): Promise<void> {
+  const database = new SQLiteD1();
+  try {
+    database.sqlite.exec(`
+      INSERT INTO knowledge_documents
+        (id, canonical_question, canonical_hash, section_slug, knowledge_type,
+         direct_answer, document_json, policy_version, created_by)
+      VALUES (
+        'knowledge-kc08b', 'How should a reviewed claim be linked?', 'kc08b-hash',
+        'ai-agents', 'explainer', 'A reviewed claim needs a source.',
+        '{"body":"## Direct answer\\n\\nA reviewed claim needs a source.","materialClaims":[{"text":"A reviewed claim needs a source.","sectionKey":"direct_answer","relationship":"answers"}],"evidenceUrls":[{"url":"https://example.com/review","name":"Review source","description":"","sectionKey":"evidence","relationship":"supports","line":4}]}',
+        'test-policy', 'test-editor'
+      );
+      INSERT INTO sources (id, name, url, section, tier, treatment, ingestion_type)
+        VALUES (808, 'Review source', 'https://example.com/feed', 'A', 'A', 'primary', 'manual');
+      INSERT INTO source_documents
+        (id, canonical_url, canonical_url_hash, source_id, media_kind, admission_state, copyright_storage_mode)
+        VALUES ('source-doc-kc08b', 'https://example.com/review', 'kc08b-source-hash', 808, 'html', 'admitted', 'metadata_only');
+      INSERT INTO canonical_claims
+        (id, canonical_text, claim_class, claim_domain, current_state, materiality)
+        VALUES ('canonical-kc08b', 'A reviewed claim needs a source.', 'editorial_synthesis', 'general', 'active', 'standard');
+    `);
+    const result = await suggestKnowledgeLinks(database.asD1(), { knowledgeDocumentId: "knowledge-kc08b" });
+    assert.equal(result.algorithmVersion, KNOWLEDGE_LINK_SUGGESTION_VERSION);
+    assert.equal(result.claimSuggestions[0]?.canonicalClaimId, "canonical-kc08b", "matching canonical claims are suggested");
+    assert.equal(result.sourceSuggestions[0]?.sourceDocumentId, "source-doc-kc08b", "exact evidence URLs suggest existing source documents");
+    assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM knowledge_document_claims").first<{ count: number }>())?.count, 0,
+      "suggestions do not create reviewed knowledge mappings");
+  } finally {
+    database.close();
+  }
+}
+
+async function kc08dKnowledgeDocumentMappingTests(): Promise<void> {
+  const database = new SQLiteD1();
+  try {
+    database.sqlite.exec(`
+      INSERT INTO knowledge_documents
+        (id, canonical_question, canonical_hash, section_slug, knowledge_type, document_json, policy_version, created_by)
+      VALUES (
+        'knowledge-kc08d', 'How is a reviewed mapping saved?', 'kc08d-hash', 'ai-agents', 'explainer',
+        '{"body":"## Direct answer\\n\\nA reviewed mapping needs an accepted assertion.","materialClaims":[{"text":"A reviewed mapping needs an accepted assertion.","sectionKey":"direct_answer","relationship":"answers"}]}',
+        'test-policy', 'test-editor'
+      );
+      INSERT INTO source_documents
+        (id, canonical_url, canonical_url_hash, media_kind, admission_state, copyright_storage_mode)
+        VALUES ('source-doc-kc08d', 'https://example.com/kc08d', 'kc08d-source-hash', 'html', 'admitted', 'metadata_only');
+      INSERT INTO source_document_versions
+        (id, source_document_id, content_hash, retrieved_url, retrieved_at, extraction_status)
+        VALUES ('source-version-kc08d', 'source-doc-kc08d', 'kc08d-content-hash', 'https://example.com/kc08d', datetime('now'), 'captured');
+      INSERT INTO canonical_claims
+        (id, canonical_text, claim_class, claim_domain, current_state, materiality)
+        VALUES ('canonical-kc08d', 'A reviewed mapping needs an accepted assertion.', 'editorial_synthesis', 'general', 'active', 'standard');
+      INSERT INTO claim_assertions
+        (id, canonical_claim_id, source_document_version_id, assertion_text, relationship,
+         source_role, directness, evidence_treatment, admission_state, freshness_state,
+         extraction_method, extraction_version, confidence, reviewer_state, reviewed_by, reviewed_at)
+        VALUES ('assertion-kc08d', 'canonical-kc08d', 'source-version-kc08d',
+                'A reviewed mapping needs an accepted assertion.', 'supports', 'evidence', 'direct',
+                'factual_support', 'admitted', 'current', 'test', 'test-v1', 0.9,
+                'accepted', 'publisher@example.com', datetime('now'));
+    `);
+    const mapped = await mapKnowledgeDocumentClaim(database.asD1(), {
+      knowledgeDocumentId: "knowledge-kc08d", sectionKey: "direct_answer",
+      canonicalClaimId: "canonical-kc08d", claimRelationship: "answers",
+      assertions: [{ claimAssertionId: "assertion-kc08d", relationship: "supports" }],
+      reviewerEmail: "publisher@example.com", requestId: "kc08d-request",
+    });
+    assert.equal(mapped.assertionsMapped, 1);
+    assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM knowledge_document_claims").first<{ count: number }>())?.count, 1);
+    assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM knowledge_document_claim_assertions").first<{ count: number }>())?.count, 1);
+    assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM admin_audit_log WHERE action = 'map_knowledge_document_claim'").first<{ count: number }>())?.count, 1);
+
+    database.sqlite.exec(`
+      INSERT INTO claim_assertions
+        (id, canonical_claim_id, source_document_version_id, assertion_text, relationship,
+         source_role, directness, evidence_treatment, admission_state, freshness_state,
+         extraction_method, extraction_version, confidence, reviewer_state, reviewed_by, reviewed_at)
+        VALUES ('assertion-kc08d-internal', 'canonical-kc08d', 'source-version-kc08d',
+                'Internal synthesis only.', 'contextualises', 'internal_synthesis', 'unknown',
+                'internal_synthesis', 'admitted', 'current', 'test', 'test-v1', 0.9,
+                'accepted', 'publisher@example.com', datetime('now'));
+    `);
+    await assert.rejects(
+      () => mapKnowledgeDocumentClaim(database.asD1(), {
+        knowledgeDocumentId: "knowledge-kc08d", sectionKey: "direct_answer",
+        canonicalClaimId: "canonical-kc08d", claimRelationship: "answers",
+        assertions: [{ claimAssertionId: "assertion-kc08d-internal", relationship: "supports" }],
+        reviewerEmail: "publisher@example.com", requestId: "kc08d-request-2",
+      }),
+      (error: unknown) => error instanceof KnowledgeDocumentMappingError && error.code === "assertion_not_eligible",
+      "internal TRACE synthesis cannot be mapped as external evidence",
+    );
+  } finally {
+    database.close();
+  }
+}
+
 await boundaryTests();
 await triageUrlSourceTests();
 sourceExtractionTests();
@@ -1449,4 +1659,8 @@ await kc02SchemaTests();
 kc07aEvidenceScoringTests();
 await kc05gLegacyCutoverTests();
 await kc02ReconciliationTests();
+await kc07eApprovalTests();
+kc08aKnowledgeMarkdownTests();
+await kc08bKnowledgeLinkSuggestionTests();
+await kc08dKnowledgeDocumentMappingTests();
 console.log("Stabilisation tests passed.");

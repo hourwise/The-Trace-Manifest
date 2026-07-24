@@ -5,6 +5,7 @@
 import type { APIRoute } from "astro";
 import { authenticateAccessRequest, type AccessEnvironment } from "../../../../security/access-auth";
 import { extractEvidenceUrls, linkKnowledgeSources } from "../../../../lib/server/knowledge-sources";
+import { parseKnowledgeMarkdown } from "../../../../lib/server/knowledge-markdown";
 
 export const prerender = false;
 
@@ -180,6 +181,9 @@ export const POST: APIRoute = async ({ request, locals }) => {
   }
 
   const { frontmatter, body } = parsed;
+  const structured = parseKnowledgeMarkdown(raw);
+  const materialClaims = "error" in structured ? [] : structured.materialClaims;
+  const evidenceUrls = "error" in structured ? extractEvidenceUrls(body) : structured.evidenceUrls;
 
   // Validate required fields
   if (!frontmatter.canonical_question || frontmatter.canonical_question.trim().length < 5) {
@@ -257,6 +261,8 @@ export const POST: APIRoute = async ({ request, locals }) => {
     frontmatter,
     body,
     sections: bodySections,
+    materialClaims,
+    evidenceUrls,
   });
 
   // ── ADR 0017 checkbox 5: version history on overwrite ──────────
@@ -318,7 +324,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
         .run();
 
       // ADR 0017: extract and link evidence sources
-      const extractedSources = extractEvidenceUrls(body);
+      const extractedSources = evidenceUrls;
       const linkResult = await linkKnowledgeSources(db, existing.id, extractedSources);
 
       return Response.json({
@@ -331,6 +337,8 @@ export const POST: APIRoute = async ({ request, locals }) => {
         revision: nextRevision,
         sourcesLinked: linkResult.linked,
         sourcesQuarantined: linkResult.quarantined,
+        materialClaimsFound: materialClaims.length,
+        evidenceUrlsFound: evidenceUrls.length,
         message: `Knowledge document updated to revision ${nextRevision}. ${linkResult.linked} source(s) linked, ${linkResult.quarantined} quarantined.`,
       }, { status: 200 });
     } catch (err) {
@@ -377,7 +385,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
       .run();
 
     // ADR 0017: extract and link evidence sources
-    const extractedSources = extractEvidenceUrls(body);
+    const extractedSources = evidenceUrls;
     const linkResult = await linkKnowledgeSources(db, docId, extractedSources);
 
     return Response.json({
@@ -389,6 +397,8 @@ export const POST: APIRoute = async ({ request, locals }) => {
       status: "draft",
       sourcesLinked: linkResult.linked,
       sourcesQuarantined: linkResult.quarantined,
+      materialClaimsFound: materialClaims.length,
+      evidenceUrlsFound: evidenceUrls.length,
       message: `Knowledge document created with ${linkResult.linked} linked source(s) and ${linkResult.quarantined} quarantined.`,
     }, { status: 201 });
   } catch (err) {

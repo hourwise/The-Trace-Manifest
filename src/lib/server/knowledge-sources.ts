@@ -3,11 +3,18 @@
 // matches against the source registry, and populates knowledge_document_sources.
 
 import type { TraceSourceKind } from "../../ai/task-policy";
+import {
+  extractEvidenceUrlsFromMarkdown,
+  type KnowledgeMarkdownEvidenceUrl,
+} from "./knowledge-markdown";
 
 export interface ExtractedSource {
   url: string;
   name: string;
   description: string;
+  sectionKey?: string;
+  relationship?: KnowledgeMarkdownEvidenceUrl["relationship"];
+  line?: number;
 }
 
 interface RegistrySource {
@@ -23,7 +30,7 @@ interface RegistrySource {
  * Handles markdown links: `- [Name](URL) — description`
  * And bare URLs on their own line.
  */
-export function extractEvidenceUrls(body: string): ExtractedSource[] {
+function legacyExtractEvidenceUrls(body: string): ExtractedSource[] {
   const sources: ExtractedSource[] = [];
 
   // Find the ## Evidence section
@@ -69,6 +76,20 @@ export function extractEvidenceUrls(body: string): ExtractedSource[] {
   }
 
   return sources;
+}
+
+/** Parse the full Markdown evidence format, including section and line metadata. */
+export function extractEvidenceUrls(body: string): ExtractedSource[] {
+  const parsed = extractEvidenceUrlsFromMarkdown(body);
+  if (parsed.length === 0) return legacyExtractEvidenceUrls(body);
+  return parsed.map((source) => ({
+    url: source.url,
+    name: source.name,
+    description: source.description,
+    sectionKey: source.sectionKey,
+    relationship: source.relationship,
+    line: source.line,
+  }));
 }
 
 /**

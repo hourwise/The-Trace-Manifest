@@ -48,6 +48,10 @@ try {
   db.exec(readFileSync("db/migration-0044-story-related-item-reviews.sql", "utf8"));
   db.exec(readFileSync("db/migration-0045-claim-score-snapshots.sql", "utf8"));
   db.exec(readFileSync("db/migration-0045-claim-score-snapshots.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0046-score-snapshot-explanations.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0046-score-snapshot-explanations.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0047-evidence-change-approvals.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0047-evidence-change-approvals.sql", "utf8"));
 
   const requiredTables = [
     "ai_requests", "ai_budget_reservations", "ai_usage_ledger", "ai_quota_usage",
@@ -71,6 +75,8 @@ try {
     "legacy_claim_cutover", "legacy_claim_evidence_map",
     "story_related_item_reviews", "story_claim_evidence_attachments",
     "canonical_claim_score_snapshots",
+    "evidence_score_snapshot_explanations",
+    "evidence_change_approvals",
   ];
   const tables = new Set(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((row) => row.name));
   for (const table of requiredTables) if (!tables.has(table)) throw new Error(`Missing table ${table}`);

@@ -7,6 +7,7 @@ import {
   type ScoringConflict,
   type StoryClaimForScoring,
 } from "./evidence-scoring";
+import { requiresHumanStatusApproval } from "./evidence-approval";
 
 type RecalculationEvent =
   | "accepted_evidence"
@@ -59,6 +60,12 @@ interface StoryClaimRow {
   materiality: ClaimScoringInput["materiality"];
 }
 
+interface PreviousScoreSnapshot {
+  score: number;
+  evidence_status: string;
+  component_json: string;
+}
+
 export interface RecalculateEvidenceInput {
   claimIds?: string[];
   storyIds?: number[];
@@ -72,6 +79,7 @@ export interface RecalculateEvidenceResult {
   claimSnapshots: number;
   storySnapshots: number;
   statusChanges: number;
+  approvalRequests: number;
 }
 
 function originFromTreatment(treatment: string): ScoringAssertion["provenanceOriginType"] {
@@ -84,6 +92,53 @@ function originFromTreatment(treatment: string): ScoringAssertion["provenanceOri
 
 function asPlaceholders(values: string[]): string {
   return values.map(() => "?").join(", ");
+}
+
+async function loadPreviousSnapshot(
+  db: D1Database,
+  kind: "claim" | "story",
+  subjectId: string,
+): Promise<PreviousScoreSnapshot | null> {
+  const table = kind === "claim" ? "canonical_claim_score_snapshots" : "evidence_score_snapshots";
+  const subjectColumn = kind === "claim" ? "canonical_claim_id" : "story_cluster_id";
+  return db.prepare(`
+    SELECT score, evidence_status, component_json
+    FROM ${table}
+    WHERE ${subjectColumn} = ?
+    ORDER BY created_at DESC, rowid DESC
+    LIMIT 1
+  `).bind(subjectId).first<PreviousScoreSnapshot>();
+}
+
+function changedComponentNames(beforeJson: string | null, afterJson: string): string[] {
+  if (!beforeJson) return ["initial score components"];
+  try {
+    const before = JSON.parse(beforeJson) as Record<string, unknown>;
+    const after = JSON.parse(afterJson) as Record<string, unknown>;
+    return [...new Set([...Object.keys(before), ...Object.keys(after)])]
+      .filter((key) => JSON.stringify(before[key]) !== JSON.stringify(after[key]));
+  } catch {
+    return ["score components"];
+  }
+}
+
+function explainSnapshot(
+  kind: "claim" | "story",
+  before: PreviousScoreSnapshot | null,
+  afterScore: number,
+  afterStatus: string,
+  afterComponentJson: string,
+  triggeringEvent: string,
+): string {
+  if (!before) {
+    return `Initial ${kind} evidence score ${afterScore} (${afterStatus}) under ${EVIDENCE_SCORE_POLICY_VERSION}; ${triggeringEvent} created the first immutable snapshot.`;
+  }
+  const changed = changedComponentNames(before.component_json, afterComponentJson);
+  const scoreChange = `${before.score} → ${afterScore}`;
+  const statusChange = before.evidence_status === afterStatus
+    ? `status remains ${afterStatus}`
+    : `status changed ${before.evidence_status} → ${afterStatus}`;
+  return `${kind} evidence score changed ${scoreChange}; ${statusChange}; changed components: ${changed.length > 0 ? changed.join(", ") : "none"}; recalculated for ${triggeringEvent} under ${EVIDENCE_SCORE_POLICY_VERSION}.`;
 }
 
 async function loadClaim(db: D1Database, claimId: string): Promise<ClaimScoringInput | null> {
@@ -223,38 +278,103 @@ export async function recalculateEvidenceScores(
   }
 
   const statements: D1PreparedStatement[] = [];
+  const statusStatementIndexes: number[] = [];
+  const approvalStatementIndexes: number[] = [];
   for (const score of claimScores.values()) {
+    const snapshotId = crypto.randomUUID();
+    const componentJson = JSON.stringify(score.components);
+    const before = await loadPreviousSnapshot(db, "claim", score.claimId);
+    const explanation = explainSnapshot(
+      "claim", before, score.score, score.evidenceStatus, componentJson, input.triggeringEvent,
+    );
     statements.push(db.prepare(`
       INSERT INTO canonical_claim_score_snapshots
         (id, canonical_claim_id, score, evidence_status, component_json, policy_version, triggering_event)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `).bind(
-      crypto.randomUUID(), score.claimId, score.score, score.evidenceStatus,
-      JSON.stringify(score.components), EVIDENCE_SCORE_POLICY_VERSION, input.triggeringEvent,
+      snapshotId, score.claimId, score.score, score.evidenceStatus,
+      componentJson, EVIDENCE_SCORE_POLICY_VERSION, input.triggeringEvent,
+    ));
+    statements.push(db.prepare(`
+      INSERT INTO evidence_score_snapshot_explanations
+        (id, snapshot_kind, snapshot_id, subject_id, before_score, before_evidence_status,
+         before_component_json, after_score, after_evidence_status, after_component_json,
+         policy_version, triggering_event, explanation)
+      VALUES (?, 'claim', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      crypto.randomUUID(), snapshotId, score.claimId,
+      before?.score ?? null, before?.evidence_status ?? null, before?.component_json ?? null,
+      score.score, score.evidenceStatus, componentJson,
+      EVIDENCE_SCORE_POLICY_VERSION, input.triggeringEvent, explanation,
     ));
   }
 
   let statusChanges = 0;
+  let approvalRequests = 0;
   for (const [storyId, claims] of storyClaims) {
     const score = scoreStory(claims);
+    const snapshotId = crypto.randomUUID();
+    const componentJson = JSON.stringify({ claimScores: score.claimScores });
+    const before = await loadPreviousSnapshot(db, "story", String(storyId));
+    const explanation = explainSnapshot(
+      "story", before, score.score, score.evidenceStatus, componentJson, input.triggeringEvent,
+    );
     statements.push(db.prepare(`
       INSERT INTO evidence_score_snapshots
         (id, story_cluster_id, score, evidence_status, component_json, policy_version, triggering_event)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `).bind(
-      crypto.randomUUID(), storyId, score.score, score.evidenceStatus,
-      JSON.stringify({ claimScores: score.claimScores }), EVIDENCE_SCORE_POLICY_VERSION, input.triggeringEvent,
+      snapshotId, storyId, score.score, score.evidenceStatus,
+      componentJson, EVIDENCE_SCORE_POLICY_VERSION, input.triggeringEvent,
     ));
     statements.push(db.prepare(`
-      UPDATE story_clusters
-      SET evidence_status = ?, updated_at = datetime('now')
-      WHERE id = ? AND evidence_status <> ?
-    `).bind(score.evidenceStatus, storyId, score.evidenceStatus));
+      INSERT INTO evidence_score_snapshot_explanations
+        (id, snapshot_kind, snapshot_id, subject_id, before_score, before_evidence_status,
+         before_component_json, after_score, after_evidence_status, after_component_json,
+         policy_version, triggering_event, explanation)
+      VALUES (?, 'story', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      crypto.randomUUID(), snapshotId, String(storyId),
+      before?.score ?? null, before?.evidence_status ?? null, before?.component_json ?? null,
+      score.score, score.evidenceStatus, componentJson,
+      EVIDENCE_SCORE_POLICY_VERSION, input.triggeringEvent, explanation,
+    ));
+    const currentStory = await db.prepare(
+      "SELECT evidence_status FROM story_clusters WHERE id = ?",
+    ).bind(storyId).first<{ evidence_status: string }>();
+    if (currentStory && requiresHumanStatusApproval(currentStory.evidence_status, score.evidenceStatus)) {
+      approvalStatementIndexes.push(statements.length);
+      statements.push(db.prepare(`
+        INSERT OR IGNORE INTO evidence_change_approvals
+          (id, change_kind, target_type, target_id, previous_status,
+           proposed_status, snapshot_id, state, requested_by, reason,
+           payload_json, idempotency_key)
+        VALUES (?, 'status_change', 'story_cluster', ?, ?, ?, ?, 'pending',
+                'system:recalculation', ?, ?, ?)
+      `).bind(
+        crypto.randomUUID(), String(storyId), currentStory.evidence_status,
+        score.evidenceStatus, snapshotId, explanation,
+        JSON.stringify({ policyVersion: EVIDENCE_SCORE_POLICY_VERSION, triggeringEvent: input.triggeringEvent }),
+        `status-change:${storyId}:${score.evidenceStatus}:${input.triggeringEvent}`,
+      ));
+    } else {
+      statusStatementIndexes.push(statements.length);
+      statements.push(db.prepare(`
+        UPDATE story_clusters
+        SET evidence_status = ?, updated_at = datetime('now')
+        WHERE id = ? AND evidence_status <> ?
+      `).bind(score.evidenceStatus, storyId, score.evidenceStatus));
+    }
   }
 
   if (statements.length > 0) {
     const results = await db.batch(statements);
-    for (const result of results) statusChanges += Number(result.meta.changes ?? 0) > 0 ? 1 : 0;
+    for (const index of statusStatementIndexes) {
+      statusChanges += Number(results[index]?.meta.changes ?? 0) > 0 ? 1 : 0;
+    }
+    for (const index of approvalStatementIndexes) {
+      approvalRequests += Number(results[index]?.meta.changes ?? 0) > 0 ? 1 : 0;
+    }
   }
 
   return {
@@ -264,6 +384,7 @@ export async function recalculateEvidenceScores(
     claimSnapshots: claimScores.size,
     storySnapshots: storyClaims.size,
     statusChanges,
+    approvalRequests,
   };
 }
 
