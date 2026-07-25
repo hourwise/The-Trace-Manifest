@@ -1,4 +1,4 @@
-// KC-08D: publisher-only reviewed knowledge-to-evidence mapping.
+// KC-08D/E: publisher-only reviewed knowledge-to-evidence mapping and legacy-link migration.
 import type { APIRoute } from "astro";
 import { authenticateAccessRequest, type AccessEnvironment } from "../../../../security/access-auth";
 import { sameOriginRequest, type OriginPolicyEnvironment } from "../../../../security/origin-policy";
@@ -32,6 +32,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
   const knowledgeDocumentId = text(body.knowledgeDocumentId);
   const sectionKey = text(body.sectionKey);
   const canonicalClaimId = text(body.canonicalClaimId);
+  const legacySourceLinkId = text(body.legacySourceLinkId) || undefined;
   const claimRelationship = body.claimRelationship;
   const requestId = text(body.requestId) || crypto.randomUUID();
   if (!knowledgeDocumentId || !sectionKey || !canonicalClaimId) {
@@ -52,6 +53,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
       assertions,
       reviewerEmail: identity.email,
       requestId,
+      legacySourceLinkId,
     });
     return Response.json({ success: true, ...result, requestId });
   } catch (error) {

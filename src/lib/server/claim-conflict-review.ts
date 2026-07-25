@@ -1,5 +1,6 @@
 export type ClaimConflictReviewDecision = "acknowledge" | "resolve" | "dismiss" | "reopen";
 import { recalculateEvidenceScores } from "./evidence-recalculation";
+import { triggerKnowledgeReview } from "./knowledge-change-proposals";
 
 export interface ClaimConflictReviewInput {
   conflictCaseId: string;
@@ -66,6 +67,11 @@ export async function reviewClaimConflictCase(
   await recalculateEvidenceScores(db, {
     claimIds: [conflict.source_claim_id, conflict.target_claim_id],
     triggeringEvent: "conflict_reviewed",
+  });
+  await triggerKnowledgeReview(db, {
+    kind: "conflict_created",
+    claimIds: [conflict.source_claim_id, conflict.target_claim_id],
+    eventId: conflict.id,
   });
   return { conflictCaseId: conflict.id, previousStatus: conflict.status, status, decision: input.decision };
 }

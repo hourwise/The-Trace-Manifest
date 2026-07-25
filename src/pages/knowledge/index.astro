@@ -16,11 +16,15 @@ interface D1KnowledgeDoc {
   section_slug: string;
   direct_answer: string | null;
   review_after: string | null;
+  open_change_count: number;
 }
 
 const d1Docs = await db
   .prepare(
-    `SELECT id, canonical_question, knowledge_type, evidence_status, section_slug, direct_answer, review_after
+    `SELECT id, canonical_question, knowledge_type, evidence_status, section_slug, direct_answer, review_after,
+            (SELECT COUNT(*) FROM knowledge_change_proposals proposal
+             WHERE proposal.knowledge_document_id = knowledge_documents.id
+               AND proposal.state = 'proposed') AS open_change_count
      FROM knowledge_documents
      WHERE status = 'approved' AND visibility IN ('public_knowledge', 'public_guide')
        AND (hard_expiry IS NULL OR datetime(hard_expiry) > datetime('now'))
@@ -195,7 +199,7 @@ interface UnifiedHub {
   name: string;
   description: string;
   source: "static" | "d1";
-  items: { href: string; badge: string; title: string; reviewDue?: boolean }[];
+  items: { href: string; badge: string; title: string; reviewDue?: boolean; reviewRequired?: boolean }[];
 }
 
 const unifiedHubs: UnifiedHub[] = [
@@ -220,6 +224,7 @@ const unifiedHubs: UnifiedHub[] = [
       badge: typeLabel(doc.knowledge_type),
       title: doc.canonical_question,
       reviewDue: isKnowledgeReviewDue(doc.review_after),
+      reviewRequired: Number(doc.open_change_count ?? 0) > 0,
     })),
   })),
 ];
@@ -274,6 +279,7 @@ const totalHubs = unifiedHubs.length;
                   <span class="badge badge-sm" style="font-size:0.58rem;flex-shrink:0;">{item.badge}</span>
                   <span>{item.title.length > 90 ? item.title.slice(0, 90) + "…" : item.title}</span>
                   {item.reviewDue && <span class="badge badge-sm" style="font-size:0.55rem;flex-shrink:0;background:#fff3cd;color:#856404;border-color:#ffc107;">Review due</span>}
+                  {item.reviewRequired && <span class="badge badge-sm" style="font-size:0.55rem;flex-shrink:0;background:#fff3cd;color:#856404;border-color:#ffc107;">Evidence review</span>}
                 </a>
               </li>
             ))}

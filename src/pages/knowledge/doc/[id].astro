@@ -21,13 +21,17 @@ interface KnowledgeDoc {
   approved_at: string | null;
   review_after: string | null;
   hard_expiry: string | null;
+  open_change_count: number;
 }
 
 const doc = await db
   .prepare(
     `SELECT id, canonical_question, knowledge_type, evidence_status, section_slug,
             direct_answer, detailed_explanation, document_json,
-            approved_at, review_after, hard_expiry
+            approved_at, review_after, hard_expiry,
+            (SELECT COUNT(*) FROM knowledge_change_proposals proposal
+             WHERE proposal.knowledge_document_id = knowledge_documents.id
+               AND proposal.state = 'proposed') AS open_change_count
      FROM knowledge_documents
      WHERE id = ? AND status = 'approved' AND visibility IN ('public_knowledge', 'public_guide')`,
   )
@@ -39,6 +43,7 @@ if (!doc || isKnowledgeHardExpired(doc.hard_expiry)) {
 }
 
 const reviewDue = isKnowledgeReviewDue(doc.review_after);
+const reviewRequired = Number(doc.open_change_count ?? 0) > 0;
 
 // Extract body sections from document_json
 let body = "";
@@ -76,6 +81,13 @@ function typeLabel(t: string): string {
         <div role="alert" class="card" style="margin-top:1rem;background:color-mix(in oklch, var(--ev-outdated) 10%, transparent);border-left:4px solid var(--ev-outdated);">
           <strong>Review due.</strong>
           <span class="meta"> This knowledge document remains visible for editorial transparency, but it is not current evidence for Ask TRACE until reviewed.</span>
+        </div>
+      )}
+
+      {reviewRequired && (
+        <div role="alert" class="card" style="margin-top:1rem;background:color-mix(in oklch, var(--ev-outdated) 10%, transparent);border-left:4px solid var(--ev-outdated);">
+          <strong>Evidence review in progress.</strong>
+          <span class="meta"> Linked evidence has changed or entered a conflict. This page remains visible for transparency, but it is excluded from normal Ask TRACE retrieval until a publisher reviews it.</span>
         </div>
       )}
 

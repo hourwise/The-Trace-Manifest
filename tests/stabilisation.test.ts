@@ -34,6 +34,8 @@ import { evidencePolicyEvaluationFixtures } from "../src/lib/server/evidence-eva
 import { parseKnowledgeMarkdown } from "../src/lib/server/knowledge-markdown";
 import { KNOWLEDGE_LINK_SUGGESTION_VERSION, suggestKnowledgeLinks } from "../src/lib/server/knowledge-link-suggestions";
 import { KnowledgeDocumentMappingError, mapKnowledgeDocumentClaim } from "../src/lib/server/knowledge-document-mapping";
+import { evaluateKnowledgeApproval } from "../src/lib/server/knowledge-approval";
+import { triggerKnowledgeReview } from "../src/lib/server/knowledge-change-proposals";
 import { captureAdmittedSource, SourceCaptureError } from "../src/lib/server/source-capture";
 import { signInternalRequest, verifyInternalRequestSignature } from "../src/security/internal-signature";
 import { publishBriefing, publishStory, upgradeClusterEvidence } from "../workers/ingestion/publish";
@@ -1603,17 +1605,25 @@ async function kc08dKnowledgeDocumentMappingTests(): Promise<void> {
                 'A reviewed mapping needs an accepted assertion.', 'supports', 'evidence', 'direct',
                 'factual_support', 'admitted', 'current', 'test', 'test-v1', 0.9,
                 'accepted', 'publisher@example.com', datetime('now'));
+      INSERT INTO knowledge_document_sources
+        (id, knowledge_document_id, source_reference, claim_reference, source_kind,
+         source_role, admission_state, freshness_state, independent_evidence_weight, relationship)
+        VALUES ('legacy-source-kc08e', 'knowledge-kc08d', 'https://example.com/kc08d',
+                'source:kc08d', 'external_independent', 'evidence', 'admitted', 'current', 1, 'supports');
     `);
     const mapped = await mapKnowledgeDocumentClaim(database.asD1(), {
       knowledgeDocumentId: "knowledge-kc08d", sectionKey: "direct_answer",
       canonicalClaimId: "canonical-kc08d", claimRelationship: "answers",
       assertions: [{ claimAssertionId: "assertion-kc08d", relationship: "supports" }],
       reviewerEmail: "publisher@example.com", requestId: "kc08d-request",
+      legacySourceLinkId: "legacy-source-kc08e",
     });
     assert.equal(mapped.assertionsMapped, 1);
     assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM knowledge_document_claims").first<{ count: number }>())?.count, 1);
     assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM knowledge_document_claim_assertions").first<{ count: number }>())?.count, 1);
     assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM admin_audit_log WHERE action = 'map_knowledge_document_claim'").first<{ count: number }>())?.count, 1);
+    assert.equal((await database.prepare("SELECT state FROM knowledge_source_link_migration_audit WHERE legacy_source_link_id = 'legacy-source-kc08e'").first<{ state: string }>())?.state, "migrated",
+      "reviewed mapping closes the legacy source audit record");
 
     database.sqlite.exec(`
       INSERT INTO claim_assertions
@@ -1635,6 +1645,238 @@ async function kc08dKnowledgeDocumentMappingTests(): Promise<void> {
       (error: unknown) => error instanceof KnowledgeDocumentMappingError && error.code === "assertion_not_eligible",
       "internal TRACE synthesis cannot be mapped as external evidence",
     );
+  } finally {
+    database.close();
+  }
+}
+
+async function kc08fKnowledgeApprovalGateTests(): Promise<void> {
+  const database = new SQLiteD1();
+  try {
+    database.sqlite.exec(`
+      INSERT INTO knowledge_documents
+        (id, canonical_question, canonical_hash, section_slug, knowledge_type,
+         document_json, policy_version, created_by)
+      VALUES ('knowledge-kc08f', 'When is public knowledge eligible?', 'kc08f-hash',
+              'ai-agents', 'explainer',
+              '{"materialClaims":[{"text":"A public answer needs reviewed evidence.","sectionKey":"direct_answer","relationship":"answers"}],"body":""}',
+              'test-policy', 'test-editor');
+      INSERT INTO canonical_claims
+        (id, canonical_text, claim_class, claim_domain, current_state, materiality)
+      VALUES ('canonical-kc08f', 'A public answer needs reviewed evidence.', 'specification_defined', 'general', 'active', 'standard');
+    `);
+    const blocked = await evaluateKnowledgeApproval(database.asD1(), "knowledge-kc08f");
+    assert.equal(blocked.eligible, false, "unmapped material knowledge cannot pass the public gate");
+    assert.deepEqual(blocked.unresolvedSections, ["direct_answer"]);
+
+    database.sqlite.exec(`
+      INSERT INTO source_documents
+        (id, canonical_url, canonical_url_hash, media_kind, admission_state, copyright_storage_mode)
+      VALUES ('source-doc-kc08f', 'https://example.com/kc08f', 'kc08f-source-hash', 'html', 'admitted', 'metadata_only');
+      INSERT INTO source_document_versions
+        (id, source_document_id, content_hash, retrieved_url, retrieved_at, extraction_status)
+      VALUES ('source-version-kc08f', 'source-doc-kc08f', 'kc08f-content-hash', 'https://example.com/kc08f', datetime('now'), 'captured');
+      INSERT INTO claim_assertions
+        (id, canonical_claim_id, source_document_version_id, assertion_text, relationship,
+         source_role, directness, evidence_treatment, admission_state, freshness_state,
+         extraction_method, extraction_version, confidence, reviewer_state, reviewed_by, reviewed_at)
+      VALUES ('assertion-kc08f', 'canonical-kc08f', 'source-version-kc08f',
+              'A public answer needs reviewed evidence.', 'supports', 'evidence', 'direct',
+              'factual_support', 'admitted', 'current', 'test', 'test-v1', 0.9,
+              'accepted', 'publisher@example.com', datetime('now'));
+      INSERT INTO knowledge_document_claims
+        (knowledge_document_id, canonical_claim_id, section_key, relationship, reviewed_by, reviewed_at)
+      VALUES ('knowledge-kc08f', 'canonical-kc08f', 'direct_answer', 'answers', 'publisher@example.com', datetime('now'));
+      INSERT INTO knowledge_document_claim_assertions
+        (knowledge_document_id, section_key, canonical_claim_id, claim_assertion_id, relationship, reviewed_by, reviewed_at)
+      VALUES ('knowledge-kc08f', 'direct_answer', 'canonical-kc08f', 'assertion-kc08f', 'supports', 'publisher@example.com', datetime('now'));
+    `);
+    const eligible = await evaluateKnowledgeApproval(database.asD1(), "knowledge-kc08f");
+    assert.equal(eligible.eligible, true, "a reviewed current external assertion satisfies the public gate");
+
+    database.sqlite.exec(`
+      INSERT INTO knowledge_documents
+        (id, canonical_question, canonical_hash, section_slug, knowledge_type,
+         document_json, policy_version, created_by)
+      VALUES ('knowledge-kc08f-inference', 'What is this inference?', 'kc08f-inference-hash',
+              'ai-agents', 'explainer',
+              '{"materialClaims":[{"text":"This is an explicitly labelled editorial inference.","sectionKey":"direct_answer","relationship":"answers"}],"body":""}',
+              'test-policy', 'test-editor');
+      INSERT INTO canonical_claims
+        (id, canonical_text, claim_class, claim_domain, current_state, materiality)
+      VALUES ('canonical-kc08f-inference', 'This is an explicitly labelled editorial inference.', 'editorial_synthesis', 'general', 'active', 'standard');
+      INSERT INTO knowledge_document_claims
+        (knowledge_document_id, canonical_claim_id, section_key, relationship, reviewed_by, reviewed_at)
+      VALUES ('knowledge-kc08f-inference', 'canonical-kc08f-inference', 'direct_answer', 'inference_basis', 'publisher@example.com', datetime('now'));
+    `);
+    const inference = await evaluateKnowledgeApproval(database.asD1(), "knowledge-kc08f-inference");
+    assert.equal(inference.eligible, true, "explicitly reviewed editorial synthesis can pass as inference basis");
+    assert.deepEqual(inference.inferenceSections, ["direct_answer"]);
+  } finally {
+    database.close();
+  }
+}
+
+async function kc08gKnowledgeEvidenceResolutionTests(): Promise<void> {
+  const database = new SQLiteD1();
+  try {
+    database.sqlite.exec(`
+      INSERT INTO knowledge_documents
+        (id, canonical_question, canonical_hash, section_slug, knowledge_type,
+         status, visibility, evidence_status, direct_answer, document_json,
+         policy_version, approved_by, approved_at, created_by)
+      VALUES ('knowledge-kc08g', 'How does inherited evidence resolve?', 'kc08g-hash',
+              'ai-agents', 'explainer', 'approved', 'public_knowledge',
+              'strongly_supported', 'The mapped source is available.',
+              '{"materialClaims":[{"text":"The mapped source is available.","sectionKey":"direct_answer","relationship":"answers"}],"body":""}',
+              'test-policy', 'publisher@example.com', datetime('now'), 'test-editor');
+      INSERT INTO source_documents
+        (id, canonical_url, canonical_url_hash, media_kind, admission_state, copyright_storage_mode)
+      VALUES ('source-doc-kc08g', 'https://example.com/kc08g', 'kc08g-source-hash', 'html', 'admitted', 'metadata_only');
+      INSERT INTO source_document_versions
+        (id, source_document_id, content_hash, retrieved_url, retrieved_at, published_at, extraction_status)
+      VALUES ('source-version-kc08g', 'source-doc-kc08g', 'kc08g-content-hash', 'https://example.com/kc08g', datetime('now'), datetime('now'), 'extracted');
+      INSERT INTO source_chunks
+        (id, source_document_version_id, chunk_index, text_excerpt, text_hash, start_locator, end_locator)
+      VALUES ('source-chunk-kc08g', 'source-version-kc08g', 0, 'The mapped source is available.', 'kc08g-chunk-hash', 'html:12', 'html:13');
+      INSERT INTO canonical_claims
+        (id, canonical_text, claim_class, claim_domain, current_state, materiality)
+      VALUES ('canonical-kc08g', 'The mapped source is available.', 'specification_defined', 'general', 'active', 'standard');
+      INSERT INTO claim_assertions
+        (id, canonical_claim_id, source_document_version_id, source_chunk_id,
+         start_locator, end_locator, assertion_text, relationship, source_role,
+         directness, evidence_treatment, admission_state, freshness_state,
+         extraction_method, extraction_version, confidence, reviewer_state,
+         reviewed_by, reviewed_at)
+      VALUES ('assertion-kc08g', 'canonical-kc08g', 'source-version-kc08g', 'source-chunk-kc08g',
+              'html:12', 'html:13', 'The mapped source is available.', 'supports', 'evidence',
+              'direct', 'factual_support', 'admitted', 'current', 'test', 'test-v1', 0.9,
+              'accepted', 'publisher@example.com', datetime('now'));
+      INSERT INTO knowledge_document_claims
+        (knowledge_document_id, canonical_claim_id, section_key, relationship, reviewed_by, reviewed_at)
+      VALUES ('knowledge-kc08g', 'canonical-kc08g', 'direct_answer', 'answers', 'publisher@example.com', datetime('now'));
+      INSERT INTO knowledge_document_claim_assertions
+        (knowledge_document_id, section_key, canonical_claim_id, claim_assertion_id, relationship, reviewed_by, reviewed_at)
+      VALUES ('knowledge-kc08g', 'direct_answer', 'canonical-kc08g', 'assertion-kc08g', 'supports', 'publisher@example.com', datetime('now'));
+    `);
+    const resolved = await retrieveApprovedKnowledge(database.asD1(), "mapped source", 4);
+    const internal = resolved.find((item) => item.sourceId === "knowledge:knowledge-kc08g");
+    const assertion = resolved.find((item) => item.assertionId === "assertion-kc08g");
+    assert.equal(internal?.externalEvidenceResolved, true, "knowledge marks its inherited bundle resolved");
+    assert.equal(assertion?.sourceUrl, "https://example.com/kc08g");
+    assert.equal(assertion?.sourceChunkId, "source-chunk-kc08g");
+    assert.equal(assertion?.startLocator, "html:12");
+    assert.equal(assertion?.endLocator, "html:13");
+    assert.equal(assertion?.sourceRole, "evidence");
+
+    database.sqlite.exec("UPDATE claim_assertions SET source_chunk_id = NULL WHERE id = 'assertion-kc08g'");
+    const unresolved = await retrieveApprovedKnowledge(database.asD1(), "mapped source", 4);
+    assert.equal(unresolved.find((item) => item.sourceId === "knowledge:knowledge-kc08g")?.externalEvidenceResolved, false,
+      "missing chunk/locator fails inherited evidence resolution");
+    assert.equal(unresolved.some((item) => item.assertionId === "assertion-kc08g"), false,
+      "unresolved assertions are not supplied as external evidence");
+  } finally {
+    database.close();
+  }
+}
+
+async function kc08hKnowledgeChangeProposalTests(): Promise<void> {
+  const database = new SQLiteD1();
+  try {
+    database.sqlite.exec(`
+      INSERT INTO knowledge_documents
+        (id, canonical_question, canonical_hash, section_slug, knowledge_type,
+         status, visibility, evidence_status, direct_answer, document_json,
+         policy_version, approved_by, approved_at, created_by)
+      VALUES ('knowledge-kc08h', 'What changed in the linked evidence?', 'kc08h-hash',
+              'ai-agents', 'explainer', 'approved', 'public_knowledge',
+              'strongly_supported', 'The linked evidence is current.',
+              '{"materialClaims":[{"text":"The linked evidence is current.","sectionKey":"direct_answer","relationship":"answers"}],"body":""}',
+              'test-policy', 'publisher@example.com', datetime('now'), 'test-editor');
+      INSERT INTO knowledge_documents
+        (id, canonical_question, canonical_hash, section_slug, knowledge_type,
+         status, visibility, evidence_status, direct_answer, document_json,
+         review_after, policy_version, approved_by, approved_at, created_by)
+      VALUES ('knowledge-kc08h-expiry', 'What has expired?', 'kc08h-expiry-hash',
+              'ai-agents', 'explainer', 'approved', 'public_knowledge',
+              'strongly_supported', 'This entry is due for review.',
+              '{"materialClaims":[],"body":""}', datetime('now', '-1 day'),
+              'test-policy', 'publisher@example.com', datetime('now'), 'test-editor');
+      INSERT INTO source_documents
+        (id, canonical_url, canonical_url_hash, media_kind, admission_state, copyright_storage_mode, current_version_id)
+      VALUES ('source-doc-kc08h', 'https://example.com/kc08h', 'kc08h-source-hash', 'html', 'admitted', 'metadata_only', 'source-version-kc08h');
+      INSERT INTO source_document_versions
+        (id, source_document_id, content_hash, retrieved_url, retrieved_at, extraction_status)
+      VALUES ('source-version-kc08h', 'source-doc-kc08h', 'kc08h-content-hash', 'https://example.com/kc08h', datetime('now'), 'extracted');
+      INSERT INTO canonical_claims
+        (id, canonical_text, claim_class, claim_domain, current_state, materiality)
+      VALUES ('canonical-kc08h', 'The linked evidence is current.', 'specification_defined', 'general', 'active', 'standard'),
+             ('canonical-kc08h-other', 'The linked evidence is not current.', 'specification_defined', 'general', 'active', 'standard');
+      INSERT INTO claim_assertions
+        (id, canonical_claim_id, source_document_version_id, assertion_text, relationship,
+         source_role, directness, evidence_treatment, admission_state, freshness_state,
+         extraction_method, extraction_version, confidence, reviewer_state, reviewed_by, reviewed_at)
+      VALUES ('assertion-kc08h', 'canonical-kc08h', 'source-version-kc08h',
+              'The linked evidence is current.', 'supports', 'evidence', 'direct',
+              'factual_support', 'admitted', 'current', 'test', 'test-v1', 0.9,
+              'accepted', 'publisher@example.com', datetime('now'));
+      INSERT INTO knowledge_document_claims
+        (knowledge_document_id, canonical_claim_id, section_key, relationship, reviewed_by, reviewed_at)
+      VALUES ('knowledge-kc08h', 'canonical-kc08h', 'direct_answer', 'answers', 'publisher@example.com', datetime('now'));
+      INSERT INTO knowledge_document_claim_assertions
+        (knowledge_document_id, section_key, canonical_claim_id, claim_assertion_id, relationship, reviewed_by, reviewed_at)
+      VALUES ('knowledge-kc08h', 'direct_answer', 'canonical-kc08h', 'assertion-kc08h', 'supports', 'publisher@example.com', datetime('now'));
+    `);
+
+    const changed = await triggerKnowledgeReview(database.asD1(), {
+      kind: "evidence_changed", claimIds: ["canonical-kc08h"], eventId: "kc08h-evidence-event",
+    });
+    assert.equal(changed.proposalsCreated, 1);
+    assert.equal(changed.affectedDocumentIds.includes("knowledge-kc08h"), true);
+    const repeated = await triggerKnowledgeReview(database.asD1(), {
+      kind: "evidence_changed", claimIds: ["canonical-kc08h"], eventId: "kc08h-evidence-event",
+    });
+    assert.equal(repeated.proposalsCreated, 0, "the same evidence event is idempotent");
+    assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM knowledge_change_proposals WHERE knowledge_document_id = 'knowledge-kc08h'").first<{ count: number }>())?.count, 1);
+    assert.equal((await retrieveApprovedKnowledge(database.asD1(), "linked evidence", 4)).length, 0,
+      "open review proposals exclude the knowledge page from Ask TRACE retrieval");
+
+    database.sqlite.exec(`
+      INSERT INTO source_document_versions
+        (id, source_document_id, content_hash, retrieved_url, retrieved_at, extraction_status)
+      VALUES ('source-version-kc08h-new', 'source-doc-kc08h', 'kc08h-content-hash-new', 'https://example.com/kc08h', datetime('now'), 'extracted');
+      UPDATE source_documents SET current_version_id = 'source-version-kc08h-new' WHERE id = 'source-doc-kc08h';
+    `);
+    const sourceChanged = await triggerKnowledgeReview(database.asD1(), {
+      kind: "evidence_changed", sourceDocumentVersionId: "source-version-kc08h-new", eventId: "source-version-kc08h-new",
+    });
+    assert.equal(sourceChanged.proposalsCreated, 1, "a newer source version creates a review proposal");
+
+    database.sqlite.exec(`
+      INSERT INTO knowledge_claim_conflict_cases
+        (id, source_claim_id, target_claim_id, conflict_kind, explanation, confidence, status, idempotency_key)
+      VALUES ('conflict-kc08h', 'canonical-kc08h', 'canonical-kc08h-other', 'contradiction',
+              'The linked evidence conflicts.', 0.9, 'unresolved', 'kc08h-conflict-key');
+    `);
+    const conflict = await triggerKnowledgeReview(database.asD1(), {
+      kind: "conflict_created", claimIds: ["canonical-kc08h"], eventId: "conflict-kc08h",
+    });
+    assert.equal(conflict.proposalsCreated, 1, "unresolved conflicts create a separate review proposal");
+
+    const correction = await triggerKnowledgeReview(database.asD1(), {
+      kind: "correction_recorded", claimIds: ["canonical-kc08h"], eventId: "correction-kc08h",
+    });
+    assert.equal(correction.proposalsCreated, 1);
+    const supersession = await triggerKnowledgeReview(database.asD1(), {
+      kind: "supersession_recorded", claimIds: ["canonical-kc08h"], eventId: "supersession-kc08h",
+    });
+    assert.equal(supersession.proposalsCreated, 1);
+
+    const expiry = await triggerKnowledgeReview(database.asD1(), {
+      kind: "expiry_reached", now: new Date().toISOString(), eventId: "scheduled-expiry",
+    });
+    assert.equal(expiry.proposalsCreated, 1, "due knowledge creates a freshness review proposal");
+    assert.equal((await database.prepare("SELECT proposal_type FROM knowledge_change_proposals WHERE knowledge_document_id = 'knowledge-kc08h-expiry'").first<{ proposal_type: string }>())?.proposal_type, "freshness_review");
   } finally {
     database.close();
   }
@@ -1663,4 +1905,7 @@ await kc07eApprovalTests();
 kc08aKnowledgeMarkdownTests();
 await kc08bKnowledgeLinkSuggestionTests();
 await kc08dKnowledgeDocumentMappingTests();
+await kc08fKnowledgeApprovalGateTests();
+await kc08gKnowledgeEvidenceResolutionTests();
+await kc08hKnowledgeChangeProposalTests();
 console.log("Stabilisation tests passed.");

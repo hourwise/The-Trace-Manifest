@@ -8,6 +8,7 @@ import {
   type StoryClaimForScoring,
 } from "./evidence-scoring";
 import { requiresHumanStatusApproval } from "./evidence-approval";
+import { triggerKnowledgeReview } from "./knowledge-change-proposals";
 
 type RecalculationEvent =
   | "accepted_evidence"
@@ -395,8 +396,14 @@ export async function recalculateExpiredEvidence(db: D1Database): Promise<Recalc
     FROM claim_assertions
     WHERE freshness_state = 'stale'
   `).all<{ canonical_claim_id: string }>();
-  return recalculateEvidenceScores(db, {
+  const result = await recalculateEvidenceScores(db, {
     claimIds: (rows.results ?? []).map((row) => row.canonical_claim_id),
     triggeringEvent: "expiry_reached",
   });
+  await triggerKnowledgeReview(db, {
+    kind: "expiry_reached",
+    claimIds: (rows.results ?? []).map((row) => row.canonical_claim_id),
+    eventId: "scheduled-expiry",
+  });
+  return result;
 }

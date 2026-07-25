@@ -70,7 +70,9 @@ export class SQLiteD1 {
     this.sqlite.exec(readFileSync("db/migration-0044-story-related-item-reviews.sql", "utf8"));
     this.sqlite.exec(readFileSync("db/migration-0045-claim-score-snapshots.sql", "utf8"));
     this.sqlite.exec(readFileSync("db/migration-0046-score-snapshot-explanations.sql", "utf8"));
-    this.sqlite.exec(readFileSync("db/migration-0047-evidence-change-approvals.sql", "utf8"));
+  this.sqlite.exec(readFileSync("db/migration-0047-evidence-change-approvals.sql", "utf8"));
+    this.sqlite.exec(readFileSync("db/migration-0048-knowledge-source-link-audit.sql", "utf8"));
+    this.sqlite.exec(readFileSync("db/migration-0049-knowledge-change-proposal-index.sql", "utf8"));
   }
 
   prepare(query: string): SQLiteD1Statement {

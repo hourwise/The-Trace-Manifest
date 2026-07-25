@@ -1,6 +1,7 @@
 import { generateClaimProvenanceProposal } from "./claim-provenance-proposals";
 import { generateClaimRelationshipProposals } from "./claim-relationship-proposals";
 import { recalculateEvidenceScores } from "./evidence-recalculation";
+import { triggerKnowledgeReview } from "./knowledge-change-proposals";
 
 export type ClaimMatchDecision = "merge_existing" | "create_new" | "reject";
 
@@ -152,6 +153,11 @@ export async function reviewClaimMatchCandidate(
     await recalculateEvidenceScores(db, {
       claimIds: [resolvedCanonicalClaimId, candidate.source_canonical_claim_id],
       triggeringEvent: "claim_match_accepted",
+    });
+    await triggerKnowledgeReview(db, {
+      kind: "evidence_changed",
+      claimIds: [resolvedCanonicalClaimId, candidate.source_canonical_claim_id],
+      eventId: candidate.id,
     });
   }
   return {

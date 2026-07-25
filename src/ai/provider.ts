@@ -78,6 +78,13 @@ export interface EvidenceExcerpt {
   isDisputed?: boolean;
   /** True only when a TRACE knowledge record's external assertion bundle is resolved. */
   externalEvidenceResolved?: boolean;
+  /** KC-08G provenance locators retained for citation-resolution work. */
+  assertionId?: string;
+  sourceDocumentVersionId?: string;
+  sourceChunkId?: string;
+  startLocator?: string;
+  endLocator?: string;
+  knowledgeDocumentId?: string;
 }
 
 // ============================================================

@@ -1,4 +1,6 @@
 import { parseKnowledgeMarkdown, type KnowledgeClaimRelationship } from "./knowledge-markdown";
+import { getLegacyKnowledgeSourceLink, sourceReferenceMatches } from "./knowledge-source-migration";
+import { triggerKnowledgeReview } from "./knowledge-change-proposals";
 
 export type KnowledgeAssertionRelationship =
   | "supports"
@@ -18,6 +20,8 @@ export interface KnowledgeDocumentMappingInput {
   }>;
   reviewerEmail: string;
   requestId: string;
+  /** Existing string-only source link being explicitly migrated, if any. */
+  legacySourceLinkId?: string;
 }
 
 export interface KnowledgeDocumentMappingResult {
@@ -66,19 +70,54 @@ export async function mapKnowledgeDocumentClaim(
   `).bind(input.canonicalClaimId).first<{ id: string }>();
   if (!claim) throw new KnowledgeDocumentMappingError("claim_not_found", "The canonical claim is unavailable.", 409);
 
+  const legacySourceLink = input.legacySourceLinkId
+    ? await getLegacyKnowledgeSourceLink(db, input.legacySourceLinkId, input.knowledgeDocumentId)
+    : null;
+  if (input.legacySourceLinkId && !legacySourceLink) {
+    throw new KnowledgeDocumentMappingError("legacy_source_link_not_found", "The legacy source link is unavailable.", 404);
+  }
+  if (legacySourceLink && ["rejected", "retained_legacy"].includes(legacySourceLink.state)) {
+    throw new KnowledgeDocumentMappingError("legacy_source_link_closed", "That legacy source link has already been closed without migration.", 409);
+  }
+  if (legacySourceLink?.state === "migrated"
+    && (legacySourceLink.migrated_section_key !== input.sectionKey
+      || legacySourceLink.migrated_canonical_claim_id !== input.canonicalClaimId)) {
+    throw new KnowledgeDocumentMappingError("legacy_source_link_already_migrated", "That legacy source link is already mapped to a different reviewed claim.", 409);
+  }
+  if (legacySourceLink && legacySourceLink.source_role !== "internal_synthesis" && input.assertions.length === 0) {
+    throw new KnowledgeDocumentMappingError("legacy_source_requires_assertion", "An external legacy source link must resolve to at least one reviewed assertion.", 409);
+  }
+
   for (const assertion of input.assertions) {
     const eligible = await db.prepare(`
-      SELECT id FROM claim_assertions
-      WHERE id = ? AND canonical_claim_id = ?
-        AND reviewer_state = 'accepted'
-        AND admission_state = 'admitted'
-        AND freshness_state = 'current'
-        AND evidence_treatment <> 'internal_synthesis'
-    `).bind(assertion.claimAssertionId, input.canonicalClaimId).first<{ id: string }>();
+      SELECT ca.id, version.retrieved_url, source_document.canonical_url
+      FROM claim_assertions ca
+      LEFT JOIN source_document_versions version ON version.id = ca.source_document_version_id
+      LEFT JOIN source_documents source_document ON source_document.id = version.source_document_id
+      WHERE ca.id = ? AND ca.canonical_claim_id = ?
+        AND ca.reviewer_state = 'accepted'
+        AND ca.admission_state = 'admitted'
+        AND ca.freshness_state = 'current'
+        AND ca.evidence_treatment <> 'internal_synthesis'
+    `).bind(assertion.claimAssertionId, input.canonicalClaimId).first<{
+      id: string;
+      retrieved_url: string | null;
+      canonical_url: string | null;
+    }>();
     if (!eligible) {
       throw new KnowledgeDocumentMappingError(
         "assertion_not_eligible",
         `Assertion ${assertion.claimAssertionId} is not an accepted, current, admitted external assertion.`,
+        409,
+      );
+    }
+    if (legacySourceLink
+      && legacySourceLink.source_role !== "internal_synthesis"
+      && !sourceReferenceMatches(legacySourceLink.source_reference, eligible.retrieved_url)
+      && !sourceReferenceMatches(legacySourceLink.source_reference, eligible.canonical_url)) {
+      throw new KnowledgeDocumentMappingError(
+        "legacy_source_assertion_mismatch",
+        `Assertion ${assertion.claimAssertionId} does not resolve to the legacy source URL under review.`,
         409,
       );
     }
@@ -127,9 +166,33 @@ export async function mapKnowledgeDocumentClaim(
     input.requestId, `section:${input.sectionKey}:assertions:${input.assertions.length}`,
   ));
 
+  if (legacySourceLink) {
+    statements.push(db.prepare(`
+      UPDATE knowledge_source_link_migration_audit
+      SET state = 'migrated', migrated_section_key = ?, migrated_canonical_claim_id = ?,
+          reviewed_by = ?, reviewed_at = datetime('now'), migrated_at = datetime('now'),
+          review_reason = 'Publisher reviewed section, claim, and assertion mapping.'
+      WHERE legacy_source_link_id = ? AND knowledge_document_id = ?
+        AND state IN ('pending_review', 'migrated')
+    `).bind(
+      input.sectionKey, input.canonicalClaimId, input.reviewerEmail,
+      input.legacySourceLinkId, input.knowledgeDocumentId,
+    ));
+  }
+
   const results = await db.batch(statements);
   if (Number(results[0]?.meta.changes ?? 0) !== 1) {
     throw new KnowledgeDocumentMappingError("mapping_conflict", "The knowledge mapping changed before it could be saved.", 409);
+  }
+  const currentDocument = await db.prepare(
+    "SELECT status FROM knowledge_documents WHERE id = ?",
+  ).bind(input.knowledgeDocumentId).first<{ status: string }>();
+  if (currentDocument?.status === "approved") {
+    await triggerKnowledgeReview(db, {
+      kind: "evidence_changed",
+      claimIds: [input.canonicalClaimId],
+      eventId: input.requestId,
+    });
   }
   return {
     knowledgeDocumentId: input.knowledgeDocumentId,

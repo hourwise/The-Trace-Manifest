@@ -5,6 +5,7 @@
  */
 
 import type { ExtractedHtmlDocument } from "./source-extraction";
+import { triggerKnowledgeReview } from "./knowledge-change-proposals";
 
 export type SourceCaptureStorageMode = "metadata_only" | "short_excerpt" | "private_full_text" | "editor_supplied_document" | "prohibited";
 
@@ -165,6 +166,13 @@ export async function captureAdmittedSource(
     if (canStoreBody) await env.RAW_STORE.delete([r2OriginalKey!, r2ExtractedKey!]).catch(() => undefined);
     throw new SourceCaptureError("The source metadata could not be recorded.", "database_write_failed", 500);
   }
+
+  await triggerKnowledgeReview(env.DB, {
+    kind: "evidence_changed",
+    sourceDocumentIds: [sourceDocumentId],
+    sourceDocumentVersionId,
+    eventId: sourceDocumentVersionId,
+  });
 
   return {
     sourceDocumentId, sourceDocumentVersionId, canonicalUrlHash, contentHash,

@@ -1,8 +1,9 @@
 ---
-// KC-08D: publisher-only mapper for reviewed knowledge claims and assertions.
+// KC-08D/E: publisher-only mapper and legacy-link migration review.
 import BaseLayout from "../../../layouts/BaseLayout.astro";
 import { authenticateAccessRequest, type AccessEnvironment } from "../../../security/access-auth";
 import { suggestKnowledgeLinks, type KnowledgeClaimSuggestion } from "../../../lib/server/knowledge-link-suggestions";
+import { listLegacyKnowledgeSourceLinks, type LegacyKnowledgeSourceLink } from "../../../lib/server/knowledge-source-migration";
 
 export const prerender = false;
 
@@ -20,6 +21,9 @@ const documents = (await db.prepare(`
 
 const requestedId = new URL(Astro.request.url).searchParams.get("id") ?? "";
 const selected = documents.find((document) => document.id === requestedId) ?? documents[0] ?? null;
+const legacySourceLinks: LegacyKnowledgeSourceLink[] = selected
+  ? await listLegacyKnowledgeSourceLinks(db, selected.id)
+  : [];
 let suggestions: Awaited<ReturnType<typeof suggestKnowledgeLinks>> | null = null;
 let suggestionError = "";
 if (selected) {
@@ -115,6 +119,18 @@ const assertionRelationships = ["supports", "qualifies", "contradicts", "context
           <strong>{suggestions?.unresolvedClaimCount ?? 0}</strong> unresolved claims
         </div>
 
+        {legacySourceLinks.length > 0 && (
+          <div class="card legacy-links">
+            <h2>Legacy source links</h2>
+            <p class="meta">These string-only links are compatibility records. Select one in a mapping form after confirming its source URL and reviewed assertion; they never count as evidence on their own.</p>
+            <ul class="source-list">
+              {legacySourceLinks.map((source) => (
+                <li><code>{source.source_reference}</code> <span class={`badge ${source.state === "pending_review" ? "badge-provisional" : ""}`}>{label(source.state)}</span> <span class="meta">{source.claim_reference || "no claim reference"}</span></li>
+              ))}
+            </ul>
+          </div>
+        )}
+
         {(suggestions?.sourceSuggestions ?? []).length > 0 && (
           <div class="card">
             <h2>Evidence URL suggestions</h2>
@@ -158,6 +174,12 @@ const assertionRelationships = ["supports", "qualifies", "contradicts", "context
                     {eligibleAssertions.map((assertion) => <option value={assertion.id}>{assertion.assertion_text.slice(0, 180)}{assertion.retrieved_url ? ` · ${assertion.retrieved_url}` : ""}</option>)}
                   </select>
                 </label>
+                <label>Legacy source link <span class="meta">(optional migration audit link)</span>
+                  <select name="legacySourceLinkId">
+                    <option value="">No legacy link</option>
+                    {legacySourceLinks.filter((source) => source.state === "pending_review").map((source) => <option value={source.legacy_source_link_id}>{source.source_reference}</option>)}
+                  </select>
+                </label>
                 <label>Assertion relationship
                   <select name="assertionRelationship">
                     {assertionRelationships.map((relationship) => <option value={relationship}>{label(relationship)}</option>)}
@@ -189,6 +211,7 @@ const assertionRelationships = ["supports", "qualifies", "contradicts", "context
         canonicalClaimId: (mappingForm.querySelector("[name=canonicalClaimId]") as unknown as HTMLSelectElement).value,
         claimRelationship: (mappingForm.querySelector("[name=claimRelationship]") as unknown as HTMLSelectElement).value,
         assertions: assertionId ? [{ claimAssertionId: assertionId, relationship: (mappingForm.querySelector("[name=assertionRelationship]") as unknown as HTMLSelectElement).value }] : [],
+        legacySourceLinkId: (mappingForm.querySelector("[name=legacySourceLinkId]") as unknown as HTMLSelectElement).value || undefined,
         requestId: crypto.randomUUID(),
       };
       result.textContent = "Saving…";
