@@ -1,9 +1,9 @@
 # KC-09D Preview indexing evidence
 
 **Status:** Indexing flow complete locally and the Preview Worker is deployed.
-No vector records have been generated yet because the signed admin trigger
-requires the existing Preview internal-service secret, which is not exposed to
-this execution environment.
+The first bounded run remains at the signed-admin execution gate because the
+existing Preview internal-service secret is not exposed to this execution
+environment.
 
 ## Implementation
 
@@ -36,11 +36,13 @@ this execution environment.
   completed successfully (5 queries, 11 rows written). Preview D1 integrity
   checks remain clean.
 - Preview Worker deployment completed as version
-  `ae6424a8-95da-4d0b-82c2-2165fdf27b49`; Wrangler confirmed the isolated D1,
+  `b56d6936-8422-4b4c-ade8-9020e885692f`; Wrangler confirmed the isolated D1,
   AI, Vectorize, R2, and queue bindings.
-- Read-only Preview verification found both KC-09D state tables present, zero
-  embedding runs, zero embedding items, and zero lexical records. `PRAGMA
-  quick_check` returned `ok`; `PRAGMA foreign_key_check` returned no rows.
+- Read-only Preview verification after this deployment found zero embedding
+  runs, zero embedding items, and zero indexed chunks. `PRAGMA quick_check`
+  returned `ok`; `PRAGMA foreign_key_check` returned no rows.
 - No Workers AI call, Vectorize upsert, or production change has occurred. A
-  publisher can now invoke `POST /admin/knowledge/index-preview` through the
-  authenticated Preview admin proxy with a bounded limit (for example, 25).
+  publisher must still invoke `POST /admin/knowledge/index-preview` through
+  the authenticated Preview admin boundary with a bounded limit (for example,
+  25); this environment cannot manufacture that HMAC without exposing or
+  rotating the configured secret.
