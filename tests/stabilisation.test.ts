@@ -9,6 +9,7 @@ import { independentEvidenceWeightFor, isAnswerEligibleEvidence, PUBLIC_ASK_TASK
 import { GUIDE_CONTRACT_VERSION, guideFreshness, isGuideEligibleForProceduralRetrieval, validateGuideCommand, validateGuideMetadata } from "../src/guides/contract";
 import { nodeWindowsVerificationCommands } from "../src/guides/drafts/install-node-js-and-npm-on-windows";
 import { validateAskBody } from "../src/pages/api/trace/ask";
+import { authorisedRoute, buildWorkerAdminPath, normaliseAdminPath } from "../src/pages/api/admin/[...path]";
 import { handleTriageRequest } from "../src/pages/api/admin/ai-triage";
 import { extractTriageUrlSource, TriageUrlFetchError } from "../src/lib/server/triage-url-source";
 import { retrieveRemoteSource, SourceRetrievalError } from "../src/lib/server/source-retrieval";
@@ -60,6 +61,23 @@ const controls = {
   maxRequestMicrousd: 100,
   dailyQuestionsPerVisitor: 1,
 };
+
+function adminProxyPathTests(): void {
+  assert.equal(buildWorkerAdminPath("knowledge/index-preview"), "/admin/knowledge/index-preview");
+  assert.equal(buildWorkerAdminPath("social-signals", "?page=2"), "/admin/social-signals?page=2");
+  assert.equal(normaliseAdminPath("knowledge/index-preview"), "knowledge/index-preview");
+  assert.equal(normaliseAdminPath("social-signals"), "social-signals");
+
+  for (const malformed of ["", "/knowledge/index-preview", "knowledge//index-preview", "knowledge/../social-signals", "knowledge/.hidden", "knowledge\\index-preview", "knowledge/index-preview?x=1", " knowledge/index-preview"]) {
+    assert.equal(normaliseAdminPath(malformed), null, `malformed admin path rejected: ${malformed}`);
+    assert.equal(buildWorkerAdminPath(malformed), null, `malformed upstream path rejected: ${malformed}`);
+  }
+  assert.equal(buildWorkerAdminPath("knowledge/index-preview", "#fragment"), null, "fragment-bearing upstream path rejected");
+  assert.equal(authorisedRoute("knowledge/index-preview", "POST", "publisher"), true, "publisher can reach the Preview index route");
+  assert.equal(authorisedRoute("social-signals", "GET", "reader"), true, "reader can read social signals");
+  assert.equal(authorisedRoute("social-signals", "DELETE", "publisher"), false, "unsupported methods fail closed");
+  assert.equal(authorisedRoute("knowledge/../social-signals", "POST", "publisher"), false, "traversal cannot bypass route authorization");
+}
 
 async function governanceTests(): Promise<void> {
   const database = new SQLiteD1();
@@ -2366,6 +2384,7 @@ function kc09jRefusalDisagreementTests(): void {
   assert.equal(qualifiedResult.passed, true, "the target qualified_lean answer preserves the selected lean and change guidance");
 }
 
+adminProxyPathTests();
 await boundaryTests();
 await triageUrlSourceTests();
 sourceExtractionTests();

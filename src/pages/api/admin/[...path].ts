@@ -17,6 +17,7 @@ const PUBLISH_ROUTES = new Set([
   "publish-briefing", "archive-cluster",
   "approve-evidence-status",
   "knowledge/capture-missing",
+  "knowledge/index-preview",
   "candidates", "social-signals", "related-items",
 ]);
 
@@ -52,9 +53,26 @@ async function auditDenial(
   }
 }
 
-function authorisedRoute(path: string, method: string, role: OperatorRole): boolean {
-  if (path === "social-signals") return true; // ADR 0009: explicit bypass for social signals
-  if (!/^[a-z0-9/-]+$/.test(path)) return false;
+export function normaliseAdminPath(path: unknown): string | null {
+  if (typeof path !== "string" || path.length === 0 || path.length > 200 || path.trim() !== path) return null;
+  const segments = path.split("/");
+  if (segments.length === 0 || segments.some((segment) => !/^[a-z0-9-]+$/.test(segment))) return null;
+  return path;
+}
+
+export function buildWorkerAdminPath(path: unknown, search = ""): string | null {
+  const normalised = normaliseAdminPath(path);
+  if (!normalised || (search && (!search.startsWith("?") || search.includes("#")))) return null;
+  return `/admin/${normalised}${search}`;
+}
+
+export function authorisedRoute(path: string, method: string, role: OperatorRole): boolean {
+  const normalised = normaliseAdminPath(path);
+  if (!normalised) return false;
+  if (normalised === "social-signals") {
+    return method === "GET" || (method === "POST" && role === "publisher"); // ADR 0009: explicit route allowance
+  }
+  path = normalised;
   if (method === "GET") return READ_ROUTES.has(path) && (path !== "candidates" || role === "publisher");
   if (method === "POST") return role === "publisher" && PUBLISH_ROUTES.has(path);
   return false;
@@ -113,14 +131,16 @@ export async function handleAdminProxyRequest(
   const identity = await authenticateAccessRequest(request, env);
   if (!identity) return Response.json({ error: "Unauthorized" }, { status: 401 });
 
+  const normalisedPath = normaliseAdminPath(path);
+
   if (request.method === "POST" && !sameOriginRequest(request, env)) {
-    if (!await auditDenial(env, identity, path, "origin_rejected")) {
+    if (!await auditDenial(env, identity, normalisedPath ?? path, "origin_rejected")) {
       return Response.json({ error: "Audit service unavailable" }, { status: 503 });
     }
     return Response.json({ error: "Origin rejected" }, { status: 403 });
   }
-  if (!authorisedRoute(path, request.method, identity.role)) {
-    if (!await auditDenial(env, identity, path, "route_or_role_rejected")) {
+  if (!normalisedPath || !authorisedRoute(normalisedPath, request.method, identity.role)) {
+    if (!await auditDenial(env, identity, normalisedPath ?? path, "route_or_role_rejected")) {
       return Response.json({ error: "Audit service unavailable" }, { status: 503 });
     }
     return Response.json({ error: identity.role === "reader" ? "Forbidden" : "Not found" }, { status: identity.role === "reader" ? 403 : 404 });
@@ -136,7 +156,8 @@ export async function handleAdminProxyRequest(
   if (body === null) return Response.json({ error: "Request body is too large." }, { status: 413 });
 
   const incoming = new URL(request.url);
-  const pathAndQuery = `/admin/${path}${incoming.search}`;
+  const pathAndQuery = buildWorkerAdminPath(normalisedPath, incoming.search);
+  if (!pathAndQuery) return Response.json({ error: "Malformed admin path." }, { status: 404 });
   const timestamp = String(Date.now());
   const nonce = crypto.randomUUID();
   const signatureIdentity = { operator: identity.email, role: identity.role, timestamp, nonce };
@@ -144,17 +165,19 @@ export async function handleAdminProxyRequest(
 
   let upstream: Response;
   try {
+    const upstreamHeaders = new Headers({
+      "X-Trace-Internal-Version": "v1",
+      "X-Trace-Operator": identity.email,
+      "X-Trace-Role": identity.role,
+      "X-Trace-Timestamp": timestamp,
+      "X-Trace-Nonce": nonce,
+      "X-Trace-Signature": signature,
+    });
+    const contentType = request.headers.get("content-type");
+    if (contentType) upstreamHeaders.set("Content-Type", contentType);
     upstream = await fetch(`${workerOrigin}${pathAndQuery}`, {
       method: request.method,
-      headers: {
-        "Content-Type": "application/json",
-        "X-Trace-Internal-Version": "v1",
-        "X-Trace-Operator": identity.email,
-        "X-Trace-Role": identity.role,
-        "X-Trace-Timestamp": timestamp,
-        "X-Trace-Nonce": nonce,
-        "X-Trace-Signature": signature,
-      },
+      headers: upstreamHeaders,
       body: request.method === "GET" ? undefined : body,
       signal: AbortSignal.timeout(15_000),
     });
