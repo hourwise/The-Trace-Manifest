@@ -35,6 +35,9 @@ import { evidencePolicyEvaluationFixtures } from "../src/lib/server/evidence-eva
 import { parseKnowledgeMarkdown } from "../src/lib/server/knowledge-markdown";
 import { KNOWLEDGE_LINK_SUGGESTION_VERSION, suggestKnowledgeLinks } from "../src/lib/server/knowledge-link-suggestions";
 import { KNOWLEDGE_IMPACT_MATCH_VERSION, matchKnowledgeImpacts } from "../src/lib/server/knowledge-impact-matching";
+import { KNOWLEDGE_IMPACT_PROPOSAL_VERSION, createKnowledgeImpactProposals } from "../src/lib/server/knowledge-impact-proposals";
+import { KNOWLEDGE_IMPACT_QUEUE_VERSION, loadKnowledgeImpactQueues } from "../src/lib/server/knowledge-impact-queues";
+import { listKnowledgeRevisionHistory, proposeKnowledgeRevision, reviewKnowledgeRevision } from "../src/lib/server/knowledge-revisions";
 import { KnowledgeDocumentMappingError, mapKnowledgeDocumentClaim } from "../src/lib/server/knowledge-document-mapping";
 import { evaluateKnowledgeApproval } from "../src/lib/server/knowledge-approval";
 import { triggerKnowledgeReview } from "../src/lib/server/knowledge-change-proposals";
@@ -1990,6 +1993,114 @@ async function kc10aKnowledgeImpactMatchingTests(): Promise<void> {
   assert.equal(after?.count, before?.count, "impact matching is read-only");
 }
 
+async function kc10bKnowledgeImpactProposalTests(): Promise<void> {
+  const database = new SQLiteD1();
+  database.sqlite.exec(readFileSync("db/migration-0024-guides-lab.sql", "utf8"));
+  database.sqlite.exec(`
+    INSERT INTO source_documents (id, canonical_url, canonical_url_hash, media_kind, admission_state, copyright_storage_mode, current_version_id)
+      VALUES ('proposal-source', 'https://example.com/proposal', 'proposal-hash', 'html', 'admitted', 'short_excerpt', 'proposal-version');
+    INSERT INTO source_document_versions (id, source_document_id, content_hash, retrieved_url, retrieved_at, extraction_status)
+      VALUES ('proposal-version', 'proposal-source', 'proposal-content', 'https://example.com/proposal', '2026-07-26T00:00:00Z', 'extracted');
+    INSERT INTO canonical_claims (id, canonical_text, claim_class, claim_domain, current_state)
+      VALUES ('proposal-claim', 'Nova model supports 64k context for coding agents.', 'specification_defined', 'model_capability', 'active');
+    INSERT INTO claim_assertions (id, canonical_claim_id, source_document_version_id, assertion_text, relationship, source_role, directness, evidence_treatment, admission_state, freshness_state, extraction_method, reviewer_state, reviewed_by, reviewed_at)
+      VALUES ('proposal-assertion', 'proposal-claim', 'proposal-version', 'Nova supports 64k context.', 'supports', 'evidence', 'direct', 'factual_support', 'admitted', 'current', 'test', 'accepted', 'tester', '2026-07-26T00:00:00Z');
+    INSERT INTO knowledge_documents (id, canonical_question, canonical_hash, section_slug, knowledge_type, status, visibility, evidence_status, direct_answer, document_json, policy_version, approved_by, approved_at, created_by)
+      VALUES ('proposal-doc', 'Nova model context profile', 'proposal-doc-hash', 'ai-agents', 'model_profile', 'approved', 'public_knowledge', 'confirmed', 'Nova supports 64k context.', '{}', 'test', 'publisher', '2026-07-26T00:00:00Z', 'tester');
+    INSERT INTO guides (id, slug, title, category, difficulty, verification_status, status, visibility, author_name, reviewed_by, body_markdown, published_at)
+      VALUES ('proposal-guide', 'nova-coding', 'Nova coding guide', 'local-ai', 'beginner', 'fully-tested', 'published', 'public', 'TRACE', 'publisher', 'Nova 64k coding context.', '2026-07-26T00:00:00Z');
+    INSERT INTO models (name, slug, provider, status, openness, description, publication_status, reviewed_by, reviewed_at)
+      VALUES ('Nova', 'nova', 'TRACE Labs', 'active', 'api_only', 'Nova model with 64k coding context.', 'published', 'publisher', '2026-07-26T00:00:00Z');
+    INSERT INTO story_clusters (id, title, topic, summary, publication_status, is_published, published_at)
+      VALUES (991, 'Nova context release', 'models', 'Nova launches with 64k coding context.', 'published', 1, '2026-07-26T00:00:00Z');
+  `);
+  const overrides = [
+    { targetType: "knowledge_document" as const, targetId: "proposal-doc", impactType: "support" as const },
+    { targetType: "guide" as const, targetId: "proposal-guide", impactType: "timeline_addition" as const },
+    { targetType: "model_profile" as const, targetId: "1", impactType: "comparison_update" as const },
+    { targetType: "story" as const, targetId: "991", impactType: "review_only" as const },
+  ];
+  const first = await createKnowledgeImpactProposals(database as unknown as D1Database, { claimIds: ["proposal-claim"], impactTypes: overrides, triggeringStoryId: 991, now: "2026-07-26T12:00:00Z" });
+  assert.equal(first.detectorVersion, KNOWLEDGE_IMPACT_PROPOSAL_VERSION);
+  assert.equal(first.matchesConsidered, 4);
+  assert.equal(first.proposalsCreated, 4, "each eligible target gets one review-gated proposal");
+  assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM knowledge_impact_proposals").first<{ count: number }>())?.count, 4);
+  assert.deepEqual((await database.prepare("SELECT impact_type FROM knowledge_impact_proposals ORDER BY target_type").all<{ impact_type: string }>()).results.map((row) => row.impact_type), ["timeline_addition", "support", "comparison_update", "review_only"]);
+  const second = await createKnowledgeImpactProposals(database as unknown as D1Database, { claimIds: ["proposal-claim"], impactTypes: overrides, triggeringStoryId: 991, now: "2026-07-26T12:00:00Z" });
+  assert.equal(second.proposalsCreated, 0, "the same detector event is idempotent");
+  assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM knowledge_impact_proposals WHERE state = 'proposed'").first<{ count: number }>())?.count, 4, "all proposals remain pending reviewer action");
+}
+
+async function kc10cKnowledgeImpactQueueTests(): Promise<void> {
+  const database = new SQLiteD1();
+  database.sqlite.exec(readFileSync("db/migration-0024-guides-lab.sql", "utf8"));
+  database.sqlite.exec(`
+    INSERT INTO source_documents (id, canonical_url, canonical_url_hash, media_kind, admission_state, copyright_storage_mode, current_version_id)
+      VALUES ('queue-source', 'https://example.com/queue', 'queue-hash', 'html', 'admitted', 'short_excerpt', 'queue-version');
+    INSERT INTO source_document_versions (id, source_document_id, content_hash, retrieved_url, retrieved_at, extraction_status)
+      VALUES ('queue-version', 'queue-source', 'queue-content', 'https://example.com/queue', '2026-07-26T00:00:00Z', 'extracted');
+    INSERT INTO canonical_claims (id, canonical_text, claim_class, claim_domain) VALUES
+      ('queue-claim', 'Queue claim about Nova capability.', 'specification_defined', 'model_capability'),
+      ('queue-other-claim', 'Contradictory Nova capability.', 'specification_defined', 'model_capability');
+    INSERT INTO claim_assertions (id, canonical_claim_id, source_document_version_id, assertion_text, relationship, source_role, directness, evidence_treatment, admission_state, freshness_state, extraction_method, reviewer_state, reviewed_by, reviewed_at)
+      VALUES ('queue-assertion', 'queue-claim', 'queue-version', 'Queue claim assertion.', 'supports', 'evidence', 'direct', 'factual_support', 'admitted', 'current', 'test', 'accepted', 'tester', '2026-07-26T00:00:00Z');
+    INSERT INTO knowledge_documents (id, canonical_question, canonical_hash, section_slug, knowledge_type, status, visibility, evidence_status, hard_expiry, review_after, policy_version, approved_by, approved_at, created_by)
+      VALUES ('queue-doc', 'Nova queue document', 'queue-doc-hash', 'ai-agents', 'model_profile', 'approved', 'public_knowledge', 'confirmed', '2026-07-25T00:00:00Z', '2026-07-24T00:00:00Z', 'test', 'publisher', '2026-07-20T00:00:00Z', 'tester');
+    INSERT INTO knowledge_impact_proposals (id, target_type, target_id, accepted_claim_id, impact_type, proposed_change_json, rationale, detector_version)
+      VALUES ('queue-impact', 'knowledge_document', 'queue-doc', 'queue-claim', 'contradiction', '{}', 'test', 'kc-10b-v1');
+    INSERT INTO knowledge_claim_conflict_cases (id, source_claim_id, target_claim_id, conflict_kind, explanation, confidence, status, idempotency_key)
+      VALUES ('queue-conflict', 'queue-claim', 'queue-other-claim', 'contradiction', 'Competing claims remain unresolved.', 0.9, 'unresolved', 'queue-conflict-key');
+  `);
+  const queues = await loadKnowledgeImpactQueues(database as unknown as D1Database, { now: "2026-07-26T12:00:00Z", limit: 10 });
+  assert.equal(queues.algorithmVersion, KNOWLEDGE_IMPACT_QUEUE_VERSION);
+  assert.deepEqual(queues.affectedKnowledge.map((item) => item.id), ["queue-doc"]);
+  assert.equal(queues.affectedKnowledge[0]?.detail.includes("contradiction"), true);
+  assert.deepEqual(queues.expiringKnowledge.map((item) => item.id), ["queue-doc"]);
+  assert.equal(queues.expiringKnowledge[0]?.detail, "hard_expiry");
+  assert.deepEqual(queues.unresolvedContradictions.map((item) => item.id), ["queue-conflict"]);
+  assert.deepEqual(queues.orphanClaims.map((item) => item.id), ["queue-claim"]);
+  const proposalCount = await database.prepare("SELECT COUNT(*) AS count FROM knowledge_impact_proposals").first<{ count: number }>();
+  assert.equal(proposalCount?.count, 1, "queue loading is read-only");
+}
+
+async function kc10dKnowledgeRevisionTests(): Promise<void> {
+  const database = new SQLiteD1();
+  database.sqlite.exec(`
+    INSERT INTO canonical_claims (id, canonical_text, claim_class, claim_domain) VALUES ('kc10d-claim', 'Nova claim.', 'specification_defined', 'model_capability');
+    INSERT INTO knowledge_documents (id, canonical_question, canonical_hash, section_slug, knowledge_type, status, visibility, evidence_status, direct_answer, detailed_explanation, document_json, source_set_hash, policy_version, approved_by, approved_at, created_by)
+      VALUES ('kc10d-doc', 'Nova revision policy', 'kc10d-hash', 'ai-agents', 'explainer', 'approved', 'public_knowledge', 'confirmed', 'The original answer.', 'Original explanation.', '{"version":1}', 'sources-v1', 'test', 'publisher', '2026-07-26T00:00:00Z', 'tester');
+    INSERT INTO knowledge_document_claims (knowledge_document_id, canonical_claim_id, section_key, relationship) VALUES ('kc10d-doc', 'kc10d-claim', 'answer', 'supports');
+  `);
+  const draft = await proposeKnowledgeRevision(database as unknown as D1Database, {
+    knowledgeDocumentId: "kc10d-doc",
+    payload: { canonicalQuestion: "Nova revision policy", directAnswer: "The reviewed answer.", detailedExplanation: "Reviewed explanation.", documentJson: '{"version":2}', sourceSetHash: "sources-v2" },
+    rationale: "A newly accepted claim changes the answer.", changeSummary: "Update Nova revision policy", createdBy: "publisher@example.com", proposalId: "impact-proposal-kc10d",
+  });
+  assert.equal(draft.status, "draft");
+  assert.equal((await database.prepare("SELECT direct_answer FROM knowledge_documents WHERE id = 'kc10d-doc'").first<{ direct_answer: string }>())?.direct_answer, "The original answer.", "draft proposal cannot change public text");
+  assert.equal((await database.prepare("SELECT prior_evidence_status, proposal_id FROM knowledge_revision_decisions WHERE revision_id = ?").bind(draft.revisionId).first<{ prior_evidence_status: string; proposal_id: string }>())?.prior_evidence_status, "confirmed");
+  assert.equal((await database.prepare("SELECT evidence_set_json FROM knowledge_revision_evidence_snapshots WHERE revision_id = ?").bind(draft.revisionId).first<{ evidence_set_json: string }>())?.evidence_set_json.includes("kc10d-claim"), true, "prior evidence links are snapshotted");
+
+  const approved = await reviewKnowledgeRevision(database as unknown as D1Database, { revisionId: draft.revisionId, decision: "approve", reviewer: "reviewer@example.com", reviewNote: "Evidence bundle reviewed." });
+  assert.equal(approved.status, "approved");
+  assert.equal((await database.prepare("SELECT direct_answer, document_json FROM knowledge_documents WHERE id = 'kc10d-doc'").first<{ direct_answer: string; document_json: string }>())?.direct_answer, "The reviewed answer.");
+  assert.equal((await database.prepare("SELECT status FROM knowledge_document_revisions WHERE id = ?").bind(draft.revisionId).first<{ status: string }>())?.status, "approved");
+  assert.equal((await database.prepare("SELECT decision, reviewed_by FROM knowledge_revision_decisions WHERE revision_id = ?").bind(draft.revisionId).first<{ decision: string; reviewed_by: string }>())?.reviewed_by, "reviewer@example.com");
+  const history = await listKnowledgeRevisionHistory(database as unknown as D1Database, { knowledgeDocumentId: "kc10d-doc" });
+  assert.equal(history[0]?.revisionId, draft.revisionId);
+  assert.equal(history[0]?.decision, "approved");
+  assert.equal(history[0]?.priorDocumentJson.includes("version"), true);
+  assert.throws(() => database.sqlite.exec(`UPDATE knowledge_document_revisions SET change_summary = 'tampered' WHERE id = '${draft.revisionId}'`), /immutable/);
+  assert.throws(() => database.sqlite.exec(`UPDATE knowledge_revision_decisions SET review_note = 'tampered' WHERE revision_id = '${draft.revisionId}'`), /immutable/);
+
+  const rejected = await proposeKnowledgeRevision(database as unknown as D1Database, {
+    knowledgeDocumentId: "kc10d-doc", payload: { documentJson: '{"version":3}', directAnswer: "Rejected answer." },
+    rationale: "This should not publish.", changeSummary: "Rejected revision", createdBy: "publisher@example.com",
+  });
+  await reviewKnowledgeRevision(database as unknown as D1Database, { revisionId: rejected.revisionId, decision: "reject", reviewer: "reviewer@example.com" });
+  assert.equal((await database.prepare("SELECT direct_answer FROM knowledge_documents WHERE id = 'kc10d-doc'").first<{ direct_answer: string }>())?.direct_answer, "The reviewed answer.", "rejected revision leaves public text unchanged");
+}
+
 function kc09EmbeddingPolicyTests(): void {
   assert.equal(KC09_EMBEDDING_POLICY.embeddingProvider, "workers_ai");
   assert.equal(KC09_EMBEDDING_POLICY.embeddingModel, "@cf/baai/bge-m3");
@@ -2460,6 +2571,9 @@ await kc08fKnowledgeApprovalGateTests();
 await kc08gKnowledgeEvidenceResolutionTests();
 await kc08hKnowledgeChangeProposalTests();
 await kc10aKnowledgeImpactMatchingTests();
+await kc10bKnowledgeImpactProposalTests();
+await kc10cKnowledgeImpactQueueTests();
+await kc10dKnowledgeRevisionTests();
 kc09EmbeddingPolicyTests();
 await kc09dEmbeddingIndexTests();
 await kc09eVectorResolutionTests();

@@ -6,6 +6,7 @@ import type { APIRoute } from "astro";
 import { authenticateAccessRequest, type AccessEnvironment } from "../../../../security/access-auth";
 import { extractEvidenceUrls, linkKnowledgeSources } from "../../../../lib/server/knowledge-sources";
 import { parseKnowledgeMarkdown } from "../../../../lib/server/knowledge-markdown";
+import { proposeKnowledgeRevision } from "../../../../lib/server/knowledge-revisions";
 
 export const prerender = false;
 
@@ -266,6 +267,31 @@ export const POST: APIRoute = async ({ request, locals }) => {
   });
 
   // ── ADR 0017 checkbox 5: version history on overwrite ──────────
+  if (existing && overwrite && existing.status === "approved") {
+    try {
+      const revision = await proposeKnowledgeRevision(db, {
+        knowledgeDocumentId: existing.id,
+        payload: {
+          canonicalQuestion: frontmatter.canonical_question.trim(),
+          directAnswer,
+          detailedExplanation,
+          documentJson,
+          sourceSetHash: frontmatter.source_set_hash || existing.source_set_hash,
+          evidenceStatus,
+          reviewAfter: frontmatter.review_after || null,
+          hardExpiry: frontmatter.hard_expiry || null,
+        },
+        rationale: `Ingest overwrite requested by ${identity.email}; approved text requires reviewed revision.`,
+        changeSummary: `Proposed ingest revision by ${identity.email}`,
+        createdBy: identity.email,
+      });
+      return Response.json({ success: true, status: "revision_pending", revisionId: revision.revisionId, revisionNumber: revision.revisionNumber, knowledgeDocumentId: revision.knowledgeDocumentId }, { status: 202 });
+    } catch (error) {
+      console.error("knowledge_document revision proposal failed:", error);
+      return Response.json({ error: "Failed to create a reviewed knowledge revision." }, { status: 409 });
+    }
+  }
+
   if (existing && overwrite) {
     try {
       // Get current max revision number

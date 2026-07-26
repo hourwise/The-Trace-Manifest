@@ -719,10 +719,10 @@ Exit: Ask TRACE can return the ADR 0016 evidence mode plus supported, qualified-
 ### KC-10 — Knowledge-impact proposals and revisions
 
 - [x] **KC-10A:** Match new accepted claims to approved knowledge documents, Guides, model profiles, and earlier stories with the bounded, deterministic, read-only `kc-10a-v1` matcher. Eligibility re-checks accepted/admitted/current claim evidence, publication state, hard expiry, and open change proposals; no proposals or revisions are written. See [`docs/audit/kc-10a-knowledge-impact-matching-evidence.md`](audit/kc-10a-knowledge-impact-matching-evidence.md).
-- [ ] **KC-10B:** Create change proposals for support, qualification, contradiction, correction, supersession, timeline addition, comparison update, or review-only impact.
-- [ ] **KC-10C:** Build queues for affected knowledge, expiring knowledge, unresolved contradictions, and orphan claims.
-- [ ] **KC-10D:** Require a reviewed immutable revision for substantive public changes.
-- [ ] **KC-10E:** Preserve the prior version, evidence set, score, rationale, and reviewer decision.
+- [x] **KC-10B:** Create idempotent, review-gated impact proposals for support, qualification, contradiction, correction, supersession, timeline addition, comparison update, or review-only impact. Migration 0052 records generic target identities for knowledge documents, Guides, model profiles, and stories; proposals remain `proposed` and never rewrite or publish targets. See [`docs/audit/kc-10b-knowledge-impact-proposals-evidence.md`](audit/kc-10b-knowledge-impact-proposals-evidence.md).
+- [x] **KC-10C:** Build bounded publisher-only queues for affected knowledge, expiring knowledge, unresolved contradictions, and orphan accepted claims. The read-only `kc-10c-v1` service combines KC-10B and legacy review signals, re-checks D1 eligibility, and is surfaced at `/admin/knowledge/impact-queues`. See [`docs/audit/kc-10c-knowledge-impact-queues-evidence.md`](audit/kc-10c-knowledge-impact-queues-evidence.md).
+- [x] **KC-10D:** Require a reviewed immutable revision for substantive public changes. Approved-document ingest overwrites now become draft revisions; publisher-only revision routes apply or reject them with same-origin checks, atomic state transitions, and preserved prior evidence/score context. See [`docs/audit/kc-10d-knowledge-revision-evidence.md`](audit/kc-10d-knowledge-revision-evidence.md).
+- [x] **KC-10E:** Preserve the prior version, complete evidence set, score context, rationale, and reviewer decision in append-only snapshots protected against tampering; expose bounded publisher history through the revision API. See [`docs/audit/kc-10e-knowledge-revision-history-evidence.md`](audit/kc-10e-knowledge-revision-history-evidence.md).
 
 Exit: a later model release can propose updates to earlier model knowledge and comparisons without silently changing them.
 
@@ -750,6 +750,30 @@ Exit: every published story and approved knowledge document has an explicit back
 - [ ] **KC-12G:** Keep public numeric evidence scores disabled until KC-07F passes; launch with qualitative bands and explanations, then enable numeric snapshots only through a reviewed policy-version rollout.
 
 Exit: the complete system is enabled in bounded stages, and every public claim can be traced through TRACE synthesis to admitted external evidence.
+
+## 10A. Deferred post-KC extensions
+
+The 26 July 2026 ADR-0020 capability-first news and secondary discovery sources, and the TRACE Capture mobile and bulk capture compatibility instruction, were reviewed during KC implementation. They do not change the KC evidence, claim, retrieval, proposal, or queue contracts. They are deliberately deferred until KC-10D/E, KC-11, and the initial KC-12 rollout are complete.
+
+The existing `editorial_candidates` path remains the closest current lead boundary, while `admitAndQueueManualCapture` remains an evidence-oriented source-document path for reviewed knowledge URLs. A future TRACE Capture submission must not bypass that distinction or write directly to `feed_items`, `story_clusters`, claims, or evidence records. KC orphan-claim queues must continue to ignore unadmitted capture leads until a reviewed canonical assertion exists.
+
+### Post-KC-01 — capability-first news and secondary discovery (ADR-0020)
+
+- [ ] Add `editorial_class` (`capability`, `narrative`, `mixed`) and versioned capability metadata with source/assertion provenance and explicit `unknown` values.
+- [ ] Add constrained discovery-source roles and policies for AI Search, Lev Selector, Hacker News AI, and direct Hacker News comparison; discovery sources may trigger candidates but cannot confirm or auto-publish claims.
+- [ ] Add discovery-resolution and coverage-audit records, original-source lookup tasks, and a publisher queue for unresolved candidates.
+- [ ] Add selective YouTube metadata/caption ingestion with quota/backoff, timestamped attribution, transcript minimisation, URL safety, and prompt-injection controls.
+- [ ] Add reviewed public presentation blocks for “What can I do now?”, “What remains unclear”, evidence labels, supplemental “Watch or listen”, capability filtering, caught-up briefings, and non-discovery notifications.
+- [ ] Calibrate capability prioritisation and missed-story comparison for at least four weeks before changing ranking weights.
+
+### Post-KC-02 — TRACE Capture intake and bulk editorial import
+
+- [ ] Add a new capture-intake ADR and contract (`CaptureBatchRequest`/item result) independent of D1 table shapes; reserve `capture_batches`, `capture_items`, `capture_item_urls`, and `capture_import_events` or equivalent additive tables.
+- [ ] Define authenticated single-item, bulk, JSON, plain-text, optional CSV, and Admin import adapters with partial success, authoritative server IDs/timestamps, batch/item idempotency, duplicate explanations, bounded payloads, and auditable status transitions.
+- [ ] Keep captures as editorial leads through inbox, deduplication, URL resolution, fetch/enrichment, existing ingestion, and review; capture admission must never publish or establish trust/evidence.
+- [ ] Specify a future restricted user/device authentication model (`capture:create`, `capture:read-own`, `capture:retry-own`) with revocable short-lived credentials; never place a permanent administrator secret in the Android app.
+- [ ] Add SSRF-safe enrichment, URL scheme/redirect/private-network checks, untrusted-content sanitisation, rate limits, upload limits, and security/audit tests before enabling any public mobile endpoint.
+- [ ] Add the mobile/bulk admin preview and duplicate/rejection views only after the contract and migration are reviewed; do not build Android-specific behaviour in TRACE core.
 
 ## 11. Backfill order and token budget
 

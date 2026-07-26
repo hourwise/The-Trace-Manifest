@@ -60,6 +60,12 @@ try {
   db.exec(readFileSync("db/migration-0050-knowledge-retrieval-indexes.sql", "utf8"));
   db.exec(readFileSync("db/migration-0051-knowledge-embedding-index-state.sql", "utf8"));
   db.exec(readFileSync("db/migration-0051-knowledge-embedding-index-state.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0052-knowledge-impact-proposals.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0052-knowledge-impact-proposals.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0053-knowledge-revision-decisions.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0053-knowledge-revision-decisions.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0054-knowledge-revision-immutability.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0054-knowledge-revision-immutability.sql", "utf8"));
 
   const requiredTables = [
     "ai_requests", "ai_budget_reservations", "ai_usage_ledger", "ai_quota_usage",
@@ -90,6 +96,9 @@ try {
     "knowledge_search_fts",
     "knowledge_embedding_runs",
     "knowledge_embedding_index_items",
+    "knowledge_impact_proposals",
+    "knowledge_revision_decisions",
+    "knowledge_revision_evidence_snapshots",
   ];
   const tables = new Set(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((row) => row.name));
   for (const table of requiredTables) if (!tables.has(table)) throw new Error(`Missing table ${table}`);

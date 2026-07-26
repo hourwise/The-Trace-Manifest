@@ -22,6 +22,7 @@
 | 7-8 | ⏸️ | Multilingual, sharing/snapshots — not started |
 | 9 — Models/Benchmarks | ✅ | 22 models, 10 benchmarks, 11 providers, 14+ benchmark runs. TRACE aggregate scores, model card scores, score normalisation. |
 | 9.5 — Open Model Execution Intelligence | Planned | ADR 0019 follow-on: exact artefacts, runtimes, hardware, compatibility, diagnostics, and deterministic recommendations. Starts only after the required Knowledge Continuity source foundation; it reuses that evidence system rather than duplicating it. |
+| 9.6 — Capability-first discovery and TRACE Capture | Deferred until KC completion | ADR-0020 capability classification/secondary discovery and the separate TRACE Capture mobile/bulk intake contract are planned post-KC. Captures remain editorial leads and cannot bypass the existing evidence boundary. See the deferred extensions in `TRACE-KNOWLEDGE-CONTINUITY-BUILD-PLAN.md`. |
 | 10 | ⏸️ | Commercial features — not started |
 | **Bonus: Public Ask TRACE** | ⚠️ Partial | Live with 3 questions/day/visitor, eligible published-story evidence, and approved knowledge whose inherited external bundle resolves. Knowledge pages with open change proposals remain excluded until publisher review. |
 | **Bonus: Evidence source linking** | ✅ | 79-source registry, auto-link knowledge doc evidence URLs |
@@ -102,6 +103,8 @@ The Cloudflare Pages deploy command (`npx wrangler pages deploy dist`) was remov
 - [ ] **Public Guides** — render approved guides at `/guides/[slug]`, integrate with Ask TRACE
 - [ ] **Guides ↔ Knowledge linking** — cross-reference guides with related knowledge docs
 - [ ] **Social signals → Feed items** — promotion workflow for social posts to become stories
+- [ ] **Post-KC capability-first discovery (ADR-0020)** — classify capability/narrative/mixed clusters, constrain secondary discovery sources, resolve original evidence, and add coverage audits and reader capability blocks.
+- [ ] **Post-KC TRACE Capture intake** — review a format-independent single/bulk/import capture contract, additive capture inbox schema, restricted device authentication, duplicate/idempotency rules, and SSRF-safe enrichment before exposing any mobile endpoint.
 - [ ] **Page-diff for remaining changelogs** — AWS, OpenAI, Gemini API release notes
 - [ ] **Artificial Analysis connector** — highest-value remaining manual source
 
