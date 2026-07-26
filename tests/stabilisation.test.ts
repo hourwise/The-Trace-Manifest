@@ -34,6 +34,7 @@ import { evaluateEvidencePolicy, PUBLIC_EVIDENCE_NUMERIC_SCORES_ENABLED } from "
 import { evidencePolicyEvaluationFixtures } from "../src/lib/server/evidence-evaluation-fixtures";
 import { parseKnowledgeMarkdown } from "../src/lib/server/knowledge-markdown";
 import { KNOWLEDGE_LINK_SUGGESTION_VERSION, suggestKnowledgeLinks } from "../src/lib/server/knowledge-link-suggestions";
+import { KNOWLEDGE_IMPACT_MATCH_VERSION, matchKnowledgeImpacts } from "../src/lib/server/knowledge-impact-matching";
 import { KnowledgeDocumentMappingError, mapKnowledgeDocumentClaim } from "../src/lib/server/knowledge-document-mapping";
 import { evaluateKnowledgeApproval } from "../src/lib/server/knowledge-approval";
 import { triggerKnowledgeReview } from "../src/lib/server/knowledge-change-proposals";
@@ -1942,6 +1943,53 @@ async function kc08hKnowledgeChangeProposalTests(): Promise<void> {
   }
 }
 
+async function kc10aKnowledgeImpactMatchingTests(): Promise<void> {
+  const database = new SQLiteD1();
+  database.sqlite.exec(readFileSync("db/migration-0024-guides-lab.sql", "utf8"));
+  database.sqlite.exec(`
+    INSERT INTO source_documents (id, canonical_url, canonical_url_hash, media_kind, admission_state, copyright_storage_mode, current_version_id)
+      VALUES ('impact-source', 'https://example.com/impact', 'impact-hash', 'html', 'admitted', 'short_excerpt', 'impact-version');
+    INSERT INTO source_document_versions (id, source_document_id, content_hash, retrieved_url, retrieved_at, extraction_status)
+      VALUES ('impact-version', 'impact-source', 'impact-content', 'https://example.com/impact', '2026-07-26T00:00:00Z', 'extracted');
+    INSERT INTO canonical_claims (id, canonical_text, claim_class, claim_domain, current_state)
+      VALUES ('impact-claim', 'Orion model supports 128k context windows for coding agents in 2026.', 'specification_defined', 'model_capability', 'active');
+    INSERT INTO claim_assertions (id, canonical_claim_id, source_document_version_id, assertion_text, relationship, source_role, directness, evidence_treatment, admission_state, freshness_state, extraction_method, extraction_version, reviewer_state, reviewed_by, reviewed_at, confidence)
+      VALUES ('impact-assertion', 'impact-claim', 'impact-version', 'Orion supports 128k context windows for coding agents.', 'supports', 'evidence', 'direct', 'factual_support', 'admitted', 'current', 'test', '1', 'accepted', 'tester', '2026-07-26T00:00:00Z', 0.95);
+    INSERT INTO knowledge_documents (id, canonical_question, canonical_hash, section_slug, knowledge_type, status, visibility, evidence_status, direct_answer, document_json, policy_version, approved_by, approved_at, created_by)
+      VALUES ('impact-doc', 'Orion model context windows', 'impact-doc-hash', 'ai-agents', 'model_profile', 'approved', 'public_knowledge', 'confirmed', 'Orion supports 128k context windows for coding agents.', '{}', 'test', 'publisher', '2026-07-26T00:00:00Z', 'tester');
+    INSERT INTO knowledge_documents (id, canonical_question, canonical_hash, section_slug, knowledge_type, status, visibility, evidence_status, direct_answer, document_json, policy_version, approved_by, approved_at, created_by)
+      VALUES ('impact-doc-clean', 'Orion coding model profile', 'impact-doc-clean-hash', 'ai-agents', 'model_profile', 'approved', 'public_knowledge', 'confirmed', 'Orion is a coding model with a 128k context window.', '{}', 'test', 'publisher', '2026-07-26T00:00:00Z', 'tester');
+    INSERT INTO guides (id, slug, title, category, difficulty, verification_status, status, visibility, author_name, reviewed_by, body_markdown, published_at)
+      VALUES ('impact-guide', 'orion-coding-agents', 'Coding agents with Orion context windows', 'local-ai', 'intermediate', 'fully-tested', 'published', 'public', 'TRACE', 'publisher', 'Use Orion for coding agents with a 128k context window.', '2026-07-26T00:00:00Z');
+    INSERT INTO models (name, slug, provider, status, openness, description, publication_status, reviewed_by, reviewed_at)
+      VALUES ('Orion', 'orion', 'TRACE Labs', 'active', 'api_only', 'Orion is a coding model with 128k context windows.', 'published', 'publisher', '2026-07-26T00:00:00Z');
+    INSERT INTO story_clusters (id, title, topic, summary, publication_status, is_published, published_at)
+      VALUES (981, 'Orion launches with 128k context', 'models', 'The Orion coding model introduces a 128k context window.', 'published', 1, '2026-07-26T00:00:00Z');
+    INSERT INTO knowledge_documents (id, canonical_question, canonical_hash, section_slug, knowledge_type, status, visibility, evidence_status, document_json, policy_version, approved_by, approved_at, created_by)
+      VALUES ('impact-draft', 'Orion draft context notes', 'impact-draft-hash', 'ai-agents', 'model_profile', 'draft', 'internal', 'unverified', '{}', 'test', NULL, NULL, 'tester');
+    INSERT INTO guides (id, slug, title, category, difficulty, verification_status, status, visibility, author_name, body_markdown)
+      VALUES ('impact-draft-guide', 'draft-orion', 'Draft Orion guide', 'local-ai', 'beginner', 'needs-review', 'draft', 'internal', 'TRACE', 'Orion 128k context draft.');
+    INSERT INTO models (name, slug, provider, status, openness, description, publication_status)
+      VALUES ('Orion Draft', 'orion-draft', 'TRACE Labs', 'active', 'api_only', 'Orion 128k draft profile.', 'draft');
+    INSERT INTO story_clusters (id, title, topic, summary, publication_status, is_published)
+      VALUES (982, 'Draft Orion note', 'models', 'Orion 128k draft note.', 'draft', 0);
+    INSERT INTO knowledge_change_proposals (id, knowledge_document_id, triggering_claim_id, proposal_type, proposed_change_json, rationale, detector_version, state)
+      VALUES ('impact-open-proposal', 'impact-doc', 'impact-claim', 'update', '{}', 'test', 'test', 'proposed');
+  `);
+
+  const before = await database.prepare("SELECT COUNT(*) AS count FROM knowledge_change_proposals").first<{ count: number }>();
+  const result = await matchKnowledgeImpacts(database as unknown as D1Database, { claimIds: ["impact-claim", "missing-claim"], maxMatchesPerClaim: 10, now: "2026-07-26T12:00:00Z" });
+  assert.equal(result.algorithmVersion, KNOWLEDGE_IMPACT_MATCH_VERSION);
+  assert.deepEqual(result.acceptedClaimIds, ["impact-claim"]);
+  assert.deepEqual(result.ignoredClaimIds, ["missing-claim"]);
+  assert.deepEqual(result.matches.map((match) => `${match.targetType}:${match.targetId}`), ["knowledge_document:impact-doc-clean", "guide:impact-guide", "model_profile:1", "story:981"]);
+  assert.ok(result.matches.every((match) => match.matchScore >= 0.25 && match.matchedTerms.includes("orion")));
+  assert.equal(result.matches.some((match) => match.targetId === "impact-doc"), false, "documents with open proposals are excluded until review");
+  assert.equal(result.matches.some((match) => match.targetId.includes("draft")), false, "unpublished targets fail closed");
+  const after = await database.prepare("SELECT COUNT(*) AS count FROM knowledge_change_proposals").first<{ count: number }>();
+  assert.equal(after?.count, before?.count, "impact matching is read-only");
+}
+
 function kc09EmbeddingPolicyTests(): void {
   assert.equal(KC09_EMBEDDING_POLICY.embeddingProvider, "workers_ai");
   assert.equal(KC09_EMBEDDING_POLICY.embeddingModel, "@cf/baai/bge-m3");
@@ -2411,6 +2459,7 @@ await kc08dKnowledgeDocumentMappingTests();
 await kc08fKnowledgeApprovalGateTests();
 await kc08gKnowledgeEvidenceResolutionTests();
 await kc08hKnowledgeChangeProposalTests();
+await kc10aKnowledgeImpactMatchingTests();
 kc09EmbeddingPolicyTests();
 await kc09dEmbeddingIndexTests();
 await kc09eVectorResolutionTests();

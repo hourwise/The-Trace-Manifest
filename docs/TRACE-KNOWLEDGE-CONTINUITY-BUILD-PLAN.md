@@ -1,6 +1,6 @@
 # TRACE Knowledge Continuity and Story Memory Build Plan
 
-**Status:** Canonical implementation plan (KC-02, KC-03A–E, KC-04A–F, KC-05A–G, KC-06A–E, KC-07A–F, KC-08A–H, and KC-09A–J complete locally; Preview resource rollout and first bounded run remain operational gates)
+**Status:** Canonical implementation plan (KC-02, KC-03A–E, KC-04A–F, KC-05A–G, KC-06A–E, KC-07A–F, KC-08A–H, KC-09A–J, and KC-10A complete locally; Preview rollout and first bounded run completed against an empty corpus)
 
 **Date:** 24 July 2026
 
@@ -718,7 +718,7 @@ Exit: Ask TRACE can return the ADR 0016 evidence mode plus supported, qualified-
 
 ### KC-10 — Knowledge-impact proposals and revisions
 
-- [ ] **KC-10A:** Match new accepted claims to approved knowledge documents, Guides, model profiles, and earlier stories.
+- [x] **KC-10A:** Match new accepted claims to approved knowledge documents, Guides, model profiles, and earlier stories with the bounded, deterministic, read-only `kc-10a-v1` matcher. Eligibility re-checks accepted/admitted/current claim evidence, publication state, hard expiry, and open change proposals; no proposals or revisions are written. See [`docs/audit/kc-10a-knowledge-impact-matching-evidence.md`](audit/kc-10a-knowledge-impact-matching-evidence.md).
 - [ ] **KC-10B:** Create change proposals for support, qualification, contradiction, correction, supersession, timeline addition, comparison update, or review-only impact.
 - [ ] **KC-10C:** Build queues for affected knowledge, expiring knowledge, unresolved contradictions, and orphan claims.
 - [ ] **KC-10D:** Require a reviewed immutable revision for substantive public changes.
