@@ -36,6 +36,17 @@ TRACE_AI_EDITORIAL_ENABLED = "false"
 TRACE_AI_SCHEDULED_ENABLED = "false"
 TRACE_AI_GLOBAL_KILL_SWITCH = "false"
 
+# KC-09B: Preview-only semantic recall bindings. Production deliberately has
+# no AI or Vectorize binding until a separate rollout approval.
+[env.preview.ai]
+binding = "AI"
+remote = true
+
+[[env.preview.vectorize]]
+binding = "KNOWLEDGE_VECTOR_INDEX"
+index_name = "trace-manifest-knowledge-preview-bge-m3-v1"
+remote = true
+
 [[env.preview.d1_databases]]
 binding = "DB"
 database_name = "trace-manifest-db-preview"

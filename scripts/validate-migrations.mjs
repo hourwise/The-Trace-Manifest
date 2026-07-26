@@ -56,6 +56,10 @@ try {
   db.exec(readFileSync("db/migration-0048-knowledge-source-link-audit.sql", "utf8"));
   db.exec(readFileSync("db/migration-0049-knowledge-change-proposal-index.sql", "utf8"));
   db.exec(readFileSync("db/migration-0049-knowledge-change-proposal-index.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0050-knowledge-retrieval-indexes.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0050-knowledge-retrieval-indexes.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0051-knowledge-embedding-index-state.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0051-knowledge-embedding-index-state.sql", "utf8"));
 
   const requiredTables = [
     "ai_requests", "ai_budget_reservations", "ai_usage_ledger", "ai_quota_usage",
@@ -82,6 +86,10 @@ try {
     "evidence_score_snapshot_explanations",
     "evidence_change_approvals",
     "knowledge_source_link_migration_audit",
+    "knowledge_search_records",
+    "knowledge_search_fts",
+    "knowledge_embedding_runs",
+    "knowledge_embedding_index_items",
   ];
   const tables = new Set(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((row) => row.name));
   for (const table of requiredTables) if (!tables.has(table)) throw new Error(`Missing table ${table}`);
@@ -133,6 +141,21 @@ try {
     `).run();
   } catch { traceEvidenceConstraintHeld = true; }
   if (!traceEvidenceConstraintHeld) throw new Error("TRACE synthesis could be recorded as independent evidence");
+
+  db.prepare(`
+    INSERT INTO canonical_claims
+      (id, canonical_text, claim_class, subject_entity_id)
+    VALUES ('search-claim', 'Vector retrieval keeps D1 authoritative', 'editorial_synthesis', NULL)
+  `).run();
+  const lexicalHit = db.prepare(`
+    SELECT records.record_type, records.record_id
+    FROM knowledge_search_fts fts
+    JOIN knowledge_search_records records ON records.rowid = fts.rowid
+    WHERE knowledge_search_fts MATCH 'authoritative'
+  `).get();
+  if (lexicalHit?.record_type !== "canonical_claim" || lexicalHit?.record_id !== "search-claim") {
+    throw new Error("knowledge FTS lexical index did not resolve back to D1");
+  }
 
   db.prepare(`
     INSERT INTO feed_items

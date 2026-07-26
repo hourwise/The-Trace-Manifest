@@ -67,7 +67,8 @@ export function validateEvidenceExcerpt(v: unknown): v is EvidenceExcerpt {
     "sourceId", "sourceKind", "sourceRole", "admissionState", "freshnessState", "independentEvidenceWeight",
     "claimId", "text", "sourceClassification", "sourceName", "sourceUrl",
     "observedAt", "publishedAt", "trustNotes", "relationship", "isDisputed",
-    "externalEvidenceResolved",
+    "externalEvidenceResolved", "assertionId", "sourceDocumentVersionId", "sourceChunkId",
+    "startLocator", "endLocator", "knowledgeDocumentId",
   ])
     && isString(e.sourceId, 128)
     && isKnownSourceKind(e.sourceKind)
@@ -85,7 +86,13 @@ export function validateEvidenceExcerpt(v: unknown): v is EvidenceExcerpt {
     && isOptionalString(e.trustNotes, 1_000)
     && isOptionalString(e.relationship, 100)
     && (e.isDisputed === undefined || isBoolean(e.isDisputed))
-    && (e.externalEvidenceResolved === undefined || isBoolean(e.externalEvidenceResolved));
+    && (e.externalEvidenceResolved === undefined || isBoolean(e.externalEvidenceResolved))
+    && isOptionalString(e.assertionId, 128)
+    && isOptionalString(e.sourceDocumentVersionId, 128)
+    && isOptionalString(e.sourceChunkId, 128)
+    && isOptionalString(e.startLocator, 500)
+    && isOptionalString(e.endLocator, 500)
+    && isOptionalString(e.knowledgeDocumentId, 128);
 }
 
 export function validateEvidenceExcerpts(excerpts: unknown, minimum = 0): ValidationResult {
@@ -198,21 +205,66 @@ export function validateAnswerDraft(output: unknown): ValidationResult {
 
   const errors: string[] = [];
   if (!hasOnlyKeys(o, [
-    "answer", "keyPoints", "claims", "citedSourceIds", "citedClaimIds", "confirmedFacts",
-    "reportedClaims", "analysis", "disagreements", "caveats", "whatCouldChange", "proposedConfidence",
+    "answer", "evidenceMode", "conclusionMode", "directAnswer", "lean", "whyLean", "positions",
+    "sourceSummaries", "confidence", "confidenceScore", "confidenceReasons", "limitations",
+    "unresolvedQuestions", "freshestEvidenceAt", "keyPoints", "claims", "citations", "citedSourceIds",
+    "citedClaimIds", "confirmedFacts", "reportedClaims", "analysis", "disagreements", "caveats",
+    "whatCouldChange", "proposedConfidence",
   ])) errors.push("answer contains unknown fields");
   if (!isString(o.answer)) errors.push("answer is required and must be a non-empty string");
+  const validEvidenceModes = ["knowledge", "researched", "insufficient", "out_of_scope", "refused"];
+  if (!isString(o.evidenceMode) || !validEvidenceModes.includes(o.evidenceMode as string)) errors.push("evidenceMode is invalid");
+  const validConclusionModes = ["supported", "qualified_lean", "multiple_positions", "insufficient_evidence"];
+  if (!isString(o.conclusionMode) || !validConclusionModes.includes(o.conclusionMode as string)) errors.push("conclusionMode is invalid");
+  if (!isString(o.directAnswer, 4_000)) errors.push("directAnswer is required and must be bounded");
+  if (!(o.lean === null || isString(o.lean, 500))) errors.push("lean must be null or a bounded string");
+  if (!isString(o.whyLean, 2_000)) errors.push("whyLean is required and must be bounded");
+  if (!isArray(o.positions, 0, 8) || !(o.positions as unknown[]).every((position) => {
+    if (!position || typeof position !== "object" || Array.isArray(position)) return false;
+    const item = position as Record<string, unknown>;
+    return hasOnlyKeys(item, ["positionId", "label", "summary", "supportingClaimIds", "contradictingClaimIds", "sourceIds"])
+      && isString(item.positionId, 128) && isString(item.label, 300) && isString(item.summary, 2_000)
+      && isStringArray(item.supportingClaimIds, 16) && isStringArray(item.contradictingClaimIds, 16)
+      && isStringArray(item.sourceIds, 16)
+      && ((item.supportingClaimIds as string[]).length + (item.contradictingClaimIds as string[]).length > 0);
+  })) errors.push("positions must contain bounded evidence-linked position objects");
+  if (!isArray(o.sourceSummaries, 0, 16) || !(o.sourceSummaries as unknown[]).every((summary) => {
+    if (!summary || typeof summary !== "object" || Array.isArray(summary)) return false;
+    const item = summary as Record<string, unknown>;
+    return hasOnlyKeys(item, ["sourceId", "sourceName", "sourceRole", "summary", "materialClaims", "caveats", "publishedAt", "retrievedAt"])
+      && isString(item.sourceId, 128) && isString(item.sourceName, 300) && isString(item.sourceRole, 100)
+      && isString(item.summary, 2_000) && isStringArray(item.materialClaims, 16)
+      && isStringArray(item.caveats, 16) && (item.publishedAt === null || isString(item.publishedAt, 64))
+      && (item.retrievedAt === null || isString(item.retrievedAt, 64));
+  })) errors.push("sourceSummaries must contain bounded source summary objects");
+  const validConfidences = ["high", "medium", "low", "insufficient_evidence"];
+  if (!isString(o.confidence) || !validConfidences.includes(o.confidence as string)) errors.push("confidence is invalid");
+  if (!(o.confidenceScore === null || isNumber(o.confidenceScore, 0, 100))) errors.push("confidenceScore must be null or 0-100");
+  if (!isStringArray(o.confidenceReasons, 10) || !(o.confidenceReasons as string[]).every((item) => isString(item, 1_000))) errors.push("confidenceReasons must contain at most 10 bounded strings");
+  if (!isStringArray(o.limitations, 10) || !(o.limitations as string[]).every((item) => isString(item, 1_000))) errors.push("limitations must contain at most 10 bounded strings");
+  if (!isStringArray(o.unresolvedQuestions, 10) || !(o.unresolvedQuestions as string[]).every((item) => isString(item, 1_000))) errors.push("unresolvedQuestions must contain at most 10 bounded strings");
+  if (!(o.freshestEvidenceAt === null || isString(o.freshestEvidenceAt, 64))) errors.push("freshestEvidenceAt must be null or a bounded timestamp");
   if (!isStringArray(o.keyPoints, 10) || !(o.keyPoints as string[]).every((item) => isString(item, 1_000))) errors.push("keyPoints must contain at most 10 bounded strings");
   if (!isArray(o.claims, 0, 20) || !(o.claims as unknown[]).every((claim) => {
     if (!claim || typeof claim !== "object") return false;
     const item = claim as Record<string, unknown>;
-    return hasOnlyKeys(item, ["text", "evidenceSourceIds", "evidenceClaimIds"])
-      && isString(item.text, 1000)
+    return hasOnlyKeys(item, ["text", "evidenceSourceIds", "evidenceClaimIds", "claimId", "statement", "relationship", "citationAssertionIds"])
+      && isString(item.text, 1000) && isString(item.claimId, 128) && isString(item.statement, 1_000)
+      && isString(item.relationship, 100)
       && isStringArray(item.evidenceSourceIds, 16)
       && isStringArray(item.evidenceClaimIds, 16)
+      && isStringArray(item.citationAssertionIds, 16)
       && (item.evidenceSourceIds as string[]).length > 0
-      && (item.evidenceClaimIds as string[]).length > 0;
+      && (item.evidenceClaimIds as string[]).length > 0
+      && (item.citationAssertionIds as string[]).length > 0;
   })) errors.push("claims must contain evidence-linked claim objects");
+  if (!isArray(o.citations, 0, 32) || !(o.citations as unknown[]).every((citation) => {
+    if (!citation || typeof citation !== "object" || Array.isArray(citation)) return false;
+    const item = citation as Record<string, unknown>;
+    return hasOnlyKeys(item, ["assertionId", "sourceDocumentVersionId", "sourceChunkId", "startLocator", "endLocator"])
+      && isString(item.assertionId, 128) && isString(item.sourceDocumentVersionId, 128)
+      && isString(item.sourceChunkId, 128) && isString(item.startLocator, 500) && isString(item.endLocator, 500);
+  })) errors.push("citations must contain bounded assertion locator objects");
   if (!isStringArray(o.citedSourceIds, 16)) errors.push("citedSourceIds must contain at most 16 strings");
   if (!isStringArray(o.citedClaimIds, 16)) errors.push("citedClaimIds must contain at most 16 strings");
   if (!isStringArray(o.confirmedFacts, 10) || !(o.confirmedFacts as string[]).every((item) => isString(item, 1_000))) errors.push("confirmedFacts must contain at most 10 bounded strings");
@@ -222,7 +274,17 @@ export function validateAnswerDraft(output: unknown): ValidationResult {
   if (o.analysis !== undefined && (typeof o.analysis !== "string" || o.analysis.length > 4_000)) errors.push("analysis must be a bounded string when supplied");
   if (!isString(o.whatCouldChange, 2_000)) errors.push("whatCouldChange is required and must be bounded");
 
-  const validConfidences = ["high", "medium", "low", "insufficient_evidence"];
+  if (["insufficient", "out_of_scope", "refused"].includes(o.evidenceMode as string)
+    && o.conclusionMode !== "insufficient_evidence") {
+    errors.push("non-answer evidence modes require insufficient_evidence conclusionMode");
+  }
+  if (o.conclusionMode !== "insufficient_evidence" && Array.isArray(o.positions) && o.positions.length === 0) {
+    errors.push("conclusive modes require at least one position");
+  }
+  if (o.conclusionMode === "qualified_lean" && o.lean === null) {
+    errors.push("qualified_lean requires a selected lean position");
+  }
+
   if (!isString(o.proposedConfidence) || !validConfidences.includes(o.proposedConfidence as string)) {
     errors.push(`proposedConfidence must be one of: ${validConfidences.join(", ")}`);
   }

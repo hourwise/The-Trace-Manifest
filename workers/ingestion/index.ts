@@ -30,6 +30,7 @@ import type { OperatorRole } from "../../src/security/access-auth";
 import { admitAndQueueFeedCapture, admitAndQueueManualCapture, admitAndQueueKnowledgeDocumentCapture } from "./knowledge-capture-queue";
 import { consumeKnowledgeCaptureBatch } from "./knowledge-capture-consumer";
 import { recalculateEvidenceScores, recalculateExpiredEvidence } from "../../src/lib/server/evidence-recalculation";
+import { indexKnowledgeEmbeddings } from "./knowledge-embedding-index";
 
 // ============================================================
 // Signed internal-service authentication
@@ -65,7 +66,7 @@ const WRITE_ADMIN_ROUTES = new Set([
   "/admin/approve-evidence-status",
   "/admin/related-items",
   "/admin/candidates", "/admin/social-signals", "/admin/knowledge/capture-url",
-  "/admin/knowledge/capture-missing",
+  "/admin/knowledge/capture-missing", "/admin/knowledge/index-preview",
 ]);
 const MAX_ADMIN_BODY_BYTES = 64 * 1024;
 
@@ -144,7 +145,12 @@ async function readBoundedAdminBody(request: Request): Promise<string | null> {
 export interface Env {
   DB: D1Database;
   RAW_STORE: R2Bucket;
+  /** KC-09B Preview-only Workers AI binding; production remains unbound. */
+  AI?: Ai;
+  /** KC-09B Preview-only Vectorize binding; D1 remains authoritative. */
+  KNOWLEDGE_VECTOR_INDEX?: VectorizeIndex;
   KNOWLEDGE_PROCESSING_QUEUE?: Queue;
+  TRACE_ENVIRONMENT?: string;
   TRACE_INTERNAL_SERVICE_SECRET: string;
   GITHUB_TOKEN?: string;
 }
@@ -1010,6 +1016,8 @@ async function handleAdminRoute(
       return handleManualKnowledgeCapture(request, env, operator);
     case "/admin/knowledge/capture-missing":
       return handleKnowledgeDocumentCapture(request, env, operator);
+    case "/admin/knowledge/index-preview":
+      return handleKnowledgeEmbeddingIndex(request, env);
     case "/admin/publish-story":
       return handlePublishStory(request, env, operator);
     case "/admin/withdraw-story":
@@ -1044,6 +1052,26 @@ async function handleAdminRoute(
 // ============================================================
 // Admin API handlers
 // ============================================================
+async function handleKnowledgeEmbeddingIndex(request: Request, env: Env): Promise<Response> {
+  const body = await readAdminObject(request, ["limit", "dryRun"]);
+  if (!body) return Response.json({ error: "Invalid request body." }, { status: 400 });
+  const limit = body.limit === undefined ? undefined : body.limit;
+  if (limit !== undefined && (!Number.isInteger(limit) || Number(limit) < 1 || Number(limit) > 100)) {
+    return Response.json({ error: "limit must be an integer between 1 and 100." }, { status: 400 });
+  }
+  if (body.dryRun !== undefined && typeof body.dryRun !== "boolean") {
+    return Response.json({ error: "dryRun must be a boolean." }, { status: 400 });
+  }
+  const result = await indexKnowledgeEmbeddings(env, {
+    limit: typeof limit === "number" ? limit : undefined,
+    dryRun: body.dryRun === true,
+  });
+  if (result.state === "disabled") {
+    return Response.json({ error: "Preview embedding bindings are unavailable.", result }, { status: 503 });
+  }
+  return Response.json(result, { status: result.state === "failed" ? 502 : 200 });
+}
+
 async function readAdminObject(request: Request, allowedKeys: readonly string[]): Promise<Record<string, unknown> | null> {
   try {
     const parsed = await request.json() as unknown;

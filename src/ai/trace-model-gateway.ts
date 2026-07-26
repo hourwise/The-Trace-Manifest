@@ -1,10 +1,11 @@
 import type {
-  EvidenceExcerpt, TraceAIConfig, TraceAnswerDraft, TraceEditorialDraft, TraceModelId,
+  EvidenceExcerpt, TraceAIConfig, TraceAnswerDraft, TraceAnswerClaim, TraceAnswerPosition,
+  TraceAnswerSourceSummary, TraceEditorialDraft, TraceModelId,
 } from "./provider";
 import { DeepSeekAPIError, DeepSeekProvider } from "./providers/deepseek";
 import { buildConfig, configuredTaskDailyBudget, type TraceAIEnvironment } from "./config";
 import { validateTaskInput } from "./schemas";
-import { validateAnswerOutput, validateEditorialOutput } from "./validation";
+import { validateAnswerOutput, validateEditorialOutput, type AnswerPolicyExpectation } from "./validation";
 import { validateModelAssignment } from "./model-router";
 import {
   DurableAIGovernance,
@@ -16,6 +17,7 @@ import {
   type DeterministicConfidence,
 } from "../lib/server/ask-evidence";
 import { isAnswerEligibleEvidence } from "./task-policy";
+import { resolveAndValidateCitationReferences } from "../lib/server/knowledge-citation-resolution";
 
 export type TraceAIRuntimeEnvironment = TraceAIEnvironment & { DB?: D1Database };
 
@@ -38,17 +40,32 @@ export interface PublicCitation {
   sourceClassification: string;
   observedAt?: string;
   publishedAt?: string;
+  assertionId?: string;
+  sourceDocumentVersionId?: string;
+  sourceChunkId?: string;
+  startLocator?: string;
+  endLocator?: string;
 }
 
 export interface AskTracePayload {
   answer: string;
+  evidenceMode: TraceAnswerDraft["evidenceMode"];
+  conclusionMode: TraceAnswerDraft["conclusionMode"];
+  directAnswer: string;
+  lean: string | null;
+  whyLean: string;
+  positions: TraceAnswerPosition[];
+  sourceSummaries: TraceAnswerSourceSummary[];
   keyPoints: string[];
-  claims: { text: string; evidenceSourceIds: string[]; evidenceClaimIds: string[] }[];
+  claims: TraceAnswerClaim[];
   citations: PublicCitation[];
   confidence: DeterministicConfidence["label"];
   /** Numeric confidence is internal/admin-only until KC-07 calibration passes. */
   confidenceScore: number | null;
   confidenceReasons: string[];
+  limitations: string[];
+  unresolvedQuestions: string[];
+  freshestEvidenceAt: string | null;
   freshestObservedAt: string | null;
   hasMaterialDisagreement: boolean;
   disagreements: string[];
@@ -98,15 +115,28 @@ function safeNonAnswer(
   confidence: DeterministicConfidence,
   reason: string,
   exposeNumericScore = false,
+  policy?: AnswerPolicyExpectation,
 ): AskTracePayload {
+  const evidenceMode = policy?.evidenceMode ?? "insufficient";
+  const conclusionMode = policy?.conclusionMode ?? "insufficient_evidence";
   return {
     answer: "TRACE does not have enough eligible published evidence to answer this question reliably.",
+    evidenceMode,
+    conclusionMode,
+    directAnswer: "TRACE does not have enough eligible published evidence to answer this question reliably.",
+    lean: null,
+    whyLean: "No defensible lean was selected.",
+    positions: [],
+    sourceSummaries: [],
     keyPoints: [],
     claims: [],
     citations: [],
     confidence: "insufficient_evidence",
     confidenceScore: exposeNumericScore ? confidence.score : null,
     confidenceReasons: [...confidence.reasons, reason],
+    limitations: [reason],
+    unresolvedQuestions: [],
+    freshestEvidenceAt: confidence.freshestObservedAt,
     freshestObservedAt: confidence.freshestObservedAt,
     hasMaterialDisagreement: confidence.hasMaterialDisagreement,
     disagreements: [],
@@ -136,7 +166,8 @@ function citationsFor(draft: TraceAnswerDraft, evidence: EvidenceExcerpt[]): Pub
     ...draft.claims.flatMap((claim) => claim.evidenceClaimIds),
   ]);
   return evidence
-    .filter((item) => citedSources.has(item.sourceId) || Boolean(item.claimId && citedClaims.has(item.claimId)))
+    .filter((item) => citedSources.has(item.sourceId) || Boolean(item.claimId && citedClaims.has(item.claimId))
+      || draft.citations.some((citation) => citation.assertionId === item.assertionId))
     .map((item) => ({
       sourceId: item.sourceId,
       claimId: item.claimId,
@@ -145,7 +176,28 @@ function citationsFor(draft: TraceAnswerDraft, evidence: EvidenceExcerpt[]): Pub
       sourceClassification: item.sourceClassification,
       observedAt: item.observedAt,
       publishedAt: item.publishedAt,
+      assertionId: item.assertionId,
+      sourceDocumentVersionId: item.sourceDocumentVersionId,
+      sourceChunkId: item.sourceChunkId,
+      startLocator: item.startLocator,
+      endLocator: item.endLocator,
     }));
+}
+
+function answerPolicyFor(evidence: EvidenceExcerpt[], confidence: DeterministicConfidence): AnswerPolicyExpectation {
+  const insufficient = confidence.label === "insufficient_evidence";
+  return {
+    evidenceMode: insufficient
+      ? "insufficient"
+      : evidence.some((item) => item.sourceKind === "trace_knowledge" && item.externalEvidenceResolved === true)
+        ? "knowledge" : "researched",
+    conclusionMode: insufficient ? "insufficient_evidence" : "supported",
+    confidence: confidence.label,
+    // KC-09G's full position packet will supply a concrete lean in the next
+    // retrieval integration. Until then the application explicitly selects no
+    // lean rather than allowing the model to invent one.
+    leanPositionId: null,
+  };
 }
 
 function answerPayload(
@@ -155,6 +207,7 @@ function answerPayload(
   confidence: DeterministicConfidence,
   knowledgeWarning?: string | null,
   exposeNumericScore = false,
+  policy?: AnswerPolicyExpectation,
 ): AskTracePayload {
   const confidenceReasons = knowledgeWarning
     ? [...confidence.reasons, knowledgeWarning]
@@ -164,12 +217,22 @@ function answerPayload(
     : draft.caveats;
   return {
     answer: draft.answer,
+    evidenceMode: policy?.evidenceMode ?? draft.evidenceMode,
+    conclusionMode: policy?.conclusionMode ?? draft.conclusionMode,
+    directAnswer: draft.directAnswer,
+    lean: policy?.leanPositionId === undefined ? draft.lean : policy.leanPositionId,
+    whyLean: draft.whyLean,
+    positions: draft.positions,
+    sourceSummaries: draft.sourceSummaries,
     keyPoints: draft.keyPoints,
     claims: draft.claims,
     citations: citationsFor(draft, evidence),
     confidence: confidence.label,
     confidenceScore: exposeNumericScore ? confidence.score : null,
     confidenceReasons,
+    limitations: draft.limitations,
+    unresolvedQuestions: draft.unresolvedQuestions,
+    freshestEvidenceAt: draft.freshestEvidenceAt ?? confidence.freshestObservedAt,
     freshestObservedAt: confidence.freshestObservedAt,
     hasMaterialDisagreement: confidence.hasMaterialDisagreement,
     disagreements: draft.disagreements,
@@ -305,6 +368,7 @@ export async function askTrace(env: TraceAIRuntimeEnvironment, context: AskTrace
   const excludedEvidence = context.evidenceExcerpts.length - eligibleEvidence.length;
   const knowledgeWarning = unresolvedKnowledgeWarning(context.evidenceExcerpts);
   const confidence = calculateDeterministicConfidence(eligibleEvidence);
+  const answerPolicy = answerPolicyFor(eligibleEvidence, confidence);
   if (confidence.label === "insufficient_evidence") {
     const exclusionReason = excludedEvidence > 0
       ? `${excludedEvidence} supplied record${excludedEvidence === 1 ? " was" : "s were"} excluded because it was not admitted, current external evidence.`
@@ -314,6 +378,7 @@ export async function askTrace(env: TraceAIRuntimeEnvironment, context: AskTrace
       confidence,
       [knowledgeWarning, exclusionReason].filter(Boolean).join(" "),
       Boolean(context.adminOverride),
+      answerPolicy,
     );
     await governance.completeWithoutModel(context.requestId, payload);
     return { status: "ok", requestId: context.requestId, payload };
@@ -342,18 +407,27 @@ export async function askTrace(env: TraceAIRuntimeEnvironment, context: AskTrace
   const startedAt = Date.now();
   try {
     const generation = await provider.generateAnswer(input);
-    const validation = validateAnswerOutput(generation.output, input.evidenceExcerpts, input.maxOutputTokens);
-    const payload = validation.passed
-      ? answerPayload(context.requestId, generation.output, eligibleEvidence, confidence, knowledgeWarning, Boolean(context.adminOverride))
+    const validation = validateAnswerOutput(generation.output, input.evidenceExcerpts, input.maxOutputTokens, answerPolicy);
+    const referencedAssertionIds = generation.output.claims.flatMap((claim) => claim.citationAssertionIds);
+    const d1BackedCitations = generation.output.citations.length > 0
+      && generation.output.citations.every((citation) => input.evidenceExcerpts.some((excerpt) =>
+        excerpt.assertionId === citation.assertionId && excerpt.externalEvidenceResolved === true));
+    const citationResolution = env.DB && d1BackedCitations
+      ? await resolveAndValidateCitationReferences(env.DB, generation.output.citations, referencedAssertionIds)
+      : null;
+    const answerValidated = validation.passed && (!citationResolution || citationResolution.passed);
+    const payload = answerValidated
+      ? answerPayload(context.requestId, generation.output, eligibleEvidence, confidence, knowledgeWarning, Boolean(context.adminOverride), answerPolicy)
       : safeNonAnswer(
         context.requestId,
         confidence,
         [knowledgeWarning, "The generated draft failed citation or structure validation."].filter(Boolean).join(" "),
         Boolean(context.adminOverride),
+        answerPolicy,
       );
     const settlement = usageSettlement(
       config, config.publicModel, generation.usage, inputTokens, input.maxOutputTokens,
-      Date.now() - startedAt, generation.providerStatus, validation.passed ? "passed" : "failed",
+      Date.now() - startedAt, generation.providerStatus, answerValidated ? "passed" : "failed",
     );
     await governance.settleSuccess(
       context.requestId, reservation.reservationId, config.provider, config.publicModel,

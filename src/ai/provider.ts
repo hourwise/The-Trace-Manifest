@@ -93,8 +93,23 @@ export interface EvidenceExcerpt {
 
 export interface TraceAnswerDraft {
   answer: string;
+  /** KC-09H validated answer contract. */
+  evidenceMode: "knowledge" | "researched" | "insufficient" | "out_of_scope" | "refused";
+  conclusionMode: "supported" | "qualified_lean" | "multiple_positions" | "insufficient_evidence";
+  directAnswer: string;
+  lean: string | null;
+  whyLean: string;
+  positions: TraceAnswerPosition[];
+  sourceSummaries: TraceAnswerSourceSummary[];
+  confidence: "high" | "medium" | "low" | "insufficient_evidence";
+  confidenceScore: number | null;
+  confidenceReasons: string[];
+  limitations: string[];
+  unresolvedQuestions: string[];
+  freshestEvidenceAt: string | null;
   keyPoints: string[];
   claims: TraceAnswerClaim[];
+  citations: TraceAnswerCitation[];
   citedSourceIds: string[];
   citedClaimIds: string[];
   confirmedFacts: string[];
@@ -110,6 +125,38 @@ export interface TraceAnswerClaim {
   text: string;
   evidenceSourceIds: string[];
   evidenceClaimIds: string[];
+  claimId: string;
+  statement: string;
+  relationship: string;
+  citationAssertionIds: string[];
+}
+
+export interface TraceAnswerPosition {
+  positionId: string;
+  label: string;
+  summary: string;
+  supportingClaimIds: string[];
+  contradictingClaimIds: string[];
+  sourceIds: string[];
+}
+
+export interface TraceAnswerCitation {
+  assertionId: string;
+  sourceDocumentVersionId: string;
+  sourceChunkId: string;
+  startLocator: string;
+  endLocator: string;
+}
+
+export interface TraceAnswerSourceSummary {
+  sourceId: string;
+  sourceName: string;
+  sourceRole: string;
+  summary: string;
+  materialClaims: string[];
+  caveats: string[];
+  publishedAt: string | null;
+  retrievedAt: string | null;
 }
 
 export interface TraceEditorialDraft {

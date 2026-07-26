@@ -73,6 +73,8 @@ export class SQLiteD1 {
   this.sqlite.exec(readFileSync("db/migration-0047-evidence-change-approvals.sql", "utf8"));
     this.sqlite.exec(readFileSync("db/migration-0048-knowledge-source-link-audit.sql", "utf8"));
     this.sqlite.exec(readFileSync("db/migration-0049-knowledge-change-proposal-index.sql", "utf8"));
+    this.sqlite.exec(readFileSync("db/migration-0050-knowledge-retrieval-indexes.sql", "utf8"));
+    this.sqlite.exec(readFileSync("db/migration-0051-knowledge-embedding-index-state.sql", "utf8"));
   }
 
   prepare(query: string): SQLiteD1Statement {

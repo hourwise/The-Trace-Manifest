@@ -37,6 +37,12 @@ import { KnowledgeDocumentMappingError, mapKnowledgeDocumentClaim } from "../src
 import { evaluateKnowledgeApproval } from "../src/lib/server/knowledge-approval";
 import { triggerKnowledgeReview } from "../src/lib/server/knowledge-change-proposals";
 import { captureAdmittedSource, SourceCaptureError } from "../src/lib/server/source-capture";
+import { KC09_EMBEDDING_POLICY, embeddingRolloutFor, isAllowedKnowledgeVectorMetadataField } from "../src/lib/server/knowledge-embedding-policy";
+import { resolveKnowledgeVectorMatches } from "../src/lib/server/knowledge-vector-resolution";
+import { resolveAndValidateCitationReferences, resolveKnowledgeCitations, type KnowledgeCitationInput } from "../src/lib/server/knowledge-citation-resolution";
+import { groupKnowledgePositions, groupResolvedKnowledgePositions, type KnowledgePositionEvidence } from "../src/lib/server/knowledge-position-grouping";
+import { selectKnowledgeConclusion, type KnowledgePositionAssessment } from "../src/lib/server/knowledge-conclusion-policy";
+import { estimateEmbeddingTokens, indexKnowledgeEmbeddings, normalizeEmbeddingText, type KnowledgeEmbeddingVector } from "../workers/ingestion/knowledge-embedding-index";
 import { signInternalRequest, verifyInternalRequestSignature } from "../src/security/internal-signature";
 import { publishBriefing, publishStory, upgradeClusterEvidence } from "../workers/ingestion/publish";
 import { reconcileKnowledgeIndexOperations } from "../workers/ingestion/knowledge-reconciliation";
@@ -95,10 +101,12 @@ const evidence: EvidenceExcerpt[] = [
   {
     sourceId: "source-1", sourceKind: "external_primary", sourceRole: "evidence", admissionState: "admitted", freshnessState: "current", independentEvidenceWeight: 0,
     claimId: "claim-1", text: "Evidence one", sourceClassification: "Tier A; primary", trustNotes: "Evidence quality: strong", observedAt: "2026-07-13T10:00:00Z",
+    assertionId: "assertion-1", sourceDocumentVersionId: "version-1", sourceChunkId: "chunk-1", startLocator: "p1:1", endLocator: "p1:2",
   },
   {
     sourceId: "source-2", sourceKind: "external_independent", sourceRole: "evidence", admissionState: "admitted", freshnessState: "current", independentEvidenceWeight: 0,
     claimId: "claim-2", text: "Evidence two", sourceClassification: "Tier B; independent", trustNotes: "Evidence quality: strong", observedAt: "2026-07-14T10:00:00Z",
+    assertionId: "assertion-2", sourceDocumentVersionId: "version-2", sourceChunkId: "chunk-2", startLocator: "p2:1", endLocator: "p2:2",
   },
 ];
 
@@ -112,8 +120,21 @@ async function gatewayTests(): Promise<void> {
       return Response.json({
         choices: [{ message: { content: JSON.stringify({
           answer: "The supplied reviewed evidence supports this bounded answer.",
+          evidence_mode: "researched", conclusion_mode: "supported",
+          direct_answer: "The supplied reviewed evidence supports this bounded answer.", lean: null,
+          why_lean: "No competing position was selected by the application policy.",
+          positions: [{ position_id: "position-supported", label: "Supported position", summary: "Both sources support the answer.", supporting_claim_ids: ["claim-1", "claim-2"], contradicting_claim_ids: [], source_ids: ["source-1", "source-2"] }],
+          source_summaries: [
+            { source_id: "source-1", source_name: "source-1", source_role: "primary", summary: "Primary evidence.", material_claims: ["claim-1"], caveats: [], published_at: null, retrieved_at: "2026-07-13T10:00:00Z" },
+            { source_id: "source-2", source_name: "source-2", source_role: "independent", summary: "Independent evidence.", material_claims: ["claim-2"], caveats: [], published_at: null, retrieved_at: "2026-07-14T10:00:00Z" },
+          ],
+          confidence: "medium", confidence_score: null, confidence_reasons: ["Two supplied eligible sources."], limitations: [], unresolved_questions: [], freshest_evidence_at: "2026-07-14T10:00:00Z",
           key_points: ["Two published sources were supplied."],
-          claims: [{ text: "Two sources support the answer.", evidence_source_ids: ["source-1", "source-2"], evidence_claim_ids: ["claim-1", "claim-2"] }],
+          claims: [{ text: "Two sources support the answer.", claim_id: "claim-1", statement: "Two sources support the answer.", relationship: "supports", evidence_source_ids: ["source-1", "source-2"], evidence_claim_ids: ["claim-1", "claim-2"], citation_assertion_ids: ["assertion-1", "assertion-2"] }],
+          citations: [
+            { assertion_id: "assertion-1", source_document_version_id: "version-1", source_chunk_id: "chunk-1", start_locator: "p1:1", end_locator: "p1:2" },
+            { assertion_id: "assertion-2", source_document_version_id: "version-2", source_chunk_id: "chunk-2", start_locator: "p2:1", end_locator: "p2:2" },
+          ],
           cited_source_ids: ["source-1", "source-2"], cited_claim_ids: ["claim-1", "claim-2"],
           confirmed_facts: [], reported_claims: [], analysis: "", disagreements: [], caveats: [],
           what_could_change: "New reviewed evidence.", proposed_confidence: "high",
@@ -791,18 +812,39 @@ async function boundaryTests(): Promise<void> {
     maxOutputTokens: 300, unexpected: true,
   }).valid, false, "gateway inputs reject unknown fields");
   assert.equal(validateAnswerDraft({
-    answer: "A structurally plausible answer.", keyPoints: [], claims: [], citedSourceIds: [],
-    citedClaimIds: [], confirmedFacts: [], reportedClaims: [], disagreements: [], caveats: [],
+    answer: "A structurally plausible answer.", evidenceMode: "researched", conclusionMode: "supported",
+    directAnswer: "A bounded answer.", lean: null, whyLean: "No lean.", positions: [], sourceSummaries: [],
+    confidence: "low", confidenceScore: null, confidenceReasons: ["Limited evidence."], limitations: [], unresolvedQuestions: [], freshestEvidenceAt: null,
+    keyPoints: [], claims: [], citations: [], citedSourceIds: [], citedClaimIds: [], confirmedFacts: [], reportedClaims: [], disagreements: [], caveats: [],
     whatCouldChange: "New evidence.", proposedConfidence: "low", unexpected: true,
   }).valid, false, "provider outputs reject unknown fields");
   const unsuppliedCitation = validateAnswerOutput({
-    answer: "A material statement backed by a fabricated citation.", keyPoints: [],
-    claims: [{ text: "Material statement.", evidenceSourceIds: ["source-unknown"], evidenceClaimIds: ["claim-unknown"] }],
+    answer: "A material statement backed by a fabricated citation.", evidenceMode: "researched", conclusionMode: "supported",
+    directAnswer: "A material statement backed by a fabricated citation.", lean: "position-1", whyLean: "The supplied evidence is stronger.",
+    positions: [{ positionId: "position-1", label: "Position", summary: "A position.", supportingClaimIds: ["claim-unknown"], contradictingClaimIds: [], sourceIds: ["source-unknown"] }],
+    sourceSummaries: [], confidence: "low", confidenceScore: null, confidenceReasons: ["Low confidence."], limitations: [], unresolvedQuestions: [], freshestEvidenceAt: null,
+    keyPoints: [], citations: [{ assertionId: "assertion-unknown", sourceDocumentVersionId: "version-unknown", sourceChunkId: "chunk-unknown", startLocator: "p1:1", endLocator: "p1:2" }],
+    claims: [{ text: "Material statement.", claimId: "claim-unknown", statement: "Material statement.", relationship: "supports", evidenceSourceIds: ["source-unknown"], evidenceClaimIds: ["claim-unknown"], citationAssertionIds: ["assertion-unknown"] }],
     citedSourceIds: ["source-unknown"], citedClaimIds: ["claim-unknown"], confirmedFacts: [],
     reportedClaims: [], analysis: "", disagreements: [], caveats: [], whatCouldChange: "New evidence.",
     proposedConfidence: "low",
   }, evidence, 300);
   assert.equal(unsuppliedCitation.passed, false, "Ask cannot cite evidence that was not supplied");
+  const validAnswerContract = {
+    answer: "A bounded answer backed by the supplied evidence.", evidenceMode: "researched", conclusionMode: "supported",
+    directAnswer: "The supplied evidence supports the bounded answer.", lean: "position-1", whyLean: "The supported position has the available evidence.",
+    positions: [{ positionId: "position-1", label: "Supported", summary: "The supplied evidence supports this position.", supportingClaimIds: ["claim-1"], contradictingClaimIds: [], sourceIds: ["source-1"] }],
+    sourceSummaries: [{ sourceId: "source-1", sourceName: "source-1", sourceRole: "primary", summary: "Primary source.", materialClaims: ["claim-1"], caveats: [], publishedAt: null, retrievedAt: "2026-07-13T10:00:00Z" }],
+    confidence: "low", confidenceScore: null, confidenceReasons: ["Bounded evidence."], limitations: [], unresolvedQuestions: [], freshestEvidenceAt: "2026-07-13T10:00:00Z",
+    keyPoints: ["Bounded point."], claims: [{ text: "Supported claim.", claimId: "claim-1", statement: "Supported claim.", relationship: "supports", evidenceSourceIds: ["source-1"], evidenceClaimIds: ["claim-1"], citationAssertionIds: ["assertion-1"] }],
+    citations: [{ assertionId: "assertion-1", sourceDocumentVersionId: "version-1", sourceChunkId: "chunk-1", startLocator: "p1:1", endLocator: "p1:2" }],
+    citedSourceIds: ["source-1"], citedClaimIds: ["claim-1"], confirmedFacts: [], reportedClaims: [], analysis: "", disagreements: [], caveats: [], whatCouldChange: "A new reviewed source.", proposedConfidence: "low",
+  };
+  const locatorMismatch = validateAnswerOutput({ ...validAnswerContract, citations: [{ ...validAnswerContract.citations[0], endLocator: "p9:9" }] }, evidence, 300);
+  assert.equal(locatorMismatch.passed, false, "citation locators must match the supplied reviewed excerpt");
+  const modeMismatch = validateAnswerOutput(validAnswerContract, evidence, 300, { evidenceMode: "knowledge", conclusionMode: "supported", confidence: "high" });
+  assert.equal(modeMismatch.passed, false, "model cannot override application-selected evidence mode or confidence");
+  assert.ok(modeMismatch.failures.some((failure) => failure.includes("application-selected")));
   assert.equal(calculateDeterministicConfidence([]).label, "insufficient_evidence");
   assert.notEqual(calculateDeterministicConfidence(evidence).label, "insufficient_evidence");
 
@@ -1882,6 +1924,448 @@ async function kc08hKnowledgeChangeProposalTests(): Promise<void> {
   }
 }
 
+function kc09EmbeddingPolicyTests(): void {
+  assert.equal(KC09_EMBEDDING_POLICY.embeddingProvider, "workers_ai");
+  assert.equal(KC09_EMBEDDING_POLICY.embeddingModel, "@cf/baai/bge-m3");
+  assert.equal(KC09_EMBEDDING_POLICY.dimensions, 1024);
+  assert.equal(KC09_EMBEDDING_POLICY.metric, "cosine");
+  assert.equal(KC09_EMBEDDING_POLICY.languagePolicy, "multilingual_original_language");
+  assert.equal(KC09_EMBEDDING_POLICY.sourceChunkPolicy.embeddingInputMaxChars, 2_000);
+  assert.equal(KC09_EMBEDDING_POLICY.rollout.productionIndexEnabled, false);
+  assert.equal(KC09_EMBEDDING_POLICY.metadataIndexes.length, 5);
+  assert.equal(isAllowedKnowledgeVectorMetadataField("publication_state"), true);
+  assert.equal(isAllowedKnowledgeVectorMetadataField("source_url"), false, "Vector metadata must not carry source URLs.");
+
+  const preview = embeddingRolloutFor("preview");
+  assert.equal(preview.enabled, true);
+  if (preview.enabled) {
+    assert.equal(preview.indexName, "trace-manifest-knowledge-preview-bge-m3-v1");
+    assert.equal(preview.namespace, "kc09-bge-m3-v1");
+  }
+  assert.deepEqual(embeddingRolloutFor("production"), { enabled: false, reason: "preview_only" },
+    "KC-09A must not expose a production vector target.");
+  assert.deepEqual(embeddingRolloutFor("development"), { enabled: false, reason: "development_uses_no_remote_index" });
+}
+
+async function kc09dEmbeddingIndexTests(): Promise<void> {
+  assert.equal(normalizeEmbeddingText("  bounded\nsource\ttext  "), "bounded source text");
+  assert.equal(estimateEmbeddingTokens("1234"), 1);
+  const database = new SQLiteD1();
+  let upserted: KnowledgeEmbeddingVector[] = [];
+  try {
+    await database.prepare(`
+      INSERT INTO source_documents
+        (id, canonical_url, canonical_url_hash, media_kind, copyright_storage_mode, admission_state)
+      VALUES ('kc09d-doc', 'https://example.test/kc09d', 'kc09d-url-hash', 'html', 'short_excerpt', 'admitted')
+    `).run();
+    await database.prepare(`
+      INSERT INTO source_document_versions
+        (id, source_document_id, content_hash, retrieved_url, retrieved_at, extraction_status, source_language)
+      VALUES ('kc09d-version', 'kc09d-doc', 'kc09d-content-hash', 'https://example.test/kc09d', datetime('now'), 'extracted', 'en')
+    `).run();
+    await database.prepare(`
+      INSERT INTO source_chunks
+        (id, source_document_version_id, chunk_index, text_excerpt, text_hash, start_locator, end_locator)
+      VALUES ('kc09d-chunk', 'kc09d-version', 0, 'A bounded multilingual retrieval chunk.', 'kc09d-chunk-hash', 'p1:1', 'p1:2')
+    `).run();
+    const ai = {
+      async run(_model: string, input: { text: string[] }) {
+        return { data: input.text.map(() => new Array(1024).fill(0.01)) };
+      },
+    };
+    const index = {
+      async upsert(vectors: KnowledgeEmbeddingVector[]) {
+        upserted = vectors;
+        return { ids: vectors.map(vector => vector.id), count: vectors.length };
+      },
+      async getByIds(ids: string[]) {
+        return ids.map(id => ({ id }));
+      },
+    };
+    const environment = {
+      DB: database.asD1(), AI: ai, KNOWLEDGE_VECTOR_INDEX: index, TRACE_ENVIRONMENT: "preview",
+    };
+    const dryRun = await indexKnowledgeEmbeddings(environment, { limit: 5, dryRun: true });
+    assert.equal(dryRun.selected, 1, "only the admitted locator-backed chunk is selected");
+    assert.equal(dryRun.inputTokens > 0, true);
+    const result = await indexKnowledgeEmbeddings(environment, { limit: 5 });
+    assert.equal(result.state, "completed");
+    assert.equal(result.indexed, 1);
+    assert.equal(upserted[0]?.id, "source_chunk:kc09d-chunk");
+    assert.equal(upserted[0]?.namespace, "kc09-bge-m3-v1");
+    assert.equal(upserted[0]?.metadata.embedding_version, "kc09-bge-m3-v1");
+    assert.equal((await database.prepare("SELECT state FROM knowledge_embedding_index_items WHERE record_id = 'kc09d-chunk'").first<{ state: string }>())?.state, "indexed");
+    assert.equal((await database.prepare("SELECT embedding_state FROM source_chunks WHERE id = 'kc09d-chunk'").first<{ embedding_state: string }>())?.embedding_state, "indexed");
+  } finally {
+    database.close();
+  }
+}
+
+async function kc09eVectorResolutionTests(): Promise<void> {
+  const database = new SQLiteD1();
+  try {
+    await database.prepare(`
+      INSERT INTO source_documents
+        (id, canonical_url, canonical_url_hash, media_kind, copyright_storage_mode, admission_state)
+      VALUES ('kc09e-doc', 'https://example.test/kc09e', 'kc09e-url-hash', 'html', 'short_excerpt', 'admitted')
+    `).run();
+    await database.prepare(`
+      INSERT INTO source_document_versions
+        (id, source_document_id, content_hash, retrieved_url, retrieved_at, extraction_status, source_language)
+      VALUES ('kc09e-version', 'kc09e-doc', 'kc09e-content-hash', 'https://example.test/kc09e', datetime('now'), 'extracted', 'fr')
+    `).run();
+    await database.prepare(`
+      INSERT INTO source_chunks
+        (id, source_document_version_id, chunk_index, text_excerpt, text_hash, start_locator, end_locator,
+         embedding_state, embedding_model, embedding_version)
+      VALUES ('kc09e-chunk', 'kc09e-version', 0, 'A D1-authoritative source chunk.', 'kc09e-chunk-hash', 'p1:1', 'p1:2',
+         'indexed', ?, ?)
+    `).bind(KC09_EMBEDDING_POLICY.embeddingModel, KC09_EMBEDDING_POLICY.policyVersion).run();
+    await database.prepare(`
+      INSERT INTO canonical_claims
+        (id, canonical_text, claim_class, claim_domain, current_state, materiality)
+      VALUES ('kc09e-claim', 'The source documents a bounded retrieval policy.', 'specification_defined', 'general', 'active', 'standard')
+    `).run();
+    await database.prepare(`
+      INSERT INTO claim_assertions
+        (id, canonical_claim_id, source_document_version_id, source_chunk_id, start_locator, end_locator,
+         assertion_text, relationship, source_role, directness, evidence_treatment, admission_state,
+         freshness_state, extraction_method, extraction_version, confidence, reviewer_state, reviewed_by, reviewed_at)
+      VALUES ('kc09e-assertion', 'kc09e-claim', 'kc09e-version', 'kc09e-chunk', 'p1:1', 'p1:2',
+         'The source documents a bounded retrieval policy.', 'supports', 'evidence', 'direct', 'factual_support',
+         'admitted', 'current', 'test', 'kc09e-test-v1', 0.95, 'accepted', 'reviewer@example.test', datetime('now'))
+    `).run();
+    await database.prepare(`
+      INSERT INTO source_chunks
+        (id, source_document_version_id, chunk_index, text_excerpt, text_hash, start_locator, end_locator,
+         embedding_state, embedding_model, embedding_version)
+      VALUES ('kc09e-chunk-old', 'kc09e-version', 1, 'An old-policy source chunk.', 'kc09e-old-chunk-hash', 'p2:1', 'p2:2',
+         'indexed', ?, ?)
+    `).bind(KC09_EMBEDDING_POLICY.embeddingModel, KC09_EMBEDDING_POLICY.policyVersion).run();
+
+    const metadata = {
+      record_type: "source_chunk",
+      language: "fr",
+      admission_state: "admitted",
+      publication_state: "not_applicable",
+      embedding_version: KC09_EMBEDDING_POLICY.policyVersion,
+    };
+    const resolved = await resolveKnowledgeVectorMatches(database.asD1(), [
+      { id: "source_chunk:kc09e-chunk", score: 0.91, metadata },
+      { id: "canonical_claim:kc09e-claim", score: 0.905, metadata: { ...metadata, record_type: "canonical_claim" } },
+      { id: "source_chunk:kc09e-chunk", score: 0.90, metadata },
+      { id: "source_chunk:missing", score: 0.89, metadata: { ...metadata, record_type: "source_chunk" } },
+      { id: "source_chunk:kc09e-chunk-old", score: 0.88, metadata: { ...metadata, embedding_version: "old-policy" } },
+      { id: "not-a-vector-id", score: 0.87, metadata },
+    ]);
+    assert.equal(resolved.accepted.length, 2, "only D1-eligible source and claim matches are accepted");
+    const acceptedSource = resolved.accepted.find(item => item.recordType === "source_chunk");
+    const acceptedClaim = resolved.accepted.find(item => item.recordType === "canonical_claim");
+    assert.equal(acceptedSource?.language, "fr");
+    assert.deepEqual(acceptedSource?.provenance.sourceDocumentIds, ["kc09e-doc"]);
+    assert.equal(acceptedClaim?.language, "fr", "canonical claim inherits the reviewed source language");
+    assert.deepEqual(acceptedClaim?.provenance.assertionIds, ["kc09e-assertion"]);
+    assert.ok(resolved.rejected.some(item => item.reason === "duplicate_candidate"));
+    assert.ok(resolved.rejected.some(item => item.reason === "record_not_found"));
+    assert.ok(resolved.rejected.some(item => item.reason === "embedding_version_mismatch"));
+    assert.ok(resolved.rejected.some(item => item.reason === "invalid_vector_id"));
+
+    await database.prepare("UPDATE source_documents SET admission_state = 'quarantined' WHERE id = 'kc09e-doc'").run();
+    const quarantined = await resolveKnowledgeVectorMatches(database.asD1(), [
+      { id: "source_chunk:kc09e-chunk", score: 1, metadata },
+      { id: "canonical_claim:kc09e-claim", score: 0.99, metadata: { ...metadata, record_type: "canonical_claim" } },
+    ]);
+    assert.equal(quarantined.accepted.length, 0, "D1 admission changes invalidate old vector matches");
+    assert.equal(quarantined.rejected[0]?.reason, "source_not_eligible");
+    assert.equal(quarantined.rejected[1]?.reason, "claim_not_eligible");
+  } finally {
+    database.close();
+  }
+}
+
+async function kc09iCitationResolutionTests(): Promise<void> {
+  const database = new SQLiteD1();
+  const validCitation: KnowledgeCitationInput = {
+    assertionId: "kc09i-assertion",
+    sourceDocumentVersionId: "kc09i-version",
+    sourceChunkId: "kc09i-chunk",
+    startLocator: "p1:1",
+    endLocator: "p1:2",
+  };
+  try {
+    await database.prepare(`
+      INSERT INTO source_documents
+        (id, canonical_url, canonical_url_hash, media_kind, copyright_storage_mode, admission_state)
+      VALUES ('kc09i-doc', 'https://example.test/kc09i', 'kc09i-url-hash', 'html', 'short_excerpt', 'admitted')
+    `).run();
+    await database.prepare(`
+      INSERT INTO source_document_versions
+        (id, source_document_id, content_hash, retrieved_url, retrieved_at, extraction_status, source_language)
+      VALUES ('kc09i-version', 'kc09i-doc', 'kc09i-content-hash', 'https://example.test/kc09i', datetime('now'), 'extracted', 'en')
+    `).run();
+    await database.prepare(`
+      INSERT INTO source_chunks
+        (id, source_document_version_id, chunk_index, text_excerpt, text_hash, start_locator, end_locator)
+      VALUES ('kc09i-chunk', 'kc09i-version', 0, 'A reviewed citation chunk.', 'kc09i-chunk-hash', 'p1:1', 'p1:2')
+    `).run();
+    await database.prepare(`
+      INSERT INTO provenance_groups (id, origin_type, explanation, determined_by, determination_method)
+      VALUES ('kc09i-group', 'primary', 'A reviewed primary source.', 'kc09i-test', 'editor_review')
+    `).run();
+    await database.prepare(`
+      INSERT INTO source_provenance_memberships (id, source_document_id, provenance_group_id, relationship, confidence)
+      VALUES ('kc09i-membership', 'kc09i-doc', 'kc09i-group', 'original', 1)
+    `).run();
+    await database.prepare(`
+      INSERT INTO canonical_claims
+        (id, canonical_text, claim_class, claim_domain, current_state, materiality)
+      VALUES ('kc09i-claim', 'The reviewed source supports citation resolution.', 'specification_defined', 'general', 'active', 'standard')
+    `).run();
+    await database.prepare(`
+      INSERT INTO claim_assertions
+        (id, canonical_claim_id, source_document_version_id, source_chunk_id, start_locator, end_locator,
+         assertion_text, relationship, source_role, directness, evidence_treatment, admission_state,
+         freshness_state, provenance_group_id, extraction_method, extraction_version, confidence,
+         reviewer_state, reviewed_by, reviewed_at)
+      VALUES ('kc09i-assertion', 'kc09i-claim', 'kc09i-version', 'kc09i-chunk', 'p1:1', 'p1:2',
+         'The reviewed source supports citation resolution.', 'supports', 'evidence', 'direct', 'factual_support',
+         'admitted', 'current', 'kc09i-group', 'test', 'kc09i-test-v1', 0.95,
+         'accepted', 'reviewer@example.test', datetime('now'))
+    `).run();
+
+    const resolved = await resolveKnowledgeCitations(database.asD1(), [validCitation]);
+    assert.equal(resolved.rejected.length, 0, "reviewed citation resolves from D1");
+    assert.equal(resolved.resolved[0]?.canonicalClaimId, "kc09i-claim");
+    assert.deepEqual(resolved.resolved[0]?.provenanceGroupIds, ["kc09i-group"]);
+    assert.equal(resolved.resolved[0]?.chunkText, "A reviewed citation chunk.");
+
+    const wrongVersion = await resolveKnowledgeCitations(database.asD1(), [{ ...validCitation, sourceDocumentVersionId: "wrong-version" }]);
+    assert.equal(wrongVersion.rejected[0]?.reason, "source_version_mismatch");
+    const wrongChunk = await resolveKnowledgeCitations(database.asD1(), [{ ...validCitation, sourceChunkId: "wrong-chunk" }]);
+    assert.equal(wrongChunk.rejected[0]?.reason, "source_chunk_mismatch");
+    const wrongLocator = await resolveKnowledgeCitations(database.asD1(), [{ ...validCitation, endLocator: "p1:999" }]);
+    assert.equal(wrongLocator.rejected[0]?.reason, "locator_mismatch");
+    const malformed = await resolveKnowledgeCitations(database.asD1(), [{ ...validCitation, startLocator: " p1:1" }]);
+    assert.equal(malformed.rejected[0]?.reason, "invalid_citation");
+    const duplicate = await resolveKnowledgeCitations(database.asD1(), [validCitation, validCitation]);
+    assert.equal(duplicate.resolved.length, 1);
+    assert.equal(duplicate.rejected[0]?.reason, "duplicate_citation");
+
+    const linked = await resolveAndValidateCitationReferences(database.asD1(), [validCitation], [validCitation.assertionId]);
+    assert.equal(linked.passed, true, "answer assertion references require a D1-resolved citation");
+    const missingReference = await resolveAndValidateCitationReferences(database.asD1(), [validCitation], ["not-resolved"]);
+    assert.equal(missingReference.passed, false);
+
+    await database.prepare("UPDATE source_documents SET admission_state = 'quarantined' WHERE id = 'kc09i-doc'").run();
+    const quarantined = await resolveKnowledgeCitations(database.asD1(), [validCitation]);
+    assert.equal(quarantined.rejected[0]?.reason, "source_not_admitted");
+    await database.prepare("UPDATE source_documents SET admission_state = 'admitted'").run();
+    await database.prepare("UPDATE claim_assertions SET freshness_state = 'stale' WHERE id = 'kc09i-assertion'").run();
+    const stale = await resolveKnowledgeCitations(database.asD1(), [validCitation]);
+    assert.equal(stale.rejected[0]?.reason, "stale_or_disputed");
+  } finally {
+    database.close();
+  }
+}
+
+function kc09fPositionGroupingTests(): void {
+  const evidence: KnowledgePositionEvidence[] = [
+    {
+      id: "match-a", recordType: "canonical_claim", recordId: "claim-a", claimId: "claim-a",
+      statement: "Model X supports image inputs.", score: 0.92, provenanceGroupIds: ["group-a"],
+      relationships: [{ targetClaimId: "claim-b", relationship: "supports" }],
+    },
+    {
+      id: "match-b", recordType: "canonical_claim", recordId: "claim-b", claimId: "claim-b",
+      statement: "Model X accepts image inputs.", score: 0.87, provenanceGroupIds: ["group-b"],
+      relationships: [{ targetClaimId: "claim-c", relationship: "contradicts" }],
+    },
+    {
+      id: "match-c", recordType: "canonical_claim", recordId: "claim-c", claimId: "claim-c",
+      statement: "Model X does not accept image inputs.", score: 0.81, provenanceGroupIds: ["group-c"],
+    },
+    {
+      id: "match-a", recordType: "canonical_claim", recordId: "claim-a", claimId: "claim-a",
+      statement: "Model X supports image inputs.", score: 0.10,
+    },
+  ];
+  const grouped = groupKnowledgePositions(evidence);
+  assert.equal(grouped.positions.length, 2, "supporting claims form one compatible position");
+  assert.equal(grouped.positions[0]?.evidenceIds.length, 2);
+  assert.deepEqual(grouped.positions[0]?.provenanceGroupIds, ["group-a", "group-b"]);
+  assert.equal(grouped.competitions.length, 1, "reviewed contradiction remains a competing position pair");
+  assert.deepEqual(grouped.competitions[0]?.relationships, ["contradicts"]);
+  assert.deepEqual(grouped.ignoredEvidenceIds, ["match-a"]);
+}
+
+async function kc09fD1RelationshipGroupingTests(): Promise<void> {
+  const database = new SQLiteD1();
+  try {
+    await database.prepare(`
+      INSERT INTO source_documents
+        (id, canonical_url, canonical_url_hash, media_kind, copyright_storage_mode, admission_state)
+      VALUES ('kc09f-doc', 'https://example.test/kc09f', 'kc09f-url-hash', 'html', 'short_excerpt', 'admitted')
+    `).run();
+    await database.prepare(`
+      INSERT INTO source_document_versions
+        (id, source_document_id, content_hash, retrieved_url, retrieved_at, extraction_status)
+      VALUES ('kc09f-version', 'kc09f-doc', 'kc09f-content-hash', 'https://example.test/kc09f', datetime('now'), 'extracted')
+    `).run();
+    await database.prepare(`
+      INSERT INTO source_chunks
+        (id, source_document_version_id, chunk_index, text_excerpt, text_hash, start_locator, end_locator)
+      VALUES ('kc09f-chunk', 'kc09f-version', 0, 'Reviewed relationship evidence.', 'kc09f-chunk-hash', 'p1:1', 'p1:2')
+    `).run();
+    await database.prepare(`
+      INSERT INTO canonical_claims (id, canonical_text, claim_class, claim_domain)
+      VALUES ('kc09f-claim-a', 'The system supports images.', 'specification_defined', 'general'),
+             ('kc09f-claim-b', 'The system accepts images.', 'specification_defined', 'general')
+    `).run();
+    await database.prepare(`
+      INSERT INTO claim_assertions
+        (id, canonical_claim_id, source_document_version_id, source_chunk_id, assertion_text,
+         relationship, source_role, directness, evidence_treatment, admission_state,
+         freshness_state, extraction_method, reviewer_state, reviewed_by, reviewed_at)
+      VALUES ('kc09f-assertion', 'kc09f-claim-a', 'kc09f-version', 'kc09f-chunk', 'The system supports images.',
+         'supports', 'evidence', 'direct', 'factual_support', 'admitted', 'current', 'test', 'accepted', 'reviewer@example.test', datetime('now'))
+    `).run();
+    await database.prepare(`
+      INSERT INTO knowledge_claim_relationship_proposals
+        (id, source_assertion_id, source_canonical_claim_id, target_canonical_claim_id,
+         relationship, confidence, rationale, determination_method, algorithm_version,
+         state, reviewed_by, reviewed_at, idempotency_key)
+      VALUES ('kc09f-proposal', 'kc09f-assertion', 'kc09f-claim-a', 'kc09f-claim-b',
+         'supports', 0.9, 'Reviewed support relation.', 'rule_proposal', 'kc09f-test-v1',
+         'accepted', 'reviewer@example.test', datetime('now'), 'kc09f-idempotency')
+    `).run();
+    const base = { language: "en", admissionState: "admitted", publicationState: "not_applicable", provenance: { sourceDocumentIds: ["kc09f-doc"], sourceDocumentVersionIds: ["kc09f-version"], sourceChunkIds: ["kc09f-chunk"], provenanceGroupIds: [], assertionIds: ["kc09f-assertion"] }, metadata: {} };
+    const grouping = await groupResolvedKnowledgePositions(database.asD1(), [
+      { ...base, id: "canonical_claim:kc09f-claim-a", score: 0.9, recordType: "canonical_claim", recordId: "kc09f-claim-a" },
+      { ...base, id: "canonical_claim:kc09f-claim-b", score: 0.8, recordType: "canonical_claim", recordId: "kc09f-claim-b" },
+    ]);
+    assert.equal(grouping.positions.length, 1, "accepted D1 support relationships merge claim positions");
+    assert.deepEqual(grouping.positions[0]?.claimIds, ["kc09f-claim-a", "kc09f-claim-b"]);
+  } finally {
+    database.close();
+  }
+}
+
+function kc09gConclusionPolicyTests(): void {
+  const strong: KnowledgePositionAssessment = {
+    positionId: "position-strong", evidenceCount: 3, currentEvidenceCount: 3,
+    directEvidenceCount: 2, independentProvenanceGroupCount: 2, strongEvidenceCount: 2,
+  };
+  const moderate: KnowledgePositionAssessment = {
+    positionId: "position-moderate", evidenceCount: 2, currentEvidenceCount: 2,
+    directEvidenceCount: 1, independentProvenanceGroupCount: 1, strongEvidenceCount: 0,
+  };
+  const supported = selectKnowledgeConclusion({ evidenceMode: "knowledge", positions: [strong] });
+  assert.equal(supported.conclusionMode, "supported");
+  assert.equal(supported.confidence, "high");
+  assert.equal(supported.leanPositionId, "position-strong");
+
+  const qualified = selectKnowledgeConclusion({
+    evidenceMode: "researched", positions: [strong, moderate],
+    competitions: [{ leftPositionId: strong.positionId, rightPositionId: moderate.positionId }],
+  });
+  assert.equal(qualified.conclusionMode, "qualified_lean");
+  assert.equal(qualified.leanPositionId, "position-strong");
+  assert.ok(qualified.whatCouldChange.length > 0);
+
+  const multiple = selectKnowledgeConclusion({
+    evidenceMode: "knowledge", positions: [strong, { ...strong, positionId: "position-peer" }],
+    competitions: [{ leftPositionId: strong.positionId, rightPositionId: "position-peer" }],
+  });
+  assert.equal(multiple.conclusionMode, "multiple_positions");
+  assert.equal(multiple.leanPositionId, null);
+
+  const insufficient = selectKnowledgeConclusion({ evidenceMode: "knowledge", positions: [moderate] });
+  assert.equal(insufficient.conclusionMode, "insufficient_evidence");
+  assert.equal(insufficient.confidence, "insufficient_evidence");
+  assert.equal(selectKnowledgeConclusion({ evidenceMode: "insufficient", positions: [strong] }).conclusionMode, "insufficient_evidence");
+}
+
+function kc09jRefusalDisagreementTests(): void {
+  const refusal = {
+    answer: "TRACE cannot answer this reliably from the eligible evidence.",
+    evidenceMode: "refused", conclusionMode: "insufficient_evidence",
+    directAnswer: "TRACE cannot answer this reliably.", lean: null,
+    whyLean: "No defensible position was selected.", positions: [], sourceSummaries: [],
+    confidence: "insufficient_evidence", confidenceScore: null,
+    confidenceReasons: ["The request is outside the permitted answer scope."],
+    limitations: ["No eligible conclusion was produced."], unresolvedQuestions: ["A narrower question is required."],
+    freshestEvidenceAt: null, keyPoints: [], claims: [], citations: [], citedSourceIds: [], citedClaimIds: [],
+    confirmedFacts: [], reportedClaims: [], disagreements: [], caveats: ["The request was refused."],
+    whatCouldChange: "A bounded, in-scope question with reviewed evidence.", proposedConfidence: "insufficient_evidence",
+  };
+  const refusalResult = validateAnswerOutput(refusal, [], 300, {
+    evidenceMode: "refused", conclusionMode: "insufficient_evidence", confidence: "insufficient_evidence", leanPositionId: null,
+  });
+  assert.equal(refusalResult.passed, true, "a refusal may safely contain no factual claims or citations");
+
+  const disagreementEvidence: EvidenceExcerpt[] = [
+    { ...evidence[0], sourceId: "disagreement-source-a", claimId: "disagreement-claim-a", assertionId: "disagreement-assertion-a", relationship: "supports" },
+    { ...evidence[1], sourceId: "disagreement-source-b", claimId: "disagreement-claim-b", assertionId: "disagreement-assertion-b", relationship: "contradicts", isDisputed: true },
+  ];
+  const disagreementDraft = {
+    answer: "The supplied sources support competing positions, so TRACE will not collapse them into one claim.",
+    evidenceMode: "researched", conclusionMode: "multiple_positions",
+    directAnswer: "The evidence remains divided between two positions.", lean: null,
+    whyLean: "No position has a defensible application-selected lean.",
+    positions: [
+      { positionId: "position-a", label: "Position A", summary: "The first source supports the claim.", supportingClaimIds: ["disagreement-claim-a"], contradictingClaimIds: [], sourceIds: ["disagreement-source-a"] },
+      { positionId: "position-b", label: "Position B", summary: "The second source contradicts the claim.", supportingClaimIds: ["disagreement-claim-b"], contradictingClaimIds: [], sourceIds: ["disagreement-source-b"] },
+    ],
+    sourceSummaries: [], confidence: "low", confidenceScore: null, confidenceReasons: ["Material disagreement remains."],
+    limitations: ["The competing sources were not reconciled."], unresolvedQuestions: [], freshestEvidenceAt: null,
+    keyPoints: ["The evidence is disputed."],
+    claims: [
+      { text: "Position A is supported.", claimId: "disagreement-claim-a", statement: "Position A is supported.", relationship: "supports", evidenceSourceIds: ["disagreement-source-a"], evidenceClaimIds: ["disagreement-claim-a"], citationAssertionIds: ["disagreement-assertion-a"] },
+      { text: "Position B is reported.", claimId: "disagreement-claim-b", statement: "Position B is reported.", relationship: "contradicts", evidenceSourceIds: ["disagreement-source-b"], evidenceClaimIds: ["disagreement-claim-b"], citationAssertionIds: ["disagreement-assertion-b"] },
+    ],
+    citations: [
+      { assertionId: "disagreement-assertion-a", sourceDocumentVersionId: "version-1", sourceChunkId: "chunk-1", startLocator: "p1:1", endLocator: "p1:2" },
+      { assertionId: "disagreement-assertion-b", sourceDocumentVersionId: "version-2", sourceChunkId: "chunk-2", startLocator: "p2:1", endLocator: "p2:2" },
+    ],
+    citedSourceIds: ["disagreement-source-a", "disagreement-source-b"], citedClaimIds: ["disagreement-claim-a", "disagreement-claim-b"],
+    confirmedFacts: [], reportedClaims: [], analysis: "", disagreements: ["The sources materially disagree."], caveats: [],
+    whatCouldChange: "A reviewed source resolving the contradiction.", proposedConfidence: "low",
+  };
+  assert.equal(validateAnswerOutput(disagreementDraft, disagreementEvidence, 300).passed, true,
+    "a disagreement-aware answer must preserve explicit disagreement evidence");
+  assert.equal(validateAnswerOutput({ ...disagreementDraft, disagreements: [] }, disagreementEvidence, 300).passed, false,
+    "omitting a supplied material disagreement fails closed");
+
+  const qualifiedPolicy = selectKnowledgeConclusion({
+    evidenceMode: "researched",
+    positions: [
+      { positionId: "position-strong", evidenceCount: 3, currentEvidenceCount: 3, directEvidenceCount: 2, independentProvenanceGroupCount: 2, strongEvidenceCount: 2 },
+      { positionId: "position-moderate", evidenceCount: 2, currentEvidenceCount: 2, directEvidenceCount: 1, independentProvenanceGroupCount: 1, strongEvidenceCount: 0 },
+    ],
+    competitions: [{ leftPositionId: "position-strong", rightPositionId: "position-moderate" }],
+  });
+  assert.equal(qualifiedPolicy.conclusionMode, "qualified_lean");
+  const qualifiedDraft = {
+    ...disagreementDraft,
+    answer: "The evidence leans toward Position A, although Position B remains plausible.",
+    directAnswer: "The evidence supports a qualified lean toward Position A.",
+    conclusionMode: "qualified_lean", lean: "position-strong",
+    whyLean: "Position A has the stronger independent and direct evidence, but a competing position remains.",
+    positions: [
+      { positionId: "position-strong", label: "Position A", summary: "Stronger evidence position.", supportingClaimIds: ["disagreement-claim-a"], contradictingClaimIds: [], sourceIds: ["disagreement-source-a"] },
+      { positionId: "position-moderate", label: "Position B", summary: "Competing evidence position.", supportingClaimIds: ["disagreement-claim-b"], contradictingClaimIds: [], sourceIds: ["disagreement-source-b"] },
+    ],
+    disagreements: [], confidence: qualifiedPolicy.confidence, proposedConfidence: qualifiedPolicy.confidence,
+    confidenceScore: null, confidenceReasons: qualifiedPolicy.confidenceReasons,
+    whatCouldChange: qualifiedPolicy.whatCouldChange.join(" "),
+  };
+  const qualifiedResult = validateAnswerOutput(qualifiedDraft, disagreementEvidence.map((item) => ({ ...item, isDisputed: false, relationship: undefined })), 300, {
+    evidenceMode: qualifiedPolicy.evidenceMode, conclusionMode: qualifiedPolicy.conclusionMode,
+    confidence: qualifiedPolicy.confidence, leanPositionId: qualifiedPolicy.leanPositionId,
+  });
+  assert.equal(qualifiedResult.passed, true, "the target qualified_lean answer preserves the selected lean and change guidance");
+}
+
 await boundaryTests();
 await triageUrlSourceTests();
 sourceExtractionTests();
@@ -1908,4 +2392,12 @@ await kc08dKnowledgeDocumentMappingTests();
 await kc08fKnowledgeApprovalGateTests();
 await kc08gKnowledgeEvidenceResolutionTests();
 await kc08hKnowledgeChangeProposalTests();
+kc09EmbeddingPolicyTests();
+await kc09dEmbeddingIndexTests();
+await kc09eVectorResolutionTests();
+await kc09iCitationResolutionTests();
+kc09fPositionGroupingTests();
+await kc09fD1RelationshipGroupingTests();
+kc09gConclusionPolicyTests();
+kc09jRefusalDisagreementTests();
 console.log("Stabilisation tests passed.");
