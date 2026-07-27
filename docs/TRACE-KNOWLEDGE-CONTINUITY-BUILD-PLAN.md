@@ -728,8 +728,8 @@ Exit: a later model release can propose updates to earlier model knowledge and c
 
 ### KC-11 — Historical backfill
 
-- [ ] **KC-11A:** Inventory all published stories, approved knowledge documents, static knowledge pages, Guides, corrections, models, providers, benchmarks, and source URLs.
-- [ ] **KC-11B:** Produce a dry-run cost report and reviewed total backfill budget.
+- [x] **KC-11A:** Inventory all published stories, approved knowledge documents, static knowledge pages, Guides, corrections, models, providers, benchmarks, and source URLs. `scripts/inventory-backfill.mjs` produces the read-only `kc-11a-v1` inventory; the 27 July 2026 Preview baseline contains 0 published/approved D1 content records, 16 static pages, 30 Markdown inputs, 23 Guide-related files, and 193 unique source URLs/references. See [`docs/audit/kc-11a-backfill-inventory-evidence.md`](audit/kc-11a-backfill-inventory-evidence.md).
+- [x] **KC-11B:** Produce a read-only dry-run cost report and reviewed local total backfill ceiling. `scripts/backfill-cost-report.mjs` reports deterministic checks, governed routine-AI calls, token ceilings, the KC-09 embedding envelope, and an `$18.4435` Preview-static baseline maximum; explicit batch approval remains required. See [`docs/audit/kc-11b-backfill-cost-evidence.md`](audit/kc-11b-backfill-cost-evidence.md).
 - [ ] **KC-11C:** Backfill admitted source documents and versions in bounded batches.
 - [ ] **KC-11D:** Extract source summaries, entities, claims, opinions, caveats, and provenance candidates.
 - [ ] **KC-11E:** Review high-impact, conflicting, failed, paywalled, and low-confidence records.
