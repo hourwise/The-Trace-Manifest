@@ -78,6 +78,7 @@ export class SQLiteD1 {
     this.sqlite.exec(readFileSync("db/migration-0052-knowledge-impact-proposals.sql", "utf8"));
     this.sqlite.exec(readFileSync("db/migration-0053-knowledge-revision-decisions.sql", "utf8"));
     this.sqlite.exec(readFileSync("db/migration-0054-knowledge-revision-immutability.sql", "utf8"));
+    this.sqlite.exec(readFileSync("db/migration-0055-knowledge-embedding-confirmation.sql", "utf8"));
   }
 
   prepare(query: string): SQLiteD1Statement {

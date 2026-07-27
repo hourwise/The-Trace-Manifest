@@ -54,6 +54,8 @@ export interface KnowledgeEmbeddingRunSummary {
   indexed: number;
   skipped: number;
   deferred: number;
+  confirmationPending: number;
+  reconciled: number;
   inputTokens: number;
   errorCode?: string;
 }
@@ -61,6 +63,8 @@ export interface KnowledgeEmbeddingRunSummary {
 const DEFAULT_LIMIT = 25;
 const MAX_LIMIT = 100;
 const MAX_TEXT_CHARS = KC09_EMBEDDING_POLICY.sourceChunkPolicy.embeddingInputMaxChars;
+const MAX_CONFIRMATION_ATTEMPTS = 3;
+const RUNNING_RECLAIM_AFTER_MINUTES = 15;
 
 function boundedLimit(value: number | undefined): number {
   if (!Number.isFinite(value)) return DEFAULT_LIMIT;
@@ -251,17 +255,29 @@ function parseEmbeddings(value: unknown): number[][] {
   });
 }
 
+interface ExistingEmbeddingItem {
+  id: string;
+  state: string;
+  content_hash: string;
+  vector_id: string;
+  confirmation_attempt_count: number;
+  active_running: number;
+}
+
 async function existingItem(
   db: D1Database,
   item: KnowledgeEmbeddingCandidate,
   contentHash: string,
-): Promise<{ id: string; state: string; content_hash: string } | null> {
+): Promise<ExistingEmbeddingItem | null> {
   return db.prepare(`
-    SELECT id, state, content_hash
+    SELECT id, state, content_hash, vector_id, confirmation_attempt_count,
+           CASE WHEN state = 'running'
+                  AND datetime(updated_at) > datetime('now', '-${RUNNING_RECLAIM_AFTER_MINUTES} minutes')
+                THEN 1 ELSE 0 END AS active_running
     FROM knowledge_embedding_index_items
     WHERE record_type = ? AND record_id = ? AND policy_version = ?
   `).bind(item.recordType, item.recordId, KC09_EMBEDDING_POLICY.policyVersion)
-    .first<{ id: string; state: string; content_hash: string }>();
+    .first<ExistingEmbeddingItem>();
 }
 
 async function reserveItem(
@@ -272,7 +288,7 @@ async function reserveItem(
 ): Promise<"reserved" | "skip" | "deferred"> {
   const existing = await existingItem(db, item, contentHash);
   if (existing?.content_hash === contentHash && existing.state === "indexed") return "skip";
-  if (existing?.content_hash === contentHash && existing.state === "running") return "deferred";
+  if (existing?.content_hash === contentHash && existing.state === "running" && existing.active_running === 1) return "deferred";
   const id = existing?.id ?? crypto.randomUUID();
   await db.prepare(`
     INSERT INTO knowledge_embedding_index_items
@@ -286,7 +302,8 @@ async function reserveItem(
       estimated_input_tokens = excluded.estimated_input_tokens, language = excluded.language,
       admission_state = excluded.admission_state, publication_state = excluded.publication_state,
       state = 'pending', attempt_count = knowledge_embedding_index_items.attempt_count + 1,
-      last_error = NULL, run_id = excluded.run_id, updated_at = datetime('now')
+      confirmation_attempt_count = 0, last_error = NULL, run_id = excluded.run_id,
+      updated_at = datetime('now')
   `).bind(
     id, item.recordType, item.recordId, KC09_EMBEDDING_POLICY.policyVersion,
     KC09_EMBEDDING_POLICY.rollout.namespace, `${item.recordType}:${item.recordId}`,
@@ -294,6 +311,70 @@ async function reserveItem(
     item.admissionState, item.publicationState, runId,
   ).run();
   return "reserved";
+}
+
+async function markConfirmationPending(
+  db: D1Database,
+  item: KnowledgeEmbeddingCandidate,
+  runId: string,
+  confirmationAttemptCount: number,
+  errorCode = "vector_confirmation_pending",
+): Promise<void> {
+  await db.prepare(`
+    UPDATE knowledge_embedding_index_items
+    SET state = 'confirmation_pending', confirmation_attempt_count = ?,
+        last_error = ?, run_id = ?, updated_at = datetime('now')
+    WHERE record_type = ? AND record_id = ? AND policy_version = ?
+  `).bind(
+    confirmationAttemptCount, errorCode, runId,
+    item.recordType, item.recordId, KC09_EMBEDDING_POLICY.policyVersion,
+  ).run();
+}
+
+async function markConfirmationFailure(
+  db: D1Database,
+  item: KnowledgeEmbeddingCandidate,
+  runId: string,
+  confirmationAttemptCount: number,
+): Promise<void> {
+  await db.prepare(`
+    UPDATE knowledge_embedding_index_items
+    SET state = 'failed', confirmation_attempt_count = ?,
+        last_error = 'vector_confirmation_exhausted', run_id = ?, updated_at = datetime('now')
+    WHERE record_type = ? AND record_id = ? AND policy_version = ?
+  `).bind(
+    confirmationAttemptCount, runId,
+    item.recordType, item.recordId, KC09_EMBEDDING_POLICY.policyVersion,
+  ).run();
+}
+
+async function reconcileConfirmationPending(
+  db: D1Database,
+  index: KnowledgeEmbeddingVectorIndex,
+  item: KnowledgeEmbeddingCandidate,
+  existing: ExistingEmbeddingItem,
+  runId: string,
+): Promise<"reconciled" | "pending" | "failed"> {
+  const attempt = existing.confirmation_attempt_count + 1;
+  let confirmed = false;
+  try {
+    const vectors = await index.getByIds([existing.vector_id]);
+    confirmed = vectors.some(vector => vector.id === existing.vector_id);
+  } catch {
+    // A transient confirmation failure is treated like a bounded miss. The
+    // submitted vector remains authoritative-pending; no new embedding is run.
+  }
+
+  if (confirmed) {
+    await markItems(db, [item], "indexed", runId, undefined);
+    return "reconciled";
+  }
+  if (attempt >= MAX_CONFIRMATION_ATTEMPTS) {
+    await markConfirmationFailure(db, item, runId, attempt);
+    return "failed";
+  }
+  await markConfirmationPending(db, item, runId, attempt);
+  return "pending";
 }
 
 async function markItems(
@@ -308,11 +389,12 @@ async function markItems(
     await db.prepare(`
       UPDATE knowledge_embedding_index_items
       SET state = ?, remote_operation_id = COALESCE(?, remote_operation_id),
-          last_error = ?, run_id = ?, updated_at = datetime('now'),
+          last_error = ?, confirmation_attempt_count = CASE WHEN ? = 'indexed' OR ? = 'running' THEN 0 ELSE confirmation_attempt_count END,
+          run_id = ?, updated_at = datetime('now'),
           indexed_at = CASE WHEN ? = 'indexed' THEN datetime('now') ELSE indexed_at END
       WHERE record_type = ? AND record_id = ? AND policy_version = ?
     `).bind(
-      state, mutationId ?? null, errorCode ?? null, runId, state,
+      state, mutationId ?? null, errorCode ?? null, state, state, runId, state,
       item.recordType, item.recordId, KC09_EMBEDDING_POLICY.policyVersion,
     ).run();
     if (state === "indexed" && item.recordType === "source_chunk") {
@@ -331,7 +413,10 @@ export async function indexKnowledgeEmbeddings(
 ): Promise<KnowledgeEmbeddingRunSummary> {
   const limit = boundedLimit(options.limit);
   if (env.TRACE_ENVIRONMENT !== "preview" || !env.AI || !env.KNOWLEDGE_VECTOR_INDEX) {
-    return { state: "disabled", runId: null, selected: 0, submitted: 0, indexed: 0, skipped: 0, deferred: 0, inputTokens: 0 };
+    return {
+      state: "disabled", runId: null, selected: 0, submitted: 0, indexed: 0,
+      skipped: 0, deferred: 0, confirmationPending: 0, reconciled: 0, inputTokens: 0,
+    };
   }
 
   const candidates = await allCandidates(env.DB, limit);
@@ -347,15 +432,26 @@ export async function indexKnowledgeEmbeddings(
   `).first<{ input_tokens: number }>();
   let remainingTokens = Math.max(0, maxDailyTokens - Number(usedToday?.input_tokens ?? 0));
   for (const item of candidates) {
+    const contentHash = await hashContent(item);
+    const existing = await existingItem(env.DB, item, contentHash);
+    const confirmationOnly = existing?.content_hash === contentHash && existing.state === "confirmation_pending";
+    const indexedOnly = existing?.content_hash === contentHash && existing.state === "indexed";
+    const activeRunningOnly = existing?.content_hash === contentHash
+      && existing.state === "running" && existing.active_running === 1;
     const estimated = estimateEmbeddingTokens(item.text);
-    if (estimated > remainingTokens) break;
+    if (!confirmationOnly && !indexedOnly && !activeRunningOnly && estimated > remainingTokens) break;
     selected.push(item);
-    inputTokens += estimated;
-    remainingTokens -= estimated;
+    if (!confirmationOnly && !indexedOnly && !activeRunningOnly) {
+      inputTokens += estimated;
+      remainingTokens -= estimated;
+    }
   }
 
   if (options.dryRun) {
-    return { state: "completed", runId: null, selected: selected.length, submitted: 0, indexed: 0, skipped: 0, deferred: 0, inputTokens };
+    return {
+      state: "completed", runId: null, selected: selected.length, submitted: 0, indexed: 0,
+      skipped: 0, deferred: 0, confirmationPending: 0, reconciled: 0, inputTokens,
+    };
   }
 
   const runId = crypto.randomUUID();
@@ -363,20 +459,39 @@ export async function indexKnowledgeEmbeddings(
     INSERT INTO knowledge_embedding_runs
       (id, environment, policy_version, namespace, state, requested_limit, input_tokens)
     VALUES (?, 'preview', ?, ?, 'running', ?, ?)
-  `).bind(runId, KC09_EMBEDDING_POLICY.policyVersion, KC09_EMBEDDING_POLICY.rollout.namespace, limit, inputTokens).run();
+  `).bind(runId, KC09_EMBEDDING_POLICY.policyVersion, KC09_EMBEDDING_POLICY.rollout.namespace, limit, 0).run();
 
   let skipped = 0;
   let deferred = 0;
+  let confirmationPending = 0;
+  let reconciled = 0;
+  let runInputTokens = 0;
+  let confirmationFailed = false;
+  let indexed = 0;
   const reserved: KnowledgeEmbeddingCandidate[] = [];
   for (const item of selected) {
-    const status = await reserveItem(env.DB, item, await hashContent(item), runId);
+    const contentHash = await hashContent(item);
+    const existing = await existingItem(env.DB, item, contentHash);
+    if (existing?.content_hash === contentHash && existing.state === "confirmation_pending") {
+      const outcome = await reconcileConfirmationPending(env.DB, env.KNOWLEDGE_VECTOR_INDEX, item, existing, runId);
+      if (outcome === "reconciled") {
+        indexed++;
+        reconciled++;
+      } else if (outcome === "pending") {
+        deferred++;
+        confirmationPending++;
+      } else {
+        confirmationFailed = true;
+      }
+      continue;
+    }
+    const status = await reserveItem(env.DB, item, contentHash, runId);
     if (status === "skip") skipped++;
     else if (status === "deferred") deferred++;
     else reserved.push(item);
   }
 
   let submitted = 0;
-  let indexed = 0;
   let failed = false;
   const maxBatchTokens = KC09_EMBEDDING_POLICY.budget.maximumInputTokensPerBatch;
   for (let offset = 0; offset < reserved.length; ) {
@@ -391,6 +506,7 @@ export async function indexKnowledgeEmbeddings(
       offset++;
     }
     try {
+      runInputTokens += batchTokens;
       await markItems(env.DB, batch, "running", runId, undefined);
       const embeddings = parseEmbeddings(await env.AI.run(KC09_EMBEDDING_POLICY.embeddingModel, { text: batch.map(item => item.text) }));
       if (embeddings.length !== batch.length || embeddings.some(values => values.length !== KC09_EMBEDDING_POLICY.dimensions)) {
@@ -410,7 +526,13 @@ export async function indexKnowledgeEmbeddings(
       }));
       await env.KNOWLEDGE_VECTOR_INDEX.upsert(vectors);
       submitted += batch.length;
-      const confirmed = await env.KNOWLEDGE_VECTOR_INDEX.getByIds(vectors.map(vector => vector.id));
+      let confirmed: Array<{ id: string }> = [];
+      try {
+        confirmed = await env.KNOWLEDGE_VECTOR_INDEX.getByIds(vectors.map(vector => vector.id));
+      } catch {
+        // The upsert succeeded; a transient confirmation error must not turn
+        // active embedding work into a duplicate submission on the next run.
+      }
       const confirmedIds = new Set(confirmed.map(vector => vector.id));
       const confirmedItems = batch.filter(item => confirmedIds.has(`${item.recordType}:${item.recordId}`));
       const deferredItems = batch.filter(item => !confirmedIds.has(`${item.recordType}:${item.recordId}`));
@@ -418,8 +540,13 @@ export async function indexKnowledgeEmbeddings(
         await markItems(env.DB, confirmedItems, "indexed", runId, undefined);
         indexed += confirmedItems.length;
       }
-      if (deferredItems.length) await markItems(env.DB, deferredItems, "running", runId, undefined, "vector_confirmation_pending");
-      if (deferredItems.length) deferred += deferredItems.length;
+      for (const item of deferredItems) {
+        await markConfirmationPending(env.DB, item, runId, 1);
+      }
+      if (deferredItems.length) {
+        deferred += deferredItems.length;
+        confirmationPending += deferredItems.length;
+      }
     } catch {
       failed = true;
       await markItems(env.DB, batch, "failed", runId, undefined, "embedding_index_failed");
@@ -427,13 +554,24 @@ export async function indexKnowledgeEmbeddings(
     }
   }
 
-  const state = failed ? "failed" : deferred > 0 ? "partial" : "completed";
+  const state = failed || confirmationFailed ? "failed" : deferred > 0 ? "partial" : "completed";
   await env.DB.prepare(`
     UPDATE knowledge_embedding_runs
-    SET state = ?, vector_count = ?, skipped_count = ?, completed_at = datetime('now'),
-        error_code = CASE WHEN ? = 'failed' THEN 'embedding_index_failed' ELSE NULL END
+    SET state = ?, vector_count = ?, skipped_count = ?, input_tokens = ?,
+        confirmation_pending_count = ?, reconciled_count = ?, completed_at = datetime('now'),
+        error_code = CASE WHEN ? = 'failed' AND ? = 1 THEN 'embedding_index_failed'
+                          WHEN ? = 'failed' THEN 'vector_confirmation_exhausted'
+                          ELSE NULL END
     WHERE id = ?
-  `).bind(state, indexed, skipped, state, runId).run();
-  return { state, runId, selected: selected.length, submitted, indexed, skipped, deferred, inputTokens,
-    ...(failed ? { errorCode: "embedding_index_failed" } : {}) };
+  `).bind(
+    state, indexed, skipped, runInputTokens, confirmationPending, reconciled,
+    state, failed ? 1 : 0, state, runId,
+  ).run();
+  return {
+    state, runId, selected: selected.length, submitted, indexed, skipped, deferred,
+    confirmationPending, reconciled, inputTokens: runInputTokens,
+    ...((failed || confirmationFailed)
+      ? { errorCode: failed ? "embedding_index_failed" : "vector_confirmation_exhausted" }
+      : {}),
+  };
 }

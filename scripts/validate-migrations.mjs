@@ -66,6 +66,8 @@ try {
   db.exec(readFileSync("db/migration-0053-knowledge-revision-decisions.sql", "utf8"));
   db.exec(readFileSync("db/migration-0054-knowledge-revision-immutability.sql", "utf8"));
   db.exec(readFileSync("db/migration-0054-knowledge-revision-immutability.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0055-knowledge-embedding-confirmation.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0055-knowledge-embedding-confirmation.sql", "utf8"));
 
   const requiredTables = [
     "ai_requests", "ai_budget_reservations", "ai_usage_ledger", "ai_quota_usage",
@@ -102,6 +104,15 @@ try {
   ];
   const tables = new Set(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((row) => row.name));
   for (const table of requiredTables) if (!tables.has(table)) throw new Error(`Missing table ${table}`);
+
+  const embeddingItemColumns = new Set(db.prepare("PRAGMA table_info(knowledge_embedding_index_items)").all().map((row) => row.name));
+  for (const column of ["confirmation_attempt_count"]) {
+    if (!embeddingItemColumns.has(column)) throw new Error(`Missing embedding confirmation column ${column}`);
+  }
+  const embeddingRunColumns = new Set(db.prepare("PRAGMA table_info(knowledge_embedding_runs)").all().map((row) => row.name));
+  for (const column of ["confirmation_pending_count", "reconciled_count"]) {
+    if (!embeddingRunColumns.has(column)) throw new Error(`Missing embedding run counter column ${column}`);
+  }
 
   const jobColumns = new Set(db.prepare("PRAGMA table_info(ingestion_jobs)").all().map((row) => row.name));
   for (const column of ["result_status", "items_rejected", "items_skipped", "outcome_detail"]) {

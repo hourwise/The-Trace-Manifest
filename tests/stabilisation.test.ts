@@ -2178,6 +2178,164 @@ async function kc09dEmbeddingIndexTests(): Promise<void> {
   }
 }
 
+async function kc09dConfirmationReconciliationTests(): Promise<void> {
+  async function fixture(): Promise<SQLiteD1> {
+    const database = new SQLiteD1();
+    await database.prepare(`
+      INSERT INTO source_documents
+        (id, canonical_url, canonical_url_hash, media_kind, copyright_storage_mode, admission_state)
+      VALUES ('kc09d-confirm-doc', 'https://example.test/kc09d-confirm', 'kc09d-confirm-url', 'html', 'short_excerpt', 'admitted')
+    `).run();
+    await database.prepare(`
+      INSERT INTO source_document_versions
+        (id, source_document_id, content_hash, retrieved_url, retrieved_at, extraction_status, source_language)
+      VALUES ('kc09d-confirm-version', 'kc09d-confirm-doc', 'kc09d-confirm-content', 'https://example.test/kc09d-confirm', datetime('now'), 'extracted', 'en')
+    `).run();
+    await database.prepare(`
+      INSERT INTO source_chunks
+        (id, source_document_version_id, chunk_index, text_excerpt, text_hash, start_locator, end_locator)
+      VALUES ('kc09d-confirm-chunk', 'kc09d-confirm-version', 0, 'A delayed Vectorize confirmation fixture.', 'kc09d-confirm-chunk-hash', 'p1:1', 'p1:2')
+    `).run();
+    return database;
+  }
+
+  function vectorHarness(visible: () => boolean) {
+    let aiCalls = 0;
+    let upsertCalls = 0;
+    const vectors = new Map<string, KnowledgeEmbeddingVector>();
+    const ai = {
+      async run(_model: string, input: { text: string[] }) {
+        aiCalls++;
+        return { data: input.text.map(() => new Array(1024).fill(0.01)) };
+      },
+    };
+    const index = {
+      async upsert(items: KnowledgeEmbeddingVector[]) {
+        upsertCalls++;
+        for (const item of items) vectors.set(item.id, item);
+        return { ids: items.map(item => item.id), count: items.length };
+      },
+      async getByIds(ids: string[]) {
+        return visible() ? ids.flatMap(id => vectors.has(id) ? [{ id }] : []) : [];
+      },
+    };
+    return { ai, index, get aiCalls() { return aiCalls; }, get upsertCalls() { return upsertCalls; } };
+  }
+
+  // A missed immediate confirmation is explicit and is reconciled later
+  // without another Workers AI call or Vectorize upsert.
+  {
+    const database = await fixture();
+    let visible = false;
+    const harness = vectorHarness(() => visible);
+    const environment = { DB: database.asD1(), AI: harness.ai, KNOWLEDGE_VECTOR_INDEX: harness.index, TRACE_ENVIRONMENT: "preview" };
+    try {
+      const first = await indexKnowledgeEmbeddings(environment, { limit: 5 });
+      assert.deepEqual(
+        { state: first.state, submitted: first.submitted, indexed: first.indexed, deferred: first.deferred, confirmationPending: first.confirmationPending },
+        { state: "partial", submitted: 1, indexed: 0, deferred: 1, confirmationPending: 1 },
+        "an upsert whose immediate confirmation misses becomes confirmation-pending",
+      );
+      assert.equal((await database.prepare("SELECT state FROM knowledge_embedding_index_items WHERE record_id = 'kc09d-confirm-chunk'").first<{ state: string }>())?.state, "confirmation_pending");
+      assert.equal((await database.prepare("SELECT confirmation_pending_count FROM knowledge_embedding_runs ORDER BY created_at DESC LIMIT 1").first<{ confirmation_pending_count: number }>())?.confirmation_pending_count, 1);
+
+      visible = true;
+      await database.prepare("UPDATE knowledge_embedding_runs SET input_tokens = 250000 WHERE id = ?").bind(first.runId).run();
+      const second = await indexKnowledgeEmbeddings(environment, { limit: 5 });
+      assert.equal(second.submitted, 0, "delayed confirmation does not resubmit the vector");
+      assert.equal(second.indexed, 1);
+      assert.equal(second.reconciled, 1);
+      assert.equal(second.inputTokens, 0, "a confirmation-only run consumes no embedding tokens");
+      assert.equal(harness.aiCalls, 1, "delayed confirmation does not regenerate an embedding");
+      assert.equal(harness.upsertCalls, 1, "delayed confirmation does not repeat the upsert");
+      const item = await database.prepare("SELECT state, indexed_at, last_error FROM knowledge_embedding_index_items WHERE record_id = 'kc09d-confirm-chunk'").first<{ state: string; indexed_at: string | null; last_error: string | null }>();
+      assert.equal(item?.state, "indexed");
+      assert.ok(item?.indexed_at, "reconciled vectors receive indexed_at");
+      assert.equal(item?.last_error, null, "reconciliation clears the pending error");
+      assert.equal((await database.prepare("SELECT reconciled_count FROM knowledge_embedding_runs WHERE id = ?").bind(second.runId).first<{ reconciled_count: number }>())?.reconciled_count, 1);
+    } finally {
+      database.close();
+    }
+  }
+
+  // Repeated confirmation misses are bounded, then the next run may perform
+  // one controlled upsert retry from the failed state.
+  {
+    const database = await fixture();
+    const harness = vectorHarness(() => false);
+    const environment = { DB: database.asD1(), AI: harness.ai, KNOWLEDGE_VECTOR_INDEX: harness.index, TRACE_ENVIRONMENT: "preview" };
+    try {
+      const first = await indexKnowledgeEmbeddings(environment, { limit: 5 });
+      const second = await indexKnowledgeEmbeddings(environment, { limit: 5 });
+      const third = await indexKnowledgeEmbeddings(environment, { limit: 5 });
+      assert.equal(first.state, "partial");
+      assert.equal(second.state, "partial");
+      assert.equal(third.state, "failed", "confirmation misses eventually fail at the bounded threshold");
+      assert.equal((await database.prepare("SELECT state, confirmation_attempt_count, last_error FROM knowledge_embedding_index_items WHERE record_id = 'kc09d-confirm-chunk'").first<{ state: string; confirmation_attempt_count: number; last_error: string }>())?.state, "failed");
+      assert.equal((await database.prepare("SELECT confirmation_attempt_count FROM knowledge_embedding_index_items WHERE record_id = 'kc09d-confirm-chunk'").first<{ confirmation_attempt_count: number }>())?.confirmation_attempt_count, 3);
+      assert.equal((await database.prepare("SELECT last_error FROM knowledge_embedding_index_items WHERE record_id = 'kc09d-confirm-chunk'").first<{ last_error: string }>())?.last_error, "vector_confirmation_exhausted");
+      const retry = await indexKnowledgeEmbeddings(environment, { limit: 5 });
+      assert.equal(retry.submitted, 1, "a failed confirmation item gets one controlled upsert retry");
+      assert.equal(harness.aiCalls, 2, "only the bounded retry regenerates an embedding");
+      assert.equal(harness.upsertCalls, 2);
+    } finally {
+      database.close();
+    }
+  }
+
+  // Indexed content remains idempotent, while an active running row defers and
+  // an old generic running row is reclaimable.
+  {
+    const database = await fixture();
+    const harness = vectorHarness(() => true);
+    const environment = { DB: database.asD1(), AI: harness.ai, KNOWLEDGE_VECTOR_INDEX: harness.index, TRACE_ENVIRONMENT: "preview" };
+    try {
+      await indexKnowledgeEmbeddings(environment, { limit: 5 });
+      await database.prepare("UPDATE source_chunks SET embedding_state = 'stale' WHERE id = 'kc09d-confirm-chunk'").run();
+      const unchanged = await indexKnowledgeEmbeddings(environment, { limit: 5 });
+      assert.equal(unchanged.skipped, 1, "unchanged indexed content is skipped even when eligibility is revisited");
+      assert.equal(harness.aiCalls, 1);
+
+      const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(
+        `${KC09_EMBEDDING_POLICY.policyVersion}\nsource_chunk\nkc09d-confirm-chunk\nA delayed Vectorize confirmation fixture.`,
+      ));
+      const contentHash = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("");
+      await database.prepare(`
+        UPDATE knowledge_embedding_index_items
+        SET state = 'running', content_hash = ?, updated_at = datetime('now')
+        WHERE record_id = 'kc09d-confirm-chunk'
+      `).bind(contentHash).run();
+      const active = await indexKnowledgeEmbeddings(environment, { limit: 5 });
+      assert.equal(active.deferred, 1, "recently active embedding work defers safely");
+      assert.equal(harness.aiCalls, 1);
+
+      await database.prepare("UPDATE knowledge_embedding_index_items SET updated_at = datetime('now', '-30 minutes') WHERE record_id = 'kc09d-confirm-chunk'").run();
+      const reclaimed = await indexKnowledgeEmbeddings(environment, { limit: 5 });
+      assert.equal(reclaimed.submitted, 1, "stale generic running work is reclaimable");
+      assert.equal(harness.aiCalls, 2);
+    } finally {
+      database.close();
+    }
+  }
+
+  // The production environment remains explicitly disabled and cannot invoke
+  // Workers AI or Vectorize even when bindings are supplied by a test.
+  {
+    const database = await fixture();
+    const harness = vectorHarness(() => true);
+    try {
+      const result = await indexKnowledgeEmbeddings({
+        DB: database.asD1(), AI: harness.ai, KNOWLEDGE_VECTOR_INDEX: harness.index, TRACE_ENVIRONMENT: "production",
+      }, { limit: 5 });
+      assert.equal(result.state, "disabled", "production indexing remains disabled");
+      assert.equal(harness.aiCalls, 0);
+      assert.equal(harness.upsertCalls, 0);
+    } finally {
+      database.close();
+    }
+  }
+}
+
 async function kc09eVectorResolutionTests(): Promise<void> {
   const database = new SQLiteD1();
   try {
@@ -2576,6 +2734,7 @@ await kc10cKnowledgeImpactQueueTests();
 await kc10dKnowledgeRevisionTests();
 kc09EmbeddingPolicyTests();
 await kc09dEmbeddingIndexTests();
+await kc09dConfirmationReconciliationTests();
 await kc09eVectorResolutionTests();
 await kc09iCitationResolutionTests();
 kc09fPositionGroupingTests();
