@@ -1,10 +1,8 @@
 # KC-09D Preview indexing evidence
 
-**Status:** Indexing flow and delayed-confirmation fix pass locally. The
-confirmation migration and Worker fix are deployed to Preview. A follow-up
-authenticated publisher run is still required to observe the recovered vector
-settle through the deployed path; the internal-service secret is not exposed to
-this execution environment.
+**Status:** PASS — authenticated Preview delayed-confirmation reconciliation
+verified end to end. The confirmation migration and Worker fix are deployed to
+Preview; production indexing remains disabled.
 
 ## Implementation
 
@@ -37,6 +35,47 @@ this execution environment.
   and a dry-run estimate. Production has no AI or Vectorize binding and fails
   closed.
 
+## Authenticated Preview reconciliation evidence
+
+- Merge gate: **PASS**.
+- Worker deployment: `7e349586-1d51-4e43-be62-d4ac6ae90274`.
+- Run ID: `27b9998f-5226-437d-92dd-dc865fdb8113`.
+- Authenticated API response:
+
+  ```json
+  {
+    "state": "completed",
+    "runId": "27b9998f-5226-437d-92dd-dc865fdb8113",
+    "selected": 1,
+    "submitted": 0,
+    "indexed": 1,
+    "skipped": 0,
+    "deferred": 0,
+    "confirmationPending": 0,
+    "reconciled": 1,
+    "inputTokens": 0
+  }
+  ```
+
+- D1 indexed-item result:
+
+  ```text
+  record_type=published_story
+  record_id=1
+  state=indexed
+  attempt_count=1
+  confirmation_attempt_count=0
+  last_error=NULL
+  vector_id=published_story:1
+  indexed_at=2026-07-28 20:01:25
+  ```
+
+- This confirms `submitted=0`, `reconciled=1`, and `inputTokens=0` on the
+  follow-up run: Vectorize confirmation settled the previously submitted
+  vector without another Workers AI embedding or Vectorize upsert.
+- Production indexing, backfill execution, and public numeric evidence scores
+  remain disabled after this validation.
+
 ## Validation and Preview state
 
 - `npm.cmd run test` passed (119 ingestion checks plus stabilisation tests,
@@ -57,10 +96,5 @@ this execution environment.
   `7e349586-1d51-4e43-be62-d4ac6ae90274`; Wrangler confirmed the isolated D1,
   AI, Vectorize, R2, and queue bindings.
 - Read-only Preview verification confirms the new state/counter columns and
-  the recovered `published_story:1` item in `confirmation_pending`. No new
-  indexing request was sent during this validation, and no production change
-  was made. A publisher must still invoke `POST /admin/knowledge/index-preview`
-  through the authenticated Preview admin boundary with a bounded limit (for
-  example, 25) to complete the deployed delayed-confirmation smoke test; this
-  environment cannot manufacture that HMAC without exposing or rotating the
-  configured secret.
+  the recovered `published_story:1` item settled to `indexed` after the
+  authenticated run. No production change was made.
