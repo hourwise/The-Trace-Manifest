@@ -1087,9 +1087,13 @@ async function handleKnowledgeEmbeddingIndex(request: Request, env: Env): Promis
 async function handleKnowledgeBackfillPlan(request: Request, env: Env): Promise<Response> {
   if (request.method !== "POST") return Response.json({ error: "Method not allowed — use POST" }, { status: 405 });
   const body = parseBackfillRequest(await request.json().catch(() => null));
-  if (!body || !body.inventory || !body.selection) return Response.json({ error: "A versioned inventory and explicit selection are required." }, { status: 400 });
+  if (!body || !body.inventory || !body.selection || typeof body.inventorySnapshotId !== "string") return Response.json({ error: "An authoritative inventorySnapshotId, versioned inventory, and explicit selection are required." }, { status: 400 });
   try {
-    const plan = await buildBackfillPlan(body.inventory as any, body.selection);
+    const snapshot = await env.DB.prepare("SELECT id, schema_version, inventory_identity, snapshot_json, policy_version, active FROM knowledge_source_backfill_inventory_snapshots WHERE id = ?").bind(body.inventorySnapshotId).first<any>();
+    if (!snapshot || snapshot.active !== 1 || snapshot.schema_version !== "kc-11a-v1" || snapshot.policy_version !== "kc-11c-v1") return Response.json({ error: "Authoritative inventory snapshot not found or inactive." }, { status: 409 });
+    const submitted = body.inventory as any;
+    const plan = await buildBackfillPlan(submitted, body.selection, String(body.inventorySnapshotId));
+    if (plan.inventoryIdentity !== snapshot.inventory_identity) return Response.json({ error: "Submitted inventory does not match the authoritative snapshot." }, { status: 409 });
     return Response.json({ state: "dry_run", writes: 0, fetches: 0, plan });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "Invalid backfill plan." }, { status: 400 });
@@ -1111,7 +1115,7 @@ async function handleKnowledgeBackfillExecute(request: Request, env: Env, operat
   const body = parseBackfillRequest(await request.json().catch(() => null));
   if (!body || typeof body.batchId !== "string" || typeof body.planHash !== "string" || typeof body.idempotencyKey !== "string") return Response.json({ error: "batchId, planHash, and idempotencyKey are required." }, { status: 400 });
   try {
-    return Response.json(await executeBackfill(env, body.batchId, body.planHash, operator.email, body.idempotencyKey));
+    return Response.json(await executeBackfill(env, body.batchId, body.planHash, operator.email, body.idempotencyKey, request.url.endsWith("/retry") ? "retry" : "initial"));
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "Backfill execution failed." }, { status: 409 });
   }

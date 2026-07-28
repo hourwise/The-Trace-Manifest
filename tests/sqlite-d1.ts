@@ -80,6 +80,7 @@ export class SQLiteD1 {
     this.sqlite.exec(readFileSync("db/migration-0054-knowledge-revision-immutability.sql", "utf8"));
     this.sqlite.exec(readFileSync("db/migration-0055-knowledge-embedding-confirmation.sql", "utf8"));
     this.sqlite.exec(readFileSync("db/migration-0056-kc-11c-bounded-source-backfill.sql", "utf8"));
+    this.sqlite.exec(readFileSync("db/migration-0057-kc-11c-backfill-integrity.sql", "utf8"));
   }
 
   prepare(query: string): SQLiteD1Statement {

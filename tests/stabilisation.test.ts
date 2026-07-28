@@ -47,7 +47,7 @@ import { resolveKnowledgeVectorMatches } from "../src/lib/server/knowledge-vecto
 import { resolveAndValidateCitationReferences, resolveKnowledgeCitations, type KnowledgeCitationInput } from "../src/lib/server/knowledge-citation-resolution";
 import { groupKnowledgePositions, groupResolvedKnowledgePositions, type KnowledgePositionEvidence } from "../src/lib/server/knowledge-position-grouping";
 import { selectKnowledgeConclusion, type KnowledgePositionAssessment } from "../src/lib/server/knowledge-conclusion-policy";
-import { BACKFILL_CEILINGS, approveBackfillPlan, buildBackfillPlan } from "../src/lib/server/knowledge-source-backfill";
+import { BACKFILL_CEILINGS, approveBackfillPlan, buildBackfillPlan, executeBackfill } from "../src/lib/server/knowledge-source-backfill";
 import { estimateEmbeddingTokens, indexKnowledgeEmbeddings, normalizeEmbeddingText, type KnowledgeEmbeddingVector } from "../workers/ingestion/knowledge-embedding-index";
 import { signInternalRequest, verifyInternalRequestSignature } from "../src/security/internal-signature";
 import { publishBriefing, publishStory, upgradeClusterEvidence } from "../workers/ingestion/publish";
@@ -107,6 +107,23 @@ async function kc11cBackfillPlanTests(): Promise<void> {
   assert.equal(repeat.planHash, plan.planHash, "identical inventory and selection produce a stable plan hash");
   await assert.rejects(() => buildBackfillPlan(inventory, { category: "source_url", limit: 26 }), /between 1 and 25/);
   await assert.rejects(() => approveBackfillPlan({ TRACE_ENVIRONMENT: "production" } as any, plan, plan.planHash, "publisher@example.com", "approval-1"), /Preview-only/);
+}
+
+async function kc11cBackfillIntegrityTests(): Promise<void> {
+  const inventory = { schemaVersion: "kc-11a-v1", generatedAt: "2026-07-28T00:00:00Z", categories: { source_url: [] } };
+  const plan = await buildBackfillPlan(inventory, { category: "source_url", limit: 1 }, "snapshot-1");
+  const database = new SQLiteD1();
+  const env = { DB: database.asD1(), RAW_STORE: { put: async () => undefined, delete: async () => undefined }, TRACE_ENVIRONMENT: "preview" } as any;
+  try {
+    database.sqlite.prepare("INSERT INTO knowledge_source_backfill_inventory_snapshots (id, schema_version, inventory_identity, snapshot_json, policy_version, created_by) VALUES (?, ?, ?, ?, ?, ?)").run("snapshot-1", "kc-11a-v1", plan.inventoryIdentity, JSON.stringify(inventory), "kc-11c-v1", "reviewer@example.com");
+    const approved = await approveBackfillPlan(env, plan, plan.planHash, "publisher@example.com", "approval-integrity");
+    const first = await executeBackfill(env, approved.batchId, plan.planHash, "publisher@example.com", "execute-integrity");
+    const repeat = await executeBackfill(env, approved.batchId, plan.planHash, "publisher@example.com", "execute-integrity");
+    assert.equal(first.state, "completed");
+    assert.deepEqual(repeat, first, "repeating an execution key returns its recorded result");
+    assert.throws(() => database.sqlite.prepare("DELETE FROM knowledge_source_backfill_batches WHERE id = ?").run(approved.batchId), /immutable/);
+    assert.throws(() => database.sqlite.prepare("UPDATE knowledge_source_backfill_batches SET state = 'approved' WHERE id = ?").run(approved.batchId), /invalid backfill batch state transition/);
+  } finally { database.sqlite.close(); }
 }
 
 async function governanceTests(): Promise<void> {
@@ -2729,6 +2746,7 @@ function kc09jRefusalDisagreementTests(): void {
 
 adminProxyPathTests();
 await kc11cBackfillPlanTests();
+await kc11cBackfillIntegrityTests();
 await boundaryTests();
 await triageUrlSourceTests();
 sourceExtractionTests();
