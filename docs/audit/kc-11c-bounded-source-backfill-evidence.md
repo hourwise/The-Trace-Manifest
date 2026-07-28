@@ -11,7 +11,8 @@ Ceilings are 25 records, concurrency 1 (the implemented sequential bound), 3 red
 ## Validation state
 
 - Local implementation: complete.
-- Previous Preview deployment: migration 0056 bookmark `0000003a-00000006-000050b6-58e7936e60a4668d41eb2b84b22847f5`; Worker version `83049b68-2743-4c7e-9de5-7bc70049fcaa`; Pages deployment `f5c22bf8` (`https://agent-kc-11c-bounded-source.the-trace-manifest.pages.dev`). Corrective migration 0057 and code deployment are pending.
+- Corrective Preview deployment: migration 0057 bookmark `0000003c-00000008-000050b6-372e2f4f5236d986f7e5c62a4d749120`; Worker version `b2641a01-2199-4d8f-b941-43386417efdd`; Pages deployment `dc268c0e` (`https://agent-kc-11c-bounded-source-cj1n.the-trace-manifest.pages.dev`).
+- Full `npm run ci`: passed (diff, typecheck, tests, migrations, security, evidence policy, knowledge markdown, build).
 - Real authenticated Preview batch: intentionally not executed. A human publisher must approve the exact plan hash before execution.
 
 ## Proposed smoke batch (not executed)
