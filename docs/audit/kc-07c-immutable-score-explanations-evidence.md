@@ -1,6 +1,6 @@
 # KC-07C immutable score and explanation evidence
 
-**Date:** 24 July 2026  
+**Date:** 24 July 2026
 **Status:** Complete locally; production migration/deployment remains pending the normal release approval.
 
 ## Implemented

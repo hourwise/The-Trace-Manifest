@@ -104,7 +104,7 @@ The Cloudflare Pages deploy command (`npx wrangler pages deploy dist`) was remov
 - [ ] **Guides ↔ Knowledge linking** — cross-reference guides with related knowledge docs
 - [ ] **Social signals → Feed items** — promotion workflow for social posts to become stories
 - [ ] **Post-KC capability-first discovery (ADR-0020)** — classify capability/narrative/mixed clusters, constrain secondary discovery sources, resolve original evidence, and add coverage audits and reader capability blocks.
-- [ ] **Post-KC TRACE Capture intake** — review a format-independent single/bulk/import capture contract, additive capture inbox schema, restricted device authentication, duplicate/idempotency rules, and SSRF-safe enrichment before exposing any mobile endpoint.
+- [ ] **Post-KC TRACE Capture intake** — review a format-independent single/bulk/import capture contract, additive capture inbox schema, device access controls, duplicate handling, idempotent processing, and SSRF-safe enrichment before exposing any mobile endpoint.
 - [ ] **Page-diff for remaining changelogs** — AWS, OpenAI, Gemini API release notes
 - [ ] **Artificial Analysis connector** — highest-value remaining manual source
 

@@ -1,7 +1,7 @@
 # KC-08B Knowledge Link Suggestions Evidence
 
-**Status:** Complete locally  
-**Date:** 24 July 2026  
+**Status:** Complete locally
+**Date:** 24 July 2026
 **Scope:** deterministic suggestions for existing canonical claims and source records
 
 ## Implemented

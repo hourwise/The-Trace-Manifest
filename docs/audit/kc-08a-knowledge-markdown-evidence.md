@@ -1,7 +1,7 @@
 # KC-08A Knowledge Markdown Evidence
 
-**Status:** Complete locally  
-**Date:** 24 July 2026  
+**Status:** Complete locally
+**Date:** 24 July 2026
 **Scope:** deterministic parsing of material claims and evidence URLs from new and existing TRACE knowledge Markdown
 
 ## Implemented

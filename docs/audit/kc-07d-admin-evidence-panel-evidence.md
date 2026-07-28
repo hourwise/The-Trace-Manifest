@@ -1,6 +1,6 @@
 # KC-07D admin evidence panel evidence
 
-**Date:** 24 July 2026  
+**Date:** 24 July 2026
 **Status:** Complete locally; production deployment remains pending the normal release approval.
 
 ## Implemented

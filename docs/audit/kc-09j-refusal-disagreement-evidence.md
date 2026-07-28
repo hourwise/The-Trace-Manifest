@@ -24,4 +24,3 @@ Checks passed:
 - `npm.cmd run typecheck` (zero errors; four pre-existing hints);
 - `npm.cmd run test:migrations`;
 - `git diff --check` (only existing line-ending normalization warnings).
-

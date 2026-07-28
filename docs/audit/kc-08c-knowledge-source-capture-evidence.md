@@ -1,7 +1,7 @@
 # KC-08C Knowledge Source Capture Evidence
 
-**Status:** Complete locally  
-**Date:** 24 July 2026  
+**Status:** Complete locally
+**Date:** 24 July 2026
 **Scope:** queue unresolved evidence URLs from knowledge Markdown for admitted source capture and extraction
 
 ## Implemented

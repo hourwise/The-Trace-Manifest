@@ -1,6 +1,6 @@
 # KC-07F evidence-policy evaluation evidence
 
-**Date:** 24 July 2026  
+**Date:** 24 July 2026
 **Status:** Complete locally; enabling public numeric evidence scores remains a separate reviewed policy rollout.
 
 ## Implemented

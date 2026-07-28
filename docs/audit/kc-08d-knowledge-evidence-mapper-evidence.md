@@ -1,7 +1,7 @@
 # KC-08D Knowledge Evidence Mapper Evidence
 
-**Status:** Complete locally  
-**Date:** 24 July 2026  
+**Status:** Complete locally
+**Date:** 24 July 2026
 **Scope:** publisher review of section → canonical claim → source assertion mappings
 
 ## Implemented
