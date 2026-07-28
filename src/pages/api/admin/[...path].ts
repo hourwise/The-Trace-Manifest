@@ -18,8 +18,10 @@ const PUBLISH_ROUTES = new Set([
   "approve-evidence-status",
   "knowledge/capture-missing",
   "knowledge/index-preview",
+  "knowledge/backfill/plan", "knowledge/backfill/approve", "knowledge/backfill/execute", "knowledge/backfill/retry",
   "candidates", "social-signals", "related-items",
 ]);
+const READ_ROUTES_WITH_BACKFILL = new Set(["knowledge/backfill/status"]);
 
 interface ProxyEnvironment {
   DB?: D1Database;
@@ -73,7 +75,7 @@ export function authorisedRoute(path: string, method: string, role: OperatorRole
     return method === "GET" || (method === "POST" && role === "publisher"); // ADR 0009: explicit route allowance
   }
   path = normalised;
-  if (method === "GET") return READ_ROUTES.has(path) && (path !== "candidates" || role === "publisher");
+  if (method === "GET") return (READ_ROUTES.has(path) || READ_ROUTES_WITH_BACKFILL.has(path)) && (path !== "candidates" || role === "publisher");
   if (method === "POST") return role === "publisher" && PUBLISH_ROUTES.has(path);
   return false;
 }

@@ -68,6 +68,8 @@ try {
   db.exec(readFileSync("db/migration-0054-knowledge-revision-immutability.sql", "utf8"));
   db.exec(readFileSync("db/migration-0055-knowledge-embedding-confirmation.sql", "utf8"));
   db.exec(readFileSync("db/migration-0055-knowledge-embedding-confirmation.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0056-kc-11c-bounded-source-backfill.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0056-kc-11c-bounded-source-backfill.sql", "utf8"));
 
   const requiredTables = [
     "ai_requests", "ai_budget_reservations", "ai_usage_ledger", "ai_quota_usage",
@@ -80,6 +82,7 @@ try {
     "story_relationships", "knowledge_change_proposals", "evidence_score_snapshots",
     "knowledge_processing_jobs", "knowledge_index_operations", "knowledge_index_operation_receipts",
     "knowledge_reconciliation_runs",
+    "knowledge_source_backfill_batches", "knowledge_source_backfill_items", "knowledge_source_backfill_item_events",
     "knowledge_extraction_runs", "knowledge_extraction_run_outputs",
     "knowledge_extraction_reviews",
     "knowledge_claim_match_candidates",

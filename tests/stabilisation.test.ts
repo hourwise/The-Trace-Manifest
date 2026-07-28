@@ -47,6 +47,7 @@ import { resolveKnowledgeVectorMatches } from "../src/lib/server/knowledge-vecto
 import { resolveAndValidateCitationReferences, resolveKnowledgeCitations, type KnowledgeCitationInput } from "../src/lib/server/knowledge-citation-resolution";
 import { groupKnowledgePositions, groupResolvedKnowledgePositions, type KnowledgePositionEvidence } from "../src/lib/server/knowledge-position-grouping";
 import { selectKnowledgeConclusion, type KnowledgePositionAssessment } from "../src/lib/server/knowledge-conclusion-policy";
+import { BACKFILL_CEILINGS, approveBackfillPlan, buildBackfillPlan } from "../src/lib/server/knowledge-source-backfill";
 import { estimateEmbeddingTokens, indexKnowledgeEmbeddings, normalizeEmbeddingText, type KnowledgeEmbeddingVector } from "../workers/ingestion/knowledge-embedding-index";
 import { signInternalRequest, verifyInternalRequestSignature } from "../src/security/internal-signature";
 import { publishBriefing, publishStory, upgradeClusterEvidence } from "../workers/ingestion/publish";
@@ -81,6 +82,31 @@ function adminProxyPathTests(): void {
   assert.equal(authorisedRoute("social-signals", "GET", "reader"), true, "reader can read social signals");
   assert.equal(authorisedRoute("social-signals", "DELETE", "publisher"), false, "unsupported methods fail closed");
   assert.equal(authorisedRoute("knowledge/../social-signals", "POST", "publisher"), false, "traversal cannot bypass route authorization");
+  assert.equal(authorisedRoute("knowledge/backfill/plan", "POST", "publisher"), true, "publisher can create a bounded backfill plan");
+  assert.equal(authorisedRoute("knowledge/backfill/status", "GET", "reader"), true, "reader can inspect backfill status");
+  assert.equal(authorisedRoute("knowledge/backfill/execute", "POST", "reader"), false, "reader cannot execute a backfill");
+}
+
+async function kc11cBackfillPlanTests(): Promise<void> {
+  const inventory = { schemaVersion: "kc-11a-v1", generatedAt: "2026-07-28T00:00:00Z", categories: {
+    source_url: [
+      { id: "safe-1", label: "Safe", url: "https://example.com/a/" },
+      { id: "private", label: "Private", url: "http://localhost/private" },
+      { id: "safe-2", label: "Safe two", url: "https://example.org/b" },
+    ],
+    approved_knowledge_document: [{ id: "doc-1", label: "No URL" }],
+  } };
+  await assert.rejects(() => buildBackfillPlan(inventory, { limit: 1 }), /explicit category or recordIds/);
+  const plan = await buildBackfillPlan(inventory, { category: "source_url", limit: 2, newestFirst: true });
+  assert.equal(plan.selected.length, 2);
+  assert.equal(plan.excluded.some((item) => item.reason === "url_ineligible_or_private"), true);
+  assert.equal(plan.selected[0].duplicateOutcome, "unknown_until_fetch");
+  assert.equal(plan.estimatedRequestCount, 2);
+  assert.equal(plan.estimatedStorageBytesCeiling, 2 * BACKFILL_CEILINGS.maxBytesPerRecord);
+  const repeat = await buildBackfillPlan(inventory, { category: "source_url", limit: 2, newestFirst: true });
+  assert.equal(repeat.planHash, plan.planHash, "identical inventory and selection produce a stable plan hash");
+  await assert.rejects(() => buildBackfillPlan(inventory, { category: "source_url", limit: 26 }), /between 1 and 25/);
+  await assert.rejects(() => approveBackfillPlan({ TRACE_ENVIRONMENT: "production" } as any, plan, plan.planHash, "publisher@example.com", "approval-1"), /Preview-only/);
 }
 
 async function governanceTests(): Promise<void> {
@@ -2702,6 +2728,7 @@ function kc09jRefusalDisagreementTests(): void {
 }
 
 adminProxyPathTests();
+await kc11cBackfillPlanTests();
 await boundaryTests();
 await triageUrlSourceTests();
 sourceExtractionTests();

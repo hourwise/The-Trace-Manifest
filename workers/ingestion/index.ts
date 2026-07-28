@@ -31,6 +31,7 @@ import { admitAndQueueFeedCapture, admitAndQueueManualCapture, admitAndQueueKnow
 import { consumeKnowledgeCaptureBatch } from "./knowledge-capture-consumer";
 import { recalculateEvidenceScores, recalculateExpiredEvidence } from "../../src/lib/server/evidence-recalculation";
 import { indexKnowledgeEmbeddings } from "./knowledge-embedding-index";
+import { approveBackfillPlan, buildBackfillPlan, executeBackfill, parseBackfillRequest, type BackfillPlan } from "../../src/lib/server/knowledge-source-backfill";
 
 // ============================================================
 // Signed internal-service authentication
@@ -67,7 +68,9 @@ const WRITE_ADMIN_ROUTES = new Set([
   "/admin/related-items",
   "/admin/candidates", "/admin/social-signals", "/admin/knowledge/capture-url",
   "/admin/knowledge/capture-missing", "/admin/knowledge/index-preview",
+  "/admin/knowledge/backfill/plan", "/admin/knowledge/backfill/approve", "/admin/knowledge/backfill/execute", "/admin/knowledge/backfill/retry",
 ]);
+const BACKFILL_READ_ADMIN_ROUTES = new Set(["/admin/knowledge/backfill/status"]);
 const MAX_ADMIN_BODY_BYTES = 64 * 1024;
 
 async function hashValue(value: string): Promise<string> {
@@ -110,7 +113,7 @@ async function authenticateInternalRequest(request: Request, env: Env, body: str
 }
 
 function routeAllowed(path: string, method: string, role: OperatorRole): boolean {
-  if (method === "GET") return READ_ADMIN_ROUTES.has(path) && (path !== "/admin/candidates" || role === "publisher");
+  if (method === "GET") return (READ_ADMIN_ROUTES.has(path) || BACKFILL_READ_ADMIN_ROUTES.has(path)) && (path !== "/admin/candidates" || role === "publisher");
   return method === "POST" && role === "publisher" && WRITE_ADMIN_ROUTES.has(path);
 }
 
@@ -1018,6 +1021,15 @@ async function handleAdminRoute(
       return handleKnowledgeDocumentCapture(request, env, operator);
     case "/admin/knowledge/index-preview":
       return handleKnowledgeEmbeddingIndex(request, env);
+    case "/admin/knowledge/backfill/approve":
+      return handleKnowledgeBackfillApprove(request, env, operator);
+    case "/admin/knowledge/backfill/plan":
+      return handleKnowledgeBackfillPlan(request, env);
+    case "/admin/knowledge/backfill/execute":
+    case "/admin/knowledge/backfill/retry":
+      return handleKnowledgeBackfillExecute(request, env, operator);
+    case "/admin/knowledge/backfill/status":
+      return handleKnowledgeBackfillStatus(request, env);
     case "/admin/publish-story":
       return handlePublishStory(request, env, operator);
     case "/admin/withdraw-story":
@@ -1070,6 +1082,48 @@ async function handleKnowledgeEmbeddingIndex(request: Request, env: Env): Promis
     return Response.json({ error: "Preview embedding bindings are unavailable.", result }, { status: 503 });
   }
   return Response.json(result, { status: result.state === "failed" ? 502 : 200 });
+}
+
+async function handleKnowledgeBackfillPlan(request: Request, env: Env): Promise<Response> {
+  if (request.method !== "POST") return Response.json({ error: "Method not allowed — use POST" }, { status: 405 });
+  const body = parseBackfillRequest(await request.json().catch(() => null));
+  if (!body || !body.inventory || !body.selection) return Response.json({ error: "A versioned inventory and explicit selection are required." }, { status: 400 });
+  try {
+    const plan = await buildBackfillPlan(body.inventory as any, body.selection);
+    return Response.json({ state: "dry_run", writes: 0, fetches: 0, plan });
+  } catch (error) {
+    return Response.json({ error: error instanceof Error ? error.message : "Invalid backfill plan." }, { status: 400 });
+  }
+}
+
+async function handleKnowledgeBackfillApprove(request: Request, env: Env, operator: InternalOperator): Promise<Response> {
+  const body = parseBackfillRequest(await request.json().catch(() => null));
+  if (!body?.plan || typeof body.planHash !== "string" || typeof body.idempotencyKey !== "string") return Response.json({ error: "plan, planHash, and idempotencyKey are required." }, { status: 400 });
+  try {
+    const result = await approveBackfillPlan(env, body.plan as BackfillPlan, body.planHash, operator.email, body.idempotencyKey, operator.requestId);
+    return Response.json({ state: "approved", ...result, planHash: body.planHash });
+  } catch (error) {
+    return Response.json({ error: error instanceof Error ? error.message : "Approval failed." }, { status: 409 });
+  }
+}
+
+async function handleKnowledgeBackfillExecute(request: Request, env: Env, operator: InternalOperator): Promise<Response> {
+  const body = parseBackfillRequest(await request.json().catch(() => null));
+  if (!body || typeof body.batchId !== "string" || typeof body.planHash !== "string" || typeof body.idempotencyKey !== "string") return Response.json({ error: "batchId, planHash, and idempotencyKey are required." }, { status: 400 });
+  try {
+    return Response.json(await executeBackfill(env, body.batchId, body.planHash, operator.email, body.idempotencyKey));
+  } catch (error) {
+    return Response.json({ error: error instanceof Error ? error.message : "Backfill execution failed." }, { status: 409 });
+  }
+}
+
+async function handleKnowledgeBackfillStatus(request: Request, env: Env): Promise<Response> {
+  const batchId = new URL(request.url).searchParams.get("batchId");
+  if (!batchId || !/^[0-9a-f-]{36}$/i.test(batchId)) return Response.json({ error: "batchId is required." }, { status: 400 });
+  const batch = await env.DB.prepare("SELECT id, plan_hash, state, selection_json, ceilings_json, approved_by, approved_at, executed_at, created_at, updated_at FROM knowledge_source_backfill_batches WHERE id = ?").bind(batchId).first();
+  if (!batch) return Response.json({ error: "Backfill batch not found." }, { status: 404 });
+  const items = await env.DB.prepare("SELECT inventory_record_id, category, canonical_url, outcome, reason_code, source_document_id, source_document_version_id, retry_count, updated_at FROM knowledge_source_backfill_items WHERE batch_id = ? ORDER BY inventory_record_id").bind(batchId).all();
+  return Response.json({ batch, items: items.results ?? [] });
 }
 
 async function readAdminObject(request: Request, allowedKeys: readonly string[]): Promise<Record<string, unknown> | null> {
