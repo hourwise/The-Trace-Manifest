@@ -1,5 +1,6 @@
 export type ClaimProvenanceReviewDecision = "accept" | "reject";
 import { recalculateEvidenceScores } from "./evidence-recalculation";
+import { triggerKnowledgeReview } from "./knowledge-change-proposals";
 
 export interface ClaimProvenanceReviewInput {
   proposalId: string;
@@ -94,6 +95,11 @@ export async function reviewClaimProvenanceProposal(
       await recalculateEvidenceScores(db, {
         claimIds: [assertion.canonical_claim_id],
         triggeringEvent: "provenance_changed",
+      });
+      await triggerKnowledgeReview(db, {
+        kind: "evidence_changed",
+        claimIds: [assertion.canonical_claim_id],
+        eventId: proposal.claim_assertion_id,
       });
     }
   }

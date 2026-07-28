@@ -27,9 +27,10 @@ import {
 import type { Source, FetchedFeedItem } from "./types";
 import { verifyInternalRequestSignature } from "../../src/security/internal-signature";
 import type { OperatorRole } from "../../src/security/access-auth";
-import { admitAndQueueFeedCapture, admitAndQueueManualCapture } from "./knowledge-capture-queue";
+import { admitAndQueueFeedCapture, admitAndQueueManualCapture, admitAndQueueKnowledgeDocumentCapture } from "./knowledge-capture-queue";
 import { consumeKnowledgeCaptureBatch } from "./knowledge-capture-consumer";
 import { recalculateEvidenceScores, recalculateExpiredEvidence } from "../../src/lib/server/evidence-recalculation";
+import { indexKnowledgeEmbeddings } from "./knowledge-embedding-index";
 
 // ============================================================
 // Signed internal-service authentication
@@ -62,8 +63,10 @@ const WRITE_ADMIN_ROUTES = new Set([
   "/admin/extract-claims", "/admin/detect-conflicts", "/admin/correct",
   "/admin/seed-models", "/admin/extract-model-data", "/admin/publish-story",
   "/admin/withdraw-story", "/admin/publish-briefing", "/admin/archive-cluster",
+  "/admin/approve-evidence-status",
   "/admin/related-items",
   "/admin/candidates", "/admin/social-signals", "/admin/knowledge/capture-url",
+  "/admin/knowledge/capture-missing", "/admin/knowledge/index-preview",
 ]);
 const MAX_ADMIN_BODY_BYTES = 64 * 1024;
 
@@ -142,7 +145,12 @@ async function readBoundedAdminBody(request: Request): Promise<string | null> {
 export interface Env {
   DB: D1Database;
   RAW_STORE: R2Bucket;
+  /** KC-09B Preview-only Workers AI binding; production remains unbound. */
+  AI?: Ai;
+  /** KC-09B Preview-only Vectorize binding; D1 remains authoritative. */
+  KNOWLEDGE_VECTOR_INDEX?: VectorizeIndex;
   KNOWLEDGE_PROCESSING_QUEUE?: Queue;
+  TRACE_ENVIRONMENT?: string;
   TRACE_INTERNAL_SERVICE_SECRET: string;
   GITHUB_TOKEN?: string;
 }
@@ -998,12 +1006,18 @@ async function handleAdminRoute(
       return handleCorrectionsList(env);
     case "/admin/correct":
       return handleRecordCorrection(request, env, operator);
+    case "/admin/approve-evidence-status":
+      return handleApproveEvidenceStatus(request, env, operator);
     case "/admin/seed-models":
       return handleSeedModelData(env);
     case "/admin/extract-model-data":
       return handleModelDataExtraction(env);
     case "/admin/knowledge/capture-url":
       return handleManualKnowledgeCapture(request, env, operator);
+    case "/admin/knowledge/capture-missing":
+      return handleKnowledgeDocumentCapture(request, env, operator);
+    case "/admin/knowledge/index-preview":
+      return handleKnowledgeEmbeddingIndex(request, env);
     case "/admin/publish-story":
       return handlePublishStory(request, env, operator);
     case "/admin/withdraw-story":
@@ -1038,6 +1052,26 @@ async function handleAdminRoute(
 // ============================================================
 // Admin API handlers
 // ============================================================
+async function handleKnowledgeEmbeddingIndex(request: Request, env: Env): Promise<Response> {
+  const body = await readAdminObject(request, ["limit", "dryRun"]);
+  if (!body) return Response.json({ error: "Invalid request body." }, { status: 400 });
+  const limit = body.limit === undefined ? undefined : body.limit;
+  if (limit !== undefined && (!Number.isInteger(limit) || Number(limit) < 1 || Number(limit) > 100)) {
+    return Response.json({ error: "limit must be an integer between 1 and 100." }, { status: 400 });
+  }
+  if (body.dryRun !== undefined && typeof body.dryRun !== "boolean") {
+    return Response.json({ error: "dryRun must be a boolean." }, { status: 400 });
+  }
+  const result = await indexKnowledgeEmbeddings(env, {
+    limit: typeof limit === "number" ? limit : undefined,
+    dryRun: body.dryRun === true,
+  });
+  if (result.state === "disabled") {
+    return Response.json({ error: "Preview embedding bindings are unavailable.", result }, { status: 503 });
+  }
+  return Response.json(result, { status: result.state === "failed" ? 502 : 200 });
+}
+
 async function readAdminObject(request: Request, allowedKeys: readonly string[]): Promise<Record<string, unknown> | null> {
   try {
     const parsed = await request.json() as unknown;
@@ -1295,6 +1329,36 @@ async function handleManualKnowledgeCapture(request: Request, env: Env, operator
   }, { status: 202 });
 }
 
+async function handleKnowledgeDocumentCapture(request: Request, env: Env, operator: InternalOperator): Promise<Response> {
+  const body = await readAdminObject(request, ["knowledgeDocumentId", "storageMode"]);
+  if (!body || !requiredText(body.knowledgeDocumentId, 4, 240) || !/^[A-Za-z0-9_-]+$/.test(body.knowledgeDocumentId)) {
+    return Response.json({ error: "A valid knowledgeDocumentId is required." }, { status: 400 });
+  }
+  const storageMode = body.storageMode === undefined ? "private_full_text" : body.storageMode;
+  if (storageMode !== "private_full_text" && storageMode !== "editor_supplied_document") {
+    return Response.json({ error: "storageMode must be private_full_text or editor_supplied_document." }, { status: 400 });
+  }
+  try {
+    const result = await admitAndQueueKnowledgeDocumentCapture(env, {
+      knowledgeDocumentId: body.knowledgeDocumentId,
+      copyrightStorageMode: storageMode,
+      correlationId: `knowledge-${operator.requestId}`,
+    });
+    if (result.queueUnavailable > 0 && result.queued === 0 && result.alreadyQueued === 0) {
+      return Response.json({ error: "Knowledge capture Queue is not enabled for this environment.", ...result }, { status: 503 });
+    }
+    return Response.json({ status: result.failures > 0 ? "partial" : "queued", ...result }, { status: 202 });
+  } catch (error) {
+    if (error instanceof Error && error.message === "knowledge_document_not_found") {
+      return Response.json({ error: "Knowledge document not found." }, { status: 404 });
+    }
+    if (error instanceof Error && error.message === "knowledge_document_capture_invalid") {
+      return Response.json({ error: "Invalid knowledge document id." }, { status: 400 });
+    }
+    throw error;
+  }
+}
+
 async function handleSourceList(env: Env): Promise<Response> {
   const { results } = await env.DB.prepare(
     "SELECT id, name, url, tier, treatment, ingestion_type, health_status, last_fetched_at, last_success_at, consecutive_failures FROM sources WHERE active = 1 ORDER BY tier, name"
@@ -1361,6 +1425,7 @@ async function handleRecordCorrection(request: Request, env: Env, operator: Inte
   const body = await readAdminObject(request, [
     "clusterId", "claimId", "correctionType", "previousStatement", "updatedStatement", "reason",
     "evidenceUrl", "impact", "previousEvidenceStatus", "updatedEvidenceStatus",
+    "humanApprovalNote",
   ]) as any;
   if (!body) return Response.json({ error: "Invalid correction body." }, { status: 400 });
 
@@ -1384,6 +1449,7 @@ async function handleRecordCorrection(request: Request, env: Env, operator: Inte
     || !requiredText(body.previousStatement, 1, 8_000)
     || !requiredText(body.updatedStatement, 1, 8_000)
     || !requiredText(body.reason, 3, 2_000)
+    || !requiredText(body.humanApprovalNote, 10, 2_000)
     || !optionalText(body.impact, 2_000)
     || !optionalHttpUrl(body.evidenceUrl)
     || !optionalEvidenceStatus(body.previousEvidenceStatus)
@@ -1417,6 +1483,56 @@ async function handleRecordCorrection(request: Request, env: Env, operator: Inte
       { status: targetNotPublished ? 409 : 500 },
     );
   }
+}
+
+async function handleApproveEvidenceStatus(request: Request, env: Env, operator: InternalOperator): Promise<Response> {
+  if (request.method !== "POST") return Response.json({ error: "Method not allowed — use POST" }, { status: 405 });
+  const body = await readAdminObject(request, ["approvalId", "decision", "reviewNote"]);
+  if (!body || typeof body.approvalId !== "string" || !/^[0-9a-f-]{36}$/i.test(body.approvalId)
+    || !["approve", "reject"].includes(String(body.decision))
+    || !optionalText(body.reviewNote, 2_000)) {
+    return Response.json({ error: "A valid approvalId, decision, and bounded reviewNote are required." }, { status: 400 });
+  }
+  const approval = await env.DB.prepare(`
+    SELECT id, target_id, previous_status, proposed_status, state, reason
+    FROM evidence_change_approvals
+    WHERE id = ? AND change_kind = 'status_change' AND target_type = 'story_cluster'
+  `).bind(body.approvalId).first<{
+    id: string; target_id: string; previous_status: string | null; proposed_status: string; state: string; reason: string;
+  }>();
+  if (!approval) return Response.json({ error: "Evidence status approval not found." }, { status: 404 });
+  if (approval.state !== "pending") return Response.json({ error: "Evidence status approval has already been decided." }, { status: 409 });
+
+  const reviewNote = typeof body.reviewNote === "string" ? body.reviewNote.trim() : "";
+  if (String(body.decision) === "reject" && reviewNote.length < 10) {
+    return Response.json({ error: "A rejection requires a review note of at least 10 characters." }, { status: 400 });
+  }
+  if (String(body.decision) === "reject") {
+    await env.DB.prepare(`
+      UPDATE evidence_change_approvals
+      SET state = 'rejected', reviewed_by = ?, review_note = ?, reviewed_at = datetime('now')
+      WHERE id = ? AND state = 'pending'
+    `).bind(operator.email, reviewNote || null, approval.id).run();
+    return Response.json({ status: "rejected", approvalId: approval.id });
+  }
+
+  const statusUpdate = await env.DB.prepare(`
+    UPDATE story_clusters
+    SET evidence_status = ?, updated_at = datetime('now')
+    WHERE id = ? AND evidence_status = ?
+  `).bind(approval.proposed_status, Number(approval.target_id), approval.previous_status).run();
+  if (Number(statusUpdate.meta.changes ?? 0) !== 1) {
+    return Response.json({ error: "The story status changed before approval could be applied." }, { status: 409 });
+  }
+  const approvalUpdate = await env.DB.prepare(`
+    UPDATE evidence_change_approvals
+    SET state = 'approved', reviewed_by = ?, review_note = ?, reviewed_at = datetime('now')
+    WHERE id = ? AND state = 'pending'
+  `).bind(operator.email, reviewNote || null, approval.id).run();
+  if (Number(approvalUpdate.meta.changes ?? 0) !== 1) {
+    return Response.json({ error: "The approval changed before it could be recorded." }, { status: 409 });
+  }
+  return Response.json({ status: "approved", approvalId: approval.id, proposedStatus: approval.proposed_status });
 }
 
 async function handleSeedModelData(env: Env): Promise<Response> {

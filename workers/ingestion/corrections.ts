@@ -30,6 +30,7 @@ export interface CorrectionInput {
   reason: string;
   evidenceUrl?: string | null;
   impact?: string | null;
+  humanApprovalNote: string;
   correctedBy: string;
 }
 
@@ -75,6 +76,9 @@ export async function recordClusterCorrection(
   if (!input.clusterId) {
     throw new Error("clusterId is required for cluster corrections");
   }
+  if (!input.humanApprovalNote?.trim()) {
+    throw new Error("A human approval note is required for corrections.");
+  }
 
   // Get current cluster info for the previous_evidence_status
   const cluster = await db.prepare(
@@ -87,7 +91,19 @@ export async function recordClusterCorrection(
   const previousEvidenceStatus = input.previousEvidenceStatus ?? cluster?.evidence_status ?? null;
 
   const targetStatus = input.updatedEvidenceStatus ?? "corrected";
+  const approvalId = crypto.randomUUID();
   const [inserted] = await db.batch([
+    db.prepare(
+      `INSERT INTO evidence_change_approvals
+       (id, change_kind, target_type, target_id, previous_status, proposed_status,
+        state, requested_by, reviewed_by, reason, payload_json, review_note, reviewed_at, idempotency_key)
+       VALUES (?, 'correction', 'story_cluster', ?, ?, ?, 'approved', ?, ?, ?, ?, ?, datetime('now'), ?)`
+    ).bind(
+      approvalId, String(input.clusterId), previousEvidenceStatus, targetStatus,
+      input.correctedBy, input.correctedBy, input.reason,
+      JSON.stringify({ correctionType: input.correctionType, evidenceUrl: input.evidenceUrl ?? null }),
+      input.humanApprovalNote.trim(), `correction:${approvalId}`,
+    ),
     db.prepare(
       `INSERT INTO corrections
        (cluster_id, correction_type, previous_statement, updated_statement,
@@ -128,6 +144,9 @@ export async function recordClaimCorrection(
   if (!input.claimId) {
     throw new Error("claimId is required for claim corrections");
   }
+  if (!input.humanApprovalNote?.trim()) {
+    throw new Error("A human approval note is required for corrections.");
+  }
 
   // Resolve the legacy identifier through the KC-05G mapping. The numeric
   // claim_id remains on the correction ledger for compatibility, but the
@@ -162,8 +181,20 @@ export async function recordClaimCorrection(
   const previousEvidenceStatus = input.previousEvidenceStatus ?? claim?.current_state ?? null;
   const targetStatus = input.updatedEvidenceStatus ?? "corrected";
   const correctionAssertionId = `canonical-correction-${crypto.randomUUID()}`;
+  const approvalId = crypto.randomUUID();
 
   const [inserted] = await db.batch([
+    db.prepare(
+      `INSERT INTO evidence_change_approvals
+       (id, change_kind, target_type, target_id, previous_status, proposed_status,
+        state, requested_by, reviewed_by, reason, payload_json, review_note, reviewed_at, idempotency_key)
+       VALUES (?, 'correction', 'canonical_claim', ?, ?, ?, 'approved', ?, ?, ?, ?, ?, datetime('now'), ?)`
+    ).bind(
+      approvalId, claim.canonical_claim_id, previousEvidenceStatus, targetStatus,
+      input.correctedBy, input.correctedBy, input.reason,
+      JSON.stringify({ correctionType: input.correctionType, legacyClaimId: input.claimId, evidenceUrl: input.evidenceUrl ?? null }),
+      input.humanApprovalNote.trim(), `correction:${approvalId}`,
+    ),
     db.prepare(
       `INSERT INTO corrections
        (cluster_id, claim_id, correction_type, previous_statement, updated_statement,
@@ -299,6 +330,9 @@ export function validateCorrectionInput(input: CorrectionInput): string | null {
   }
   if (!input.correctedBy) {
     return "correctedBy is required.";
+  }
+  if (!input.humanApprovalNote?.trim()) {
+    return "humanApprovalNote is required for corrections.";
   }
   if (!CORRECTION_TYPE_LABELS[input.correctionType]) {
     return `Invalid correction_type: ${input.correctionType}.`;

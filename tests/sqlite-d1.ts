@@ -69,6 +69,16 @@ export class SQLiteD1 {
     }
     this.sqlite.exec(readFileSync("db/migration-0044-story-related-item-reviews.sql", "utf8"));
     this.sqlite.exec(readFileSync("db/migration-0045-claim-score-snapshots.sql", "utf8"));
+    this.sqlite.exec(readFileSync("db/migration-0046-score-snapshot-explanations.sql", "utf8"));
+  this.sqlite.exec(readFileSync("db/migration-0047-evidence-change-approvals.sql", "utf8"));
+    this.sqlite.exec(readFileSync("db/migration-0048-knowledge-source-link-audit.sql", "utf8"));
+    this.sqlite.exec(readFileSync("db/migration-0049-knowledge-change-proposal-index.sql", "utf8"));
+    this.sqlite.exec(readFileSync("db/migration-0050-knowledge-retrieval-indexes.sql", "utf8"));
+    this.sqlite.exec(readFileSync("db/migration-0051-knowledge-embedding-index-state.sql", "utf8"));
+    this.sqlite.exec(readFileSync("db/migration-0052-knowledge-impact-proposals.sql", "utf8"));
+    this.sqlite.exec(readFileSync("db/migration-0053-knowledge-revision-decisions.sql", "utf8"));
+    this.sqlite.exec(readFileSync("db/migration-0054-knowledge-revision-immutability.sql", "utf8"));
+    this.sqlite.exec(readFileSync("db/migration-0055-knowledge-embedding-confirmation.sql", "utf8"));
   }
 
   prepare(query: string): SQLiteD1Statement {

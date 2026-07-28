@@ -1,0 +1,47 @@
+---
+// KC-10C: publisher-only inspection of bounded continuity queues.
+import BaseLayout from "../../../layouts/BaseLayout.astro";
+import { authenticateAccessRequest, type AccessEnvironment } from "../../../security/access-auth";
+import { loadKnowledgeImpactQueues, type KnowledgeImpactQueueItem } from "../../../lib/server/knowledge-impact-queues";
+
+export const prerender = false;
+const env = Astro.locals.runtime.env;
+const identity = await authenticateAccessRequest(Astro.request, env as unknown as AccessEnvironment);
+if (!identity || identity.role !== "publisher") return new Response("Forbidden", { status: 403 });
+const queues = await loadKnowledgeImpactQueues(env.DB as D1Database);
+const lanes: Array<[string, KnowledgeImpactQueueItem[]]> = [
+  ["Affected knowledge", queues.affectedKnowledge],
+  ["Expiring knowledge", queues.expiringKnowledge],
+  ["Unresolved contradictions", queues.unresolvedContradictions],
+  ["Orphan accepted claims", queues.orphanClaims],
+];
+---
+
+<BaseLayout title="Knowledge impact queues — TRACE Desk" description="Publisher-only continuity queues.">
+  <div class="wrap">
+    <h1>Knowledge impact queues</h1>
+    <p class="meta">Deterministic, read-only queue signals. Nothing here approves, rewrites, or publishes content.</p>
+    <p><a href="/admin/knowledge">&larr; Knowledge builder</a></p>
+    <div class="queue-grid">
+      {lanes.map(([title, items]) => (
+        <section class="card">
+          <h2>{title} <span class="count">{items.length}</span></h2>
+          {items.length === 0 ? <p class="meta">No items waiting.</p> : (
+            <ul>
+              {items.map((item) => <li><strong>{item.label}</strong><div class="meta">{item.id} · {item.state} · {item.detail}</div></li>)}
+            </ul>
+          )}
+        </section>
+      ))}
+    </div>
+    <p class="meta">Queue algorithm {queues.algorithmVersion}; generated {queues.generatedAt}.</p>
+  </div>
+</BaseLayout>
+
+<style>
+  .queue-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(20rem,1fr)); gap:1rem; margin-top:1.5rem; }
+  .queue-grid h2 { margin-top:0; font-size:1.1rem; }
+  .queue-grid ul { margin:0; padding-left:1.2rem; }
+  .queue-grid li { margin:0.65rem 0; }
+  .count { color:var(--color-accent); font-size:0.85rem; }
+</style>

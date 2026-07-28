@@ -1,0 +1,80 @@
+---
+// KC-08H: publisher-only queue of knowledge pages whose linked evidence
+// requires a reviewed revision. This page is inspection-only; KC-10 owns
+// substantive revision decisions.
+import BaseLayout from "../../../layouts/BaseLayout.astro";
+import { authenticateAccessRequest, type AccessEnvironment } from "../../../security/access-auth";
+
+export const prerender = false;
+
+const env = Astro.locals.runtime.env;
+const identity = await authenticateAccessRequest(Astro.request, env as unknown as AccessEnvironment);
+if (!identity || identity.role !== "publisher") return new Response("Forbidden", { status: 403 });
+
+interface ProposalRow {
+  id: string;
+  knowledge_document_id: string;
+  canonical_question: string;
+  proposal_type: string;
+  rationale: string;
+  proposed_change_json: string;
+  detector_version: string;
+  created_at: string;
+}
+
+const result = await (env.DB as D1Database).prepare(`
+  SELECT proposal.id, proposal.knowledge_document_id,
+         document.canonical_question, proposal.proposal_type,
+         proposal.rationale, proposal.proposed_change_json,
+         proposal.detector_version, proposal.created_at
+  FROM knowledge_change_proposals proposal
+  JOIN knowledge_documents document ON document.id = proposal.knowledge_document_id
+  WHERE proposal.state = 'proposed'
+  ORDER BY proposal.created_at ASC
+  LIMIT 200
+`).all<ProposalRow>();
+const proposals = result.results ?? [];
+
+function label(value: string): string {
+  return value.replace(/_/g, " ");
+}
+---
+
+<BaseLayout title="Knowledge change review — TRACE Desk" description="Publisher review queue for knowledge evidence changes.">
+  <div class="wrap">
+    <h1>Knowledge change review</h1>
+    <p class="meta">These proposals are deterministic review signals. They never rewrite approved knowledge automatically.</p>
+    <p><a href="/admin/knowledge">&larr; Knowledge builder</a></p>
+    {proposals.length === 0 ? (
+      <div class="card"><p>No open knowledge change proposals.</p></div>
+    ) : (
+      <div class="card" style="overflow-x:auto;">
+        <table style="width:100%;border-collapse:collapse;font-size:0.9rem;">
+          <thead><tr style="text-align:left;border-bottom:2px solid var(--color-border);">
+            <th style="padding:0.5rem;">Knowledge document</th>
+            <th style="padding:0.5rem;">Trigger</th>
+            <th style="padding:0.5rem;">Reason</th>
+            <th style="padding:0.5rem;">Detected</th>
+          </tr></thead>
+          <tbody>
+            {proposals.map((proposal) => (
+              <tr style="border-bottom:1px solid var(--color-border-light);vertical-align:top;">
+                <td style="padding:0.5rem;min-width:18rem;">
+                  <strong>{proposal.canonical_question}</strong>
+                  <div class="meta">{proposal.knowledge_document_id}</div>
+                </td>
+                <td style="padding:0.5rem;white-space:nowrap;"><span class="badge badge-warn">{label(proposal.proposal_type)}</span></td>
+                <td style="padding:0.5rem;min-width:24rem;">
+                  <p style="margin-top:0;">{proposal.rationale}</p>
+                  <details><summary>Evidence impact</summary><pre style="white-space:pre-wrap;font-size:0.75rem;">{proposal.proposed_change_json}</pre></details>
+                  <div class="meta">Detector {proposal.detector_version}</div>
+                </td>
+                <td style="padding:0.5rem;white-space:nowrap;color:var(--color-muted);">{proposal.created_at?.replace("T", " ").slice(0, 16) ?? "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    )}
+  </div>
+</BaseLayout>

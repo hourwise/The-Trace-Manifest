@@ -7,7 +7,7 @@
 ## Current status (23 July 2026)
 
 **Part A (launch):** Complete. Site is live at [thetracemanifest.com](https://thetracemanifest.com).  
-**Part B (post-launch):** Phases 1-4 complete. Phase 5 has a working manual/public foundation but not end-to-end evidence inheritance or Ask TRACE use; hard-expiry enforcement is now present. Knowledge Continuity KC-02 schema foundations, KC-03A–E retrieval/extraction/capture/feed/manual continuity, and KC-04A–F structured extraction/review/cache are complete; evidence inheritance remains ahead. Phase 6 foundation is built. Models & Benchmarks catalogue is populated (Phase 9 foundation). Source connector overhaul is complete. Ingestion pipeline is repaired, editorial workflow is unified, and TRACE aggregate benchmark scores are live.
+**Part B (post-launch):** Phases 1-4 complete. Phase 5 has a working manual/public foundation with reviewed knowledge evidence inheritance and hard-expiry enforcement; multi-position Ask TRACE and substantive knowledge revisions remain. Knowledge Continuity KC-02 schema foundations, KC-03A–E retrieval/extraction/capture/feed/manual continuity, KC-04A–F structured extraction/review/cache, KC-07A–F deterministic scoring/recalculation/immutable explanations/admin inspection/human approval/evaluation, and KC-08A–H reviewed knowledge linking/change propagation are complete; public numeric evidence scores remain disabled pending a reviewed policy rollout. Phase 6 foundation is built. Models & Benchmarks catalogue is populated (Phase 9 foundation). Source connector overhaul is complete. Ingestion pipeline is repaired, editorial workflow is unified, and TRACE aggregate benchmark scores are live.
 
 | Phase | Status | Key deliverables |
 |---|---|---|
@@ -15,15 +15,16 @@
 | 2 — Page-Diff Connector | ✅ | HTMLRewriter connector for Anthropic Newsroom + Research |
 | 3 — TRACE Desk | ✅ | Server-rendered desk, state machine, promote-to-story, manual URL normalisation, duplicate detection, candidate matching |
 | 4 — Admin Ask TRACE | ✅ | `/admin/ask`, evidence-grounded research with citations |
-| 5 — Knowledge Builder | ⚠️ Partial | 30 knowledge docs, gaps queue, drag-drop ingest, public pages, version history and document-level source URLs exist. Claim-level evidence inheritance, hard-expiry enforcement, and usable Ask TRACE knowledge context remain incomplete. |
-| 5.5 — Knowledge Continuity & Story Memory | 🔄 In progress | KC-02 schema foundation, KC-03A–E retrieval/extraction/capture/feed/manual continuity, and KC-04A–F structured extraction/review/cache complete. Structured claims/provenance graph, durable story relationships, knowledge evidence inheritance, story evidence scoring, multi-position answers, and historical backfill remain. See `docs/TRACE-KNOWLEDGE-CONTINUITY-BUILD-PLAN.md`. |
+| 5 — Knowledge Builder | ⚠️ Partial | 30 knowledge docs, gaps queue, drag-drop ingest, public pages, version history, and document-level source URLs exist. Claim-level evidence inheritance and hard-expiry enforcement are implemented; multi-position Ask TRACE context and substantive revision workflows remain incomplete. |
+| 5.5 — Knowledge Continuity & Story Memory | 🔄 In progress | KC-02 schema foundation, KC-03A–E retrieval/extraction/capture/feed/manual continuity, KC-04A–F structured extraction/review/cache, KC-07A–F deterministic scoring/recalculation/immutable explanations/admin inspection/human approval/evaluation, and KC-08A–H evidence linking/change propagation complete. Public numeric-score rollout, multi-position answers, substantive knowledge revisions, and historical backfill remain. See `docs/TRACE-KNOWLEDGE-CONTINUITY-BUILD-PLAN.md`. |
 | 6 — Guides Lab | 🔄 | Migration + template + ingest + admin page built. 21 guides ingested (draft). Public rendering deferred. |
 | 6.5 — TRACE Briefing | Planned | Manual, versioned editorial editions before candidate automation, AI drafting or scheduling. See `docs/TraceBriefing.md`. |
 | 7-8 | ⏸️ | Multilingual, sharing/snapshots — not started |
 | 9 — Models/Benchmarks | ✅ | 22 models, 10 benchmarks, 11 providers, 14+ benchmark runs. TRACE aggregate scores, model card scores, score normalisation. |
 | 9.5 — Open Model Execution Intelligence | Planned | ADR 0019 follow-on: exact artefacts, runtimes, hardware, compatibility, diagnostics, and deterministic recommendations. Starts only after the required Knowledge Continuity source foundation; it reuses that evidence system rather than duplicating it. |
+| 9.6 — Capability-first discovery and TRACE Capture | Deferred until KC completion | ADR-0020 capability classification/secondary discovery and the separate TRACE Capture mobile/bulk intake contract are planned post-KC. Captures remain editorial leads and cannot bypass the existing evidence boundary. See the deferred extensions in `TRACE-KNOWLEDGE-CONTINUITY-BUILD-PLAN.md`. |
 | 10 | ⏸️ | Commercial features — not started |
-| **Bonus: Public Ask TRACE** | ⚠️ Partial | Live with 3 questions/day/visitor and eligible published-story evidence. Approved knowledge is queried but currently excluded before generation because its underlying external evidence is not resolved. |
+| **Bonus: Public Ask TRACE** | ⚠️ Partial | Live with 3 questions/day/visitor, eligible published-story evidence, and approved knowledge whose inherited external bundle resolves. Knowledge pages with open change proposals remain excluded until publisher review. |
 | **Bonus: Evidence source linking** | ✅ | 79-source registry, auto-link knowledge doc evidence URLs |
 | **Bonus: Feed topic filtering** | ✅ | 7 topic filters working on `/feed` |
 | **Bonus: Knowledge base public pages** | ✅ | `/knowledge` shows 35 pages across 7 unified hub cards |
@@ -89,7 +90,7 @@ The Cloudflare Pages deploy command (`npx wrangler pages deploy dist`) was remov
 ### Short-term
 
 - [x] **Knowledge Continuity KC-04F** — add unchanged-content cache/cost tests. KC-04A–F now persist deterministic locator-backed chunks, proposed structured candidates, canonical claim assertions, source summaries, durable extraction-run metadata, publisher review transitions, and a pre-provider governed-AI cache gate; PDF v1 remains metadata-only/pending until a separate parser/provider spike passes.
-- [ ] **Story ↔ Knowledge linking (KC-08/KC-10)** — link stories and manual knowledge through reviewed canonical claims and inherited external evidence, not topic overlap alone.
+- [ ] **Story ↔ Knowledge linking (KC-08/KC-10)** — KC-08A–H now parse, suggest, capture, map, approve, resolve, and invalidate inherited evidence through deterministic publisher-review proposals; KC-10 still owns substantive revision proposals and reviewed replacements, not topic overlap alone.
 - [ ] **Feed item classification during publishing** — auto-suggest topics on the review page
 - [ ] **Homepage and feed page layouts** — redesign pass (under discussion)
 - [ ] **TRACE Briefing B1 — manual structured edition** — implement the versioned data model, admin editor, public dated/archive pages, homepage card and a reviewed Preview edition. Follow [`TraceBriefing.md`](TraceBriefing.md); do not start automated drafting or scheduling first.
@@ -98,10 +99,12 @@ The Cloudflare Pages deploy command (`npx wrangler pages deploy dist`) was remov
 
 ### Medium-term
 
-- [ ] **Knowledge Continuity KC-05 to KC-10** — KC-05A–F provide deterministic claim matching, publisher decisions, provenance, shared-origin grouping, reviewed relationships, and unresolved conflict preservation; KC-05G now maps legacy claims/evidence, freezes compatibility tables, and routes new writes through canonical claims/assertions. Remaining work covers the durable related-story workflow, evidence scoring, manual knowledge inheritance, and knowledge-impact proposals. Treat KC-02 through KC-08 as the minimum complete D1/R2 knowledge loop; lock the embedding decision before optional Vectorize/multi-position work in KC-09.
+- [ ] **Knowledge Continuity KC-05 to KC-10** — KC-05A–G provide the canonical claim/provenance/conflict graph and legacy cutover; KC-06 and KC-07 provide reviewed relationships and deterministic evidence scoring; KC-08A–H provide reviewed knowledge inheritance and change propagation. Remaining work is hybrid/multi-position retrieval in KC-09 and substantive knowledge-impact revisions in KC-10. Treat KC-02 through KC-08 as the minimum complete D1/R2 knowledge loop; lock the embedding decision before optional Vectorize/multi-position work in KC-09.
 - [ ] **Public Guides** — render approved guides at `/guides/[slug]`, integrate with Ask TRACE
 - [ ] **Guides ↔ Knowledge linking** — cross-reference guides with related knowledge docs
 - [ ] **Social signals → Feed items** — promotion workflow for social posts to become stories
+- [ ] **Post-KC capability-first discovery (ADR-0020)** — classify capability/narrative/mixed clusters, constrain secondary discovery sources, resolve original evidence, and add coverage audits and reader capability blocks.
+- [ ] **Post-KC TRACE Capture intake** — review a format-independent single/bulk/import capture contract, additive capture inbox schema, device access controls, duplicate handling, idempotent processing, and SSRF-safe enrichment before exposing any mobile endpoint.
 - [ ] **Page-diff for remaining changelogs** — AWS, OpenAI, Gemini API release notes
 - [ ] **Artificial Analysis connector** — highest-value remaining manual source
 
@@ -313,7 +316,7 @@ Deliver one phase at a time. Each phase follows: read its ADR -> write the small
 - [x] Record unanswered or weakly answered questions in a gap queue.
 - [x] Deduplicate and prioritise gaps using evidence need, not popularity alone.
 - [x] Draft knowledge documents with source links, version, owner, freshness, and review state.
-- [x] Promote only reviewed documents into the Ask TRACE retrieval-candidate corpus. Their external evidence inheritance and eligibility remain KC-08 work.
+- [x] Promote only reviewed documents into the Ask TRACE retrieval-candidate corpus. Their external evidence inheritance is resolved through KC-08 mappings and open change proposals invalidate normal retrieval until review.
 - [x] Keep superseded versions and correction history.
 
 ### Phase 6 - Guides Lab (ADR 0013)
@@ -420,7 +423,7 @@ These gaps exist between automated systems — they need dedicated build work:
 
 ### Knowledge Continuity and Story Memory
 
-[`TRACE-KNOWLEDGE-CONTINUITY-BUILD-PLAN.md`](TRACE-KNOWLEDGE-CONTINUITY-BUILD-PLAN.md) is the canonical plan for this gap. The current system stores feed snippets and rule-extracted claims but does not yet retain a governed full source document, establish independent provenance at claim level, turn related results into durable evidence relationships, or propagate new evidence into knowledge revisions.
+[`TRACE-KNOWLEDGE-CONTINUITY-BUILD-PLAN.md`](TRACE-KNOWLEDGE-CONTINUITY-BUILD-PLAN.md) is the canonical plan for this gap. The current system now retains governed source metadata/versions, establishes independent provenance at claim level, turns related results into durable evidence relationships, and propagates evidence changes into publisher-review proposals; KC-09/KC-10 still add multi-position retrieval and substantive knowledge revisions.
 
 This is not only UI wiring. It requires:
 
@@ -470,9 +473,9 @@ Routes exist (`/models`, `/benchmarks`) but show empty states. Tables exist in s
 5. Run `node scripts/link-knowledge-sources.mjs` to link evidence URLs to the source registry
 6. Docs appear at `/knowledge` and are found by the Ask TRACE retrieval query.
 
-**Current limitation:** approved knowledge prose is correctly classified as zero-weight TRACE internal synthesis, but its underlying external source/claim bundle is not yet resolved. It is therefore filtered before model generation and does not currently improve Ask TRACE answers. Continue adding well-sourced manual knowledge pages: KC-08 will parse and link their material claims to external evidence already held by TRACE, queue missing admitted sources for capture, and make the pages usable without treating TRACE's own prose as corroboration.
+**Current limitation:** approved knowledge prose is correctly classified as zero-weight TRACE internal synthesis, and KC-08A–H now parse, suggest, queue, manually map claims to eligible assertions, preserve legacy source links in a reviewed migration audit, fail closed at public approval when material sections are unresolved, resolve reviewed assertions through admitted source versions/chunks/locators during retrieval, and create deterministic publisher-review proposals when linked evidence changes, expires, conflicts, corrects, or supersedes the knowledge page. Open proposals are filtered from normal Ask TRACE retrieval until a reviewed revision exists; KC-10 still owns substantive revision decisions without silently rewriting TRACE prose.
 
-The current source-linking script records document-level URLs for migration and audit; it does not yet create the reviewed section → canonical claim → accepted assertion/locator links required for evidence inheritance.
+The current source-linking script records document-level URLs for compatibility and migration audit; only the publisher mapper creates reviewed section → canonical claim → accepted assertion/locator links required for evidence inheritance.
 
 ### Adding how-to guides
 1. Create `.md` files in `docs/guides/` using the YAML frontmatter format

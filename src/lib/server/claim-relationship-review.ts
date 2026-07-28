@@ -1,5 +1,6 @@
 import { generateClaimConflictCase } from "./claim-conflict-cases";
 import { recalculateEvidenceScores } from "./evidence-recalculation";
+import { triggerKnowledgeReview } from "./knowledge-change-proposals";
 
 export type ClaimRelationshipReviewDecision = "accept" | "reject";
 
@@ -30,6 +31,7 @@ export class ClaimRelationshipReviewError extends Error {
 interface ProposalRow {
   id: string;
   source_assertion_id: string;
+  source_canonical_claim_id: string;
   target_canonical_claim_id: string;
   relationship: string;
   confidence: number;
@@ -52,8 +54,13 @@ export async function reviewClaimRelationshipProposal(
   input: ClaimRelationshipReviewInput,
 ): Promise<ClaimRelationshipReviewResult> {
   const proposal = await db.prepare(`
-    SELECT id, source_assertion_id, target_canonical_claim_id, relationship, confidence, state
-    FROM knowledge_claim_relationship_proposals WHERE id = ?
+    SELECT proposal.id, proposal.source_assertion_id,
+           source_assertion.canonical_claim_id AS source_canonical_claim_id,
+           proposal.target_canonical_claim_id, proposal.relationship,
+           proposal.confidence, proposal.state
+    FROM knowledge_claim_relationship_proposals proposal
+    JOIN claim_assertions source_assertion ON source_assertion.id = proposal.source_assertion_id
+    WHERE proposal.id = ?
   `).bind(input.proposalId).first<ProposalRow>();
   if (!proposal) throw new ClaimRelationshipReviewError("proposal_not_found", "Claim relationship proposal not found.", 404);
   if (proposal.state !== "proposed") throw new ClaimRelationshipReviewError("proposal_already_reviewed", "This claim relationship proposal has already been reviewed.", 409);
@@ -115,6 +122,23 @@ export async function reviewClaimRelationshipProposal(
       claimIds: [proposal.target_canonical_claim_id],
       triggeringEvent: conflictCase.conflictCaseId ? "conflict_created" : "accepted_evidence",
     });
+    const changeKind = proposal.relationship === "corrects"
+      ? "correction_recorded" as const
+      : proposal.relationship === "supersedes"
+        ? "supersession_recorded" as const
+        : "evidence_changed" as const;
+    await triggerKnowledgeReview(db, {
+      kind: changeKind,
+      claimIds: [proposal.source_canonical_claim_id, proposal.target_canonical_claim_id],
+      eventId: proposal.id,
+    });
+    if (conflictCase.conflictCaseId) {
+      await triggerKnowledgeReview(db, {
+        kind: "conflict_created",
+        claimIds: [proposal.source_canonical_claim_id, proposal.target_canonical_claim_id],
+        eventId: conflictCase.conflictCaseId,
+      });
+    }
   }
   return { proposalId: proposal.id, previousState: proposal.state, decision: input.decision, createdAssertionId, conflictCaseId: conflictCase.conflictCaseId };
 }

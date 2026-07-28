@@ -1,8 +1,8 @@
 # TRACE Knowledge Continuity and Story Memory Build Plan
 
-**Status:** Canonical implementation plan (KC-02, KC-03A–E, KC-04A–F, KC-05A–G, KC-06A–E, and KC-07A–B complete locally; KC-07C is next)
+**Status:** Canonical implementation plan (KC-02, KC-03A–E, KC-04A–F, KC-05A–G, KC-06A–E, KC-07A–F, KC-08A–H, KC-09A–J, and KC-10A complete locally; Preview rollout and first bounded run completed against an empty corpus)
 
-**Date:** 23 July 2026
+**Date:** 24 July 2026
 
 **Scope:** source absorption, claim-level evidence, story memory, knowledge linking, evidence scoring, retrieval, answer synthesis, and historical backfill
 
@@ -681,55 +681,55 @@ Exit: a related result can be durably attached or linked, and the audit record e
 
 - [x] **KC-07A:** Implement the versioned claim score and story roll-up policy from section 8. Policy `kc-07a-v1` is pure, deterministic, materiality-weighted, and snapshot-schema-backed; automatic recalculation remains KC-07B.
 - [x] **KC-07B:** Recompute after accepted evidence, correction, provenance change, conflict resolution, expiry, withdrawal, or supersession. The D1-backed recalculation service invokes `kc-07a-v1`, persists claim/story score snapshots, updates qualitative story status, and is wired into review, correction, publication-status, and scheduled expiry paths. See [`docs/audit/kc-07b-automatic-recalculation-evidence.md`](audit/kc-07b-automatic-recalculation-evidence.md).
-- [ ] **KC-07C:** Store immutable score snapshots and before/after explanations.
-- [ ] **KC-07D:** Add an admin evidence panel showing material claims, roots, roles, conflicts, caps, penalties, and proposed status.
-- [ ] **KC-07E:** Require human approval for high-impact status changes and corrections; allow only policy-approved low-risk metadata recalculation later.
-- [ ] **KC-07F:** Evaluate the versioned score policy against a fixed labelled set and compare score changes with human editorial decisions before permitting public numeric display.
+- [x] **KC-07C:** Store immutable claim/story score snapshots and append-only before/after explanations. Migration 0046 records the prior state, recalculated state, policy/event, and deterministic component-change explanation; database triggers reject snapshot or explanation rewrites/deletes. See [`docs/audit/kc-07c-immutable-score-explanations-evidence.md`](audit/kc-07c-immutable-score-explanations-evidence.md).
+- [x] **KC-07D:** Add the publisher-only `/admin/knowledge/evidence` panel showing material claims, provenance roots and roles, conflicts, caps/penalties, score components, immutable before/after explanations, and proposed versus current status. The panel is inspection-only and cannot change scores or publish stories. See [`docs/audit/kc-07d-admin-evidence-panel-evidence.md`](audit/kc-07d-admin-evidence-panel-evidence.md).
+- [x] **KC-07E:** Require human approval for high-impact status changes and corrections; allow only policy-approved low-risk metadata recalculation later. Migration 0047 stores pending/approved/rejected status-change approvals, high-impact automatic transitions remain proposals until publisher approval, and correction writes require an authenticated publisher approval note. See [`docs/audit/kc-07e-human-approval-evidence.md`](audit/kc-07e-human-approval-evidence.md).
+- [x] **KC-07F:** Evaluate the versioned score policy against a fixed labelled set and compare score changes with human editorial decisions before permitting public numeric display. The `kc-07f-v1` evaluator covers vendor-only, derivative, independently reproduced, disputed, stale, and corrected cases plus increase/decrease/stable direction checks; all current labels pass while `PUBLIC_EVIDENCE_NUMERIC_SCORES_ENABLED` remains false. See [`docs/audit/kc-07f-policy-evaluation-evidence.md`](audit/kc-07f-policy-evaluation-evidence.md).
 
 Exit: adding a genuinely independent corroborating source can increase the relevant claim/story score, while adding derivative or unrelated coverage cannot.
 
 ### KC-08 — Manual knowledge-to-evidence linking
 
-- [ ] **KC-08A:** Parse material claims and evidence URLs from new and existing knowledge Markdown.
-- [ ] **KC-08B:** Suggest existing canonical claims and source documents.
-- [ ] **KC-08C:** Queue missing admitted source URLs for capture and extraction.
-- [ ] **KC-08D:** Build an admin mapper for knowledge section -> canonical claim -> source assertions.
-- [ ] **KC-08E:** Populate `knowledge_document_claims` and the foreign-key-backed `knowledge_document_claim_assertions` join after review; retain string source/claim references only for migration audit.
-- [ ] **KC-08F:** Strengthen approval so public knowledge requires reviewed evidence mappings or explicit inference/synthesis labels.
-- [ ] **KC-08G:** Resolve mapped external evidence, accepted assertions, chunks, and locators when knowledge is retrieved; retain the knowledge text as zero-weight internal synthesis.
-- [ ] **KC-08H:** Trigger review when linked evidence changes, expires, conflicts, corrects, or supersedes the knowledge page.
+- [x] **KC-08A:** Parse material claims and evidence URLs from new and existing knowledge Markdown. The shared deterministic parser records section relationships and Markdown line locators, persists derived `materialClaims`/`evidenceUrls` metadata for newly ingested documents, and scans all 30 existing Knowledge Input files (967 claims and 146 URLs). See [`docs/audit/kc-08a-knowledge-markdown-evidence.md`](audit/kc-08a-knowledge-markdown-evidence.md).
+- [x] **KC-08B:** Suggest existing canonical claims and source documents. The publisher-only read path uses deterministic lexical/entity/value/date signals (`kc-08b-v1`) to rank canonical claims and exact URL, source-registry, or same-domain source-document matches; suggestions are returned without creating mappings or changing evidence state. See [`docs/audit/kc-08b-knowledge-link-suggestions-evidence.md`](audit/kc-08b-knowledge-link-suggestions-evidence.md).
+- [x] **KC-08C:** Queue missing admitted source URLs for capture and extraction. The publisher-only `/api/admin/knowledge/capture-missing` path sends unresolved Markdown evidence URLs through the existing idempotent source-document Queue, skips rejected sources, preserves bounded messages, and never creates claims or mappings. See [`docs/audit/kc-08c-knowledge-source-capture-evidence.md`](audit/kc-08c-knowledge-source-capture-evidence.md).
+- [x] **KC-08D:** Build an admin mapper for knowledge section -> canonical claim -> source assertions. The publisher-only `/admin/knowledge/mappings` page and same-origin mapping API save attributable mappings only after the selected canonical claim and each assertion pass non-retired, accepted, admitted, current, non-internal-synthesis checks. See [`docs/audit/kc-08d-knowledge-evidence-mapper-evidence.md`](audit/kc-08d-knowledge-evidence-mapper-evidence.md).
+- [x] **KC-08E:** Make reviewed claim/assertion joins the canonical replacement for legacy string links. Migration 0048 snapshots every `knowledge_document_sources` row into an idempotent audit ledger (including future compatibility inserts); the publisher mapper can associate a legacy link only after an eligible assertion is reviewed and the source URL resolves, then records the reviewed section/claim target. Legacy strings remain audit data and never create evidence automatically. See [`docs/audit/kc-08e-knowledge-source-link-migration-evidence.md`](audit/kc-08e-knowledge-source-link-migration-evidence.md).
+- [x] **KC-08F:** Strengthen approval so public knowledge requires every parsed material section to have a reviewed eligible external assertion, or an explicitly reviewed `editorial_synthesis`/`trace_manifest_inference` mapping with `inference_basis`. The publisher approval endpoint now fails closed with a structured gate report, protects mutations with same-origin validation, and records successful approvals in the admin audit log. See [`docs/audit/kc-08f-knowledge-approval-gate-evidence.md`](audit/kc-08f-knowledge-approval-gate-evidence.md).
+- [x] **KC-08G:** Resolve mapped external evidence, accepted current assertions, source versions, chunks, and start/end locators during knowledge retrieval. The knowledge prose remains a zero-weight internal-synthesis excerpt; resolved assertion excerpts are supplied separately with provenance metadata, while incomplete bundles stay unresolved and are excluded from external evidence. See [`docs/audit/kc-08g-knowledge-evidence-resolution-evidence.md`](audit/kc-08g-knowledge-evidence-resolution-evidence.md).
+- [x] **KC-08H:** Trigger deterministic, idempotent publisher-review proposals when linked source versions change, assertions become stale, knowledge review/expiry boundaries are reached, conflicts remain unresolved, or claims are corrected/superseded. Open proposals exclude the document from normal Ask TRACE retrieval while the public page remains visibly available for transparency; the publisher-only Change review queue does not rewrite approved prose. See [`docs/audit/kc-08h-knowledge-change-review-evidence.md`](audit/kc-08h-knowledge-change-review-evidence.md).
 
 Exit: a manually entered knowledge page can answer through its inherited external evidence and can be invalidated by later evidence without being treated as independent proof.
 
 ### KC-09 — Hybrid retrieval and multi-position Ask TRACE
 
-- [ ] **KC-09A:** Lock the embedding provider, model, dimensions, language support, chunk-size policy, cost budgets, index metadata filters, version namespace, and re-embedding procedure.
-- [ ] **KC-09B:** Add lexical/entity indexes and Vectorize bindings for Preview first. Vectorize is an optional recall improvement, not a prerequisite for the D1/FTS5 knowledge loop.
-- [ ] **KC-09C:** Create Preview metadata filters and a versioned index namespace before inserting vectors; production index creation remains a later rollout gate.
-- [ ] **KC-09D:** Index source chunks, canonical claims, published stories, approved knowledge sections, Guides, and corrections with versioned embeddings.
-- [ ] **KC-09E:** Resolve all search matches through D1 eligibility and provenance rules.
-- [ ] **KC-09F:** Group evidence into compatible and competing positions.
-- [ ] **KC-09G:** Add deterministic sufficiency, confidence, and evidence/conclusion-mode selection.
-- [ ] **KC-09H:** Extend the validated answer schema with `evidenceMode`, `conclusionMode`, `lean`, `positions`, `sourceSummaries`, `whyLean`, and `whatCouldChange`.
-- [ ] **KC-09I:** Ensure citations resolve to the supplied reviewed assertion, source chunk, and start/end locator.
-- [ ] **KC-09J:** Add refusal and disagreement tests, including the target `qualified_lean` example.
+- [x] **KC-09A:** Lock the embedding provider, model, dimensions, language support, chunk-size policy, cost budgets, index metadata filters, version namespace, and re-embedding procedure. **Complete locally:** `@cf/baai/bge-m3`, 1024 dimensions, cosine distance, original-language multilingual retrieval, existing 2,000-character locator-backed chunks, Preview token ceilings, five minimal filters, `kc09-bge-m3-v1`, and a new-index re-embedding procedure are locked in [`architecture/kc-09-embedding-policy.md`](architecture/kc-09-embedding-policy.md). No Workers AI call, Vectorize index, or production binding is enabled.
+- [x] **KC-09B:** Add the additive D1 FTS5 lexical surface plus deterministic entity/relationship indexes and declare Preview-only Workers AI/Vectorize bindings. The migration is [`db/migration-0050-knowledge-retrieval-indexes.sql`](../db/migration-0050-knowledge-retrieval-indexes.sql); Preview resource creation and metadata-index verification remain an explicitly gated control-plane step. Vectorize is an optional recall improvement, not a prerequisite for the D1/FTS5 knowledge loop.
+- [x] **KC-09C:** Create the Preview metadata filters and versioned `trace-manifest-knowledge-preview-bge-m3-v1` namespace before inserting vectors. The Preview index is 1024-dimensional with cosine distance and has the five locked string filters; production index creation remains a later rollout gate. See [`docs/audit/kc-09c-preview-vectorize-evidence.md`](audit/kc-09c-preview-vectorize-evidence.md).
+- [x] **KC-09D:** Implement the bounded, versioned Preview indexer for admitted locator-backed source chunks, supported canonical claims, published stories, approved knowledge sections, optional published Guides, and published corrections. The run/item state migration and Worker activation are complete; the first bounded embedding run remains a separate signed-admin execution gate. See [`docs/audit/kc-09d-preview-indexing-evidence.md`](audit/kc-09d-preview-indexing-evidence.md).
+- [x] **KC-09E:** Resolve all search matches through D1 eligibility and provenance rules. Vectorize matches are recall-only: stable IDs and policy metadata are checked, then source admission, extraction, locator, publication, freshness, correction, change-proposal, and provenance state are re-read from D1. Ineligible, stale, duplicated, malformed, or unavailable records are rejected fail-closed. See [`docs/audit/kc-09e-vector-resolution-evidence.md`](audit/kc-09e-vector-resolution-evidence.md).
+- [x] **KC-09F:** Group evidence into compatible and competing positions. KC-09E matches are expanded through reviewed D1 claim relationships and unresolved/acknowledged conflict cases. Exact claim identity and reviewed supports/reproduces/qualifies links form compatible positions; contradiction, correction, supersession, and temporal-change edges remain explicit competing pairs. Unclaimed records remain standalone positions and no semantic model inference is used. See [`docs/audit/kc-09f-position-grouping-evidence.md`](audit/kc-09f-position-grouping-evidence.md).
+- [x] **KC-09G:** Add deterministic sufficiency, confidence, and evidence/conclusion-mode selection. Application policy now selects `supported`, `qualified_lean`, `multiple_positions`, or `insufficient_evidence` from current/direct evidence, independent provenance groups, stale/disputed penalties, and reviewed competition edges; `evidenceMode` remains independent and model output cannot upgrade it. See [`docs/audit/kc-09g-conclusion-policy-evidence.md`](audit/kc-09g-conclusion-policy-evidence.md).
+- [x] **KC-09H:** Extend the validated answer schema with `evidenceMode`, `conclusionMode`, `directAnswer`, `lean`, `positions`, claim-level assertion citations, `sourceSummaries`, `whyLean`, confidence/limitations, and `whatCouldChange`. The application-selected mode/confidence is checked after model generation; unknown IDs, mismatched locators, unsupported positions, and model attempts to change policy fail closed. See [`docs/audit/kc-09h-answer-schema-evidence.md`](audit/kc-09h-answer-schema-evidence.md).
+- [x] **KC-09I:** Resolve every answer citation against D1's reviewed assertion, canonical claim, admitted source document/version, and exact source chunk/start/end locator. Rejections cover malformed/duplicate IDs, state drift, stale/disputed/corrected claims, quarantined sources, version/chunk mismatches, and locator tampering; resolved citations retain bounded source text and provenance handles. See [`docs/audit/kc-09i-citation-resolution-evidence.md`](audit/kc-09i-citation-resolution-evidence.md).
+- [x] **KC-09J:** Add refusal and disagreement tests, including a target `qualified_lean` fixture. Refusals may contain no factual claims/citations, material disagreements must remain explicit in the answer, and the application-selected qualified lean plus `whatCouldChange` guidance cannot be changed by the model. See [`docs/audit/kc-09j-refusal-disagreement-evidence.md`](audit/kc-09j-refusal-disagreement-evidence.md).
 
 Exit: Ask TRACE can return the ADR 0016 evidence mode plus supported, qualified-lean, multiple-position, and insufficient-evidence conclusions with assertion-level citations and source summaries.
 
 ### KC-10 — Knowledge-impact proposals and revisions
 
-- [ ] **KC-10A:** Match new accepted claims to approved knowledge documents, Guides, model profiles, and earlier stories.
-- [ ] **KC-10B:** Create change proposals for support, qualification, contradiction, correction, supersession, timeline addition, comparison update, or review-only impact.
-- [ ] **KC-10C:** Build queues for affected knowledge, expiring knowledge, unresolved contradictions, and orphan claims.
-- [ ] **KC-10D:** Require a reviewed immutable revision for substantive public changes.
-- [ ] **KC-10E:** Preserve the prior version, evidence set, score, rationale, and reviewer decision.
+- [x] **KC-10A:** Match new accepted claims to approved knowledge documents, Guides, model profiles, and earlier stories with the bounded, deterministic, read-only `kc-10a-v1` matcher. Eligibility re-checks accepted/admitted/current claim evidence, publication state, hard expiry, and open change proposals; no proposals or revisions are written. See [`docs/audit/kc-10a-knowledge-impact-matching-evidence.md`](audit/kc-10a-knowledge-impact-matching-evidence.md).
+- [x] **KC-10B:** Create idempotent, review-gated impact proposals for support, qualification, contradiction, correction, supersession, timeline addition, comparison update, or review-only impact. Migration 0052 records generic target identities for knowledge documents, Guides, model profiles, and stories; proposals remain `proposed` and never rewrite or publish targets. See [`docs/audit/kc-10b-knowledge-impact-proposals-evidence.md`](audit/kc-10b-knowledge-impact-proposals-evidence.md).
+- [x] **KC-10C:** Build bounded publisher-only queues for affected knowledge, expiring knowledge, unresolved contradictions, and orphan accepted claims. The read-only `kc-10c-v1` service combines KC-10B and legacy review signals, re-checks D1 eligibility, and is surfaced at `/admin/knowledge/impact-queues`. See [`docs/audit/kc-10c-knowledge-impact-queues-evidence.md`](audit/kc-10c-knowledge-impact-queues-evidence.md).
+- [x] **KC-10D:** Require a reviewed immutable revision for substantive public changes. Approved-document ingest overwrites now become draft revisions; publisher-only revision routes apply or reject them with same-origin checks, atomic state transitions, and preserved prior evidence/score context. See [`docs/audit/kc-10d-knowledge-revision-evidence.md`](audit/kc-10d-knowledge-revision-evidence.md).
+- [x] **KC-10E:** Preserve the prior version, complete evidence set, score context, rationale, and reviewer decision in append-only snapshots protected against tampering; expose bounded publisher history through the revision API. See [`docs/audit/kc-10e-knowledge-revision-history-evidence.md`](audit/kc-10e-knowledge-revision-history-evidence.md).
 
 Exit: a later model release can propose updates to earlier model knowledge and comparisons without silently changing them.
 
 ### KC-11 — Historical backfill
 
-- [ ] **KC-11A:** Inventory all published stories, approved knowledge documents, static knowledge pages, Guides, corrections, models, providers, benchmarks, and source URLs.
-- [ ] **KC-11B:** Produce a dry-run cost report and reviewed total backfill budget.
+- [x] **KC-11A:** Inventory all published stories, approved knowledge documents, static knowledge pages, Guides, corrections, models, providers, benchmarks, and source URLs. `scripts/inventory-backfill.mjs` produces the read-only `kc-11a-v1` inventory; the 27 July 2026 Preview baseline contains 0 published/approved D1 content records, 16 static pages, 30 Markdown inputs, 23 Guide-related files, and 193 unique source URLs/references. See [`docs/audit/kc-11a-backfill-inventory-evidence.md`](audit/kc-11a-backfill-inventory-evidence.md).
+- [x] **KC-11B:** Produce a read-only dry-run cost report and reviewed local total backfill ceiling. `scripts/backfill-cost-report.mjs` reports deterministic checks, governed routine-AI calls, token ceilings, the KC-09 embedding envelope, and an `$18.4435` Preview-static baseline maximum; explicit batch approval remains required. See [`docs/audit/kc-11b-backfill-cost-evidence.md`](audit/kc-11b-backfill-cost-evidence.md).
 - [ ] **KC-11C:** Backfill admitted source documents and versions in bounded batches.
 - [ ] **KC-11D:** Extract source summaries, entities, claims, opinions, caveats, and provenance candidates.
 - [ ] **KC-11E:** Review high-impact, conflicting, failed, paywalled, and low-confidence records.
@@ -750,6 +750,30 @@ Exit: every published story and approved knowledge document has an explicit back
 - [ ] **KC-12G:** Keep public numeric evidence scores disabled until KC-07F passes; launch with qualitative bands and explanations, then enable numeric snapshots only through a reviewed policy-version rollout.
 
 Exit: the complete system is enabled in bounded stages, and every public claim can be traced through TRACE synthesis to admitted external evidence.
+
+## 10A. Deferred post-KC extensions
+
+The 26 July 2026 ADR-0020 capability-first news and secondary discovery sources, and the TRACE Capture mobile and bulk capture compatibility instruction, were reviewed during KC implementation. They do not change the KC evidence, claim, retrieval, proposal, or queue contracts. They are deliberately deferred until KC-10D/E, KC-11, and the initial KC-12 rollout are complete.
+
+The existing `editorial_candidates` path remains the closest current lead boundary, while `admitAndQueueManualCapture` remains an evidence-oriented source-document path for reviewed knowledge URLs. A future TRACE Capture submission must not bypass that distinction or write directly to `feed_items`, `story_clusters`, claims, or evidence records. KC orphan-claim queues must continue to ignore unadmitted capture leads until a reviewed canonical assertion exists.
+
+### Post-KC-01 — capability-first news and secondary discovery (ADR-0020)
+
+- [ ] Add `editorial_class` (`capability`, `narrative`, `mixed`) and versioned capability metadata with source/assertion provenance and explicit `unknown` values.
+- [ ] Add constrained discovery-source roles and policies for AI Search, Lev Selector, Hacker News AI, and direct Hacker News comparison; discovery sources may trigger candidates but cannot confirm or auto-publish claims.
+- [ ] Add discovery-resolution and coverage-audit records, original-source lookup tasks, and a publisher queue for unresolved candidates.
+- [ ] Add selective YouTube metadata/caption ingestion with quota/backoff, timestamped attribution, transcript minimisation, URL safety, and prompt-injection controls.
+- [ ] Add reviewed public presentation blocks for “What can I do now?”, “What remains unclear”, evidence labels, supplemental “Watch or listen”, capability filtering, caught-up briefings, and non-discovery notifications.
+- [ ] Calibrate capability prioritisation and missed-story comparison for at least four weeks before changing ranking weights.
+
+### Post-KC-02 — TRACE Capture intake and bulk editorial import
+
+- [ ] Add a new capture-intake ADR and contract (`CaptureBatchRequest`/item result) independent of D1 table shapes; reserve `capture_batches`, `capture_items`, `capture_item_urls`, and `capture_import_events` or equivalent additive tables.
+- [ ] Define authenticated single-item, bulk, JSON, plain-text, optional CSV, and Admin import adapters with partial success, authoritative server IDs/timestamps, batch/item idempotency, duplicate explanations, bounded payloads, and auditable status transitions.
+- [ ] Keep captures as editorial leads through inbox, deduplication, URL resolution, fetch/enrichment, existing ingestion, and review; capture admission must never publish or establish trust/evidence.
+- [ ] Specify a future restricted user/device authentication model (`capture:create`, `capture:read-own`, `capture:retry-own`) with revocable short-lived credentials; never place a permanent administrator secret in the Android app.
+- [ ] Add SSRF-safe enrichment, URL scheme/redirect/private-network checks, untrusted-content sanitisation, rate limits, upload limits, and security/audit tests before enabling any public mobile endpoint.
+- [ ] Add the mobile/bulk admin preview and duplicate/rejection views only after the contract and migration are reviewed; do not build Android-specific behaviour in TRACE core.
 
 ## 11. Backfill order and token budget
 

@@ -5,6 +5,8 @@
 import type { APIRoute } from "astro";
 import { authenticateAccessRequest, type AccessEnvironment } from "../../../../security/access-auth";
 import { extractEvidenceUrls, linkKnowledgeSources } from "../../../../lib/server/knowledge-sources";
+import { parseKnowledgeMarkdown } from "../../../../lib/server/knowledge-markdown";
+import { proposeKnowledgeRevision } from "../../../../lib/server/knowledge-revisions";
 
 export const prerender = false;
 
@@ -180,6 +182,9 @@ export const POST: APIRoute = async ({ request, locals }) => {
   }
 
   const { frontmatter, body } = parsed;
+  const structured = parseKnowledgeMarkdown(raw);
+  const materialClaims = "error" in structured ? [] : structured.materialClaims;
+  const evidenceUrls = "error" in structured ? extractEvidenceUrls(body) : structured.evidenceUrls;
 
   // Validate required fields
   if (!frontmatter.canonical_question || frontmatter.canonical_question.trim().length < 5) {
@@ -257,9 +262,36 @@ export const POST: APIRoute = async ({ request, locals }) => {
     frontmatter,
     body,
     sections: bodySections,
+    materialClaims,
+    evidenceUrls,
   });
 
   // ── ADR 0017 checkbox 5: version history on overwrite ──────────
+  if (existing && overwrite && existing.status === "approved") {
+    try {
+      const revision = await proposeKnowledgeRevision(db, {
+        knowledgeDocumentId: existing.id,
+        payload: {
+          canonicalQuestion: frontmatter.canonical_question.trim(),
+          directAnswer,
+          detailedExplanation,
+          documentJson,
+          sourceSetHash: frontmatter.source_set_hash || existing.source_set_hash,
+          evidenceStatus,
+          reviewAfter: frontmatter.review_after || null,
+          hardExpiry: frontmatter.hard_expiry || null,
+        },
+        rationale: `Ingest overwrite requested by ${identity.email}; approved text requires reviewed revision.`,
+        changeSummary: `Proposed ingest revision by ${identity.email}`,
+        createdBy: identity.email,
+      });
+      return Response.json({ success: true, status: "revision_pending", revisionId: revision.revisionId, revisionNumber: revision.revisionNumber, knowledgeDocumentId: revision.knowledgeDocumentId }, { status: 202 });
+    } catch (error) {
+      console.error("knowledge_document revision proposal failed:", error);
+      return Response.json({ error: "Failed to create a reviewed knowledge revision." }, { status: 409 });
+    }
+  }
+
   if (existing && overwrite) {
     try {
       // Get current max revision number
@@ -318,7 +350,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
         .run();
 
       // ADR 0017: extract and link evidence sources
-      const extractedSources = extractEvidenceUrls(body);
+      const extractedSources = evidenceUrls;
       const linkResult = await linkKnowledgeSources(db, existing.id, extractedSources);
 
       return Response.json({
@@ -331,6 +363,8 @@ export const POST: APIRoute = async ({ request, locals }) => {
         revision: nextRevision,
         sourcesLinked: linkResult.linked,
         sourcesQuarantined: linkResult.quarantined,
+        materialClaimsFound: materialClaims.length,
+        evidenceUrlsFound: evidenceUrls.length,
         message: `Knowledge document updated to revision ${nextRevision}. ${linkResult.linked} source(s) linked, ${linkResult.quarantined} quarantined.`,
       }, { status: 200 });
     } catch (err) {
@@ -377,7 +411,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
       .run();
 
     // ADR 0017: extract and link evidence sources
-    const extractedSources = extractEvidenceUrls(body);
+    const extractedSources = evidenceUrls;
     const linkResult = await linkKnowledgeSources(db, docId, extractedSources);
 
     return Response.json({
@@ -389,6 +423,8 @@ export const POST: APIRoute = async ({ request, locals }) => {
       status: "draft",
       sourcesLinked: linkResult.linked,
       sourcesQuarantined: linkResult.quarantined,
+      materialClaimsFound: materialClaims.length,
+      evidenceUrlsFound: evidenceUrls.length,
       message: `Knowledge document created with ${linkResult.linked} linked source(s) and ${linkResult.quarantined} quarantined.`,
     }, { status: 201 });
   } catch (err) {

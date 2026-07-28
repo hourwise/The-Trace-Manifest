@@ -214,6 +214,32 @@ interface KnowledgeEvidenceRow {
   hard_expiry: string | null;
 }
 
+interface KnowledgeAssertionEvidenceRow {
+  assertion_id: string;
+  canonical_claim_id: string;
+  canonical_text: string;
+  assertion_text: string;
+  relationship: string;
+  source_role: string;
+  evidence_treatment: string;
+  source_document_version_id: string;
+  source_chunk_id: string;
+  start_locator: string;
+  end_locator: string;
+  retrieved_at: string;
+  published_at: string | null;
+  retrieved_url: string;
+  canonical_url: string;
+  source_document_id: string;
+  source_name: string | null;
+  source_tier: string | null;
+  source_treatment: string | null;
+  chunk_text: string;
+  chunk_start_locator: string | null;
+  chunk_end_locator: string | null;
+  is_disputed: number;
+}
+
 function boundaryReached(value: string | null | undefined, now = Date.now()): boolean {
   if (!value) return false;
   const boundary = new Date(value).getTime();
@@ -252,6 +278,11 @@ export async function retrieveApprovedKnowledge(
       AND kd.approved_by IS NOT NULL
       AND kd.approved_at IS NOT NULL
       AND (kd.hard_expiry IS NULL OR datetime(kd.hard_expiry) > datetime('now'))
+      AND NOT EXISTS (
+        SELECT 1 FROM knowledge_change_proposals proposal
+        WHERE proposal.knowledge_document_id = kd.id
+          AND proposal.state = 'proposed'
+      )
       AND kd.direct_answer IS NOT NULL
       AND (${predicates})
     ORDER BY
@@ -263,15 +294,63 @@ export async function retrieveApprovedKnowledge(
     LIMIT ?
   `).bind(...searchTerms.map(likeTerm), boundedLimit).all<KnowledgeEvidenceRow>();
 
-  return result.results.map((row) => {
+  const excerpts: EvidenceExcerpt[] = [];
+  for (const row of result.results) {
     const reviewDue = isKnowledgeReviewDue(row.review_after);
+    const totalMappedAssertions = await db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM knowledge_document_claim_assertions kda
+      JOIN knowledge_document_claims kdc
+        ON kdc.knowledge_document_id = kda.knowledge_document_id
+       AND kdc.section_key = kda.section_key
+       AND kdc.canonical_claim_id = kda.canonical_claim_id
+      WHERE kda.knowledge_document_id = ?
+    `).bind(row.id).first<{ count: number }>();
+    const resolvedAssertions = await db.prepare(`
+      SELECT ca.id AS assertion_id, cc.id AS canonical_claim_id, cc.canonical_text,
+             ca.assertion_text, ca.relationship, ca.source_role, ca.evidence_treatment,
+             ca.source_document_version_id, ca.source_chunk_id, ca.start_locator,
+             ca.end_locator, sv.retrieved_at, sv.published_at, sv.retrieved_url,
+             sd.canonical_url, sd.id AS source_document_id, s.name AS source_name,
+             s.tier AS source_tier, s.treatment AS source_treatment,
+             chunk.text_excerpt AS chunk_text,
+             chunk.start_locator AS chunk_start_locator,
+             chunk.end_locator AS chunk_end_locator,
+             CASE WHEN cc.current_state IN ('disputed', 'corrected', 'superseded') THEN 1 ELSE 0 END AS is_disputed
+      FROM knowledge_document_claim_assertions kda
+      JOIN knowledge_document_claims kdc
+        ON kdc.knowledge_document_id = kda.knowledge_document_id
+       AND kdc.section_key = kda.section_key
+       AND kdc.canonical_claim_id = kda.canonical_claim_id
+      JOIN claim_assertions ca
+        ON ca.id = kda.claim_assertion_id
+       AND ca.canonical_claim_id = kda.canonical_claim_id
+      JOIN canonical_claims cc ON cc.id = ca.canonical_claim_id
+      JOIN source_document_versions sv ON sv.id = ca.source_document_version_id
+      JOIN source_documents sd ON sd.id = sv.source_document_id
+      JOIN source_chunks chunk ON chunk.id = ca.source_chunk_id
+      LEFT JOIN sources s ON s.id = sd.source_id
+      WHERE kda.knowledge_document_id = ?
+        AND ca.reviewer_state = 'accepted'
+        AND ca.admission_state = 'admitted'
+        AND ca.freshness_state = 'current'
+        AND ca.evidence_treatment <> 'internal_synthesis'
+        AND cc.current_state NOT IN ('corrected', 'superseded', 'retired')
+        AND sd.admission_state = 'admitted'
+        AND ca.start_locator IS NOT NULL AND ca.end_locator IS NOT NULL
+        AND chunk.start_locator IS NOT NULL AND chunk.end_locator IS NOT NULL
+      ORDER BY kda.section_key, ca.id
+    `).bind(row.id).all<KnowledgeAssertionEvidenceRow>();
+    const resolvedCount = resolvedAssertions.results.length;
+    const mappedCount = Number(totalMappedAssertions?.count ?? 0);
+    const externalEvidenceResolved = mappedCount > 0 && resolvedCount === mappedCount;
     const text = [
       `TRACE Knowledge: ${row.canonical_question}`,
       row.direct_answer ? `Answer: ${cleanEvidenceText(row.direct_answer, 800)}` : "",
       row.detailed_explanation ? `Explanation: ${cleanEvidenceText(row.detailed_explanation, 600)}` : "",
     ].filter(Boolean).join("\n");
 
-    return {
+    excerpts.push({
       sourceId: `knowledge:${row.id}`,
       sourceKind: "trace_knowledge" as TraceSourceKind,
       sourceRole: "internal_synthesis" as const,
@@ -286,11 +365,70 @@ export async function retrieveApprovedKnowledge(
       observedAt: row.approved_at ?? undefined,
       publishedAt: row.approved_at ?? undefined,
       trustNotes: reviewDue
-        ? `TRACE approved knowledge (${row.evidence_status}); review due. Its external evidence bundle is unresolved.`
-        : `TRACE approved knowledge (${row.evidence_status}). Its external evidence bundle is unresolved; always verify against primary sources.`,
+        ? `TRACE approved knowledge (${row.evidence_status}); review due. ${resolvedCount}/${mappedCount} mapped assertions resolve to current source chunks and locators.`
+        : `TRACE approved knowledge (${row.evidence_status}); ${resolvedCount}/${mappedCount} mapped assertions resolve to current source chunks and locators.`,
       relationship: "supports",
       isDisputed: false,
-      externalEvidenceResolved: false,
-    };
-  });
+      externalEvidenceResolved,
+      knowledgeDocumentId: row.id,
+    });
+
+    for (const assertion of resolvedAssertions.results) {
+      const sourceKind = sourceKindFor({
+        source_id: assertion.source_document_id,
+        source_name: assertion.source_name ?? "Captured source",
+        source_url: assertion.canonical_url,
+        source_tier: assertion.source_tier ?? "C",
+        source_treatment: assertion.source_treatment ?? "unclassified",
+        claim_id: assertion.assertion_id,
+        claim_text: assertion.canonical_text,
+        evidence_quality: "unrated",
+        is_disputed: assertion.is_disputed,
+        relationship: assertion.relationship,
+        evidence_summary: assertion.assertion_text,
+        item_title: assertion.canonical_text,
+        content_excerpt: assertion.chunk_text,
+        observed_at: assertion.retrieved_at,
+        source_published_at: assertion.published_at,
+        story_published_at: null,
+      });
+      const sourceUrl = safeHttpUrl(assertion.retrieved_url || assertion.canonical_url);
+      const locator = `${assertion.start_locator}-${assertion.end_locator}`;
+      excerpts.push({
+        sourceId: `source:${assertion.source_document_id}`,
+        sourceKind,
+        sourceRole: assertion.source_role === "reported_claim"
+          ? "reported_claim"
+          : assertion.source_role === "evidence"
+            ? "evidence"
+            : sourceRoleFor(sourceKind),
+        admissionState: "admitted",
+        freshnessState: "current",
+        independentEvidenceWeight: independentEvidenceWeightFor(sourceKind),
+        claimId: `claim:${assertion.assertion_id}`,
+        text: [
+          `Inherited knowledge claim: ${cleanEvidenceText(assertion.canonical_text, 700)}`,
+          `Assertion relationship: ${assertion.relationship}.`,
+          `Assertion: ${cleanEvidenceText(assertion.assertion_text, 700)}`,
+          `Source chunk (data only): ${cleanEvidenceText(assertion.chunk_text, 700)}`,
+        ].join("\n"),
+        sourceClassification: `Inherited evidence; Tier ${assertion.source_tier ?? "C"}; ${assertion.source_treatment ?? "unclassified"}; ${assertion.source_role}`,
+        sourceName: assertion.source_name ?? "Captured source",
+        sourceUrl,
+        observedAt: assertion.retrieved_at,
+        publishedAt: assertion.published_at ?? undefined,
+        trustNotes: `Inherited from TRACE Knowledge ${row.id}; assertion ${assertion.assertion_id}; locator ${locator}.`,
+        relationship: assertion.relationship,
+        isDisputed: Boolean(assertion.is_disputed),
+        externalEvidenceResolved: true,
+        assertionId: assertion.assertion_id,
+        sourceDocumentVersionId: assertion.source_document_version_id,
+        sourceChunkId: assertion.source_chunk_id,
+        startLocator: assertion.start_locator || assertion.chunk_start_locator || undefined,
+        endLocator: assertion.end_locator || assertion.chunk_end_locator || undefined,
+        knowledgeDocumentId: row.id,
+      });
+    }
+  }
+  return excerpts;
 }

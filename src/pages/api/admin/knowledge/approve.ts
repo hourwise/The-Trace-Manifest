@@ -3,6 +3,8 @@
 
 import type { APIRoute } from "astro";
 import { authenticateAccessRequest, type AccessEnvironment } from "../../../../security/access-auth";
+import { sameOriginRequest, type OriginPolicyEnvironment } from "../../../../security/origin-policy";
+import { evaluateKnowledgeApproval } from "../../../../lib/server/knowledge-approval";
 
 export const prerender = false;
 
@@ -11,6 +13,9 @@ export const PATCH: APIRoute = async ({ request, locals }) => {
   const identity = await authenticateAccessRequest(request, env as unknown as AccessEnvironment);
   if (!identity || identity.role !== "publisher") {
     return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
+  if (!sameOriginRequest(request, env as unknown as OriginPolicyEnvironment)) {
+    return Response.json({ error: "Origin rejected" }, { status: 403 });
   }
 
   const db = env.DB as D1Database;
@@ -50,6 +55,15 @@ export const PATCH: APIRoute = async ({ request, locals }) => {
     }, { status: 400 });
   }
 
+  const evidenceGate = await evaluateKnowledgeApproval(db, docId);
+  if (!evidenceGate.eligible) {
+    return Response.json({
+      error: "Public knowledge requires reviewed evidence mappings or an explicit reviewed inference/synthesis basis.",
+      code: "knowledge_evidence_required",
+      gate: evidenceGate,
+    }, { status: 409 });
+  }
+
   // Determine visibility: public_knowledge (retrievable, not a public page) or public_guide
   const visibility = body.visibility === "public_guide" ? "public_guide" : "public_knowledge";
 
@@ -66,6 +80,17 @@ export const PATCH: APIRoute = async ({ request, locals }) => {
       )
       .bind(visibility, identity.email, docId)
       .run();
+
+    await db.prepare(`
+      INSERT INTO admin_audit_log
+        (event_id, operator_email, operator_role, action, target_type, target_id,
+         request_id, outcome, detail_code)
+      VALUES (?, ?, 'publisher', 'approve_knowledge_document', 'knowledge_document',
+              ?, ?, 'succeeded', ?)
+    `).bind(
+      crypto.randomUUID(), identity.email, docId, crypto.randomUUID(),
+      `visibility=${visibility};materialClaims=${evidenceGate.materialClaimCount}`,
+    ).run();
 
     return Response.json({
       success: true,

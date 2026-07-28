@@ -24,6 +24,13 @@ export interface PostValidationResult {
   correctedDraft?: TraceAnswerDraft;  // Auto-corrected draft (rare)
 }
 
+export interface AnswerPolicyExpectation {
+  evidenceMode: "knowledge" | "researched" | "insufficient" | "out_of_scope" | "refused";
+  conclusionMode: "supported" | "qualified_lean" | "multiple_positions" | "insufficient_evidence";
+  confidence: "high" | "medium" | "low" | "insufficient_evidence";
+  leanPositionId?: string | null;
+}
+
 // ============================================================
 // Answer validation
 // ============================================================
@@ -32,6 +39,7 @@ export function validateAnswerOutput(
   draft: unknown,
   suppliedExcerpts: EvidenceExcerpt[],
   maxOutputTokens: number,
+  expectedPolicy?: AnswerPolicyExpectation,
 ): PostValidationResult {
   const failures: string[] = [];
 
@@ -44,11 +52,26 @@ export function validateAnswerOutput(
 
   const answer = draft as TraceAnswerDraft;
 
+  // 0. Application policy is authoritative; the model cannot choose modes or
+  // confidence. A caller that has not yet wired KC-09G can omit this check
+  // while still receiving the structural and identifier checks below.
+  if (expectedPolicy) {
+    if (answer.evidenceMode !== expectedPolicy.evidenceMode) failures.push("Model changed the application-selected evidenceMode.");
+    if (answer.conclusionMode !== expectedPolicy.conclusionMode) failures.push("Model changed the application-selected conclusionMode.");
+    if (answer.confidence !== expectedPolicy.confidence) failures.push("Model changed the application-selected confidence.");
+    if (expectedPolicy.leanPositionId !== undefined && answer.lean !== expectedPolicy.leanPositionId) {
+      failures.push("Model changed the application-selected lean position.");
+    }
+  }
+
   // 2. Citation validation — every cited source was supplied
   const suppliedSourceIds = suppliedExcerpts.map(e => e.sourceId);
   const suppliedClaimIds = suppliedExcerpts.filter(e => e.claimId).map(e => e.claimId!);
   const suppliedPairs = new Set(
     suppliedExcerpts.filter((excerpt) => excerpt.claimId).map((excerpt) => `${excerpt.sourceId}\u0000${excerpt.claimId}`),
+  );
+  const suppliedAssertions = new Map(
+    suppliedExcerpts.filter((excerpt) => excerpt.assertionId).map((excerpt) => [excerpt.assertionId!, excerpt]),
   );
   const citationCheck = validateCitations(
     answer.citedSourceIds,
@@ -77,9 +100,43 @@ export function validateAnswerOutput(
     if (!claimCheck.valid || claim.evidenceSourceIds.length === 0 || claim.evidenceClaimIds.length === 0 || !pairsAreValid) {
       failures.push(`Claim ${index + 1} is not linked only to supplied evidence.`);
     }
+    if (!suppliedClaimIds.includes(claim.claimId)) failures.push(`Claim ${index + 1} has an unknown claimId.`);
+    for (const assertionId of claim.citationAssertionIds) {
+      if (!suppliedAssertions.has(assertionId)) failures.push(`Claim ${index + 1} cites an unknown assertionId.`);
+    }
   }
-  if (answer.claims.length === 0) {
+  const isRefusalOrNonAnswer = ["insufficient", "out_of_scope", "refused"].includes(answer.evidenceMode);
+  if (answer.claims.length === 0 && !isRefusalOrNonAnswer) {
     failures.push("Answer has no evidence-linked claims.");
+  }
+
+  const positionIds = new Set<string>();
+  for (const [index, position] of answer.positions.entries()) {
+    if (positionIds.has(position.positionId)) failures.push(`Position ${index + 1} is duplicated.`);
+    positionIds.add(position.positionId);
+    if (position.sourceIds.some((id) => !suppliedSourceIds.includes(id))) failures.push(`Position ${index + 1} cites an unknown source.`);
+    if ([...position.supportingClaimIds, ...position.contradictingClaimIds].some((id) => !suppliedClaimIds.includes(id))) {
+      failures.push(`Position ${index + 1} cites an unknown claim.`);
+    }
+  }
+  if (expectedPolicy && expectedPolicy.conclusionMode !== "insufficient_evidence" && answer.positions.length === 0) {
+    failures.push("A conclusive answer must include at least one position.");
+  }
+  for (const [index, summary] of answer.sourceSummaries.entries()) {
+    if (!suppliedSourceIds.includes(summary.sourceId)) failures.push(`Source summary ${index + 1} cites an unknown source.`);
+  }
+  for (const citation of answer.citations) {
+    const supplied = suppliedAssertions.get(citation.assertionId);
+    if (!supplied) {
+      failures.push(`Citation references an unknown assertionId: ${citation.assertionId}`);
+      continue;
+    }
+    if (supplied.sourceDocumentVersionId !== citation.sourceDocumentVersionId
+      || supplied.sourceChunkId !== citation.sourceChunkId
+      || supplied.startLocator !== citation.startLocator
+      || supplied.endLocator !== citation.endLocator) {
+      failures.push(`Citation ${citation.assertionId} does not match the supplied reviewed locator.`);
+    }
   }
 
   // 3. Truncation check
@@ -202,8 +259,22 @@ export function validatePredictionOutput(
 function safeNonAnswer(reason: string): TraceAnswerDraft {
   return {
     answer: "TRACE was unable to produce a validated answer for this question. The available evidence may be insufficient, or the question may require information not currently in the TRACE corpus.",
+    evidenceMode: "insufficient",
+    conclusionMode: "insufficient_evidence",
+    directAnswer: "TRACE does not have enough eligible evidence to answer this question reliably.",
+    lean: null,
+    whyLean: "No defensible lean was selected.",
+    positions: [],
+    sourceSummaries: [],
+    confidence: "insufficient_evidence",
+    confidenceScore: null,
+    confidenceReasons: [reason],
+    limitations: [reason],
+    unresolvedQuestions: [],
+    freshestEvidenceAt: null,
     keyPoints: ["No validated answer could be produced."],
     claims: [],
+    citations: [],
     citedSourceIds: [],
     citedClaimIds: [],
     confirmedFacts: [],

@@ -1,0 +1,244 @@
+---
+// KC-08D/E: publisher-only mapper and legacy-link migration review.
+import BaseLayout from "../../../layouts/BaseLayout.astro";
+import { authenticateAccessRequest, type AccessEnvironment } from "../../../security/access-auth";
+import { suggestKnowledgeLinks, type KnowledgeClaimSuggestion } from "../../../lib/server/knowledge-link-suggestions";
+import { listLegacyKnowledgeSourceLinks, type LegacyKnowledgeSourceLink } from "../../../lib/server/knowledge-source-migration";
+
+export const prerender = false;
+
+const env = Astro.locals.runtime.env;
+const identity = await authenticateAccessRequest(Astro.request, env as unknown as AccessEnvironment);
+if (!identity || identity.role !== "publisher") return new Response("Forbidden", { status: 403 });
+
+const db = env.DB as D1Database;
+const documents = (await db.prepare(`
+  SELECT id, canonical_question, status, evidence_status
+  FROM knowledge_documents
+  ORDER BY updated_at DESC, created_at DESC
+  LIMIT 100
+`).all<{ id: string; canonical_question: string; status: string; evidence_status: string }>()).results ?? [];
+
+const requestedId = new URL(Astro.request.url).searchParams.get("id") ?? "";
+const selected = documents.find((document) => document.id === requestedId) ?? documents[0] ?? null;
+const legacySourceLinks: LegacyKnowledgeSourceLink[] = selected
+  ? await listLegacyKnowledgeSourceLinks(db, selected.id)
+  : [];
+let suggestions: Awaited<ReturnType<typeof suggestKnowledgeLinks>> | null = null;
+let suggestionError = "";
+if (selected) {
+  try {
+    suggestions = await suggestKnowledgeLinks(db, { knowledgeDocumentId: selected.id, maxClaims: 8, maxSources: 5 });
+  } catch (error) {
+    suggestionError = error instanceof Error ? error.message : "Suggestions unavailable.";
+  }
+}
+
+interface AssertionRow {
+  id: string;
+  canonical_claim_id: string;
+  assertion_text: string;
+  relationship: string;
+  source_role: string;
+  retrieved_url: string | null;
+}
+interface MappingRow {
+  section_key: string;
+  canonical_claim_id: string;
+  relationship: string;
+  assertion_count: number;
+}
+
+const assertions = selected ? ((await db.prepare(`
+  SELECT ca.id, ca.canonical_claim_id, ca.assertion_text, ca.relationship,
+         ca.source_role, version.retrieved_url
+  FROM claim_assertions ca
+  LEFT JOIN source_document_versions version ON version.id = ca.source_document_version_id
+  WHERE ca.reviewer_state = 'accepted'
+    AND ca.admission_state = 'admitted'
+    AND ca.freshness_state = 'current'
+    AND ca.evidence_treatment <> 'internal_synthesis'
+  ORDER BY ca.updated_at DESC
+  LIMIT 500
+`).all<AssertionRow>()).results ?? []) : [];
+const mappings = selected ? ((await db.prepare(`
+  SELECT claims.section_key, claims.canonical_claim_id, claims.relationship,
+         COUNT(assertions.claim_assertion_id) AS assertion_count
+  FROM knowledge_document_claims claims
+  LEFT JOIN knowledge_document_claim_assertions assertions
+    ON assertions.knowledge_document_id = claims.knowledge_document_id
+   AND assertions.section_key = claims.section_key
+   AND assertions.canonical_claim_id = claims.canonical_claim_id
+  WHERE claims.knowledge_document_id = ?
+  GROUP BY claims.section_key, claims.canonical_claim_id, claims.relationship
+`).bind(selected.id).all<MappingRow>()).results ?? []) : [];
+
+const assertionsByClaim = new Map<string, AssertionRow[]>();
+for (const assertion of assertions) {
+  const list = assertionsByClaim.get(assertion.canonical_claim_id) ?? [];
+  list.push(assertion);
+  assertionsByClaim.set(assertion.canonical_claim_id, list);
+}
+const suggestionsBySection = new Map<string, KnowledgeClaimSuggestion[]>();
+for (const suggestion of suggestions?.claimSuggestions ?? []) {
+  const key = `${suggestion.sectionKey}\u0000${suggestion.claimText}`;
+  const list = suggestionsBySection.get(key) ?? [];
+  list.push(suggestion);
+  suggestionsBySection.set(key, list);
+}
+const mappingKey = (sectionKey: string, claimId: string) => `${sectionKey}\u0000${claimId}`;
+const mapped = new Map(mappings.map((mapping) => [mappingKey(mapping.section_key, mapping.canonical_claim_id), mapping]));
+const label = (value: string) => value.replace(/_/g, " ");
+const claimRelationships = ["answers", "supports", "qualifies", "contradicts", "contextualises", "inference_basis"];
+const assertionRelationships = ["supports", "qualifies", "contradicts", "contextualises", "reports"];
+---
+
+<BaseLayout title="Knowledge Evidence Mapper — TRACE Desk" description="Publisher review of knowledge claims and evidence assertions.">
+  <div class="wrap">
+    <h1>Knowledge evidence mapper</h1>
+    <p class="meta">Publisher-only review. Select a parsed material statement, choose an existing canonical claim and an eligible external assertion, then save the attributable mapping. Suggestions never create links automatically.</p>
+    <p style="margin:1rem 0 2rem;"><a href="/admin/knowledge" style="color:var(--color-accent);">&larr; Knowledge Builder</a> &nbsp;|&nbsp; <a href="/admin/knowledge/claim-matches" style="color:var(--color-accent);">Claim matches</a> &nbsp;|&nbsp; <a href="/admin" style="color:var(--color-accent);">Admin</a></p>
+
+    <div class="card document-picker">
+      <label for="document-select">Knowledge document</label>
+      <select id="document-select">
+        {documents.map((document) => <option value={document.id} selected={document.id === selected?.id}>{document.canonical_question} · {document.status}</option>)}
+      </select>
+      {selected && <span class="meta">Evidence status: {label(selected.evidence_status)}</span>}
+    </div>
+
+    {!selected ? (
+      <div class="card"><p class="meta">No knowledge documents are available.</p></div>
+    ) : suggestionError ? (
+      <div class="card error"><p>{suggestionError}</p></div>
+    ) : (
+      <>
+        <div class="summary card">
+          <strong>{suggestions?.claimSuggestions.length ?? 0}</strong> claim suggestions ·
+          <strong>{suggestions?.sourceSuggestions.length ?? 0}</strong> source suggestions ·
+          <strong>{suggestions?.unresolvedClaimCount ?? 0}</strong> unresolved claims
+        </div>
+
+        {legacySourceLinks.length > 0 && (
+          <div class="card legacy-links">
+            <h2>Legacy source links</h2>
+            <p class="meta">These string-only links are compatibility records. Select one in a mapping form after confirming its source URL and reviewed assertion; they never count as evidence on their own.</p>
+            <ul class="source-list">
+              {legacySourceLinks.map((source) => (
+                <li><code>{source.source_reference}</code> <span class={`badge ${source.state === "pending_review" ? "badge-provisional" : ""}`}>{label(source.state)}</span> <span class="meta">{source.claim_reference || "no claim reference"}</span></li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {(suggestions?.sourceSuggestions ?? []).length > 0 && (
+          <div class="card">
+            <h2>Evidence URL suggestions</h2>
+            <ul class="source-list">
+              {suggestions?.sourceSuggestions.map((source) => (
+                <li><code>{source.evidenceUrl}</code> → {source.name} <span class="badge">{label(source.matchKind)}</span> <span class="meta">{source.admissionState}</span></li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        <div class="queue">
+          {[...(suggestionsBySection.entries())].map(([key, candidates]) => {
+            const separator = key.indexOf("\u0000");
+            const sectionKey = key.slice(0, separator);
+            const claimText = key.slice(separator + 1);
+            const canonicalIds = [...new Set(candidates.map((candidate) => candidate.canonicalClaimId))];
+            const selectedClaim = canonicalIds.find((id) => mapped.has(mappingKey(sectionKey, id))) ?? canonicalIds[0] ?? "";
+            const existing = mapped.get(mappingKey(sectionKey, selectedClaim));
+            const eligibleAssertions = canonicalIds.flatMap((id) => assertionsByClaim.get(id) ?? []);
+            return (
+              <form class="card mapping-form" data-section-key={sectionKey}>
+                <h2>{label(sectionKey)}</h2>
+                <p class="claim-text">{claimText}</p>
+                <label>Canonical claim
+                  <select name="canonicalClaimId" required>
+                    {canonicalIds.map((id) => {
+                      const candidate = candidates.find((item) => item.canonicalClaimId === id)!;
+                      return <option value={id}>{candidate.canonicalText} · {Math.round(candidate.matchScore * 100)}%</option>;
+                    })}
+                  </select>
+                </label>
+                <label>Knowledge relationship
+                  <select name="claimRelationship">
+                    {claimRelationships.map((relationship) => <option value={relationship} selected={existing?.relationship === relationship}>{label(relationship)}</option>)}
+                  </select>
+                </label>
+                <label>External assertion <span class="meta">(optional only for an explicitly reviewed synthesis)</span>
+                  <select name="claimAssertionId">
+                    <option value="">No assertion selected</option>
+                    {eligibleAssertions.map((assertion) => <option value={assertion.id}>{assertion.assertion_text.slice(0, 180)}{assertion.retrieved_url ? ` · ${assertion.retrieved_url}` : ""}</option>)}
+                  </select>
+                </label>
+                <label>Legacy source link <span class="meta">(optional migration audit link)</span>
+                  <select name="legacySourceLinkId">
+                    <option value="">No legacy link</option>
+                    {legacySourceLinks.filter((source) => source.state === "pending_review").map((source) => <option value={source.legacy_source_link_id}>{source.source_reference}</option>)}
+                  </select>
+                </label>
+                <label>Assertion relationship
+                  <select name="assertionRelationship">
+                    {assertionRelationships.map((relationship) => <option value={relationship}>{label(relationship)}</option>)}
+                  </select>
+                </label>
+                <div class="actions"><button type="submit" class="btn">Save reviewed mapping</button><span class="result" role="status"></span></div>
+              </form>
+            );
+          })}
+        </div>
+        {(suggestions?.claimSuggestions ?? []).length === 0 && <div class="card"><p class="meta">No canonical claim suggestions met the review threshold. KC-08B or a future claim-creation review may be needed.</p></div>}
+      </>
+    )}
+  </div>
+</BaseLayout>
+
+<script>
+  const documentSelect = document.getElementById("document-select") as HTMLSelectElement | null;
+  documentSelect?.addEventListener("change", () => { if (documentSelect.value) location.href = `/admin/knowledge/mappings?id=${encodeURIComponent(documentSelect.value)}`; });
+  document.querySelectorAll(".mapping-form").forEach((form) => {
+    const mappingForm = form as HTMLFormElement;
+    mappingForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const result = mappingForm.querySelector(".result") as HTMLElement;
+      const assertionId = (mappingForm.querySelector("[name=claimAssertionId]") as unknown as HTMLSelectElement).value;
+      const body = {
+        knowledgeDocumentId: new URLSearchParams(location.search).get("id") || documentSelect?.value,
+        sectionKey: mappingForm.dataset.sectionKey,
+        canonicalClaimId: (mappingForm.querySelector("[name=canonicalClaimId]") as unknown as HTMLSelectElement).value,
+        claimRelationship: (mappingForm.querySelector("[name=claimRelationship]") as unknown as HTMLSelectElement).value,
+        assertions: assertionId ? [{ claimAssertionId: assertionId, relationship: (mappingForm.querySelector("[name=assertionRelationship]") as unknown as HTMLSelectElement).value }] : [],
+        legacySourceLinkId: (mappingForm.querySelector("[name=legacySourceLinkId]") as unknown as HTMLSelectElement).value || undefined,
+        requestId: crypto.randomUUID(),
+      };
+      result.textContent = "Saving…";
+      try {
+        const response = await fetch("/api/admin/knowledge/map", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+        const payload = await response.json() as { error?: string };
+        result.textContent = response.ok ? "Saved. Reloading…" : (payload.error ?? "Mapping failed.");
+        if (response.ok) setTimeout(() => location.reload(), 500);
+      } catch { result.textContent = "Mapping service unavailable."; }
+    });
+  });
+</script>
+
+<style>
+  .document-picker { display:flex; flex-wrap:wrap; gap:.75rem; align-items:center; margin-bottom:1rem; }
+  .document-picker label { font-weight:600; }
+  .document-picker select { flex:1; min-width:260px; }
+  .summary { display:flex; gap:.4rem; align-items:center; margin-bottom:1rem; }
+  .summary strong { color:var(--color-accent); }
+  .queue { display:grid; gap:1rem; }
+  .mapping-form h2 { font-size:1rem; margin:0 0 .5rem; text-transform:capitalize; }
+  .claim-text { padding:.75rem; margin:.5rem 0 1rem; background:var(--color-bg-muted); border-left:3px solid var(--color-accent); }
+  label { display:block; margin-top:.7rem; font-size:.85rem; font-weight:600; }
+  select { display:block; width:100%; box-sizing:border-box; margin-top:.25rem; padding:.45rem; font:inherit; border:1px solid var(--color-border); border-radius:4px; background:var(--color-bg); }
+  .actions { display:flex; align-items:center; gap:.75rem; margin-top:1rem; }
+  .result { color:var(--color-muted); font-size:.85rem; }
+  .source-list { padding-left:1.2rem; }
+  .source-list li { margin:.5rem 0; overflow-wrap:anywhere; }
+  .error { color:var(--color-danger, #a00); }
+</style>
