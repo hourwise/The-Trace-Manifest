@@ -54,6 +54,7 @@ import {
   establishAuthoritativeInventory,
   executeBackfill,
   recoverStaleBackfill,
+  verifyPlanHash,
 } from "../src/lib/server/knowledge-source-backfill";
 import { estimateEmbeddingTokens, indexKnowledgeEmbeddings, normalizeEmbeddingText, type KnowledgeEmbeddingVector } from "../workers/ingestion/knowledge-embedding-index";
 import { signInternalRequest, verifyInternalRequestSignature } from "../src/security/internal-signature";
@@ -115,6 +116,18 @@ async function kc11cBackfillPlanTests(): Promise<void> {
   assert.equal(plan.estimatedStorageBytesCeiling, 2 * BACKFILL_CEILINGS.maxBytesPerRecord);
   const repeat = await buildBackfillPlan(inventory, { category: "source_url", limit: 2, newestFirst: true });
   assert.equal(repeat.planHash, plan.planHash, "identical inventory and selection produce a stable plan hash");
+  const transported = JSON.parse(JSON.stringify(plan));
+  assert.deepEqual(transported, plan, "a plan contains no transport-only undefined fields");
+  assert.equal(await verifyPlanHash(transported, plan.planHash), true, "the JSON-transported plan retains its hash");
+  const explicitUndefined = await buildBackfillPlan(inventory, { category: "source_url", limit: 2, newestFirst: true, recordIds: undefined });
+  assert.equal(explicitUndefined.planHash, plan.planHash, "an undefined optional recordIds input is omitted canonically");
+  const explicitIds = await buildBackfillPlan(inventory, { recordIds: ["safe-1", "safe-2"], limit: 2 });
+  const transportedExplicitIds = JSON.parse(JSON.stringify(explicitIds));
+  assert.equal(await verifyPlanHash(transportedExplicitIds, explicitIds.planHash), true, "explicit recordIds survive JSON transport");
+  await assert.rejects(() => buildBackfillPlan(inventory, { category: "source_url", limit: 2, recordIds: null as any }), /recordIds must be/);
+  assert.equal(await verifyPlanHash({ ...transported, selection: { ...transported.selection, recordIds: undefined } } as any, plan.planHash), false, "undefined in a transported hash object is rejected");
+  assert.equal(await verifyPlanHash({ ...transported, selection: { ...transported.selection, recordIds: null } } as any, plan.planHash), false, "null and omitted optional fields cannot alias accidentally");
+  assert.equal(await verifyPlanHash({ ...transported, selection: { ...transported.selection, limit: 1 } } as any, plan.planHash), false, "a material transported-plan change invalidates the hash");
   await assert.rejects(() => buildBackfillPlan(inventory, { category: "source_url", limit: 26 }), /between 1 and 25/);
   await assert.rejects(() => approveBackfillPlan({ TRACE_ENVIRONMENT: "production" } as any, plan, plan.planHash, "publisher@example.com", "approval-1"), /Preview-only/);
 }
@@ -134,7 +147,13 @@ async function kc11cBackfillIntegrityTests(): Promise<void> {
     await assert.rejects(() => establishAuthoritativeInventory(env, { ...inventory1, schemaVersion: "kc-11a-v999" }, "kc-11c-v1", "reviewer@example.com", "authority-bad-schema"), /KC-11A versioned inventory/);
 
     const oldPlan = await buildBackfillPlan(inventory1, { category: "source_url", limit: 1 }, authority1.snapshotId);
-    const oldApproval = await approveBackfillPlan(env, oldPlan, oldPlan.planHash, "publisher@example.com", "approval-old");
+    const transportedOldPlan = JSON.parse(JSON.stringify(oldPlan));
+    const oldApproval = await approveBackfillPlan(env, transportedOldPlan, transportedOldPlan.planHash, "publisher@example.com", "approval-old");
+    await assert.rejects(
+      () => approveBackfillPlan(env, { ...transportedOldPlan, selection: { ...transportedOldPlan.selection, limit: 2 } }, transportedOldPlan.planHash, "publisher@example.com", "approval-modified-transport"),
+      /Plan hash does not match/,
+      "a modified transported plan cannot be approved",
+    );
 
     const inventory2 = {
       schemaVersion: "kc-11a-v1", generatedAt: "2026-07-29T00:00:00Z",

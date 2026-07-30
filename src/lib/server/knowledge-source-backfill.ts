@@ -33,10 +33,25 @@ function eligibleRemoteUrl(value: string): boolean {
   } catch { return false; }
 }
 
-function stable(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stable).join(",")}]`;
-  if (value && typeof value === "object") return `{${Object.keys(value as Record<string, unknown>).sort().map((key) => `${JSON.stringify(key)}:${stable((value as Record<string, unknown>)[key])}`).join(",")}}`;
-  return JSON.stringify(value) ?? "null";
+function stable(value: unknown, path = "$"): string {
+  if (value === undefined) throw new Error(`Undefined value is not allowed in canonical data at ${path}.`);
+  if (value === null) return "null";
+  if (Array.isArray(value)) {
+    const values: string[] = [];
+    for (let index = 0; index < value.length; index++) {
+      if (!Object.prototype.hasOwnProperty.call(value, index)) throw new Error(`Sparse arrays are not allowed in canonical data at ${path}.`);
+      values.push(stable(value[index], `${path}[${index}]`));
+    }
+    return `[${values.join(",")}]`;
+  }
+  if (typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stable(record[key], `${path}.${key}`)}`).join(",")}}`;
+  }
+  if (typeof value === "number" && !Number.isFinite(value)) throw new Error(`Non-finite numbers are not allowed in canonical data at ${path}.`);
+  const encoded = JSON.stringify(value);
+  if (encoded === undefined) throw new Error(`Unsupported value is not allowed in canonical data at ${path}.`);
+  return encoded;
 }
 async function sha256(value: string): Promise<string> { const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)); return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join(""); }
 
@@ -55,9 +70,17 @@ export function inventoryRecords(inventory: { schemaVersion?: string; categories
 export async function buildBackfillPlan(inventory: BackfillInventory, selection: BackfillSelection, inventorySnapshotId = "local-untrusted"): Promise<BackfillPlan> {
   if (inventory.schemaVersion !== "kc-11a-v1") throw new Error("Unsupported inventory schema.");
   if (!Number.isInteger(selection.limit) || selection.limit < 1 || selection.limit > BACKFILL_CEILINGS.maxRecords) throw new Error(`limit must be between 1 and ${BACKFILL_CEILINGS.maxRecords}.`);
-  const ids = selection.recordIds?.map(String) ?? [];
-  if (selection.recordIds && (!Array.isArray(selection.recordIds) || ids.length === 0 || ids.length > BACKFILL_CEILINGS.maxRecords)) throw new Error("recordIds must be a bounded, non-empty list.");
+  if ("recordIds" in selection && selection.recordIds !== undefined && (!Array.isArray(selection.recordIds) || selection.recordIds.length === 0 || selection.recordIds.length > BACKFILL_CEILINGS.maxRecords || selection.recordIds.some((id) => typeof id !== "string" || id.length === 0))) throw new Error("recordIds must be a bounded, non-empty list of strings.");
+  if (selection.category !== undefined && (typeof selection.category !== "string" || selection.category.length === 0)) throw new Error("category must be a non-empty string when supplied.");
+  if (selection.newestFirst !== undefined && typeof selection.newestFirst !== "boolean") throw new Error("newestFirst must be a boolean when supplied.");
+  const ids = selection.recordIds === undefined ? [] : selection.recordIds.map(String);
   if (!selection.category && ids.length === 0) throw new Error("An explicit category or recordIds selection is required.");
+  const canonicalSelection: BackfillSelection = {
+    limit: selection.limit,
+    ...(selection.category !== undefined ? { category: selection.category } : {}),
+    ...(ids.length > 0 ? { recordIds: ids } : {}),
+    ...(selection.newestFirst !== undefined ? { newestFirst: selection.newestFirst } : {}),
+  };
   const all = inventoryRecords(inventory).filter((record) => (!selection.category || record.category === selection.category) && (ids.length === 0 || ids.includes(record.id)));
   const ordered = [...all].sort((a, b) => a.id.localeCompare(b.id));
   if (selection.newestFirst) ordered.reverse();
@@ -72,13 +95,17 @@ export async function buildBackfillPlan(inventory: BackfillInventory, selection:
   }
   for (const record of all) if (!selected.some((item) => item.id === record.id) && !excluded.some((item) => item.recordId === record.id)) excluded.push({ recordId: record.id, category: record.category ?? "unknown", reason: "outside_explicit_limit" });
   const inventoryIdentity = await inventoryIdentityFor(inventory);
-  const unsigned = { schemaVersion: "kc-11a-v1" as const, planVersion: "kc-11c-v1" as const, inventorySnapshotId, inventoryIdentity, selection: { ...selection, recordIds: ids.length ? ids : undefined }, ceilings: BACKFILL_CEILINGS, selected, excluded, estimatedRequestCount: selected.length, estimatedStorageBytesCeiling: selected.length * BACKFILL_CEILINGS.maxBytesPerRecord };
+  const unsigned = { schemaVersion: "kc-11a-v1" as const, planVersion: "kc-11c-v1" as const, inventorySnapshotId, inventoryIdentity, selection: canonicalSelection, ceilings: BACKFILL_CEILINGS, selected, excluded, estimatedRequestCount: selected.length, estimatedStorageBytesCeiling: selected.length * BACKFILL_CEILINGS.maxBytesPerRecord };
   return { ...unsigned, planHash: await sha256(stable(unsigned)) };
 }
 
 export async function verifyPlanHash(plan: BackfillPlan, expected: string): Promise<boolean> {
-  const { planHash: _ignored, ...unsigned } = plan;
-  return (await sha256(stable(unsigned))) === expected && plan.planHash === expected;
+  try {
+    const { planHash: _ignored, ...unsigned } = plan;
+    return (await sha256(stable(unsigned))) === expected && plan.planHash === expected;
+  } catch {
+    return false;
+  }
 }
 
 export type BackfillDb = Pick<D1Database, "prepare" | "batch" | "exec" | "dump" | "withSession">;
