@@ -49,13 +49,44 @@ publication paths.
   Markdown checks, and the production build.
 - Migration 0058 Preview bookmark:
   `0000003e-00000008-000050b7-8c5fe23768d389d1d94810a7d1d3d827`.
-- Preview Worker version:
+- Previous smoke-test Worker version:
   `12200d35-e16c-451b-94a1-19c73528fbc2`.
 - Allowlisted Preview Pages deployment:
-  `2ae1c2b2` at
+  previous smoke-test deployment `2ae1c2b2`; corrective deployment is
+  `c605ad75` at
   `https://launch-05r-preview.the-trace-manifest.pages.dev`.
+- Corrective Preview Worker version:
+  `6c25fb6d-cb09-4526-a29c-9f3158f772f8`.
 - Production database, Worker, Pages deployment, indexing, backfill, and
   feature flags: untouched.
+
+## Authenticated smoke-test failure and correction
+
+On the previous authenticated Preview deployment, the dry-run plan endpoint
+returned HTTP 200 and plan hash
+`e24aa0d64ca5f0a66782379d0b9897ac4317ba6be1884be92122de98dbd82a35`. Sending
+that exact response through `JSON.stringify()` and parsing it again before
+`/approve` returned HTTP 409:
+
+```json
+{ "error": "Plan hash does not match the submitted plan." }
+```
+
+The cause was `selection.recordIds: undefined` in the in-memory plan. The
+canonicaliser hashed that property as `null`, while JSON transport omitted it.
+Commit `786a76e` fixes this by constructing one JSON-safe canonical selection,
+rejecting undefined/sparse/non-finite canonical values, preserving explicit
+null semantics, and making verification fail closed for malformed plans.
+
+The corrective deterministic dry-run against the unchanged authoritative
+snapshot now produces plan hash
+`b6ebc48370fce5626c7c267c56ee918cf3788f54aaf4473af3c1546cdc289f28`.
+
+Regression coverage proves JSON round-trip verification, exact transported-plan
+approval, explicit and omitted record IDs, null/undefined rejection, key and
+array canonicalisation, material-field tampering rejection, and modified
+transported-plan approval failure. Full `npm run ci` passed before the
+corrective Preview deployment.
 
 Tests cover superseded snapshot invalidation; rejection of non-current
 approval and execution; snapshot, batch, item, authority, and attempt
@@ -101,7 +132,7 @@ The exact current snapshot and selection
 produce:
 
 - Plan hash:
-  `e24aa0d64ca5f0a66782379d0b9897ac4317ba6be1884be92122de98dbd82a35`
+  `b6ebc48370fce5626c7c267c56ee918cf3788f54aaf4473af3c1546cdc289f28`
 - Estimated requests: `2`
 - Estimated maximum stored bytes: `1048576`
 - Anthropic MCP source:
@@ -135,7 +166,7 @@ console.log(planResponse.status, planResult);
 ```
 
 After confirming that `planResult.plan.planHash` exactly equals
-`e24aa0d64ca5f0a66782379d0b9897ac4317ba6be1884be92122de98dbd82a35`,
+`b6ebc48370fce5626c7c267c56ee918cf3788f54aaf4473af3c1546cdc289f28`,
 approve that exact reviewed plan:
 
 ```js
