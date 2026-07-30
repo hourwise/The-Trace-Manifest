@@ -72,6 +72,8 @@ try {
   db.exec(readFileSync("db/migration-0056-kc-11c-bounded-source-backfill.sql", "utf8"));
   db.exec(readFileSync("db/migration-0057-kc-11c-backfill-integrity.sql", "utf8"));
   db.exec(readFileSync("db/migration-0057-kc-11c-backfill-integrity.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0058-kc-11c-final-integrity.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0058-kc-11c-final-integrity.sql", "utf8"));
 
   const requiredTables = [
     "ai_requests", "ai_budget_reservations", "ai_usage_ledger", "ai_quota_usage",
@@ -85,7 +87,8 @@ try {
     "knowledge_processing_jobs", "knowledge_index_operations", "knowledge_index_operation_receipts",
     "knowledge_reconciliation_runs",
     "knowledge_source_backfill_batches", "knowledge_source_backfill_items", "knowledge_source_backfill_item_events",
-    "knowledge_source_backfill_inventory_snapshots", "knowledge_source_backfill_attempts",
+    "knowledge_source_backfill_inventory_snapshots", "knowledge_source_backfill_inventory_authority",
+    "knowledge_source_backfill_attempts",
     "knowledge_extraction_runs", "knowledge_extraction_run_outputs",
     "knowledge_extraction_reviews",
     "knowledge_claim_match_candidates",

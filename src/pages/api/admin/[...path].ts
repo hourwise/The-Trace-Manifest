@@ -6,6 +6,7 @@ import { signInternalRequest } from "../../../security/internal-signature";
 export const prerender = false;
 
 const MAX_BODY_BYTES = 64 * 1024;
+const MAX_INVENTORY_SNAPSHOT_BODY_BYTES = 512 * 1024;
 const READ_ROUTES = new Set([
   "sources", "sources/health", "jobs", "cron-runs", "corrections",
   "published-stories", "clusters", "cluster-sources",
@@ -18,7 +19,8 @@ const PUBLISH_ROUTES = new Set([
   "approve-evidence-status",
   "knowledge/capture-missing",
   "knowledge/index-preview",
-  "knowledge/backfill/plan", "knowledge/backfill/approve", "knowledge/backfill/execute", "knowledge/backfill/retry",
+  "knowledge/backfill/snapshot", "knowledge/backfill/plan", "knowledge/backfill/approve",
+  "knowledge/backfill/execute", "knowledge/backfill/retry", "knowledge/backfill/recover",
   "candidates", "social-signals", "related-items",
 ]);
 const READ_ROUTES_WITH_BACKFILL = new Set(["knowledge/backfill/status"]);
@@ -92,10 +94,10 @@ function validWorkerOrigin(value: string | undefined): string | null {
   }
 }
 
-async function boundedBody(request: Request): Promise<string | null> {
+async function boundedBody(request: Request, maximumBytes = MAX_BODY_BYTES): Promise<string | null> {
   if (request.method === "GET") return "";
   const declared = Number(request.headers.get("Content-Length") ?? "0");
-  if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) return null;
+  if (Number.isFinite(declared) && declared > maximumBytes) return null;
   if (!request.body) return "";
 
   const reader = request.body.getReader();
@@ -106,7 +108,7 @@ async function boundedBody(request: Request): Promise<string | null> {
       const { done, value } = await reader.read();
       if (done) break;
       totalBytes += value.byteLength;
-      if (totalBytes > MAX_BODY_BYTES) {
+      if (totalBytes > maximumBytes) {
         await reader.cancel();
         return null;
       }
@@ -154,7 +156,10 @@ export async function handleAdminProxyRequest(
     return Response.json({ error: "Admin service is not configured." }, { status: 503 });
   }
 
-  const body = await boundedBody(request);
+  const maximumBodyBytes = normalisedPath === "knowledge/backfill/snapshot"
+    ? MAX_INVENTORY_SNAPSHOT_BODY_BYTES
+    : MAX_BODY_BYTES;
+  const body = await boundedBody(request, maximumBodyBytes);
   if (body === null) return Response.json({ error: "Request body is too large." }, { status: 413 });
 
   const incoming = new URL(request.url);

@@ -6,12 +6,24 @@ import { retrieveRemoteSource, SourceRetrievalError } from "./source-retrieval";
 export const BACKFILL_CEILINGS = Object.freeze({
   maxRecords: 25, maxConcurrency: 1, maxRedirects: 3, maxBytesPerRecord: 512 * 1024,
   maxTotalBytes: 5 * 1024 * 1024, maxRetries: 2, maxDurationMs: 30_000,
+  staleExecutionSeconds: 120,
 });
+export const BACKFILL_POLICY_VERSION = "kc-11c-v1" as const;
+export const BACKFILL_INVENTORY_SCHEMA_VERSION = "kc-11a-v1" as const;
 export type BackfillOutcome = "planned" | "captured_new_document" | "captured_new_version" | "unchanged" | "metadata_only" | "unavailable" | "excluded" | "held_for_review" | "failed_retryable" | "failed_terminal";
 export type InventoryRecord = { id: string; label?: string; state?: string; url?: string; origin?: string | string[]; category?: string };
 export type BackfillSelection = { category?: string; recordIds?: string[]; limit: number; newestFirst?: boolean };
 export type BackfillPlanItem = InventoryRecord & { category: string; canonicalUrl: string | null; fetchability: "eligible" | "ineligible"; admissionOutcome: "eligible" | "excluded"; duplicateOutcome: "unknown_until_fetch" | "not_applicable"; storageMode: SourceCaptureStorageMode; exclusionReason?: string };
 export type BackfillPlan = { schemaVersion: "kc-11a-v1"; planVersion: "kc-11c-v1"; inventorySnapshotId: string; inventoryIdentity: string; selection: BackfillSelection; ceilings: typeof BACKFILL_CEILINGS; selected: BackfillPlanItem[]; excluded: Array<{ recordId: string; category: string; reason: string }>; estimatedRequestCount: number; estimatedStorageBytesCeiling: number; planHash: string };
+export type BackfillInventory = { schemaVersion?: string; generatedAt?: string; categories?: Record<string, InventoryRecord[]>; [key: string]: unknown };
+export type InventoryAuthorityResult = {
+  snapshotId: string;
+  inventoryIdentity: string;
+  authorityDecisionId: string;
+  snapshotCreatedAt: string;
+  authorisedAt: string;
+  generation: number;
+};
 
 function eligibleRemoteUrl(value: string): boolean {
   try {
@@ -28,12 +40,19 @@ function stable(value: unknown): string {
 }
 async function sha256(value: string): Promise<string> { const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)); return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join(""); }
 
+export async function inventoryIdentityFor(inventory: BackfillInventory): Promise<string> {
+  if (inventory.schemaVersion !== BACKFILL_INVENTORY_SCHEMA_VERSION || !inventory.categories || typeof inventory.categories !== "object") {
+    throw new Error("A KC-11A versioned inventory is required.");
+  }
+  return sha256(stable(inventory));
+}
+
 export function inventoryRecords(inventory: { schemaVersion?: string; categories?: Record<string, InventoryRecord[]> }): InventoryRecord[] {
   if (inventory.schemaVersion !== "kc-11a-v1" || !inventory.categories) throw new Error("A KC-11A versioned inventory is required.");
   return Object.entries(inventory.categories).flatMap(([category, records]) => (records ?? []).map((record) => ({ ...record, id: String(record.id), category })));
 }
 
-export async function buildBackfillPlan(inventory: { schemaVersion?: string; generatedAt?: string; categories?: Record<string, InventoryRecord[]> }, selection: BackfillSelection, inventorySnapshotId = "local-untrusted"): Promise<BackfillPlan> {
+export async function buildBackfillPlan(inventory: BackfillInventory, selection: BackfillSelection, inventorySnapshotId = "local-untrusted"): Promise<BackfillPlan> {
   if (inventory.schemaVersion !== "kc-11a-v1") throw new Error("Unsupported inventory schema.");
   if (!Number.isInteger(selection.limit) || selection.limit < 1 || selection.limit > BACKFILL_CEILINGS.maxRecords) throw new Error(`limit must be between 1 and ${BACKFILL_CEILINGS.maxRecords}.`);
   const ids = selection.recordIds?.map(String) ?? [];
@@ -52,7 +71,7 @@ export async function buildBackfillPlan(inventory: { schemaVersion?: string; gen
     selected.push({ ...record, category, canonicalUrl, fetchability: "eligible", admissionOutcome: "eligible", duplicateOutcome: "unknown_until_fetch", storageMode: "metadata_only" });
   }
   for (const record of all) if (!selected.some((item) => item.id === record.id) && !excluded.some((item) => item.recordId === record.id)) excluded.push({ recordId: record.id, category: record.category ?? "unknown", reason: "outside_explicit_limit" });
-  const inventoryIdentity = await sha256(stable({ schemaVersion: inventory.schemaVersion, generatedAt: inventory.generatedAt ?? null, categories: inventory.categories }));
+  const inventoryIdentity = await inventoryIdentityFor(inventory);
   const unsigned = { schemaVersion: "kc-11a-v1" as const, planVersion: "kc-11c-v1" as const, inventorySnapshotId, inventoryIdentity, selection: { ...selection, recordIds: ids.length ? ids : undefined }, ceilings: BACKFILL_CEILINGS, selected, excluded, estimatedRequestCount: selected.length, estimatedStorageBytesCeiling: selected.length * BACKFILL_CEILINGS.maxBytesPerRecord };
   return { ...unsigned, planHash: await sha256(stable(unsigned)) };
 }
@@ -70,9 +89,123 @@ function idempotencyFor(batchId: string, recordId: string): string { return `kc1
 
 async function authoritativeSnapshot(env: BackfillEnv, plan: BackfillPlan): Promise<void> {
   if (!plan.inventorySnapshotId || plan.inventorySnapshotId === "local-untrusted") throw new Error("An authoritative KC-11A inventory snapshot is required.");
-  const snapshot = await env.DB.prepare("SELECT id, schema_version, inventory_identity, policy_version, active FROM knowledge_source_backfill_inventory_snapshots WHERE id = ?").bind(plan.inventorySnapshotId).first<any>();
-  if (!snapshot || snapshot.active !== 1 || snapshot.schema_version !== plan.schemaVersion || snapshot.policy_version !== plan.planVersion || snapshot.inventory_identity !== plan.inventoryIdentity) throw new Error("The authoritative inventory snapshot no longer matches the approved plan.");
+  const snapshot = await env.DB.prepare(`
+    SELECT snapshot_id, schema_version, inventory_identity, policy_version
+    FROM knowledge_source_backfill_current_inventory_authority
+    WHERE snapshot_id = ?
+  `).bind(plan.inventorySnapshotId).first<any>();
+  if (!snapshot || snapshot.schema_version !== plan.schemaVersion || snapshot.policy_version !== plan.planVersion || snapshot.inventory_identity !== plan.inventoryIdentity) throw new Error("The plan does not reference the currently authorised inventory snapshot.");
   if (stable(BACKFILL_CEILINGS) !== stable(plan.ceilings)) throw new Error("Backfill policy ceilings changed; approval is invalid.");
+}
+
+export async function loadCurrentBackfillInventory(
+  env: BackfillEnv,
+  snapshotId: string,
+): Promise<{ inventory: BackfillInventory; inventoryIdentity: string }> {
+  const authority = await env.DB.prepare(`
+    SELECT snapshot_id, inventory_identity, snapshot_json, schema_version, policy_version
+    FROM knowledge_source_backfill_current_inventory_authority
+    WHERE snapshot_id = ?
+  `).bind(snapshotId).first<any>();
+  if (!authority || authority.schema_version !== BACKFILL_INVENTORY_SCHEMA_VERSION || authority.policy_version !== BACKFILL_POLICY_VERSION) {
+    throw new Error("The requested inventory snapshot is not currently authorised.");
+  }
+  const inventory = JSON.parse(String(authority.snapshot_json)) as BackfillInventory;
+  if (await inventoryIdentityFor(inventory) !== authority.inventory_identity) {
+    throw new Error("The stored inventory snapshot failed its identity check.");
+  }
+  return { inventory, inventoryIdentity: String(authority.inventory_identity) };
+}
+
+export async function establishAuthoritativeInventory(
+  env: BackfillEnv,
+  inventory: BackfillInventory,
+  policyVersion: string,
+  actor: string,
+  idempotencyKey: string,
+  correlationId: string = crypto.randomUUID(),
+): Promise<InventoryAuthorityResult> {
+  if (env.TRACE_ENVIRONMENT !== "preview") throw new Error("KC-11C inventory authority is Preview-only.");
+  if (policyVersion !== BACKFILL_POLICY_VERSION) throw new Error("Unsupported backfill policy version.");
+  if (!idempotencyKey || idempotencyKey.length > 200) throw new Error("A bounded authority idempotency key is required.");
+  const inventoryIdentity = await inventoryIdentityFor(inventory);
+  const canonicalSnapshot = stable(inventory);
+
+  const prior = await env.DB.prepare(`
+    SELECT authority.id, authority.snapshot_id, authority.generation, authority.created_at AS authorised_at,
+           snapshot.inventory_identity, snapshot.created_at AS snapshot_created_at
+    FROM knowledge_source_backfill_inventory_authority AS authority
+    JOIN knowledge_source_backfill_inventory_snapshots AS snapshot ON snapshot.id = authority.snapshot_id
+    WHERE authority.idempotency_key = ?
+  `).bind(idempotencyKey).first<any>();
+  if (prior) {
+    if (prior.inventory_identity !== inventoryIdentity) throw new Error("The authority idempotency key was already used for another inventory.");
+    return {
+      snapshotId: String(prior.snapshot_id),
+      inventoryIdentity,
+      authorityDecisionId: String(prior.id),
+      snapshotCreatedAt: String(prior.snapshot_created_at),
+      authorisedAt: String(prior.authorised_at),
+      generation: Number(prior.generation),
+    };
+  }
+
+  let snapshot = await env.DB.prepare(`
+    SELECT id, inventory_identity, snapshot_json, created_at
+    FROM knowledge_source_backfill_inventory_snapshots
+    WHERE inventory_identity = ?
+  `).bind(inventoryIdentity).first<any>();
+  if (snapshot && snapshot.snapshot_json !== canonicalSnapshot) throw new Error("Inventory identity collision detected.");
+  if (!snapshot) {
+    const snapshotId = crypto.randomUUID();
+    try {
+      await env.DB.prepare(`
+        INSERT INTO knowledge_source_backfill_inventory_snapshots
+          (id, schema_version, inventory_identity, snapshot_json, policy_version, created_by, active)
+        VALUES (?, ?, ?, ?, ?, ?, 1)
+      `).bind(snapshotId, BACKFILL_INVENTORY_SCHEMA_VERSION, inventoryIdentity, canonicalSnapshot, BACKFILL_POLICY_VERSION, actor).run();
+    } catch {
+      // A concurrent identical publisher request may have inserted the same
+      // immutable identity. Re-read it; any other failure still fails closed.
+    }
+    snapshot = await env.DB.prepare(`
+      SELECT id, inventory_identity, snapshot_json, created_at
+      FROM knowledge_source_backfill_inventory_snapshots
+      WHERE inventory_identity = ?
+    `).bind(inventoryIdentity).first<any>();
+    if (!snapshot || snapshot.snapshot_json !== canonicalSnapshot) throw new Error("The immutable inventory snapshot could not be established.");
+  }
+
+  const authorityDecisionId = crypto.randomUUID();
+  try {
+    await env.DB.prepare(`
+      INSERT INTO knowledge_source_backfill_inventory_authority
+        (id, snapshot_id, schema_version, policy_version, decision, actor, idempotency_key, correlation_id)
+      VALUES (?, ?, ?, ?, 'authorised', ?, ?, ?)
+    `).bind(authorityDecisionId, snapshot.id, BACKFILL_INVENTORY_SCHEMA_VERSION, BACKFILL_POLICY_VERSION, actor, idempotencyKey, correlationId).run();
+  } catch {
+    const raced = await env.DB.prepare(`
+      SELECT id, snapshot_id FROM knowledge_source_backfill_inventory_authority WHERE idempotency_key = ?
+    `).bind(idempotencyKey).first<any>();
+    if (!raced || raced.snapshot_id !== snapshot.id) throw new Error("The inventory authority decision could not be recorded.");
+  }
+
+  const recorded = await env.DB.prepare(`
+    SELECT authority.id, authority.snapshot_id, authority.generation, authority.created_at AS authorised_at,
+           snapshot.inventory_identity, snapshot.created_at AS snapshot_created_at
+    FROM knowledge_source_backfill_inventory_authority AS authority
+    JOIN knowledge_source_backfill_inventory_snapshots AS snapshot ON snapshot.id = authority.snapshot_id
+    WHERE authority.idempotency_key = ?
+  `).bind(idempotencyKey).first<any>();
+  if (!recorded || recorded.inventory_identity !== inventoryIdentity) throw new Error("The inventory authority decision could not be verified.");
+  return {
+    snapshotId: String(recorded.snapshot_id),
+    inventoryIdentity,
+    authorityDecisionId: String(recorded.id),
+    snapshotCreatedAt: String(recorded.snapshot_created_at),
+    authorisedAt: String(recorded.authorised_at),
+    generation: Number(recorded.generation),
+  };
 }
 
 export async function approveBackfillPlan(env: BackfillEnv, plan: BackfillPlan, planHash: string, actor: string, idempotencyKey: string, correlationId = crypto.randomUUID()): Promise<{ batchId: string }> {
@@ -149,6 +282,79 @@ export async function executeBackfill(env: BackfillEnv, batchId: string, planHas
   return result;
 }
 
+export async function recoverStaleBackfill(
+  env: BackfillEnv,
+  batchId: string,
+  planHash: string,
+  actor: string,
+  nowMs = Date.now(),
+): Promise<Record<string, unknown>> {
+  if (env.TRACE_ENVIRONMENT !== "preview") throw new Error("KC-11C recovery is Preview-only.");
+  const batch = await env.DB.prepare(`
+    SELECT id, state, plan_hash, plan_json, correlation_id
+    FROM knowledge_source_backfill_batches
+    WHERE id = ? AND plan_hash = ?
+  `).bind(batchId, planHash).first<any>();
+  if (!batch) throw new Error("The exact approved plan is required for recovery.");
+  if (batch.state !== "running") return { state: "not_recovered", reason: "batch_not_running", batchId };
+  await authoritativeSnapshot(env, JSON.parse(batch.plan_json) as BackfillPlan);
+
+  const attempt = await env.DB.prepare(`
+    SELECT id, state, started_at
+    FROM knowledge_source_backfill_attempts
+    WHERE batch_id = ? AND state = 'running'
+    ORDER BY started_at DESC, id DESC
+    LIMIT 1
+  `).bind(batchId).first<any>();
+  if (!attempt) return { state: "not_recovered", reason: "running_attempt_not_found", batchId };
+  const startedAtMs = Date.parse(String(attempt.started_at).replace(" ", "T").replace(/Z?$/, "Z"));
+  if (!Number.isFinite(startedAtMs)) throw new Error("The running attempt has an invalid start time.");
+  const ageSeconds = Math.floor((nowMs - startedAtMs) / 1000);
+  if (ageSeconds < BACKFILL_CEILINGS.staleExecutionSeconds) {
+    return {
+      state: "locked",
+      reason: "running_attempt_recent",
+      batchId,
+      attemptId: attempt.id,
+      ageSeconds: Math.max(0, ageSeconds),
+      staleAfterSeconds: BACKFILL_CEILINGS.staleExecutionSeconds,
+    };
+  }
+
+  const recoveredAt = new Date(nowMs).toISOString();
+  const settlement = JSON.stringify({
+    error: "stale_execution_abandoned",
+    recoveredBy: actor,
+    recoveredAt,
+    staleAfterSeconds: BACKFILL_CEILINGS.staleExecutionSeconds,
+  });
+  const results = await env.DB.batch([
+    env.DB.prepare(`
+      UPDATE knowledge_source_backfill_attempts
+      SET state = 'failed', completed_at = ?, result_json = ?
+      WHERE id = ? AND batch_id = ? AND state = 'running' AND started_at = ?
+    `).bind(recoveredAt, settlement, attempt.id, batchId, attempt.started_at),
+    env.DB.prepare(`
+      UPDATE knowledge_source_backfill_batches
+      SET state = 'partial', updated_at = ?
+      WHERE id = ? AND state = 'running'
+    `).bind(recoveredAt, batchId),
+  ]);
+  const attemptWon = Number(results[0]?.meta?.changes ?? 0) === 1;
+  const batchWon = Number(results[1]?.meta?.changes ?? 0) === 1;
+  if (!attemptWon || !batchWon) {
+    return { state: "not_recovered", reason: "recovery_race_lost", batchId, attemptId: attempt.id };
+  }
+  return {
+    state: "recovered",
+    batchId,
+    attemptId: attempt.id,
+    recoveredAt,
+    nextState: "partial",
+    preservedCompletedItems: true,
+  };
+}
+
 async function settleItem(env: BackfillEnv, batch: any, item: any, outcome: BackfillOutcome, reason: string, actor: string, counters: Record<string, number>, fields: Record<string, unknown> = {}): Promise<void> {
   counters[outcome] = (counters[outcome] ?? 0) + 1; counters.processed++;
   await env.DB.prepare("UPDATE knowledge_source_backfill_items SET outcome = ?, reason_code = ?, source_document_id = ?, source_document_version_id = ?, http_status = ?, retrieved_url = ?, redirect_count = ?, byte_length = ?, content_hash = ?, retry_count = retry_count + CASE WHEN ? IN ('failed_retryable','failed_terminal') THEN 1 ELSE 0 END, updated_at = datetime('now') WHERE id = ?")
@@ -157,7 +363,7 @@ async function settleItem(env: BackfillEnv, batch: any, item: any, outcome: Back
     .bind(crypto.randomUUID(), batch.id, item.id, outcome, reason, JSON.stringify(fields), actor, batch.correlation_id).run();
 }
 
-export function parseBackfillRequest(value: unknown): { inventory?: unknown; inventorySnapshotId?: string; selection?: BackfillSelection; plan?: BackfillPlan; planHash?: string; batchId?: string; idempotencyKey?: string } | null {
+export function parseBackfillRequest(value: unknown): { inventory?: BackfillInventory; inventorySnapshotId?: string; policyVersion?: string; selection?: BackfillSelection; plan?: BackfillPlan; planHash?: string; batchId?: string; idempotencyKey?: string } | null {
   const body = parseBody(value); if (!body) return null;
   if (body.selection !== undefined && (!parseBody(body.selection) || !Number.isInteger((body.selection as any).limit))) return null;
   return body as any;

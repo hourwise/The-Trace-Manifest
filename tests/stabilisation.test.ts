@@ -47,7 +47,14 @@ import { resolveKnowledgeVectorMatches } from "../src/lib/server/knowledge-vecto
 import { resolveAndValidateCitationReferences, resolveKnowledgeCitations, type KnowledgeCitationInput } from "../src/lib/server/knowledge-citation-resolution";
 import { groupKnowledgePositions, groupResolvedKnowledgePositions, type KnowledgePositionEvidence } from "../src/lib/server/knowledge-position-grouping";
 import { selectKnowledgeConclusion, type KnowledgePositionAssessment } from "../src/lib/server/knowledge-conclusion-policy";
-import { BACKFILL_CEILINGS, approveBackfillPlan, buildBackfillPlan, executeBackfill } from "../src/lib/server/knowledge-source-backfill";
+import {
+  BACKFILL_CEILINGS,
+  approveBackfillPlan,
+  buildBackfillPlan,
+  establishAuthoritativeInventory,
+  executeBackfill,
+  recoverStaleBackfill,
+} from "../src/lib/server/knowledge-source-backfill";
 import { estimateEmbeddingTokens, indexKnowledgeEmbeddings, normalizeEmbeddingText, type KnowledgeEmbeddingVector } from "../workers/ingestion/knowledge-embedding-index";
 import { signInternalRequest, verifyInternalRequestSignature } from "../src/security/internal-signature";
 import { publishBriefing, publishStory, upgradeClusterEvidence } from "../workers/ingestion/publish";
@@ -83,8 +90,11 @@ function adminProxyPathTests(): void {
   assert.equal(authorisedRoute("social-signals", "DELETE", "publisher"), false, "unsupported methods fail closed");
   assert.equal(authorisedRoute("knowledge/../social-signals", "POST", "publisher"), false, "traversal cannot bypass route authorization");
   assert.equal(authorisedRoute("knowledge/backfill/plan", "POST", "publisher"), true, "publisher can create a bounded backfill plan");
+  assert.equal(authorisedRoute("knowledge/backfill/snapshot", "POST", "publisher"), true, "publisher can authorise an inventory snapshot");
+  assert.equal(authorisedRoute("knowledge/backfill/recover", "POST", "publisher"), true, "publisher can recover a stale Preview lease");
   assert.equal(authorisedRoute("knowledge/backfill/status", "GET", "reader"), true, "reader can inspect backfill status");
   assert.equal(authorisedRoute("knowledge/backfill/execute", "POST", "reader"), false, "reader cannot execute a backfill");
+  assert.equal(authorisedRoute("knowledge/backfill/recover", "POST", "reader"), false, "reader cannot recover a backfill");
 }
 
 async function kc11cBackfillPlanTests(): Promise<void> {
@@ -110,19 +120,74 @@ async function kc11cBackfillPlanTests(): Promise<void> {
 }
 
 async function kc11cBackfillIntegrityTests(): Promise<void> {
-  const inventory = { schemaVersion: "kc-11a-v1", generatedAt: "2026-07-28T00:00:00Z", categories: { source_url: [] } };
-  const plan = await buildBackfillPlan(inventory, { category: "source_url", limit: 1 }, "snapshot-1");
   const database = new SQLiteD1();
   const env = { DB: database.asD1(), RAW_STORE: { put: async () => undefined, delete: async () => undefined }, TRACE_ENVIRONMENT: "preview" } as any;
   try {
-    database.sqlite.prepare("INSERT INTO knowledge_source_backfill_inventory_snapshots (id, schema_version, inventory_identity, snapshot_json, policy_version, created_by) VALUES (?, ?, ?, ?, ?, ?)").run("snapshot-1", "kc-11a-v1", plan.inventoryIdentity, JSON.stringify(inventory), "kc-11c-v1", "reviewer@example.com");
-    const approved = await approveBackfillPlan(env, plan, plan.planHash, "publisher@example.com", "approval-integrity");
-    const first = await executeBackfill(env, approved.batchId, plan.planHash, "publisher@example.com", "execute-integrity");
-    const repeat = await executeBackfill(env, approved.batchId, plan.planHash, "publisher@example.com", "execute-integrity");
-    assert.equal(first.state, "completed");
-    assert.deepEqual(repeat, first, "repeating an execution key returns its recorded result");
-    assert.throws(() => database.sqlite.prepare("DELETE FROM knowledge_source_backfill_batches WHERE id = ?").run(approved.batchId), /immutable/);
-    assert.throws(() => database.sqlite.prepare("UPDATE knowledge_source_backfill_batches SET state = 'approved' WHERE id = ?").run(approved.batchId), /invalid backfill batch state transition/);
+    const inventory1 = {
+      schemaVersion: "kc-11a-v1", generatedAt: "2026-07-28T00:00:00Z",
+      categories: { source_url: [{ id: "safe-1", label: "Safe one", url: "https://example.com/one" }] },
+    };
+    const authority1 = await establishAuthoritativeInventory(env, inventory1, "kc-11c-v1", "reviewer@example.com", "authority-1", "correlation-authority-1");
+    const repeatedAuthority1 = await establishAuthoritativeInventory(env, inventory1, "kc-11c-v1", "reviewer@example.com", "authority-1", "correlation-authority-repeat");
+    assert.deepEqual(repeatedAuthority1, authority1, "authority establishment is idempotent");
+    await assert.rejects(() => establishAuthoritativeInventory(env, inventory1, "arbitrary-policy", "reviewer@example.com", "authority-bad-policy"), /Unsupported backfill policy/);
+    await assert.rejects(() => establishAuthoritativeInventory(env, { ...inventory1, schemaVersion: "kc-11a-v999" }, "kc-11c-v1", "reviewer@example.com", "authority-bad-schema"), /KC-11A versioned inventory/);
+
+    const oldPlan = await buildBackfillPlan(inventory1, { category: "source_url", limit: 1 }, authority1.snapshotId);
+    const oldApproval = await approveBackfillPlan(env, oldPlan, oldPlan.planHash, "publisher@example.com", "approval-old");
+
+    const inventory2 = {
+      schemaVersion: "kc-11a-v1", generatedAt: "2026-07-29T00:00:00Z",
+      categories: { source_url: [{ id: "safe-2", label: "Safe two", url: "https://example.org/two" }] },
+    };
+    const authority2 = await establishAuthoritativeInventory(env, inventory2, "kc-11c-v1", "reviewer@example.com", "authority-2", "correlation-authority-2");
+    assert.notEqual(authority2.snapshotId, authority1.snapshotId);
+    assert.equal(database.sqlite.prepare("SELECT snapshot_id FROM knowledge_source_backfill_current_inventory_authority").get()?.snapshot_id, authority2.snapshotId);
+    assert.equal(database.sqlite.prepare("SELECT state FROM knowledge_source_backfill_batches WHERE id = ?").get(oldApproval.batchId)?.state, "cancelled", "new authority invalidates an unexecuted old approval");
+    await assert.rejects(() => approveBackfillPlan(env, oldPlan, oldPlan.planHash, "publisher@example.com", "approval-non-current"), /currently authorised/);
+    await assert.rejects(() => executeBackfill(env, oldApproval.batchId, oldPlan.planHash, "publisher@example.com", "execute-old"), /exact approved plan/);
+
+    assert.throws(() => database.sqlite.prepare("UPDATE knowledge_source_backfill_inventory_snapshots SET snapshot_json = '{}' WHERE id = ?").run(authority2.snapshotId), /immutable/);
+    assert.throws(() => database.sqlite.prepare("UPDATE knowledge_source_backfill_inventory_authority SET actor = 'attacker@example.com' WHERE id = ?").run(authority2.authorityDecisionId), /append-only/);
+
+    const recentPlan = await buildBackfillPlan(inventory2, { category: "source_url", limit: 1 }, authority2.snapshotId);
+    const recentApproval = await approveBackfillPlan(env, recentPlan, recentPlan.planHash, "publisher@example.com", "approval-recent");
+    const recentItem = database.sqlite.prepare("SELECT id FROM knowledge_source_backfill_items WHERE batch_id = ?").get(recentApproval.batchId) as { id: string };
+    assert.throws(() => database.sqlite.prepare("UPDATE knowledge_source_backfill_batches SET plan_json = '{}' WHERE id = ?").run(recentApproval.batchId), /identity and approval fields are immutable/);
+    assert.throws(() => database.sqlite.prepare("UPDATE knowledge_source_backfill_batches SET approved_by = 'attacker@example.com' WHERE id = ?").run(recentApproval.batchId), /identity and approval fields are immutable/);
+    assert.throws(() => database.sqlite.prepare("UPDATE knowledge_source_backfill_items SET canonical_url = 'https://attacker.example/' WHERE id = ?").run(recentItem.id), /item identity fields are immutable/);
+
+    const nowMs = Date.parse("2026-07-29T12:00:00.000Z");
+    const recentAttemptId = "00000000-0000-4000-8000-000000000101";
+    database.sqlite.prepare("UPDATE knowledge_source_backfill_batches SET state = 'running', executed_at = ?, updated_at = ? WHERE id = ?").run("2026-07-29T11:59:30.000Z", "2026-07-29T11:59:30.000Z", recentApproval.batchId);
+    database.sqlite.prepare("INSERT INTO knowledge_source_backfill_attempts (id, batch_id, idempotency_key, actor, state, started_at, correlation_id) VALUES (?, ?, ?, ?, 'running', ?, ?)").run(recentAttemptId, recentApproval.batchId, "attempt-recent", "publisher@example.com", "2026-07-29T11:59:30.000Z", "correlation-recent");
+    const recentRecovery = await recoverStaleBackfill(env, recentApproval.batchId, recentPlan.planHash, "publisher@example.com", nowMs);
+    assert.equal(recentRecovery.state, "locked", "a recent running attempt remains locked");
+    assert.throws(() => database.sqlite.prepare("UPDATE knowledge_source_backfill_attempts SET actor = 'attacker@example.com' WHERE id = ?").run(recentAttemptId), /attempt identity fields are immutable/);
+    assert.throws(() => database.sqlite.prepare("UPDATE knowledge_source_backfill_attempts SET result_json = '{}' WHERE id = ?").run(recentAttemptId), /settlement is immutable/);
+
+    const stalePlan = await buildBackfillPlan(inventory2, { category: "source_url", limit: 1, newestFirst: true }, authority2.snapshotId);
+    const staleApproval = await approveBackfillPlan(env, stalePlan, stalePlan.planHash, "publisher@example.com", "approval-stale");
+    const staleItem = database.sqlite.prepare("SELECT id FROM knowledge_source_backfill_items WHERE batch_id = ?").get(staleApproval.batchId) as { id: string };
+    database.sqlite.prepare("UPDATE knowledge_source_backfill_items SET outcome = 'unchanged', reason_code = 'already_complete', updated_at = ? WHERE id = ?").run("2026-07-29T11:55:00.000Z", staleItem.id);
+    database.sqlite.prepare("UPDATE knowledge_source_backfill_batches SET state = 'running', executed_at = ?, updated_at = ? WHERE id = ?").run("2026-07-29T11:55:00.000Z", "2026-07-29T11:55:00.000Z", staleApproval.batchId);
+    const staleAttemptId = "00000000-0000-4000-8000-000000000102";
+    database.sqlite.prepare("INSERT INTO knowledge_source_backfill_attempts (id, batch_id, idempotency_key, actor, state, started_at, correlation_id) VALUES (?, ?, ?, ?, 'running', ?, ?)").run(staleAttemptId, staleApproval.batchId, "attempt-stale", "publisher@example.com", "2026-07-29T11:55:00.000Z", "correlation-stale");
+    const recoveries = await Promise.all([
+      recoverStaleBackfill(env, staleApproval.batchId, stalePlan.planHash, "publisher@example.com", nowMs),
+      recoverStaleBackfill(env, staleApproval.batchId, stalePlan.planHash, "publisher@example.com", nowMs),
+    ]);
+    assert.equal(recoveries.filter((result) => result.state === "recovered").length, 1, "two recovery requests have one winner");
+    assert.equal(database.sqlite.prepare("SELECT state FROM knowledge_source_backfill_attempts WHERE id = ?").get(staleAttemptId)?.state, "failed");
+    assert.equal(database.sqlite.prepare("SELECT state FROM knowledge_source_backfill_batches WHERE id = ?").get(staleApproval.batchId)?.state, "partial");
+    assert.equal(database.sqlite.prepare("SELECT outcome FROM knowledge_source_backfill_items WHERE id = ?").get(staleItem.id)?.outcome, "unchanged", "completed item outcomes survive recovery");
+    assert.throws(() => database.sqlite.prepare("UPDATE knowledge_source_backfill_attempts SET result_json = '{\"rewritten\":true}' WHERE id = ?").run(staleAttemptId), /settlement is immutable/);
+
+    await assert.rejects(
+      () => recoverStaleBackfill({ ...env, TRACE_ENVIRONMENT: "production" }, staleApproval.batchId, stalePlan.planHash, "publisher@example.com", nowMs),
+      /Preview-only/,
+    );
+    assert.throws(() => database.sqlite.prepare("DELETE FROM knowledge_source_backfill_batches WHERE id = ?").run(staleApproval.batchId), /immutable/);
   } finally { database.sqlite.close(); }
 }
 
@@ -345,6 +410,10 @@ async function deskBoundaryTests(): Promise<void> {
       method: "POST", body: JSON.stringify({ intakeType: "lead", lead: "Unauthenticated intake" }),
     }), env, context);
     assert.equal(anonymous.status, 401, "unsigned candidate intake is rejected");
+    const anonymousRecovery = await worker.fetch(new Request("https://worker.example/admin/knowledge/backfill/recover", {
+      method: "POST", body: JSON.stringify({ batchId: crypto.randomUUID(), planHash: "unsigned" }),
+    }), env, context);
+    assert.equal(anonymousRecovery.status, 401, "unsigned stale-backfill recovery is rejected");
 
     const manualCaptureBody = JSON.stringify({ url: "https://manual.example/article" });
     assert.equal((await request("reader", "POST", "/admin/knowledge/capture-url", manualCaptureBody)).status, 403,

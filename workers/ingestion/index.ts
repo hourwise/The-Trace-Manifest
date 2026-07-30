@@ -31,7 +31,16 @@ import { admitAndQueueFeedCapture, admitAndQueueManualCapture, admitAndQueueKnow
 import { consumeKnowledgeCaptureBatch } from "./knowledge-capture-consumer";
 import { recalculateEvidenceScores, recalculateExpiredEvidence } from "../../src/lib/server/evidence-recalculation";
 import { indexKnowledgeEmbeddings } from "./knowledge-embedding-index";
-import { approveBackfillPlan, buildBackfillPlan, executeBackfill, parseBackfillRequest, type BackfillPlan } from "../../src/lib/server/knowledge-source-backfill";
+import {
+  approveBackfillPlan,
+  buildBackfillPlan,
+  establishAuthoritativeInventory,
+  executeBackfill,
+  loadCurrentBackfillInventory,
+  parseBackfillRequest,
+  recoverStaleBackfill,
+  type BackfillPlan,
+} from "../../src/lib/server/knowledge-source-backfill";
 
 // ============================================================
 // Signed internal-service authentication
@@ -68,10 +77,12 @@ const WRITE_ADMIN_ROUTES = new Set([
   "/admin/related-items",
   "/admin/candidates", "/admin/social-signals", "/admin/knowledge/capture-url",
   "/admin/knowledge/capture-missing", "/admin/knowledge/index-preview",
-  "/admin/knowledge/backfill/plan", "/admin/knowledge/backfill/approve", "/admin/knowledge/backfill/execute", "/admin/knowledge/backfill/retry",
+  "/admin/knowledge/backfill/snapshot", "/admin/knowledge/backfill/plan", "/admin/knowledge/backfill/approve",
+  "/admin/knowledge/backfill/execute", "/admin/knowledge/backfill/retry", "/admin/knowledge/backfill/recover",
 ]);
 const BACKFILL_READ_ADMIN_ROUTES = new Set(["/admin/knowledge/backfill/status"]);
 const MAX_ADMIN_BODY_BYTES = 64 * 1024;
+const MAX_INVENTORY_SNAPSHOT_BODY_BYTES = 512 * 1024;
 
 async function hashValue(value: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
@@ -117,10 +128,10 @@ function routeAllowed(path: string, method: string, role: OperatorRole): boolean
   return method === "POST" && role === "publisher" && WRITE_ADMIN_ROUTES.has(path);
 }
 
-async function readBoundedAdminBody(request: Request): Promise<string | null> {
+async function readBoundedAdminBody(request: Request, maximumBytes = MAX_ADMIN_BODY_BYTES): Promise<string | null> {
   if (request.method === "GET") return "";
   const declared = Number(request.headers.get("Content-Length") ?? "0");
-  if (Number.isFinite(declared) && declared > MAX_ADMIN_BODY_BYTES) return null;
+  if (Number.isFinite(declared) && declared > maximumBytes) return null;
   if (!request.body) return "";
 
   const reader = request.body.getReader();
@@ -130,7 +141,7 @@ async function readBoundedAdminBody(request: Request): Promise<string | null> {
     const { done, value } = await reader.read();
     if (done) break;
     total += value.byteLength;
-    if (total > MAX_ADMIN_BODY_BYTES) {
+    if (total > maximumBytes) {
       await reader.cancel();
       return null;
     }
@@ -217,7 +228,10 @@ export default {
     const path = url.pathname;
 
     if (path.startsWith("/admin/")) {
-      const body = await readBoundedAdminBody(request);
+      const maximumBodyBytes = path === "/admin/knowledge/backfill/snapshot"
+        ? MAX_INVENTORY_SNAPSHOT_BODY_BYTES
+        : MAX_ADMIN_BODY_BYTES;
+      const body = await readBoundedAdminBody(request, maximumBodyBytes);
       if (body === null) {
         return Response.json({ error: "Request too large" }, { status: 413 });
       }
@@ -1021,6 +1035,8 @@ async function handleAdminRoute(
       return handleKnowledgeDocumentCapture(request, env, operator);
     case "/admin/knowledge/index-preview":
       return handleKnowledgeEmbeddingIndex(request, env);
+    case "/admin/knowledge/backfill/snapshot":
+      return handleKnowledgeBackfillSnapshot(request, env, operator);
     case "/admin/knowledge/backfill/approve":
       return handleKnowledgeBackfillApprove(request, env, operator);
     case "/admin/knowledge/backfill/plan":
@@ -1028,6 +1044,8 @@ async function handleAdminRoute(
     case "/admin/knowledge/backfill/execute":
     case "/admin/knowledge/backfill/retry":
       return handleKnowledgeBackfillExecute(request, env, operator);
+    case "/admin/knowledge/backfill/recover":
+      return handleKnowledgeBackfillRecover(request, env, operator);
     case "/admin/knowledge/backfill/status":
       return handleKnowledgeBackfillStatus(request, env);
     case "/admin/publish-story":
@@ -1087,16 +1105,34 @@ async function handleKnowledgeEmbeddingIndex(request: Request, env: Env): Promis
 async function handleKnowledgeBackfillPlan(request: Request, env: Env): Promise<Response> {
   if (request.method !== "POST") return Response.json({ error: "Method not allowed — use POST" }, { status: 405 });
   const body = parseBackfillRequest(await request.json().catch(() => null));
-  if (!body || !body.inventory || !body.selection || typeof body.inventorySnapshotId !== "string") return Response.json({ error: "An authoritative inventorySnapshotId, versioned inventory, and explicit selection are required." }, { status: 400 });
+  if (!body || !body.selection || typeof body.inventorySnapshotId !== "string") return Response.json({ error: "An authoritative inventorySnapshotId and explicit selection are required." }, { status: 400 });
   try {
-    const snapshot = await env.DB.prepare("SELECT id, schema_version, inventory_identity, snapshot_json, policy_version, active FROM knowledge_source_backfill_inventory_snapshots WHERE id = ?").bind(body.inventorySnapshotId).first<any>();
-    if (!snapshot || snapshot.active !== 1 || snapshot.schema_version !== "kc-11a-v1" || snapshot.policy_version !== "kc-11c-v1") return Response.json({ error: "Authoritative inventory snapshot not found or inactive." }, { status: 409 });
-    const submitted = body.inventory as any;
-    const plan = await buildBackfillPlan(submitted, body.selection, String(body.inventorySnapshotId));
-    if (plan.inventoryIdentity !== snapshot.inventory_identity) return Response.json({ error: "Submitted inventory does not match the authoritative snapshot." }, { status: 409 });
+    const current = await loadCurrentBackfillInventory(env, body.inventorySnapshotId);
+    const plan = await buildBackfillPlan(current.inventory, body.selection, String(body.inventorySnapshotId));
+    if (plan.inventoryIdentity !== current.inventoryIdentity) return Response.json({ error: "Stored inventory identity changed unexpectedly." }, { status: 409 });
     return Response.json({ state: "dry_run", writes: 0, fetches: 0, plan });
   } catch (error) {
-    return Response.json({ error: error instanceof Error ? error.message : "Invalid backfill plan." }, { status: 400 });
+    return Response.json({ error: error instanceof Error ? error.message : "Invalid backfill plan." }, { status: 409 });
+  }
+}
+
+async function handleKnowledgeBackfillSnapshot(request: Request, env: Env, operator: InternalOperator): Promise<Response> {
+  const body = parseBackfillRequest(await request.json().catch(() => null));
+  if (!body?.inventory || typeof body.policyVersion !== "string" || typeof body.idempotencyKey !== "string") {
+    return Response.json({ error: "inventory, policyVersion, and idempotencyKey are required." }, { status: 400 });
+  }
+  try {
+    const result = await establishAuthoritativeInventory(
+      env,
+      body.inventory,
+      body.policyVersion,
+      operator.email,
+      body.idempotencyKey,
+      operator.requestId,
+    );
+    return Response.json({ state: "authorised", ...result });
+  } catch (error) {
+    return Response.json({ error: error instanceof Error ? error.message : "Inventory authority failed." }, { status: 409 });
   }
 }
 
@@ -1118,6 +1154,19 @@ async function handleKnowledgeBackfillExecute(request: Request, env: Env, operat
     return Response.json(await executeBackfill(env, body.batchId, body.planHash, operator.email, body.idempotencyKey, request.url.endsWith("/retry") ? "retry" : "initial"));
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "Backfill execution failed." }, { status: 409 });
+  }
+}
+
+async function handleKnowledgeBackfillRecover(request: Request, env: Env, operator: InternalOperator): Promise<Response> {
+  const body = parseBackfillRequest(await request.json().catch(() => null));
+  if (!body || typeof body.batchId !== "string" || typeof body.planHash !== "string") {
+    return Response.json({ error: "batchId and planHash are required." }, { status: 400 });
+  }
+  try {
+    const result = await recoverStaleBackfill(env, body.batchId, body.planHash, operator.email);
+    return Response.json(result, { status: result.state === "locked" ? 409 : 200 });
+  } catch (error) {
+    return Response.json({ error: error instanceof Error ? error.message : "Backfill recovery failed." }, { status: 409 });
   }
 }
 
