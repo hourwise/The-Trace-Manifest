@@ -59,6 +59,11 @@ publication paths.
   `https://launch-05r-preview.the-trace-manifest.pages.dev`.
 - Corrective Preview Worker version:
   `6c25fb6d-cb09-4526-a29c-9f3158f772f8`.
+- Recovery-patch commit: `9aeb208` (`repair KC-11C retry and schema preflight`).
+- Recovery-patch Preview Worker version:
+  `ec69450d-f67d-4178-ac75-c8b81fbe93ab` at
+  `https://trace-manifest-ingestion-preview.philgeran.workers.dev`.
+- Pages was unchanged; no Pages deployment was performed.
 - Production database, Worker, Pages deployment, indexing, backfill, and
   feature flags: untouched.
 
