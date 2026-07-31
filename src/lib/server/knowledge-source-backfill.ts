@@ -2,7 +2,7 @@
 import { extractHtmlDocument } from "./source-extraction";
 import { captureAdmittedSource, normaliseSourceUrl, type SourceCaptureStorageMode } from "./source-capture";
 import { retrieveRemoteSource, SourceRetrievalError } from "./source-retrieval";
-import { triggerKnowledgeReview } from "./knowledge-change-proposals";
+import { hashNormalizedSourceContent, type SourceIdentityMediaKind } from "./source-version-identity";
 
 export const BACKFILL_CEILINGS = Object.freeze({
   maxRecords: 25, maxConcurrency: 1, maxRedirects: 3, maxBytesPerRecord: 512 * 1024,
@@ -125,6 +125,7 @@ export const KC11C_RUNTIME_SCHEMA_OBJECTS = Object.freeze([
   "knowledge_source_backfill_current_inventory_authority",
   "source_documents",
   "source_document_versions",
+  "source_document_version_observations",
   "knowledge_index_operations",
   "knowledge_documents",
   "knowledge_document_claims",
@@ -322,34 +323,71 @@ export async function executeBackfill(env: BackfillEnv, batchId: string, planHas
     const remaining = BACKFILL_CEILINGS.maxTotalBytes - totalBytes;
     if (Date.now() - started > BACKFILL_CEILINGS.maxDurationMs || remaining <= 0) { await settleItem(env, batch, item, "held_for_review", "bounded_execution_ceiling", actor, counters); continue; }
     let outcome: BackfillOutcome = "failed_retryable"; let reason = "unknown"; let retrieved: Awaited<ReturnType<typeof retrieveRemoteSource>> | null = null; let capture: Awaited<ReturnType<typeof captureAdmittedSource>> | null = null;
-    let contentHash: string | null = item.content_hash ?? null;
+    let contentHash: string | null = item.transport_hash ?? item.content_hash ?? null;
+    let normalizedContentHash: string | null = item.normalized_content_hash ?? null;
+    let hashSemanticsVersion: string | null = item.hash_semantics_version ?? null;
     let sourceDocumentId: string | null = item.source_document_id ?? null;
     let sourceDocumentVersionId: string | null = item.source_document_version_id ?? null;
     try {
       const maximumBytes = Math.min(BACKFILL_CEILINGS.maxBytesPerRecord, remaining);
       retrieved = await retrieveRemoteSource(selected.canonicalUrl, { allowedContentTypes: ["text/html", "text/plain", "text/markdown", "application/pdf"], maximumBytes, timeoutMs: 8_000, maxRedirects: BACKFILL_CEILINGS.maxRedirects, userAgent: "TRACE-KC11C-Preview/1.0" });
       totalBytes += retrieved.byteLength;
-      contentHash = await sha256(retrieved.body);
+      contentHash = retrieved.transportHash;
+      const mediaKind: SourceIdentityMediaKind = retrieved.contentType === "text/html"
+        ? "html"
+        : retrieved.contentType === "text/markdown"
+          ? "markdown"
+          : retrieved.contentType === "application/pdf"
+            ? "pdf"
+            : "plain_text";
+      const extraction = mediaKind === "html"
+        ? extractHtmlDocument(retrieved.body)
+        : extractHtmlDocument(`<main><p>${retrieved.body.slice(0, 12000)}</p></main>`);
+      normalizedContentHash = (await hashNormalizedSourceContent({ mediaKind, body: retrieved.body, extraction })).normalizedContentHash;
+      hashSemanticsVersion = "normalized_content_v1";
       const existingDocument = await env.DB.prepare("SELECT id FROM source_documents WHERE canonical_url = ?").bind(selected.canonicalUrl).first<{ id: string }>();
       sourceDocumentId = existingDocument?.id ?? null;
-      const existingVersion = existingDocument ? await env.DB.prepare("SELECT id FROM source_document_versions WHERE source_document_id = ? AND content_hash = ?").bind(existingDocument.id, contentHash).first<{ id: string }>() : null;
+      const existingVersion = existingDocument ? await env.DB.prepare(`
+        SELECT id, hash_semantics_version
+        FROM source_document_versions
+        WHERE source_document_id = ?
+          AND (normalized_content_hash = ? OR (normalized_content_hash IS NULL AND content_hash = ?))
+        ORDER BY CASE WHEN normalized_content_hash = ? THEN 0 ELSE 1 END, created_at ASC
+        LIMIT 1
+      `).bind(existingDocument.id, normalizedContentHash, contentHash, normalizedContentHash).first<{ id: string; hash_semantics_version: string }>() : null;
       if (existingVersion) {
-        sourceDocumentVersionId = existingVersion.id;
-        await triggerKnowledgeReview(env.DB, {
-          kind: "evidence_changed",
-          sourceDocumentIds: [existingDocument!.id],
-          sourceDocumentVersionId: existingVersion.id,
-          eventId: existingVersion.id,
+        // Route the unchanged path through capture so the exact transport
+        // observation is retained and the idempotent review trigger is replayed
+        // after a post-commit failure without creating a new version.
+        capture = await captureAdmittedSource(env, {
+          canonicalUrl: selected.canonicalUrl,
+          retrievedUrl: retrieved.finalUrl,
+          contentType: retrieved.contentType,
+          body: retrieved.body,
+          extraction,
+          mediaKind,
+          admissionState: "admitted",
+          copyrightStorageMode: selected.storageMode,
+          httpStatus: retrieved.responseStatus,
+          correlationId: batch.correlation_id,
+          maximumBytes,
+          transportHash: retrieved.transportHash,
         });
+        sourceDocumentId = capture.sourceDocumentId;
+        sourceDocumentVersionId = capture.sourceDocumentVersionId;
+        contentHash = capture.transportHash;
+        normalizedContentHash = capture.normalizedContentHash;
+        hashSemanticsVersion = capture.hashSemanticsVersion;
         outcome = "unchanged";
-        reason = "content_hash_unchanged";
+        reason = "normalized_content_hash_unchanged";
       }
       else {
-        const extraction = retrieved.contentType === "text/html" ? extractHtmlDocument(retrieved.body) : extractHtmlDocument(`<main><p>${retrieved.body.slice(0, 12000)}</p></main>`);
-        capture = await captureAdmittedSource(env, { canonicalUrl: selected.canonicalUrl, retrievedUrl: retrieved.finalUrl, contentType: retrieved.contentType, body: retrieved.body, extraction, mediaKind: retrieved.contentType === "text/html" ? "html" : "plain_text", admissionState: "admitted", copyrightStorageMode: selected.storageMode, httpStatus: retrieved.responseStatus, correlationId: batch.correlation_id, maximumBytes });
+        capture = await captureAdmittedSource(env, { canonicalUrl: selected.canonicalUrl, retrievedUrl: retrieved.finalUrl, contentType: retrieved.contentType, body: retrieved.body, extraction, mediaKind, admissionState: "admitted", copyrightStorageMode: selected.storageMode, httpStatus: retrieved.responseStatus, correlationId: batch.correlation_id, maximumBytes, transportHash: retrieved.transportHash });
         sourceDocumentId = capture.sourceDocumentId;
         sourceDocumentVersionId = capture.sourceDocumentVersionId;
         contentHash = capture.contentHash;
+        normalizedContentHash = capture.normalizedContentHash;
+        hashSemanticsVersion = capture.hashSemanticsVersion;
         outcome = capture.extractionStatus === "metadata_only" ? "metadata_only" : (existingDocument ? "captured_new_version" : "captured_new_document"); reason = "captured_admitted_source";
       }
     } catch (error) {
@@ -358,22 +396,27 @@ export async function executeBackfill(env: BackfillEnv, batchId: string, planHas
       // failure remains retryable and truthful without duplicating content.
       if (contentHash) {
         const committed = await env.DB.prepare(`
-          SELECT document.id AS source_document_id, version.id AS source_document_version_id
+          SELECT document.id AS source_document_id, version.id AS source_document_version_id,
+                 version.normalized_content_hash, version.hash_semantics_version
           FROM source_documents document
           JOIN source_document_versions version ON version.source_document_id = document.id
-          WHERE document.canonical_url = ? AND version.content_hash = ?
+          WHERE document.canonical_url = ?
+            AND (version.normalized_content_hash = ? OR (version.normalized_content_hash IS NULL AND version.content_hash = ?))
+          ORDER BY CASE WHEN version.normalized_content_hash = ? THEN 0 ELSE 1 END, version.created_at ASC
           LIMIT 1
-        `).bind(selected.canonicalUrl, contentHash).first<{ source_document_id: string; source_document_version_id: string }>().catch(() => null);
+        `).bind(selected.canonicalUrl, normalizedContentHash, contentHash, normalizedContentHash).first<{ source_document_id: string; source_document_version_id: string; normalized_content_hash: string | null; hash_semantics_version: string | null }>().catch(() => null);
         if (committed) {
           sourceDocumentId = committed.source_document_id;
           sourceDocumentVersionId = committed.source_document_version_id;
+          normalizedContentHash = committed.normalized_content_hash;
+          hashSemanticsVersion = committed.hash_semantics_version;
         }
       }
       reason = error instanceof SourceRetrievalError ? error.code : error instanceof Error ? error.message.slice(0, 120) : "capture_failed";
       const retryCount = Number(item.retry_count ?? 0) + 1;
       outcome = error instanceof SourceRetrievalError && ["url_ineligible", "redirect_rejected", "content_type_rejected", "response_status_rejected", "response_too_large"].includes(error.code) ? "excluded" : retryCount >= BACKFILL_CEILINGS.maxRetries ? "failed_terminal" : "failed_retryable";
     }
-    await settleItem(env, batch, item, outcome, reason, actor, counters, { sourceDocumentId, sourceDocumentVersionId, httpStatus: retrieved?.responseStatus ?? null, retrievedUrl: retrieved?.finalUrl ?? null, redirectCount: retrieved?.redirectCount ?? null, byteLength: retrieved?.byteLength ?? null, contentHash });
+    await settleItem(env, batch, item, outcome, reason, actor, counters, { sourceDocumentId, sourceDocumentVersionId, httpStatus: retrieved?.responseStatus ?? null, retrievedUrl: retrieved?.finalUrl ?? null, redirectCount: retrieved?.redirectCount ?? null, byteLength: retrieved?.byteLength ?? null, contentHash, transportHash: contentHash, normalizedContentHash, hashSemanticsVersion });
   }
   const remainingRows = await env.DB.prepare("SELECT COUNT(*) AS count FROM knowledge_source_backfill_items WHERE batch_id = ? AND outcome IN ('planned','failed_retryable','failed_terminal')").bind(batchId).first<{ count: number }>();
   const state = Number(remainingRows?.count ?? 0) > 0 ? "partial" : "completed";
@@ -458,8 +501,8 @@ export async function recoverStaleBackfill(
 
 async function settleItem(env: BackfillEnv, batch: any, item: any, outcome: BackfillOutcome, reason: string, actor: string, counters: Record<string, number>, fields: Record<string, unknown> = {}): Promise<void> {
   counters[outcome] = (counters[outcome] ?? 0) + 1; counters.processed++;
-  await env.DB.prepare("UPDATE knowledge_source_backfill_items SET outcome = ?, reason_code = ?, source_document_id = ?, source_document_version_id = ?, http_status = ?, retrieved_url = ?, redirect_count = ?, byte_length = ?, content_hash = ?, retry_count = retry_count + CASE WHEN ? IN ('failed_retryable','failed_terminal') THEN 1 ELSE 0 END, updated_at = datetime('now') WHERE id = ?")
-    .bind(outcome, reason, fields.sourceDocumentId ?? null, fields.sourceDocumentVersionId ?? null, fields.httpStatus ?? null, fields.retrievedUrl ?? null, fields.redirectCount ?? null, fields.byteLength ?? null, fields.contentHash ?? null, outcome, item.id).run();
+  await env.DB.prepare("UPDATE knowledge_source_backfill_items SET outcome = ?, reason_code = ?, source_document_id = ?, source_document_version_id = ?, http_status = ?, retrieved_url = ?, redirect_count = ?, byte_length = ?, content_hash = ?, transport_hash = ?, normalized_content_hash = ?, hash_semantics_version = ?, retry_count = retry_count + CASE WHEN ? IN ('failed_retryable','failed_terminal') THEN 1 ELSE 0 END, updated_at = datetime('now') WHERE id = ?")
+    .bind(outcome, reason, fields.sourceDocumentId ?? null, fields.sourceDocumentVersionId ?? null, fields.httpStatus ?? null, fields.retrievedUrl ?? null, fields.redirectCount ?? null, fields.byteLength ?? null, fields.contentHash ?? null, fields.transportHash ?? null, fields.normalizedContentHash ?? null, fields.hashSemanticsVersion ?? null, outcome, item.id).run();
   await env.DB.prepare("INSERT INTO knowledge_source_backfill_item_events (id, batch_id, item_id, outcome, reason_code, metadata_json, actor, correlation_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
     .bind(crypto.randomUUID(), batch.id, item.id, outcome, reason, JSON.stringify(fields), actor, batch.correlation_id).run();
 }

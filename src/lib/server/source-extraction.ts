@@ -25,6 +25,14 @@ export interface HtmlExtractionBlock {
   headingLevel?: number;
 }
 
+export interface HtmlExtractionLink {
+  href: string;
+  text: string;
+  sourceStart: number;
+  sourceEnd: number;
+  locator: string;
+}
+
 export interface HtmlExtractionDiagnostics {
   extractionMethod: "deterministic_html_v1";
   inputBytes: number;
@@ -44,6 +52,7 @@ export interface ExtractedHtmlDocument {
   authorHandle: string | null;
   publishedAt: string | null;
   description: string | null;
+  links: HtmlExtractionLink[];
   headings: Array<{
     level: number;
     text: string;
@@ -98,6 +107,7 @@ export function extractHtmlDocument(
   const metadata = extractMetadata(html);
   const selected = selectContainer(html);
   const removal = removeUntrustedElements(selected.html);
+  const links = extractLinks(removal.html, selected.offset);
   const candidates = extractBlocks(removal.html, selected.offset);
   const warnings: string[] = [];
 
@@ -145,6 +155,7 @@ export function extractHtmlDocument(
   return {
     extractionState: text ? "extracted" : "metadata_only",
     ...metadata,
+    links,
     headings,
     blocks: retained,
     text,
@@ -298,6 +309,21 @@ function extractBlocks(html: string, offset: number): HtmlExtractionBlock[] {
     if (text) blocks.push({ kind: "other", text, sourceStart: offset, sourceEnd: offset + html.length, locator: `html:${offset}-${offset + html.length}` });
   }
   return blocks;
+}
+
+function extractLinks(html: string, offset: number): HtmlExtractionLink[] {
+  const links: HtmlExtractionLink[] = [];
+  const pattern = /<a\b([^>]*)>([\s\S]*?)<\/a\s*>/gi;
+  for (const match of html.matchAll(pattern)) {
+    const attributes = parseAttributes(`<a${match[1]}>`);
+    const href = attributes.href?.trim();
+    if (!href) continue;
+    const text = cleanText(match[2].replace(/<[^>]+>/g, " "));
+    const sourceStart = offset + (match.index ?? 0);
+    const sourceEnd = sourceStart + match[0].length;
+    links.push({ href, text, sourceStart, sourceEnd, locator: `html:${sourceStart}-${sourceEnd}` });
+  }
+  return links;
 }
 
 function blockKindFor(tag: string): HtmlExtractionBlockKind {

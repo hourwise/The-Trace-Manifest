@@ -39,6 +39,8 @@ export interface RetrievedRemoteSource {
   body: string;
   redirectCount: number;
   responseStatus: number;
+  /** SHA-256 of the exact bytes read from the response body. */
+  transportHash: string;
 }
 
 export interface SourceRetrievalOptions {
@@ -106,7 +108,7 @@ async function readBoundedText(
   response: Response,
   maximumBytes: number,
   deadline: number,
-): Promise<{ body: string; byteLength: number }> {
+): Promise<{ body: string; byteLength: number; transportHash: string }> {
   const declaredLength = Number(response.headers.get("Content-Length") ?? "0");
   if (Number.isFinite(declaredLength) && declaredLength > maximumBytes) {
     await cancelResponse(response);
@@ -144,7 +146,12 @@ async function readBoundedText(
     bytes.set(chunk, offset);
     offset += chunk.byteLength;
   }
-  return { body: new TextDecoder().decode(bytes), byteLength: totalBytes };
+  return { body: new TextDecoder().decode(bytes), byteLength: totalBytes, transportHash: await sha256Bytes(bytes) };
+}
+
+async function sha256Bytes(value: Uint8Array): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", value as unknown as BufferSource);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 /**

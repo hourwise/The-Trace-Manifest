@@ -42,6 +42,7 @@ import { KnowledgeDocumentMappingError, mapKnowledgeDocumentClaim } from "../src
 import { evaluateKnowledgeApproval } from "../src/lib/server/knowledge-approval";
 import { triggerKnowledgeReview } from "../src/lib/server/knowledge-change-proposals";
 import { captureAdmittedSource, SourceCaptureError } from "../src/lib/server/source-capture";
+import { hashNormalizedSourceContent, hashTransportBody, policyVersionFor } from "../src/lib/server/source-version-identity";
 import { KC09_EMBEDDING_POLICY, embeddingRolloutFor, isAllowedKnowledgeVectorMetadataField } from "../src/lib/server/knowledge-embedding-policy";
 import { resolveKnowledgeVectorMatches } from "../src/lib/server/knowledge-vector-resolution";
 import { resolveAndValidateCitationReferences, resolveKnowledgeCitations, type KnowledgeCitationInput } from "../src/lib/server/knowledge-citation-resolution";
@@ -277,6 +278,38 @@ async function kc11cBackfillIntegrityTests(): Promise<void> {
       assert.equal(existingFailureItemRow?.source_document_version_id, recoveredItem?.source_document_version_id);
     } finally {
       recoveryDatabase.close();
+    }
+
+    // A retry batch receiving a different transport shell but identical
+    // extracted evidence must settle unchanged and retain both observations,
+    // rather than creating a second source version.
+    const volatileInventory = {
+      schemaVersion: "kc-11a-v1", generatedAt: "2026-07-28T00:00:00Z",
+      categories: { source_url: [{ id: "volatile-source", label: "Volatile source", url: "https://example.test/volatile" }] },
+    };
+    const volatileAuthority = await establishAuthoritativeInventory(env, volatileInventory, "kc-11c-v1", "reviewer@example.com", "authority-volatile");
+    const volatilePlan = await buildBackfillPlan(volatileInventory, { category: "source_url", limit: 1 }, volatileAuthority.snapshotId);
+    const volatileApproval = await approveBackfillPlan(env, volatilePlan, volatilePlan.planHash, "publisher@example.com", "approval-volatile-1");
+    const volatileBodyA = "<html><head><title>Volatile evidence</title><script nonce='a'>requestId='a'</script></head><body><main><p>Stable evidence with value 7.</p></main></body></html>";
+    const volatileBodyB = "<html><head><title>Volatile evidence</title><script nonce='b'>requestId='b'</script></head><body><main data-hydration='b'><p>Stable evidence with value 7.</p></main></body></html>";
+    const originalFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = (async () => new Response(volatileBodyA, { status: 200, headers: { "Content-Type": "text/html" } })) as typeof fetch;
+      const firstVolatileResult = await executeBackfill(env, volatileApproval.batchId, volatilePlan.planHash, "publisher@example.com", "execute-volatile-1", "initial");
+      assert.equal(firstVolatileResult.metadata_only, 1);
+      await establishAuthoritativeInventory(env, volatileInventory, "kc-11c-v1", "reviewer@example.com", "authority-volatile-repeat");
+      const secondVolatilePlan = await buildBackfillPlan(volatileInventory, { category: "source_url", limit: 1, newestFirst: false }, volatileAuthority.snapshotId);
+      const secondVolatileApproval = await approveBackfillPlan(env, secondVolatilePlan, secondVolatilePlan.planHash, "publisher@example.com", "approval-volatile-2");
+      globalThis.fetch = (async () => new Response(volatileBodyB, { status: 200, headers: { "Content-Type": "text/html" } })) as typeof fetch;
+      const secondVolatileResult = await executeBackfill(env, secondVolatileApproval.batchId, secondVolatilePlan.planHash, "publisher@example.com", "execute-volatile-2", "initial");
+      assert.equal(secondVolatileResult.unchanged, 1, "a transport-only retry settles unchanged");
+      const volatileRow = await database.prepare(`SELECT outcome, content_hash, transport_hash, normalized_content_hash, source_document_version_id FROM knowledge_source_backfill_items WHERE batch_id = ?`).bind(secondVolatileApproval.batchId).first<{ outcome: string; content_hash: string; transport_hash: string; normalized_content_hash: string; source_document_version_id: string }>();
+      assert.equal(volatileRow?.outcome, "unchanged");
+      assert.equal(volatileRow?.content_hash, volatileRow?.transport_hash);
+      assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM source_document_versions WHERE source_document_id = (SELECT source_document_id FROM knowledge_source_backfill_items WHERE batch_id = ?)").bind(secondVolatileApproval.batchId).first<{ count: number }>())?.count, 1, "transport-only retry does not create a duplicate source version");
+      assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM source_document_version_observations WHERE source_document_version_id = ?").bind(volatileRow?.source_document_version_id).first<{ count: number }>())?.count, 2, "transport-only retry records the second exact observation");
+    } finally {
+      globalThis.fetch = originalFetch;
     }
 
     const inventory1 = {
@@ -1312,6 +1345,123 @@ async function kc03cCaptureTests(): Promise<void> {
     );
   } finally {
     database.close();
+  }
+}
+
+async function sourceVersionHashSemanticsTests(): Promise<void> {
+  const stableBody = `<html><head><meta property="article:published_time" content="2026-07-30"><meta name="author" content="A. Writer"><title>Evidence report</title><script nonce="one">window.requestId="a"</script></head><body><main class="article" data-hydration="a"><h1>Evidence report</h1><p>Quoted value: 42.5%.</p><blockquote>“A material quotation.”</blockquote><pre>const answer = 42;</pre><p><a class="primary" href="https://example.test/evidence">Source link</a></p></main><script>hydrate({requestId:"a"})</script></body></html>`;
+  const volatileBody = `<html><head><title>Evidence report</title><meta name="author" content="A. Writer"><meta property="article:published_time" content="2026-07-30"><script data-request-id="b" nonce="two">hydrate({requestId:"b",nonce:"two"})</script></head><body><main data-hydration="b" class="article"><h1> Evidence report </h1><p>Quoted value: 42.5%.</p><blockquote>“A material quotation.”</blockquote><pre>const answer = 42;</pre><p><a href="https://example.test/evidence" data-track="b"> Source link </a></p></main><script>window.requestId="b"</script></body></html>`;
+  const changedBody = volatileBody.replace("42.5%", "43.5%");
+  const stableExtraction = extractHtmlDocument(stableBody);
+  const volatileExtraction = extractHtmlDocument(volatileBody);
+  const stableTransportHash = await hashTransportBody(stableBody);
+  const volatileTransportHash = await hashTransportBody(volatileBody);
+  const stableIdentity = await hashNormalizedSourceContent({ mediaKind: "html", body: stableBody, extraction: stableExtraction });
+  const volatileIdentity = await hashNormalizedSourceContent({ mediaKind: "html", body: volatileBody, extraction: volatileExtraction });
+  const changedIdentity = await hashNormalizedSourceContent({ mediaKind: "html", body: changedBody, extraction: extractHtmlDocument(changedBody) });
+  assert.notEqual(stableTransportHash, volatileTransportHash, "volatile transport changes retain distinct exact hashes");
+  assert.equal(stableIdentity.normalizedContentHash, volatileIdentity.normalizedContentHash, "volatile shell changes retain normalized evidence identity");
+  assert.notEqual(stableIdentity.normalizedContentHash, changedIdentity.normalizedContentHash, "material evidence changes create a new normalized identity");
+  assert.equal(stableIdentity.hashSemanticsVersion, "normalized_content_v1");
+  assert.ok(stableExtraction.links.some((link) => link.href === "https://example.test/evidence"), "meaningful links remain in extraction");
+
+  const database = new SQLiteD1();
+  try {
+    const rawStore = {
+      put: async () => undefined,
+      delete: async () => undefined,
+    } as unknown as Pick<R2Bucket, "put" | "delete">;
+    const capture = async (body: string, extraction: ReturnType<typeof extractHtmlDocument>) => captureAdmittedSource({ DB: database.asD1(), RAW_STORE: rawStore }, {
+      canonicalUrl: "https://example.test/hash-semantics",
+      retrievedUrl: "https://example.test/hash-semantics",
+      contentType: "text/html",
+      body,
+      extraction,
+      mediaKind: "html",
+      admissionState: "admitted",
+      copyrightStorageMode: "metadata_only",
+      httpStatus: 200,
+    });
+    const first = await capture(stableBody, stableExtraction);
+    const volatile = await capture(volatileBody, volatileExtraction);
+    assert.equal(volatile.sourceDocumentVersionId, first.sourceDocumentVersionId, "transport-only HTML changes do not create a second version");
+    assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM source_document_versions").first<{ count: number }>())?.count, 1);
+    assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM source_document_version_observations").first<{ count: number }>())?.count, 2, "both exact transport observations are retained");
+    const changed = await capture(changedBody, extractHtmlDocument(changedBody));
+    assert.notEqual(changed.sourceDocumentVersionId, first.sourceDocumentVersionId, "substantive content creates one new source version");
+    assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM source_document_versions").first<{ count: number }>())?.count, 2);
+    const versions = await database.prepare("SELECT content_hash, transport_hash, normalized_content_hash, hash_semantics_version FROM source_document_versions ORDER BY created_at, id").all<{ content_hash: string; transport_hash: string; normalized_content_hash: string; hash_semantics_version: string }>();
+    assert.ok(versions.results?.every((version) => version.content_hash === version.transport_hash && version.hash_semantics_version === "normalized_content_v1"));
+    assert.ok(versions.results?.every((version) => /^[0-9a-f]{64}$/.test(version.normalized_content_hash)));
+  } finally {
+    database.close();
+  }
+
+  const reordered = `<html><head><title>Evidence report</title><meta content="2026-07-30" property="article:published_time"><meta content="A. Writer" name="author"></head><body><main data-hydration="different"><h1>Evidence report</h1><p>Quoted value: 42.5%.</p><blockquote>“A material quotation.”</blockquote><pre>const answer = 42;</pre><p><a href="https://example.test/evidence">Source link</a></p></main></body></html>`;
+  assert.equal(
+    (await hashNormalizedSourceContent({ mediaKind: "html", body: reordered, extraction: extractHtmlDocument(reordered) })).normalizedContentHash,
+    stableIdentity.normalizedContentHash,
+    "attribute order and harmless whitespace remain canonicalized",
+  );
+  assert.notEqual(
+    (await hashNormalizedSourceContent({ mediaKind: "html", body: stableBody.replace("2026-07-30", "2026-07-31"), extraction: extractHtmlDocument(stableBody.replace("2026-07-30", "2026-07-31")) })).normalizedContentHash,
+    stableIdentity.normalizedContentHash,
+    "published-date changes remain evidence-bearing",
+  );
+  assert.equal(
+    (await hashNormalizedSourceContent({ mediaKind: "json", body: '{"b":2,"a":1}' })).normalizedContentHash,
+    (await hashNormalizedSourceContent({ mediaKind: "json", body: '{"a":1,"b":2}' })).normalizedContentHash,
+    "JSON key ordering is canonicalized",
+  );
+  assert.notEqual(
+    (await hashNormalizedSourceContent({ mediaKind: "json", body: "null" })).normalizedContentHash,
+    (await hashNormalizedSourceContent({ mediaKind: "json", body: "{}" })).normalizedContentHash,
+    "JSON null and object values remain distinct",
+  );
+  await assert.rejects(
+    () => hashNormalizedSourceContent({ mediaKind: "json", body: "not-json" }),
+    /not valid JSON/,
+    "invalid JSON cannot enter the hash identity",
+  );
+  assert.equal(
+    (await hashNormalizedSourceContent({ mediaKind: "markdown", body: "# Heading  \r\n\r\nEvidence" })).normalizedContentHash,
+    (await hashNormalizedSourceContent({ mediaKind: "markdown", body: "# Heading\n\nEvidence" })).normalizedContentHash,
+    "Markdown line endings and trailing whitespace are normalized deterministically",
+  );
+  assert.equal(policyVersionFor("pdf"), "source-normalized-pdf-v1");
+  assert.equal(policyVersionFor("plain_text"), "source-normalized-plain_text-v1");
+
+  // A legacy raw-hash row remains immutable and readable. The migration only
+  // backfills its new transport compatibility column; no normalized identity
+  // is invented without the historical extraction representation.
+  const legacyDatabase = new SQLiteD1();
+  try {
+    const legacyUrl = "https://example.test/legacy-hash";
+    const legacyUrlDigest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(legacyUrl));
+    const legacyUrlHash = Array.from(new Uint8Array(legacyUrlDigest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+    const legacyBody = "legacy body";
+    const legacyTransport = await hashTransportBody(legacyBody);
+    legacyDatabase.sqlite.prepare(`INSERT INTO source_documents (id, canonical_url, canonical_url_hash, media_kind, admission_state, copyright_storage_mode) VALUES (?, ?, ?, 'plain_text', 'admitted', 'metadata_only')`).run(`source-${legacyUrlHash}`, legacyUrl, legacyUrlHash);
+    legacyDatabase.sqlite.prepare(`INSERT INTO source_document_versions (id, source_document_id, content_hash, retrieved_url, retrieved_at, extraction_status) VALUES ('legacy-version', ?, ?, ?, datetime('now'), 'metadata_only')`).run(`source-${legacyUrlHash}`, legacyTransport, legacyUrl);
+    const result = await captureAdmittedSource({ DB: legacyDatabase.asD1(), RAW_STORE: { put: async () => undefined, delete: async () => undefined } as any }, {
+      canonicalUrl: legacyUrl,
+      retrievedUrl: legacyUrl,
+      contentType: "text/plain",
+      body: legacyBody,
+      extraction: extractHtmlDocument(`<main><p>${legacyBody}</p></main>`),
+      mediaKind: "plain_text",
+      admissionState: "admitted",
+      copyrightStorageMode: "metadata_only",
+    });
+    assert.equal(result.sourceDocumentVersionId, "legacy-version");
+    const legacy = await legacyDatabase.prepare("SELECT id, content_hash, transport_hash, normalized_content_hash, hash_semantics_version FROM source_document_versions WHERE id = 'legacy-version'").first<{ id: string; content_hash: string; transport_hash: string; normalized_content_hash: string | null; hash_semantics_version: string }>();
+    assert.equal(legacy?.id, "legacy-version");
+    assert.equal(legacy?.content_hash, legacyTransport);
+    assert.equal(legacy?.transport_hash, null, "legacy rows keep the old content_hash as their transport identity");
+    assert.equal(legacy?.normalized_content_hash, null);
+    assert.equal(legacy?.hash_semantics_version, "legacy_raw_v1", "legacy source identity remains unchanged and explicitly labelled");
+  } finally {
+    legacyDatabase.close();
   }
 }
 
@@ -2982,6 +3132,7 @@ await boundaryTests();
 await triageUrlSourceTests();
 sourceExtractionTests();
 await kc03cCaptureTests();
+await sourceVersionHashSemanticsTests();
 await kc03dQueueTests();
 await kc03eConsumerTests();
 await kc04StructuredExtractionTests();

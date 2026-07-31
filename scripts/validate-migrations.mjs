@@ -74,6 +74,9 @@ try {
   db.exec(readFileSync("db/migration-0057-kc-11c-backfill-integrity.sql", "utf8"));
   db.exec(readFileSync("db/migration-0058-kc-11c-final-integrity.sql", "utf8"));
   db.exec(readFileSync("db/migration-0058-kc-11c-final-integrity.sql", "utf8"));
+  // 0059 uses additive ALTER TABLE statements and is intentionally applied
+  // once here; D1 applies each numbered migration once in production.
+  db.exec(readFileSync("db/migration-0059-source-version-hash-semantics.sql", "utf8"));
 
   const requiredTables = [
     "ai_requests", "ai_budget_reservations", "ai_usage_ledger", "ai_quota_usage",
@@ -89,6 +92,7 @@ try {
     "knowledge_source_backfill_batches", "knowledge_source_backfill_items", "knowledge_source_backfill_item_events",
     "knowledge_source_backfill_inventory_snapshots", "knowledge_source_backfill_inventory_authority",
     "knowledge_source_backfill_attempts",
+    "source_document_version_observations",
     "knowledge_extraction_runs", "knowledge_extraction_run_outputs",
     "knowledge_extraction_reviews",
     "knowledge_claim_match_candidates",
@@ -121,6 +125,14 @@ try {
   const embeddingRunColumns = new Set(db.prepare("PRAGMA table_info(knowledge_embedding_runs)").all().map((row) => row.name));
   for (const column of ["confirmation_pending_count", "reconciled_count"]) {
     if (!embeddingRunColumns.has(column)) throw new Error(`Missing embedding run counter column ${column}`);
+  }
+  const sourceVersionColumns = new Set(db.prepare("PRAGMA table_info(source_document_versions)").all().map((row) => row.name));
+  for (const column of ["transport_hash", "normalized_content_hash", "hash_semantics_version"]) {
+    if (!sourceVersionColumns.has(column)) throw new Error(`Missing source version hash column ${column}`);
+  }
+  const backfillItemColumns = new Set(db.prepare("PRAGMA table_info(knowledge_source_backfill_items)").all().map((row) => row.name));
+  for (const column of ["transport_hash", "normalized_content_hash", "hash_semantics_version"]) {
+    if (!backfillItemColumns.has(column)) throw new Error(`Missing backfill item hash column ${column}`);
   }
 
   const jobColumns = new Set(db.prepare("PRAGMA table_info(ingestion_jobs)").all().map((row) => row.name));

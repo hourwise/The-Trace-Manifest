@@ -6,6 +6,13 @@
 
 import type { ExtractedHtmlDocument } from "./source-extraction";
 import { triggerKnowledgeReview } from "./knowledge-change-proposals";
+import {
+  hashNormalizedSourceContent,
+  hashTransportBody,
+  policyVersionFor,
+  SOURCE_HASH_SEMANTICS_VERSION,
+  LEGACY_SOURCE_HASH_SEMANTICS_VERSION,
+} from "./source-version-identity";
 
 export type SourceCaptureStorageMode = "metadata_only" | "short_excerpt" | "private_full_text" | "editor_supplied_document" | "prohibited";
 
@@ -28,13 +35,19 @@ export interface SourceCaptureInput {
   retrievedAt?: string;
   correlationId?: string;
   maximumBytes?: number;
+  /** Exact response-byte hash from the retrieval boundary, when available. */
+  transportHash?: string;
 }
 
 export interface SourceCaptureResult {
   sourceDocumentId: string;
   sourceDocumentVersionId: string;
   canonicalUrlHash: string;
+  /** Compatibility alias: exact transport hash formerly called contentHash. */
   contentHash: string;
+  transportHash: string;
+  normalizedContentHash: string;
+  hashSemanticsVersion: typeof SOURCE_HASH_SEMANTICS_VERSION | typeof LEGACY_SOURCE_HASH_SEMANTICS_VERSION;
   r2OriginalKey: string | null;
   r2ExtractedKey: string | null;
   extractionStatus: "captured" | "metadata_only";
@@ -72,24 +85,46 @@ export async function captureAdmittedSource(
   }
 
   const canonicalUrlHash = await sha256(canonicalUrl);
-  const contentHash = await sha256Bytes(bodyBytes);
+  const transportHash = input.transportHash ?? await hashTransportBody(input.body);
+  if (!/^[0-9a-f]{64}$/i.test(transportHash)) {
+    throw new SourceCaptureError("The source transport hash is invalid.", "invalid_input");
+  }
+  const normalized = await hashNormalizedSourceContent({ mediaKind: input.mediaKind, body: input.body, extraction: input.extraction });
+  const normalizedContentHash = normalized.normalizedContentHash;
   const sourceDocumentId = `source-${canonicalUrlHash}`;
-  const sourceDocumentVersionId = `source-version-${canonicalUrlHash}-${contentHash}`;
+  const existingVersion = await env.DB.prepare(`
+    SELECT id, hash_semantics_version, r2_original_key, r2_extracted_key, extraction_status
+    FROM source_document_versions
+    WHERE source_document_id = ?
+      AND (normalized_content_hash = ? OR (normalized_content_hash IS NULL AND content_hash = ?))
+    ORDER BY CASE WHEN normalized_content_hash = ? THEN 0 ELSE 1 END, created_at ASC
+    LIMIT 1
+  `).bind(sourceDocumentId, normalizedContentHash, transportHash, normalizedContentHash).first<{
+    id: string;
+    hash_semantics_version: string;
+    r2_original_key: string | null;
+    r2_extracted_key: string | null;
+    extraction_status: "captured" | "metadata_only" | null;
+  }>();
+  const sourceDocumentVersionId = existingVersion?.id ?? `source-version-${canonicalUrlHash}-${normalizedContentHash}`;
   const canStoreBody = input.copyrightStorageMode === "private_full_text" || input.copyrightStorageMode === "editor_supplied_document";
-  const extractionStatus = canStoreBody && input.extraction.extractionState === "extracted" ? "captured" : "metadata_only";
-  const r2OriginalKey = canStoreBody ? `knowledge/${canonicalUrlHash}/versions/${contentHash}/original` : null;
-  const r2ExtractedKey = canStoreBody ? `knowledge/${canonicalUrlHash}/versions/${contentHash}/extracted.json` : null;
-  const idempotencyKey = canStoreBody ? `r2-put:${sourceDocumentVersionId}` : null;
+  const shouldStoreBody = canStoreBody && !existingVersion;
+  const extractionStatus = shouldStoreBody
+    ? (input.extraction.extractionState === "extracted" ? "captured" : "metadata_only")
+    : (existingVersion?.extraction_status ?? "metadata_only");
+  const r2OriginalKey = existingVersion?.r2_original_key ?? (shouldStoreBody ? `knowledge/${canonicalUrlHash}/versions/${transportHash}/original` : null);
+  const r2ExtractedKey = existingVersion?.r2_extracted_key ?? (shouldStoreBody ? `knowledge/${canonicalUrlHash}/versions/${transportHash}/extracted.json` : null);
+  const idempotencyKey = existingVersion ? (r2OriginalKey ? `r2-put:${sourceDocumentVersionId}` : null) : (shouldStoreBody ? `r2-put:${sourceDocumentVersionId}` : null);
   const extractedBody = JSON.stringify(input.extraction);
   const retrievedAt = input.retrievedAt ?? new Date().toISOString();
 
-  if (canStoreBody) {
+  if (shouldStoreBody) {
     try {
       await env.RAW_STORE.put(r2OriginalKey!, input.body, {
         httpMetadata: { contentType: input.contentType },
         customMetadata: {
           artifact_kind: "source_original",
-          content_hash: contentHash,
+          content_hash: transportHash,
           source_document_id: sourceDocumentId,
           source_document_version_id: sourceDocumentVersionId,
         },
@@ -98,7 +133,7 @@ export async function captureAdmittedSource(
         httpMetadata: { contentType: "application/json" },
         customMetadata: {
           artifact_kind: "source_extraction",
-          source_content_hash: contentHash,
+          source_content_hash: transportHash,
           source_document_id: sourceDocumentId,
           source_document_version_id: sourceDocumentVersionId,
         },
@@ -122,33 +157,32 @@ export async function captureAdmittedSource(
             copyright_storage_mode = ?, last_seen_at = ?, updated_at = datetime('now')
         WHERE id = ?
       `).bind(input.sourceId ?? null, input.copyrightStorageMode, retrievedAt, sourceDocumentId),
-      env.DB.prepare(`
+      ...(existingVersion ? [] : [env.DB.prepare(`
         INSERT OR IGNORE INTO source_document_versions
-          (id, source_document_id, content_hash, retrieved_url, retrieved_at, http_status, media_type,
+          (id, source_document_id, content_hash, transport_hash, normalized_content_hash,
+           hash_semantics_version, retrieved_url, retrieved_at, http_status, media_type,
            byte_length, title, author, published_at, r2_original_key, r2_extracted_key,
            extraction_status, extraction_method, extraction_version)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).bind(
-        sourceDocumentVersionId, sourceDocumentId, contentHash, retrievedUrl, retrievedAt,
+        sourceDocumentVersionId, sourceDocumentId, transportHash, transportHash, normalizedContentHash,
+        SOURCE_HASH_SEMANTICS_VERSION, retrievedUrl, retrievedAt,
         input.httpStatus ?? null, input.contentType, bodyBytes.byteLength,
         input.extraction.title, input.extraction.author, input.extraction.publishedAt,
         r2OriginalKey, r2ExtractedKey, extractionStatus,
-        input.extraction.diagnostics.extractionMethod, "deterministic_html_v1",
-      ),
+        input.extraction.diagnostics.extractionMethod, policyVersionFor(input.mediaKind),
+      )]),
       env.DB.prepare(`
-        UPDATE source_document_versions
-        SET retrieved_url = ?, retrieved_at = ?, http_status = ?, media_type = ?, byte_length = ?,
-            title = ?, author = ?, published_at = ?,
-            r2_original_key = COALESCE(?, r2_original_key),
-            r2_extracted_key = COALESCE(?, r2_extracted_key),
-            extraction_status = CASE WHEN r2_original_key IS NOT NULL OR ? IS NOT NULL THEN ? ELSE extraction_status END,
-            extraction_method = ?, extraction_version = ?
-        WHERE id = ?
+        INSERT OR IGNORE INTO source_document_version_observations
+          (id, source_document_version_id, transport_hash, normalized_content_hash,
+           hash_semantics_version, retrieved_url, retrieved_at, http_status, media_type,
+           byte_length, extraction_version)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).bind(
-        retrievedUrl, retrievedAt, input.httpStatus ?? null, input.contentType, bodyBytes.byteLength,
-        input.extraction.title, input.extraction.author, input.extraction.publishedAt,
-        r2OriginalKey, r2ExtractedKey, r2OriginalKey, extractionStatus,
-        input.extraction.diagnostics.extractionMethod, "deterministic_html_v1", sourceDocumentVersionId,
+        `observation-${sourceDocumentVersionId}-${transportHash}`, sourceDocumentVersionId,
+        transportHash, normalizedContentHash, SOURCE_HASH_SEMANTICS_VERSION,
+        retrievedUrl, retrievedAt, input.httpStatus ?? null, input.contentType,
+        bodyBytes.byteLength, policyVersionFor(input.mediaKind),
       ),
       env.DB.prepare(`
         UPDATE source_documents SET current_version_id = ?, last_seen_at = ?, updated_at = datetime('now') WHERE id = ?
@@ -159,11 +193,11 @@ export async function captureAdmittedSource(
         INSERT OR IGNORE INTO knowledge_index_operations
           (id, operation_kind, subject_type, subject_id, desired_content_hash, idempotency_key)
         VALUES (?, 'r2_put', 'source_document_version', ?, ?, ?)
-      `).bind(`operation-${idempotencyKey}`, sourceDocumentVersionId, contentHash, idempotencyKey));
+      `).bind(`operation-${idempotencyKey}`, sourceDocumentVersionId, transportHash, idempotencyKey));
     }
     await env.DB.batch(statements);
   } catch {
-    if (canStoreBody) await env.RAW_STORE.delete([r2OriginalKey!, r2ExtractedKey!]).catch(() => undefined);
+    if (shouldStoreBody) await env.RAW_STORE.delete([r2OriginalKey!, r2ExtractedKey!]).catch(() => undefined);
     throw new SourceCaptureError("The source metadata could not be recorded.", "database_write_failed", 500);
   }
 
@@ -175,7 +209,10 @@ export async function captureAdmittedSource(
   });
 
   return {
-    sourceDocumentId, sourceDocumentVersionId, canonicalUrlHash, contentHash,
+    sourceDocumentId, sourceDocumentVersionId, canonicalUrlHash,
+    contentHash: transportHash, transportHash, normalizedContentHash,
+    hashSemanticsVersion: existingVersion?.hash_semantics_version === LEGACY_SOURCE_HASH_SEMANTICS_VERSION
+      ? LEGACY_SOURCE_HASH_SEMANTICS_VERSION : SOURCE_HASH_SEMANTICS_VERSION,
     r2OriginalKey, r2ExtractedKey, extractionStatus, idempotencyKey,
   };
 }

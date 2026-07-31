@@ -1,11 +1,12 @@
 # KC-11C bounded source backfill evidence
 
-Status: final integrity corrections are implemented and verified in Preview on
+Status: final integrity corrections are implemented and verified locally on
 `agent/kc-11c-bounded-source-backfill`. KC-11C remains unchecked and
-smoke-gated. One authenticated Preview smoke batch was approved and its
-bounded initial execution reached `partial`; the corrective retry remains a
-human-authenticated action. No production resource was modified, and KC-11D
-has not begun.
+smoke-gated. The authenticated Preview retry completed, and exposed a second
+raw-transport identity defect now covered by the additive migration 0059
+design. Migration 0059 has not been applied and no new Preview deployment or
+batch execution was performed in this work unit. No production resource was
+modified, and KC-11D has not begun.
 
 ## Boundary and integrity model
 
@@ -45,10 +46,11 @@ publication paths.
 
 ## Validation and Preview deployment
 
-- Full `npm run ci`: passed, including diff checks, Astro and Worker
-  typechecking, 119 ingestion tests, stabilisation tests, additive/legacy
-  migration validation, security checks, evidence policy evaluation, knowledge
-  Markdown checks, and the production build.
+- Full `npm run ci` passed for this correction, including diff checks, Astro and
+  Worker typechecking, 119 ingestion tests, stabilisation tests,
+  additive/legacy migration validation, security checks, evidence policy
+  evaluation, knowledge Markdown checks, and the production build. The code is
+  intentionally not deployed before migration 0059 is applied to Preview.
 - Migration 0058 Preview bookmark:
   `0000003e-00000008-000050b7-8c5fe23768d389d1d94810a7d1d3d827`.
 - Previous smoke-test Worker version:
@@ -143,8 +145,9 @@ replays `evidence_changed` for an existing version before settling
 Regression tests cover missing-schema refusal before fetch/attempt creation,
 post-commit failure and identifier retention, existing-version replay,
 deterministic proposal idempotency, and bounded retry settlement. A new
-Preview Worker deployment is recorded below. The authenticated retry has not
-been run by Codex and remains smoke-gated for the human operator.
+Preview Worker deployment is recorded below. The authenticated retry was later
+completed by the human operator; its result and the newly exposed hash defect
+are recorded below.
 
 Tests cover superseded snapshot invalidation; rejection of non-current
 approval and execution; snapshot, batch, item, authority, and attempt
@@ -200,7 +203,96 @@ produce:
 
 Planning performed zero fetches and zero writes. The publisher then reviewed
 and approved the exact transported plan before the bounded initial execution
-recorded above. The corrective retry remains a separate human action.
+recorded above. The corrective retry was subsequently completed by the human
+operator and did not create terminal failures.
+
+## Live retry result and hash-semantics investigation
+
+The authenticated retry completed batch
+`d0fb3d76-488d-4aa4-a431-3d6f9a282433` with attempt
+`8c159641-5502-4579-8df5-781e1d2199cf`, idempotency key
+`84198eca-e7e1-4cb4-8768-013a54fc6d65`, mode `retry`, state `completed`,
+`processed: 2`, `metadata_only: 2`, `failed_retryable: 0`,
+`failed_terminal: 0`, and `totalBytes: 521082`. Each item chronology was
+`planned → failed_retryable → metadata_only`; retry count stayed at `1` and
+the reconciled source IDs were retained. This was not an existing-identical-
+version path: each URL received a second source version.
+
+The GitHub body remained 394052 bytes with the same title, but its raw hash
+changed from
+`bc184ab75abebc8315cbde8c2b567b2d758b08a7f0ee758207841099a471926e` to
+`606ed7e3643ff9c8cdeca781381a01a79bc32158ed54f70c1479663f588079a4`.
+The Anthropic body remained 127030 bytes while its raw hash changed from
+`992908daa70e5b54066061fd8243515304cf169184b7e8e9d435505c24a3ad9b` to
+`ba8344b27d5a3207c28e28ec72c53de972d378354f75a554f4802f21af87646f`.
+These observations expose transport-level HTML volatility rather than a
+proven substantive evidence change.
+
+The exact second versions were:
+
+- GitHub retry version
+  `source-version-f7fb7d70e0ff6a4e7a73f06ab6611f114f925c625fcbd6be38e12239d0145042-606ed7e3643ff9c8cdeca781381a01a79bc32158ed54f70c1479663f588079a4`;
+- Anthropic retry version
+  `source-version-e283b9c34207eff8e62a1618cc1a5bc63348e8c9e67ea2af1dda80b41b6b3d9b-ba8344b27d5a3207c28e28ec72c53de972d378354f75a554f4802f21af87646f`.
+
+The final retry response therefore truthfully had `metadata_only: 2`,
+`unchanged: 0`, `failed_retryable: 0`, and `failed_terminal: 0`. Those four
+Preview source versions are immutable audit evidence and are not rewritten by
+this correction.
+
+For unambiguous audit text, each item chronology was `planned ->
+failed_retryable -> metadata_only`.
+
+### Current hash dependency map
+
+Before this correction, `source_document_versions.content_hash` is the
+SHA-256 of the complete retrieved body. It is simultaneously used as the
+source-version ID suffix, the `(source_document_id, content_hash)` uniqueness
+key, R2 object path/custom metadata and `knowledge_index_operations` desired
+hash, exact-content provenance grouping input, backfill retry comparison, and
+the source hash passed to deterministic extraction metadata. The embedding
+tables use a separate normalized text hash and are not the source-version
+identity. `canonical-claim-write.ts` also has a separate synthetic feed hash;
+it is not interchangeable with source capture hashes.
+
+The extraction representation already retains deterministic title, author,
+published date, description, ordered blocks (including preformatted text),
+and normalized main text. It currently drops anchor destinations, so the
+identity correction must add stable extracted links. Retrieval timestamps,
+request IDs, nonces, analytics/script hydration, and other transport shell
+fields are not evidence identity. ETag and Last-Modified are useful metadata
+only and must never be the sole identity.
+
+### Forward-compatible design (not yet applied to Preview)
+
+Migration 0059 will add explicit `transport_hash`,
+`normalized_content_hash`, and `hash_semantics_version` fields to source
+versions and backfill items, plus an append-only transport-observation table
+for later fetches that match an existing normalized version. Existing rows,
+IDs, and legacy raw `content_hash` values remain untouched; new rows retain
+the raw hash in `content_hash` for R2/reconciliation compatibility while
+storing the versioned normalized identity separately. Legacy rows are marked
+`legacy_raw_v1` with no inferred normalized hash. A partial unique index will
+deduplicate only rows with a populated normalized hash.
+
+The normalized policy will be explicit and media-specific: HTML hashes stable
+metadata, ordered evidence-bearing extracted blocks, stable links, media kind,
+and the normalization version; Markdown/text preserve meaningful code,
+numbers, quotations and links while normalizing line endings and non-evidence
+whitespace; JSON uses deterministic key ordering; PDF uses a separate bounded
+text policy. Extraction/normalization version changes produce a new identity
+policy rather than silently aliasing old rows. This migration is additive and
+will not rewrite the four smoke-test versions.
+
+No Preview migration or deployment is authorized in this work unit. Local
+migration validation and the complete CI suite must pass first; the eventual
+human Preview repair must use the exact backup and application commands in the
+follow-up deployment record. The implementation keeps `content_hash` as the
+exact transport hash for compatibility, adds `transport_hash` explicitly,
+deduplicates new versions by the versioned normalized hash, and appends every
+later transport observation without mutating a version row. The unchanged
+backfill path now goes through this observation write before replaying the
+idempotent review trigger.
 
 ## Historical authenticated commands
 
@@ -261,12 +353,11 @@ console.log(executionResponse.status, executionResult);
 The plan, approval, and initial execution commands above document the human
 smoke chronology; they were not run by Codex for this evidence update.
 
-## Exact authenticated corrective retry command
+## Historical authenticated corrective retry command
 
-After confirming the deployed Worker and the repaired Preview schema, run this
-once from the browser console at the allowlisted Preview origin while
-authenticated through Cloudflare Access as a publisher. Do not reuse the
-initial execution idempotency key:
+The human operator used the following once from the browser console at the
+allowlisted Preview origin while authenticated through Cloudflare Access as a
+publisher. It is recorded for provenance only and must not be run again:
 
 ```js
 const retryResponse = await fetch("/api/admin/knowledge/backfill/retry", {
@@ -282,11 +373,11 @@ const retryResult = await retryResponse.json();
 console.log(retryResponse.status, retryResult);
 ```
 
-The expected successful retry is `state: "completed"`, with the two items
-settled as `unchanged`, `submitted: 0`/no new source version writes, and the
-existing source document/version IDs populated on the backfill items. If the
-response is not a bounded success, stop and preserve the response for review;
-do not retry repeatedly.
+The actual response was `state: "completed"`, `processed: 2`,
+`metadata_only: 2`, `unchanged: 0`, `failed_retryable: 0`,
+`failed_terminal: 0`, and `totalBytes: 521082`. It created a second raw-hash
+version for each URL because the pre-0059 implementation treated transport
+hash as version identity. Do not retry this batch again.
 
 ## D1 verification queries
 
