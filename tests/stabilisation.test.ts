@@ -247,6 +247,34 @@ async function kc11cBackfillIntegrityTests(): Promise<void> {
       const repeatedRetry = await executeBackfill(recoveryEnv, recoveryApproval.batchId, recoveryPlan.planHash, "publisher@example.com", "execute-recovery-retry", "retry");
       assert.deepEqual(repeatedRetry, retryResult, "repeating the retry idempotency key returns the settled result");
       assert.equal((await recoveryDatabase.prepare("SELECT COUNT(*) AS count FROM knowledge_change_proposals WHERE knowledge_document_id = 'recovery-knowledge'").first<{ count: number }>())?.count, 1);
+
+      // A review-trigger failure on an already-existing version remains
+      // retryable and retains both discovered source identifiers.
+      const existingFailureInventory = {
+        schemaVersion: "kc-11a-v1", generatedAt: "2026-07-29T00:00:00Z",
+        categories: { source_url: [{ id: "recovery-source-existing", label: "Recovery source existing", url: "https://example.test/recovery" }] },
+      };
+      const existingFailureAuthority = await establishAuthoritativeInventory(recoveryEnv, existingFailureInventory, "kc-11c-v1", "reviewer@example.com", "authority-recovery-existing");
+      const existingFailurePlan = await buildBackfillPlan(existingFailureInventory, { category: "source_url", limit: 1 }, existingFailureAuthority.snapshotId);
+      const existingFailureApproval = await approveBackfillPlan(recoveryEnv, existingFailurePlan, existingFailurePlan.planHash, "publisher@example.com", "approval-recovery-existing");
+      const existingFailureItem = recoveryDatabase.sqlite.prepare("SELECT id FROM knowledge_source_backfill_items WHERE batch_id = ?").get(existingFailureApproval.batchId) as { id: string };
+      recoveryDatabase.sqlite.prepare("CREATE TRIGGER kc11c_test_existing_review_failure BEFORE INSERT ON knowledge_change_proposals BEGIN SELECT RAISE(ABORT, 'forced existing review failure'); END").run();
+      const existingOriginalFetch = globalThis.fetch;
+      globalThis.fetch = (async () => new Response(recoveryBody, { status: 200, headers: { "Content-Type": "text/html" } })) as typeof fetch;
+      let existingFailureResult: Record<string, unknown>;
+      try {
+        existingFailureResult = await executeBackfill(recoveryEnv, existingFailureApproval.batchId, existingFailurePlan.planHash, "publisher@example.com", "execute-existing-review-failure", "initial");
+      } finally {
+        globalThis.fetch = existingOriginalFetch;
+      }
+      recoveryDatabase.sqlite.prepare("DROP TRIGGER kc11c_test_existing_review_failure").run();
+      assert.equal(existingFailureResult!.state, "partial", "existing-version review failure leaves the batch partial");
+      assert.equal(existingFailureResult!.failed_retryable, 1);
+      const existingFailureItemRow = await recoveryDatabase.prepare("SELECT outcome, retry_count, source_document_id, source_document_version_id FROM knowledge_source_backfill_items WHERE id = ?").bind(existingFailureItem.id).first<{ outcome: string; retry_count: number; source_document_id: string; source_document_version_id: string }>();
+      assert.equal(existingFailureItemRow?.outcome, "failed_retryable");
+      assert.equal(existingFailureItemRow?.retry_count, 1);
+      assert.equal(existingFailureItemRow?.source_document_id, recoveryDocumentId);
+      assert.equal(existingFailureItemRow?.source_document_version_id, recoveredItem?.source_document_version_id);
     } finally {
       recoveryDatabase.close();
     }
