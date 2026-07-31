@@ -2,6 +2,7 @@
 import { extractHtmlDocument } from "./source-extraction";
 import { captureAdmittedSource, normaliseSourceUrl, type SourceCaptureStorageMode } from "./source-capture";
 import { retrieveRemoteSource, SourceRetrievalError } from "./source-retrieval";
+import { triggerKnowledgeReview } from "./knowledge-change-proposals";
 
 export const BACKFILL_CEILINGS = Object.freeze({
   maxRecords: 25, maxConcurrency: 1, maxRedirects: 3, maxBytesPerRecord: 512 * 1024,
@@ -110,6 +111,45 @@ export async function verifyPlanHash(plan: BackfillPlan, expected: string): Prom
 
 export type BackfillDb = Pick<D1Database, "prepare" | "batch" | "exec" | "dump" | "withSession">;
 export type BackfillEnv = { DB: BackfillDb; RAW_STORE: Pick<R2Bucket, "put" | "delete">; TRACE_ENVIRONMENT?: string };
+
+/**
+ * Runtime objects required by KC-11C capture and its deterministic review
+ * trigger. Keep this list explicit so a migration drift fails closed before
+ * an execution lease or network retrieval is acquired.
+ */
+export const KC11C_RUNTIME_SCHEMA_OBJECTS = Object.freeze([
+  "knowledge_source_backfill_batches",
+  "knowledge_source_backfill_items",
+  "knowledge_source_backfill_attempts",
+  "knowledge_source_backfill_item_events",
+  "knowledge_source_backfill_current_inventory_authority",
+  "source_documents",
+  "source_document_versions",
+  "knowledge_index_operations",
+  "knowledge_documents",
+  "knowledge_document_claims",
+  "knowledge_document_claim_assertions",
+  "claim_assertions",
+  "canonical_claims",
+  "knowledge_change_proposals",
+  "knowledge_claim_conflict_cases",
+] as const);
+
+/** Fail closed on migration drift without mutating the backfill ledger. */
+export async function assertBackfillRuntimeSchema(env: BackfillEnv): Promise<void> {
+  const placeholders = KC11C_RUNTIME_SCHEMA_OBJECTS.map(() => "?").join(", ");
+  const rows = await env.DB.prepare(`
+    SELECT name
+    FROM sqlite_master
+    WHERE (type = 'table' OR type = 'view')
+      AND name IN (${placeholders})
+  `).bind(...KC11C_RUNTIME_SCHEMA_OBJECTS).all<{ name: string }>();
+  const present = new Set((rows.results ?? []).map((row) => String(row.name)));
+  const missing = KC11C_RUNTIME_SCHEMA_OBJECTS.filter((name) => !present.has(name));
+  if (missing.length > 0) {
+    throw new Error(`KC-11C runtime schema is incomplete; missing: ${missing.join(", ")}`);
+  }
+}
 
 function parseBody(value: unknown): Record<string, unknown> | null { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null; }
 function idempotencyFor(batchId: string, recordId: string): string { return `kc11c:${batchId}:${recordId}`; }
@@ -256,6 +296,7 @@ export async function approveBackfillPlan(env: BackfillEnv, plan: BackfillPlan, 
 export async function executeBackfill(env: BackfillEnv, batchId: string, planHash: string, actor: string, idempotencyKey: string, mode: "initial" | "retry" = "initial"): Promise<Record<string, unknown>> {
   if (env.TRACE_ENVIRONMENT !== "preview") throw new Error("KC-11C backfill is Preview-only.");
   if (!idempotencyKey || idempotencyKey.length > 200) throw new Error("A bounded execution idempotency key is required.");
+  await assertBackfillRuntimeSchema(env);
   const batch = await env.DB.prepare("SELECT * FROM knowledge_source_backfill_batches WHERE id = ? AND plan_hash = ?").bind(batchId, planHash).first<any>();
   if (!batch) throw new Error("The exact approved plan is required.");
   const prior = await env.DB.prepare("SELECT * FROM knowledge_source_backfill_attempts WHERE batch_id = ? AND idempotency_key = ?").bind(batchId, idempotencyKey).first<any>();
@@ -281,27 +322,60 @@ export async function executeBackfill(env: BackfillEnv, batchId: string, planHas
     const remaining = BACKFILL_CEILINGS.maxTotalBytes - totalBytes;
     if (Date.now() - started > BACKFILL_CEILINGS.maxDurationMs || remaining <= 0) { await settleItem(env, batch, item, "held_for_review", "bounded_execution_ceiling", actor, counters); continue; }
     let outcome: BackfillOutcome = "failed_retryable"; let reason = "unknown"; let retrieved: Awaited<ReturnType<typeof retrieveRemoteSource>> | null = null; let capture: Awaited<ReturnType<typeof captureAdmittedSource>> | null = null;
+    let contentHash: string | null = item.content_hash ?? null;
+    let sourceDocumentId: string | null = item.source_document_id ?? null;
+    let sourceDocumentVersionId: string | null = item.source_document_version_id ?? null;
     try {
       const maximumBytes = Math.min(BACKFILL_CEILINGS.maxBytesPerRecord, remaining);
       retrieved = await retrieveRemoteSource(selected.canonicalUrl, { allowedContentTypes: ["text/html", "text/plain", "text/markdown", "application/pdf"], maximumBytes, timeoutMs: 8_000, maxRedirects: BACKFILL_CEILINGS.maxRedirects, userAgent: "TRACE-KC11C-Preview/1.0" });
       totalBytes += retrieved.byteLength;
-      const contentHash = await sha256(retrieved.body);
+      contentHash = await sha256(retrieved.body);
       const existingDocument = await env.DB.prepare("SELECT id FROM source_documents WHERE canonical_url = ?").bind(selected.canonicalUrl).first<{ id: string }>();
+      sourceDocumentId = existingDocument?.id ?? null;
       const existingVersion = existingDocument ? await env.DB.prepare("SELECT id FROM source_document_versions WHERE source_document_id = ? AND content_hash = ?").bind(existingDocument.id, contentHash).first<{ id: string }>() : null;
-      if (existingVersion) { outcome = "unchanged"; reason = "content_hash_unchanged"; }
+      if (existingVersion) {
+        sourceDocumentVersionId = existingVersion.id;
+        await triggerKnowledgeReview(env.DB, {
+          kind: "evidence_changed",
+          sourceDocumentIds: [existingDocument!.id],
+          sourceDocumentVersionId: existingVersion.id,
+          eventId: existingVersion.id,
+        });
+        outcome = "unchanged";
+        reason = "content_hash_unchanged";
+      }
       else {
         const extraction = retrieved.contentType === "text/html" ? extractHtmlDocument(retrieved.body) : extractHtmlDocument(`<main><p>${retrieved.body.slice(0, 12000)}</p></main>`);
         capture = await captureAdmittedSource(env, { canonicalUrl: selected.canonicalUrl, retrievedUrl: retrieved.finalUrl, contentType: retrieved.contentType, body: retrieved.body, extraction, mediaKind: retrieved.contentType === "text/html" ? "html" : "plain_text", admissionState: "admitted", copyrightStorageMode: selected.storageMode, httpStatus: retrieved.responseStatus, correlationId: batch.correlation_id, maximumBytes });
+        sourceDocumentId = capture.sourceDocumentId;
+        sourceDocumentVersionId = capture.sourceDocumentVersionId;
+        contentHash = capture.contentHash;
         outcome = capture.extractionStatus === "metadata_only" ? "metadata_only" : (existingDocument ? "captured_new_version" : "captured_new_document"); reason = "captured_admitted_source";
       }
     } catch (error) {
+      // A capture commits deterministic source rows before it invokes the
+      // downstream review trigger. Re-read those rows so a post-commit
+      // failure remains retryable and truthful without duplicating content.
+      if (contentHash) {
+        const committed = await env.DB.prepare(`
+          SELECT document.id AS source_document_id, version.id AS source_document_version_id
+          FROM source_documents document
+          JOIN source_document_versions version ON version.source_document_id = document.id
+          WHERE document.canonical_url = ? AND version.content_hash = ?
+          LIMIT 1
+        `).bind(selected.canonicalUrl, contentHash).first<{ source_document_id: string; source_document_version_id: string }>().catch(() => null);
+        if (committed) {
+          sourceDocumentId = committed.source_document_id;
+          sourceDocumentVersionId = committed.source_document_version_id;
+        }
+      }
       reason = error instanceof SourceRetrievalError ? error.code : error instanceof Error ? error.message.slice(0, 120) : "capture_failed";
       const retryCount = Number(item.retry_count ?? 0) + 1;
       outcome = error instanceof SourceRetrievalError && ["url_ineligible", "redirect_rejected", "content_type_rejected", "response_status_rejected", "response_too_large"].includes(error.code) ? "excluded" : retryCount >= BACKFILL_CEILINGS.maxRetries ? "failed_terminal" : "failed_retryable";
     }
-    await settleItem(env, batch, item, outcome, reason, actor, counters, { sourceDocumentId: capture?.sourceDocumentId ?? null, sourceDocumentVersionId: capture?.sourceDocumentVersionId ?? null, httpStatus: retrieved?.responseStatus ?? null, retrievedUrl: retrieved?.finalUrl ?? null, redirectCount: retrieved?.redirectCount ?? null, byteLength: retrieved?.byteLength ?? null, contentHash: capture?.contentHash ?? null });
+    await settleItem(env, batch, item, outcome, reason, actor, counters, { sourceDocumentId, sourceDocumentVersionId, httpStatus: retrieved?.responseStatus ?? null, retrievedUrl: retrieved?.finalUrl ?? null, redirectCount: retrieved?.redirectCount ?? null, byteLength: retrieved?.byteLength ?? null, contentHash });
   }
-  const remainingRows = await env.DB.prepare("SELECT COUNT(*) AS count FROM knowledge_source_backfill_items WHERE batch_id = ? AND outcome IN ('planned','failed_retryable')").bind(batchId).first<{ count: number }>();
+  const remainingRows = await env.DB.prepare("SELECT COUNT(*) AS count FROM knowledge_source_backfill_items WHERE batch_id = ? AND outcome IN ('planned','failed_retryable','failed_terminal')").bind(batchId).first<{ count: number }>();
   const state = Number(remainingRows?.count ?? 0) > 0 ? "partial" : "completed";
   const result = { state, batchId, planHash, mode, ...counters, totalBytes };
   await env.DB.prepare("UPDATE knowledge_source_backfill_batches SET state = ?, updated_at = datetime('now') WHERE id = ? AND state = 'running'").bind(state, batchId).run();

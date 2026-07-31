@@ -2,8 +2,10 @@
 
 Status: final integrity corrections are implemented and verified in Preview on
 `agent/kc-11c-bounded-source-backfill`. KC-11C remains unchecked and
-smoke-gated. No backfill batch has been approved or executed, no production
-resource was modified, and KC-11D has not begun.
+smoke-gated. One authenticated Preview smoke batch was approved and its
+bounded initial execution reached `partial`; the corrective retry remains a
+human-authenticated action. No production resource was modified, and KC-11D
+has not begun.
 
 ## Boundary and integrity model
 
@@ -88,6 +90,57 @@ array canonicalisation, material-field tampering rejection, and modified
 transported-plan approval failure. Full `npm run ci` passed before the
 corrective Preview deployment.
 
+## Authenticated Preview smoke chronology and migration drift repair
+
+The corrected transported plan was approved by the authenticated publisher as
+batch `d0fb3d76-488d-4aa4-a431-3d6f9a282433` with the unchanged plan hash
+`b6ebc48370fce5626c7c267c56ee918cf3788f54aaf4473af3c1546cdc289f28`. Its
+initial execution attempt was `fcc36ada-0ad3-4e5d-922d-434a9670d1f4`, using
+idempotency key `d90b224f-7d7b-490b-aa06-e931e72009c8`. Both selected URLs
+returned HTTP 200 and `521082` bytes were downloaded in total. The attempt
+settled two `failed_retryable` items and moved the batch to `partial`.
+
+The downstream failure was the real Preview error
+`D1_ERROR: no such table: knowledge_claim_conflict_cases: SQLITE_ERROR`.
+Despite that failure, both deterministic source writes committed before the
+review trigger failed. The two valid records were:
+
+- GitHub document
+  `source-f7fb7d70e0ff6a4e7a73f06ab6611f114f925c625fcbd6be38e12239d0145042`
+  and version
+  `source-version-f7fb7d70e0ff6a4e7a73f06ab6611f114f925c625fcbd6be38e12239d0145042-bc184ab75abebc8315cbde8c2b567b2d758b08a7f0ee758207841099a471926e`;
+- Anthropic document
+  `source-e283b9c34207eff8e62a1618cc1a5bc63348e8c9e67ea2af1dda80b41b6b3d9b`
+  and version
+  `source-version-e283b9c34207eff8e62a1618cc1a5bc63348e8c9e67ea2af1dda80b41b6b3d9b-992908daa70e5b54066061fd8243515304cf169184b7e8e9d435505c24a3ad9b`.
+
+Both source documents remain admitted, `metadata_only`, HTTP 200 current
+versions. The backfill item rows still have null source IDs because the old
+Worker did not reconcile post-commit failures.
+
+Preview migration drift was then confirmed: migrations 0041 and 0042 were
+absent even though the rest of the KC schema was present. The operator applied
+`db/migration-0041-claim-relationship-proposals.sql` followed by
+`db/migration-0042-claim-conflict-cases.sql` manually to the named Preview
+database. The four resulting tables contain zero rows. `PRAGMA quick_check`
+returned `ok`, and `PRAGMA foreign_key_check` returned no rows. A SQL export
+was attempted but could not be produced because the D1 database contains FTS5
+virtual tables; those virtual tables were not removed or altered. The
+pre-repair Time Travel bookmark was
+`0000004e-00000000-000050b9-cc4ee4210d9cd5d290c29690bfed04f8`; the
+post-migration bookmark was
+`0000004f-0000000e-000050b9-2a301a841fc633bf99a1ce65b3f5a108`.
+
+The recovery patch adds a fail-closed `sqlite_master` preflight, preserves
+committed source identifiers and content hashes after downstream failure,
+replays `evidence_changed` for an existing version before settling
+`unchanged`, and keeps the prior retry count unchanged on successful retry.
+Regression tests cover missing-schema refusal before fetch/attempt creation,
+post-commit failure and identifier retention, existing-version replay,
+deterministic proposal idempotency, and bounded retry settlement. A new
+Preview Worker deployment is recorded below. The authenticated retry has not
+been run by Codex and remains smoke-gated for the human operator.
+
 Tests cover superseded snapshot invalidation; rejection of non-current
 approval and execution; snapshot, batch, item, authority, and attempt
 immutability; one-time attempt settlement; recent running locks; stale
@@ -125,7 +178,7 @@ request body.
 The same authority request and idempotency key return the recorded decision
 without adding a duplicate snapshot or decision.
 
-## Proposed smoke plan — not approved or executed
+## Recorded smoke plan and initial execution
 
 The exact current snapshot and selection
 `{"category":"source_url","limit":2,"newestFirst":true}` deterministically
@@ -140,11 +193,11 @@ produce:
 - Model Context Protocol TypeScript SDK:
   `https://github.com/modelcontextprotocol/typescript-sdk`
 
-Planning performs zero fetches and zero writes. A publisher must review the
-returned plan before separately approving it. Approval remains a future human
-action; execution remains a later, separate action.
+Planning performed zero fetches and zero writes. The publisher then reviewed
+and approved the exact transported plan before the bounded initial execution
+recorded above. The corrective retry remains a separate human action.
 
-## Exact authenticated commands
+## Historical authenticated commands
 
 Run these only from the browser console at the allowlisted Preview origin while
 authenticated through Cloudflare Access as a publisher. The Pages proxy signs
@@ -200,7 +253,35 @@ const executionResult = await executionResponse.json();
 console.log(executionResponse.status, executionResult);
 ```
 
-No approval or execution command above was run for this evidence update.
+The plan, approval, and initial execution commands above document the human
+smoke chronology; they were not run by Codex for this evidence update.
+
+## Exact authenticated corrective retry command
+
+After confirming the deployed Worker and the repaired Preview schema, run this
+once from the browser console at the allowlisted Preview origin while
+authenticated through Cloudflare Access as a publisher. Do not reuse the
+initial execution idempotency key:
+
+```js
+const retryResponse = await fetch("/api/admin/knowledge/backfill/retry", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    batchId: "d0fb3d76-488d-4aa4-a431-3d6f9a282433",
+    planHash: "b6ebc48370fce5626c7c267c56ee918cf3788f54aaf4473af3c1546cdc289f28",
+    idempotencyKey: crypto.randomUUID()
+  })
+});
+const retryResult = await retryResponse.json();
+console.log(retryResponse.status, retryResult);
+```
+
+The expected successful retry is `state: "completed"`, with the two items
+settled as `unchanged`, `submitted: 0`/no new source version writes, and the
+existing source document/version IDs populated on the backfill items. If the
+response is not a bounded success, stop and preserve the response for review;
+do not retry repeatedly.
 
 ## D1 verification queries
 
@@ -214,7 +295,8 @@ SELECT id, snapshot_id, decision, actor, idempotency_key, correlation_id,
 FROM knowledge_source_backfill_inventory_authority
 ORDER BY generation;
 
-SELECT id, state, plan_hash, approved_by, approved_at, executed_at
+SELECT id, json_extract(plan_json, '$.inventorySnapshotId') AS inventory_snapshot_id,
+       inventory_identity, state, plan_hash, approved_by, approved_at, executed_at
 FROM knowledge_source_backfill_batches
 ORDER BY created_at DESC;
 
@@ -235,7 +317,8 @@ WHERE batch_id = ?
 ORDER BY created_at;
 ```
 
-Post-authority Preview verification returned one current authority generation,
-zero backfill batches, and zero execution attempts. KC-11C therefore remains
-unchecked until the authenticated smoke batch and its remote ledger outcomes
-are reviewed.
+Post-repair Preview verification returned one current authority generation and
+the smoke batch above in `partial`, with one completed initial execution
+attempt and two failed-retryable items retaining retry count `1`. KC-11C
+therefore remains unchecked until the authenticated corrective retry and its
+remote ledger outcomes are reviewed.

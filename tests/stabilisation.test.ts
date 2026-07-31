@@ -136,6 +136,121 @@ async function kc11cBackfillIntegrityTests(): Promise<void> {
   const database = new SQLiteD1();
   const env = { DB: database.asD1(), RAW_STORE: { put: async () => undefined, delete: async () => undefined }, TRACE_ENVIRONMENT: "preview" } as any;
   try {
+    // Runtime schema drift must fail before an attempt, lease, retry count, or
+    // network retrieval is created.
+    const missingDatabase = new SQLiteD1();
+    try {
+      const missingEnv = { DB: missingDatabase.asD1(), RAW_STORE: { put: async () => undefined, delete: async () => undefined }, TRACE_ENVIRONMENT: "preview" } as any;
+      const missingInventory = {
+        schemaVersion: "kc-11a-v1", generatedAt: "2026-07-28T00:00:00Z",
+        categories: { source_url: [{ id: "missing-schema", label: "Missing schema", url: "https://example.test/missing-schema" }] },
+      };
+      const missingAuthority = await establishAuthoritativeInventory(missingEnv, missingInventory, "kc-11c-v1", "reviewer@example.com", "authority-missing-schema");
+      const missingPlan = await buildBackfillPlan(missingInventory, { category: "source_url", limit: 1 }, missingAuthority.snapshotId);
+      const missingApproval = await approveBackfillPlan(missingEnv, missingPlan, missingPlan.planHash, "publisher@example.com", "approval-missing-schema");
+      missingDatabase.sqlite.exec("DROP TABLE knowledge_claim_conflict_cases");
+      const originalFetch = globalThis.fetch;
+      let fetches = 0;
+      globalThis.fetch = (async () => { fetches++; throw new Error("schema preflight must run before fetch"); }) as typeof fetch;
+      try {
+        await assert.rejects(
+          () => executeBackfill(missingEnv, missingApproval.batchId, missingPlan.planHash, "publisher@example.com", "execute-missing-schema"),
+          /runtime schema is incomplete.*knowledge_claim_conflict_cases/,
+        );
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+      assert.equal(fetches, 0, "missing runtime schema fails before network retrieval");
+      assert.equal((await missingDatabase.prepare("SELECT COUNT(*) AS count FROM knowledge_source_backfill_attempts").first<{ count: number }>())?.count, 0, "missing schema creates no attempt");
+      assert.equal((await missingDatabase.prepare("SELECT state FROM knowledge_source_backfill_batches WHERE id = ?").bind(missingApproval.batchId).first<{ state: string }>())?.state, "approved", "missing schema preserves approved batch state");
+      assert.equal((await missingDatabase.prepare("SELECT outcome, retry_count FROM knowledge_source_backfill_items WHERE batch_id = ?").bind(missingApproval.batchId).first<{ outcome: string; retry_count: number }>() )?.outcome, "planned");
+      assert.equal((await missingDatabase.prepare("SELECT COUNT(*) AS count FROM source_documents").first<{ count: number }>())?.count, 0, "missing schema creates no source rows");
+    } finally {
+      missingDatabase.close();
+    }
+
+    // A post-commit review failure must retain deterministic source IDs. The
+    // retry then takes the existing-version branch, replays the review trigger,
+    // and settles unchanged without duplicating source rows or proposals.
+    const recoveryDatabase = new SQLiteD1();
+    try {
+      const recoveryEnv = { DB: recoveryDatabase.asD1(), RAW_STORE: { put: async () => undefined, delete: async () => undefined }, TRACE_ENVIRONMENT: "preview" } as any;
+      const recoveryInventory = {
+        schemaVersion: "kc-11a-v1", generatedAt: "2026-07-28T00:00:00Z",
+        categories: { source_url: [{ id: "recovery-source", label: "Recovery source", url: "https://example.test/recovery" }] },
+      };
+      const recoveryAuthority = await establishAuthoritativeInventory(recoveryEnv, recoveryInventory, "kc-11c-v1", "reviewer@example.com", "authority-recovery");
+      const recoveryPlan = await buildBackfillPlan(recoveryInventory, { category: "source_url", limit: 1 }, recoveryAuthority.snapshotId);
+      const recoveryApproval = await approveBackfillPlan(recoveryEnv, recoveryPlan, recoveryPlan.planHash, "publisher@example.com", "approval-recovery");
+      const recoveryItem = recoveryDatabase.sqlite.prepare("SELECT id FROM knowledge_source_backfill_items WHERE batch_id = ?").get(recoveryApproval.batchId) as { id: string };
+      const recoveryUrlDigest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode("https://example.test/recovery"));
+      const recoveryUrlHash = Array.from(new Uint8Array(recoveryUrlDigest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+      const recoveryDocumentId = `source-${recoveryUrlHash}`;
+      const recoveryOldVersionId = `source-version-${recoveryUrlHash}-old`;
+      const recoveryBody = "<html><head><title>Recovery source</title></head><body><main><p>New recovery content.</p></main></body></html>";
+      recoveryDatabase.sqlite.exec(`
+        INSERT INTO source_documents
+          (id, canonical_url, canonical_url_hash, media_kind, admission_state, copyright_storage_mode, current_version_id)
+        VALUES ('${recoveryDocumentId}', 'https://example.test/recovery', '${recoveryUrlHash}', 'html', 'admitted', 'metadata_only', '${recoveryOldVersionId}');
+        INSERT INTO source_document_versions
+          (id, source_document_id, content_hash, retrieved_url, retrieved_at, extraction_status)
+        VALUES ('${recoveryOldVersionId}', '${recoveryDocumentId}', 'recovery-old-content', 'https://example.test/recovery', datetime('now'), 'extracted');
+        INSERT INTO knowledge_documents
+          (id, canonical_question, canonical_hash, section_slug, knowledge_type, status, visibility, evidence_status, direct_answer, document_json, policy_version, approved_by, approved_at, created_by)
+        VALUES ('recovery-knowledge', 'What is the recovery source?', 'recovery-knowledge-hash', 'ai-agents', 'explainer', 'approved', 'public_knowledge', 'confirmed', 'The recovery source is current.', '{}', 'test', 'publisher@example.com', datetime('now'), 'test');
+        INSERT INTO canonical_claims
+          (id, canonical_text, claim_class, claim_domain, current_state)
+        VALUES ('recovery-claim', 'The recovery source is current.', 'specification_defined', 'general', 'active');
+        INSERT INTO claim_assertions
+          (id, canonical_claim_id, source_document_version_id, assertion_text, relationship, source_role, directness, evidence_treatment, admission_state, freshness_state, extraction_method, extraction_version, reviewer_state, reviewed_by, reviewed_at, confidence)
+        VALUES ('recovery-assertion', 'recovery-claim', '${recoveryOldVersionId}', 'The recovery source is current.', 'supports', 'evidence', 'direct', 'factual_support', 'admitted', 'current', 'test', '1', 'accepted', 'publisher@example.com', datetime('now'), 0.9);
+        INSERT INTO knowledge_document_claims
+          (knowledge_document_id, canonical_claim_id, section_key, relationship, reviewed_by, reviewed_at)
+        VALUES ('recovery-knowledge', 'recovery-claim', 'direct_answer', 'answers', 'publisher@example.com', datetime('now'));
+        INSERT INTO knowledge_document_claim_assertions
+          (knowledge_document_id, section_key, canonical_claim_id, claim_assertion_id, relationship, reviewed_by, reviewed_at)
+        VALUES ('recovery-knowledge', 'direct_answer', 'recovery-claim', 'recovery-assertion', 'supports', 'publisher@example.com', datetime('now'));
+      `);
+      recoveryDatabase.sqlite.prepare("CREATE TRIGGER kc11c_test_review_failure BEFORE INSERT ON knowledge_change_proposals BEGIN SELECT RAISE(ABORT, 'forced review failure'); END").run();
+      assert.equal(recoveryDatabase.sqlite.prepare("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = 'kc11c_test_review_failure'").get()?.name, "kc11c_test_review_failure");
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (async () => new Response(recoveryBody, { status: 200, headers: { "Content-Type": "text/html" } })) as typeof fetch;
+      let failedResult: Record<string, unknown>;
+      let retryResult: Record<string, unknown>;
+      let failedItem: { outcome: string; retry_count: number; source_document_id: string; source_document_version_id: string } | null;
+      try {
+        failedResult = await executeBackfill(recoveryEnv, recoveryApproval.batchId, recoveryPlan.planHash, "publisher@example.com", "execute-recovery-initial", "initial");
+        assert.equal(failedResult!.state, "partial", `post-commit review failure leaves a partial batch: ${JSON.stringify(failedResult)}`);
+        assert.equal(failedResult!.failed_retryable, 1, "post-commit review failure remains retryable");
+        failedItem = await recoveryDatabase.prepare("SELECT outcome, retry_count, source_document_id, source_document_version_id FROM knowledge_source_backfill_items WHERE id = ?").bind(recoveryItem.id).first<{ outcome: string; retry_count: number; source_document_id: string; source_document_version_id: string }>();
+        assert.equal(failedItem?.outcome, "failed_retryable");
+        assert.equal(failedItem?.retry_count, 1);
+        assert.equal(failedItem?.source_document_id, recoveryDocumentId, "committed source document ID is retained after downstream failure");
+        assert.notEqual(failedItem?.source_document_version_id, recoveryOldVersionId, "the newly committed version ID is retained");
+        assert.equal((await recoveryDatabase.prepare("SELECT COUNT(*) AS count FROM source_documents WHERE id = ?").bind(recoveryDocumentId).first<{ count: number }>())?.count, 1);
+        assert.equal((await recoveryDatabase.prepare("SELECT COUNT(*) AS count FROM source_document_versions WHERE source_document_id = ?").bind(recoveryDocumentId).first<{ count: number }>())?.count, 2, "post-commit failure does not create duplicate versions on the first pass");
+        recoveryDatabase.sqlite.prepare("DROP TRIGGER kc11c_test_review_failure").run();
+        retryResult = await executeBackfill(recoveryEnv, recoveryApproval.batchId, recoveryPlan.planHash, "publisher@example.com", "execute-recovery-retry", "retry");
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+      assert.equal(retryResult.state, "completed", `existing-version review replay completes the retry: ${JSON.stringify(retryResult)}`);
+      assert.equal(retryResult.unchanged, 1, "the retry settles the existing version as unchanged");
+      const recoveredItem = await recoveryDatabase.prepare("SELECT outcome, retry_count, source_document_id, source_document_version_id FROM knowledge_source_backfill_items WHERE id = ?").bind(recoveryItem.id).first<{ outcome: string; retry_count: number; source_document_id: string; source_document_version_id: string }>();
+      assert.equal(recoveredItem?.outcome, "unchanged");
+      assert.equal(recoveredItem?.retry_count, 1, "a successful retry does not increment the prior retry count");
+      assert.equal(recoveredItem?.source_document_id, recoveryDocumentId);
+      assert.equal(recoveredItem?.source_document_version_id, failedItem?.source_document_version_id);
+      assert.equal((await recoveryDatabase.prepare("SELECT COUNT(*) AS count FROM source_document_versions WHERE source_document_id = ?").bind(recoveryDocumentId).first<{ count: number }>())?.count, 2, "existing-version recovery does not duplicate the version");
+      assert.equal((await recoveryDatabase.prepare("SELECT COUNT(*) AS count FROM knowledge_change_proposals WHERE knowledge_document_id = 'recovery-knowledge'").first<{ count: number }>())?.count, 1, "the replayed review proposal is deterministic and idempotent");
+      assert.equal((await recoveryDatabase.prepare("SELECT COUNT(*) AS count FROM knowledge_source_backfill_attempts WHERE batch_id = ?").bind(recoveryApproval.batchId).first<{ count: number }>())?.count, 2, "one initial and one retry attempt are recorded");
+      const repeatedRetry = await executeBackfill(recoveryEnv, recoveryApproval.batchId, recoveryPlan.planHash, "publisher@example.com", "execute-recovery-retry", "retry");
+      assert.deepEqual(repeatedRetry, retryResult, "repeating the retry idempotency key returns the settled result");
+      assert.equal((await recoveryDatabase.prepare("SELECT COUNT(*) AS count FROM knowledge_change_proposals WHERE knowledge_document_id = 'recovery-knowledge'").first<{ count: number }>())?.count, 1);
+    } finally {
+      recoveryDatabase.close();
+    }
+
     const inventory1 = {
       schemaVersion: "kc-11a-v1", generatedAt: "2026-07-28T00:00:00Z",
       categories: { source_url: [{ id: "safe-1", label: "Safe one", url: "https://example.com/one" }] },
