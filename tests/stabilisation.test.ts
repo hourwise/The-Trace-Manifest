@@ -1427,6 +1427,11 @@ async function sourceVersionHashSemanticsTests(): Promise<void> {
   const duplicateLinkIdentity = await componentIdentity(baseLinkBody.replace("</p>", ` <a href="https://evidence.test/data">Source</a></p>`));
   assert.notEqual(baseLinkIdentity.diagnostics.normalizedLinksHash, duplicateLinkIdentity.diagnostics.normalizedLinksHash, "duplicate links are observable in the link component");
   assert.equal(duplicateLinkIdentity.diagnostics.linkCount, 3);
+  const duplicateOrderA = await componentIdentity(`<article><p><a href="https://evidence.test/a">Source</a> <a href="https://evidence.test/b">Source</a> <a href="https://evidence.test/b">Source</a></p></article>`);
+  const duplicateOrderB = await componentIdentity(`<article><p><a href="https://evidence.test/b">Source</a> <a href="https://evidence.test/a">Source</a> <a href="https://evidence.test/b">Source</a></p></article>`);
+  assert.equal(duplicateOrderA.diagnostics.normalizedBlocksHash, duplicateOrderB.diagnostics.normalizedBlocksHash, "reordered duplicate links retain identical visible article text");
+  assert.notEqual(duplicateOrderA.diagnostics.normalizedLinksHash, duplicateOrderB.diagnostics.normalizedLinksHash, "reordered duplicate links are isolated to the link component");
+  assert.equal(duplicateOrderA.diagnostics.normalizedStructureHash, duplicateOrderB.diagnostics.normalizedStructureHash);
   const changedDestinationIdentity = await componentIdentity(baseLinkBody.replace("https://evidence.test/report", "https://evidence.test/substantive-report"));
   assert.notEqual(baseLinkIdentity.diagnostics.normalizedLinksHash, changedDestinationIdentity.diagnostics.normalizedLinksHash, "a genuine evidence-link destination change remains evidence-bearing");
   assert.equal(baseLinkIdentity.diagnostics.normalizedBlocksHash, changedDestinationIdentity.diagnostics.normalizedBlocksHash);
