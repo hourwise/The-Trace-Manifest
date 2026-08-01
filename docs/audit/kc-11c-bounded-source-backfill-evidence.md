@@ -1,12 +1,13 @@
 # KC-11C bounded source backfill evidence
 
-Status: final integrity corrections are implemented, locally verified, and
-deployed to the isolated Preview Worker on
-`agent/kc-11c-bounded-source-backfill`. KC-11C remains unchecked and at its
-final fresh-smoke gate. Migration 0059 is applied to Preview and the corrected
-Worker is deployed; Pages remains unchanged. No fresh smoke batch has been
-approved or executed for this deployment record. Production is untouched,
-the completed historical batch must not be reused, and KC-11D has not begun.
+Status: the two-pass authenticated Preview smoke completed, but only the
+GitHub source passed normalized-identity reconciliation. Anthropic produced a
+second `normalized_content_v1` identity from retrievals with the same visible
+metadata and byte length. Privacy-safe component diagnostics are now
+implemented locally behind additive migration 0060; migration 0060 has not
+been applied and this code has not been deployed. KC-11C remains unchecked.
+Production and Pages are untouched, no completed batch may be reused, and
+KC-11D has not begun.
 
 ## Boundary and integrity model
 
@@ -85,6 +86,75 @@ publication paths.
 - Pages was unchanged; no Pages deployment was performed.
 - Production database, Worker, Pages deployment, indexing, backfill, and
   feature flags: untouched.
+
+## Actual fresh two-pass smoke and diagnostic follow-up
+
+The publisher completed the fresh smoke against Worker version
+`4452c10c-d619-432d-aeb9-0c3c8e5cad13`. Pass 1 used batch
+`fcccc69b-1974-4d53-a8ea-e1c6ee4a016a` and plan hash
+`96db4d07088b90b47dabe49f2518a3ba792027777c4ab2cd7f8274d479a3e3e6`.
+It completed in `initial` mode with `processed: 2`, `metadata_only: 2`,
+`unchanged: 0`, no retryable or terminal failures, and `totalBytes: 521082`.
+It established one `normalized_content_v1` version and one observation for
+each selected source.
+
+Pass 2 used batch `b46c744e-4eab-4fbe-9bef-0da96b0927a5` and plan hash
+`fa0b559cb7adfb5dbbf59d94633d601d76348b6454f1112d61583f6a9ce2fb64`.
+It completed in `initial` mode with `processed: 2`, `unchanged: 1`,
+`metadata_only: 1`, no retryable or terminal failures, and
+`totalBytes: 521082`. Neither batch was retried and neither may be rerun.
+
+The GitHub source at
+`https://github.com/modelcontextprotocol/typescript-sdk` fully passed. Both
+passes produced normalized hash
+`3aceb4be8440a2e828961459f87d004f007c8f0796fb0abd07d47ceee6e54013`.
+Its transport hash changed, but its version ID remained the same; pass 2
+settled `unchanged` with reason `normalized_content_hash_unchanged`. It has one
+normalized version, two observations, and two distinct transport hashes in
+addition to its two immutable legacy versions.
+
+The Anthropic source at
+`https://www.anthropic.com/news/model-context-protocol` did not pass identity
+stability. Pass 1 at `2026-08-01T09:20:06.921Z` produced transport hash
+`42fca0766c2567be23e57d5359d7645cbfcb7c9b3982feec35bc5e66ca4382dc`
+and normalized hash
+`c81af465df02f492798fe3c71334b5a808af7be86f592029bb885c14e40563a7`.
+Pass 2 at `2026-08-01T09:25:26.577Z` produced transport hash
+`753a66d2056def7e16f252cdf6ffc95cc65f7d943e97d65441d35dbffac5779d`
+and normalized hash
+`876ea848145a19bb35da63b339435ac21b1be41912901d489fd5206ded282bf7`.
+The corresponding immutable normalized version IDs end in those normalized
+hashes. Both retrievals were 127030 bytes and had title
+`Introducing the Model Context Protocol`, null author, and null published
+date. Anthropic therefore has two legacy and two normalized versions, each
+normalized version with one observation. The visible fields do not explain
+the change, and the historical observations do not contain enough information
+to identify its component safely.
+
+Migration 0060 adds nullable, per-observation component digests for canonical
+metadata, blocks, links, and structure; block, link, and heading counts;
+container and truncation state; and normalization policy version. Existing
+observations remain null and are not inferred or rewritten. New observations
+store only SHA-256 digests, counts, enums, and the policy identifier--never
+page text, descriptions, link text, or hrefs. Runtime execution fails closed
+before fetching or acquiring an attempt when any diagnostic column is absent.
+
+Deterministic local fixtures show that `normalized_content_v1` is sensitive to
+full link query strings, fragments, link order, and duplicate links, and that
+the link component isolates those changes. They also separately isolate
+metadata, block text/order, structure/count, container selection, and
+truncation boundaries. This establishes link volatility as a plausible class,
+but does not prove that it caused either historical Anthropic change. No link
+normalization rule or identity policy was changed. Any future canonical-link
+correction must use an explicit new semantics version after a diagnostic-
+enabled Anthropic retrieval identifies the changed component.
+
+Preview integrity checks passed after the smoke. No rollback, record deletion,
+record rewrite, batch retry, production action, or Pages change occurred.
+Migration 0060 must be reviewed and applied to Preview before a Worker built
+from this implementation can be deployed. KC-11C stays open pending that
+deployment and a future authenticated retrieval proving component-level and
+normalized-identity stability.
 
 ## Authenticated smoke-test failure and correction
 
@@ -567,7 +637,11 @@ The actual response was `state: "completed"`, `processed: 2`,
 version for each URL because the pre-0059 implementation treated transport
 hash as version identity. Do not retry this batch again.
 
-## Exact fresh-smoke D1 verification commands
+## Historical fresh-smoke D1 verification runbook
+
+This runbook is retained to show how the completed two-pass evidence was
+verified. It is not an instruction to create, approve, execute, or retry a
+batch. The actual immutable IDs and outcomes are recorded above.
 
 Before pass 1, record the immutable baseline. This is read-only and should show
 two legacy source versions per document and no `normalized_content_v1` version:
@@ -606,12 +680,9 @@ npx wrangler d1 execute trace-manifest-db-preview --remote --command "SELECT sou
 npx wrangler d1 execute trace-manifest-db-preview --remote --command "SELECT source_document_version_id, COUNT(*) AS observation_count, COUNT(DISTINCT transport_hash) AS distinct_transport_count, MIN(retrieved_at) AS first_observed_at, MAX(retrieved_at) AS last_observed_at FROM source_document_version_observations WHERE source_document_version_id IN (SELECT source_document_version_id FROM knowledge_source_backfill_items WHERE batch_id = '$Pass1BatchId') GROUP BY source_document_version_id ORDER BY source_document_version_id; PRAGMA quick_check; PRAGMA foreign_key_check;"
 ```
 
-The final gate requires both pass-2 items to be `unchanged`, both
-`same_version` and `normalized_unchanged` values to be `1`, no increase beyond
-one normalized version per source document, and two distinct observations for
-each source where `transport_changed = 1`. Preserve all returned IDs, hashes,
-timestamps, results, and bookmarks in this audit note. Do not retry either
-fresh batch if a gate fails; stop for review.
+The intended gate required both pass-2 items to be `unchanged`. GitHub met that
+gate; Anthropic did not, so the operator stopped without retrying either fresh
+batch. The component-diagnostic correction above is the follow-up.
 
 ## General D1 verification queries
 
@@ -649,7 +720,7 @@ ORDER BY created_at;
 
 Historical post-repair verification initially found the prior smoke batch in
 `partial`; the authenticated human recovery retry later completed it with the
-outcomes recorded above. It is immutable historical evidence and must not be
-used by the final smoke. KC-11C remains unchecked until two fresh authenticated
-Preview batches pass the normalized-version and delayed transport-observation
-proof in this runbook.
+outcomes recorded above. It and both fresh batches are immutable historical
+evidence and must not be reused. KC-11C remains unchecked pending migration
+0060 review, Preview-only application and deployment, and a later component-
+diagnostic stability proof.

@@ -170,6 +170,34 @@ async function kc11cBackfillIntegrityTests(): Promise<void> {
       missingDatabase.close();
     }
 
+    const missingDiagnosticsDatabase = new SQLiteD1(true, false);
+    try {
+      const missingDiagnosticsEnv = { DB: missingDiagnosticsDatabase.asD1(), RAW_STORE: { put: async () => undefined, delete: async () => undefined }, TRACE_ENVIRONMENT: "preview" } as any;
+      const missingDiagnosticsInventory = {
+        schemaVersion: "kc-11a-v1", generatedAt: "2026-07-28T00:00:00Z",
+        categories: { source_url: [{ id: "missing-diagnostics", label: "Missing diagnostics", url: "https://example.test/missing-diagnostics" }] },
+      };
+      const authority = await establishAuthoritativeInventory(missingDiagnosticsEnv, missingDiagnosticsInventory, "kc-11c-v1", "reviewer@example.com", "authority-missing-diagnostics");
+      const plan = await buildBackfillPlan(missingDiagnosticsInventory, { category: "source_url", limit: 1 }, authority.snapshotId);
+      const approval = await approveBackfillPlan(missingDiagnosticsEnv, plan, plan.planHash, "publisher@example.com", "approval-missing-diagnostics");
+      const originalFetch = globalThis.fetch;
+      let fetches = 0;
+      globalThis.fetch = (async () => { fetches++; throw new Error("diagnostic schema preflight must run before fetch"); }) as typeof fetch;
+      try {
+        await assert.rejects(
+          () => executeBackfill(missingDiagnosticsEnv, approval.batchId, plan.planHash, "publisher@example.com", "execute-missing-diagnostics"),
+          /runtime schema is incomplete.*source_document_version_observations\.normalized_metadata_hash/,
+        );
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+      assert.equal(fetches, 0, "missing diagnostic columns fail before network retrieval");
+      assert.equal((await missingDiagnosticsDatabase.prepare("SELECT COUNT(*) AS count FROM knowledge_source_backfill_attempts").first<{ count: number }>())?.count, 0);
+      assert.equal((await missingDiagnosticsDatabase.prepare("SELECT state FROM knowledge_source_backfill_batches WHERE id = ?").bind(approval.batchId).first<{ state: string }>())?.state, "approved");
+    } finally {
+      missingDiagnosticsDatabase.close();
+    }
+
     // A post-commit review failure must retain deterministic source IDs. The
     // retry then takes the existing-version branch, replays the review trigger,
     // and settles unchanged without duplicating source rows or proposals.
@@ -1362,8 +1390,82 @@ async function sourceVersionHashSemanticsTests(): Promise<void> {
   assert.notEqual(stableTransportHash, volatileTransportHash, "volatile transport changes retain distinct exact hashes");
   assert.equal(stableIdentity.normalizedContentHash, volatileIdentity.normalizedContentHash, "volatile shell changes retain normalized evidence identity");
   assert.notEqual(stableIdentity.normalizedContentHash, changedIdentity.normalizedContentHash, "material evidence changes create a new normalized identity");
+  assert.deepEqual(stableIdentity.diagnostics, volatileIdentity.diagnostics, "transport-only shell changes leave every identity component stable");
+  assert.equal(stableIdentity.diagnostics.normalizedMetadataHash, changedIdentity.diagnostics.normalizedMetadataHash);
+  assert.notEqual(stableIdentity.diagnostics.normalizedBlocksHash, changedIdentity.diagnostics.normalizedBlocksHash, "paragraph changes are localized to the block component");
+  assert.equal(stableIdentity.diagnostics.normalizedLinksHash, changedIdentity.diagnostics.normalizedLinksHash);
+  assert.equal(stableIdentity.diagnostics.normalizedStructureHash, changedIdentity.diagnostics.normalizedStructureHash);
+  assert.match(stableIdentity.diagnostics.normalizedMetadataHash, /^[0-9a-f]{64}$/);
+  assert.equal(stableIdentity.diagnostics.normalizationPolicyVersion, "source-normalized-html-v1");
+  assert.deepEqual(
+    { blocks: stableIdentity.diagnostics.blockCount, links: stableIdentity.diagnostics.linkCount, headings: stableIdentity.diagnostics.headingCount },
+    { blocks: 5, links: 1, headings: 1 },
+  );
   assert.equal(stableIdentity.hashSemanticsVersion, "normalized_content_v1");
   assert.ok(stableExtraction.links.some((link) => link.href === "https://example.test/evidence"), "meaningful links remain in extraction");
+
+  const componentIdentity = async (body: string, maxTextCharacters?: number) => hashNormalizedSourceContent({
+    mediaKind: "html",
+    body,
+    extraction: extractHtmlDocument(body, maxTextCharacters ? { maxTextCharacters } : {}),
+  });
+  const baseLinkBody = `<html><head><title>Link evidence</title><meta name="description" content="Stable description"><meta property="article:published_time" content="2026-07-30"></head><body><article><p><a href="https://evidence.test/report">Source</a> <a href="https://evidence.test/data">Source</a></p></article></body></html>`;
+  const baseLinkIdentity = await componentIdentity(baseLinkBody);
+  const volatileQueryIdentity = await componentIdentity(baseLinkBody.replace("https://evidence.test/report", "https://evidence.test/report?utm_source=session#result"));
+  assert.notEqual(baseLinkIdentity.diagnostics.normalizedLinksHash, volatileQueryIdentity.diagnostics.normalizedLinksHash, "v1 diagnostics expose volatile query and fragment sensitivity in the link component");
+  assert.equal(baseLinkIdentity.diagnostics.normalizedMetadataHash, volatileQueryIdentity.diagnostics.normalizedMetadataHash);
+  assert.equal(baseLinkIdentity.diagnostics.normalizedBlocksHash, volatileQueryIdentity.diagnostics.normalizedBlocksHash);
+  assert.equal(baseLinkIdentity.diagnostics.normalizedStructureHash, volatileQueryIdentity.diagnostics.normalizedStructureHash);
+  assert.notEqual(baseLinkIdentity.normalizedContentHash, volatileQueryIdentity.normalizedContentHash, "normalized_content_v1 remains intentionally unchanged pending live component evidence");
+
+  const reorderedLinksIdentity = await componentIdentity(baseLinkBody
+    .replace("https://evidence.test/report", "https://evidence.test/placeholder")
+    .replace("https://evidence.test/data", "https://evidence.test/report")
+    .replace("https://evidence.test/placeholder", "https://evidence.test/data"));
+  assert.equal(baseLinkIdentity.diagnostics.normalizedBlocksHash, reorderedLinksIdentity.diagnostics.normalizedBlocksHash);
+  assert.notEqual(baseLinkIdentity.diagnostics.normalizedLinksHash, reorderedLinksIdentity.diagnostics.normalizedLinksHash, "link order is observable without exposing link values");
+  const duplicateLinkIdentity = await componentIdentity(baseLinkBody.replace("</p>", ` <a href="https://evidence.test/data">Source</a></p>`));
+  assert.notEqual(baseLinkIdentity.diagnostics.normalizedLinksHash, duplicateLinkIdentity.diagnostics.normalizedLinksHash, "duplicate links are observable in the link component");
+  assert.equal(duplicateLinkIdentity.diagnostics.linkCount, 3);
+  const changedDestinationIdentity = await componentIdentity(baseLinkBody.replace("https://evidence.test/report", "https://evidence.test/substantive-report"));
+  assert.notEqual(baseLinkIdentity.diagnostics.normalizedLinksHash, changedDestinationIdentity.diagnostics.normalizedLinksHash, "a genuine evidence-link destination change remains evidence-bearing");
+  assert.equal(baseLinkIdentity.diagnostics.normalizedBlocksHash, changedDestinationIdentity.diagnostics.normalizedBlocksHash);
+
+  for (const metadataBody of [
+    baseLinkBody.replace("Link evidence", "Changed title"),
+    baseLinkBody.replace("Stable description", "Changed description"),
+    baseLinkBody.replace("2026-07-30", "2026-07-31"),
+  ]) {
+    const metadataIdentity = await componentIdentity(metadataBody);
+    assert.notEqual(baseLinkIdentity.diagnostics.normalizedMetadataHash, metadataIdentity.diagnostics.normalizedMetadataHash, "title, description, and date changes are localized to metadata");
+    assert.equal(baseLinkIdentity.diagnostics.normalizedBlocksHash, metadataIdentity.diagnostics.normalizedBlocksHash);
+    assert.equal(baseLinkIdentity.diagnostics.normalizedLinksHash, metadataIdentity.diagnostics.normalizedLinksHash);
+  }
+
+  const dynamicBlockIdentity = await componentIdentity(baseLinkBody.replace("</article>", "<p>Dynamic article block.</p></article>"));
+  assert.notEqual(baseLinkIdentity.diagnostics.normalizedBlocksHash, dynamicBlockIdentity.diagnostics.normalizedBlocksHash);
+  assert.notEqual(baseLinkIdentity.diagnostics.normalizedStructureHash, dynamicBlockIdentity.diagnostics.normalizedStructureHash);
+  assert.equal(dynamicBlockIdentity.diagnostics.blockCount, baseLinkIdentity.diagnostics.blockCount + 1);
+  const orderedHeadings = await componentIdentity("<article><h2>First</h2><p>Evidence.</p><h2>Second</h2></article>");
+  const reorderedHeadings = await componentIdentity("<article><h2>Second</h2><p>Evidence.</p><h2>First</h2></article>");
+  assert.notEqual(orderedHeadings.diagnostics.normalizedBlocksHash, reorderedHeadings.diagnostics.normalizedBlocksHash, "heading and text ordering remains evidence-bearing");
+  assert.equal(orderedHeadings.diagnostics.normalizedStructureHash, reorderedHeadings.diagnostics.normalizedStructureHash, "unchanged heading shape is distinct from its evidence text");
+  const uiShellIdentity = await componentIdentity(baseLinkBody.replace("<article>", "<nav><p>Session menu</p></nav><aside><p>Advertisement</p></aside><article>"));
+  assert.deepEqual(baseLinkIdentity.diagnostics, uiShellIdentity.diagnostics, "non-evidence navigation and aside blocks remain excluded");
+
+  const articleIdentity = await componentIdentity("<article><h1>Container test</h1><p>Same evidence.</p></article>");
+  const mainIdentity = await componentIdentity("<main><h1>Container test</h1><p>Same evidence.</p></main>");
+  assert.equal(articleIdentity.normalizedContentHash, mainIdentity.normalizedContentHash, "container choice is diagnostic and does not silently alter v1 identity");
+  assert.equal(articleIdentity.diagnostics.normalizedStructureHash, mainIdentity.diagnostics.normalizedStructureHash);
+  assert.equal(articleIdentity.diagnostics.extractionContainer, "article");
+  assert.equal(mainIdentity.diagnostics.extractionContainer, "main");
+  const boundedBody = "<article><p>Deterministic evidence extending beyond the small extraction bound.</p></article>";
+  const truncatedIdentity = await componentIdentity(boundedBody, 20);
+  const untruncatedIdentity = await componentIdentity(boundedBody, 200);
+  assert.equal(truncatedIdentity.diagnostics.extractionTruncated, true);
+  assert.equal(untruncatedIdentity.diagnostics.extractionTruncated, false);
+  assert.notEqual(truncatedIdentity.diagnostics.normalizedBlocksHash, untruncatedIdentity.diagnostics.normalizedBlocksHash, "truncation-bound content differences are localized to blocks and the explicit bound flag");
+  assert.equal(truncatedIdentity.diagnostics.normalizedStructureHash, untruncatedIdentity.diagnostics.normalizedStructureHash);
 
   const database = new SQLiteD1();
   try {
@@ -1387,6 +1489,24 @@ async function sourceVersionHashSemanticsTests(): Promise<void> {
     assert.equal(volatile.sourceDocumentVersionId, first.sourceDocumentVersionId, "transport-only HTML changes do not create a second version");
     assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM source_document_versions").first<{ count: number }>())?.count, 1);
     assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM source_document_version_observations").first<{ count: number }>())?.count, 2, "both exact transport observations are retained");
+    const observations = await database.prepare(`
+      SELECT normalized_metadata_hash, normalized_blocks_hash, normalized_links_hash,
+             normalized_structure_hash, block_count, link_count, heading_count,
+             extraction_container, extraction_truncated, normalization_policy_version
+      FROM source_document_version_observations ORDER BY retrieved_at, id
+    `).all<Record<string, string | number | null>>();
+    assert.equal(observations.results?.length, 2);
+    for (const observation of observations.results ?? []) {
+      for (const field of ["normalized_metadata_hash", "normalized_blocks_hash", "normalized_links_hash", "normalized_structure_hash"]) {
+        assert.match(String(observation[field]), /^[0-9a-f]{64}$/, `${field} is a privacy-safe cryptographic digest`);
+      }
+      assert.equal(observation.block_count, 5);
+      assert.equal(observation.link_count, 1);
+      assert.equal(observation.heading_count, 1);
+      assert.equal(observation.extraction_container, "main");
+      assert.equal(observation.extraction_truncated, 0);
+      assert.equal(observation.normalization_policy_version, "source-normalized-html-v1");
+    }
     const changed = await capture(changedBody, extractHtmlDocument(changedBody));
     assert.notEqual(changed.sourceDocumentVersionId, first.sourceDocumentVersionId, "substantive content creates one new source version");
     assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM source_document_versions").first<{ count: number }>())?.count, 2);
@@ -1462,6 +1582,43 @@ async function sourceVersionHashSemanticsTests(): Promise<void> {
     assert.equal(legacy?.hash_semantics_version, "legacy_raw_v1", "legacy source identity remains unchanged and explicitly labelled");
   } finally {
     legacyDatabase.close();
+  }
+
+  const preDiagnosticDatabase = new SQLiteD1(true, false);
+  try {
+    preDiagnosticDatabase.sqlite.exec(`
+      INSERT INTO source_documents
+        (id, canonical_url, canonical_url_hash, media_kind, admission_state, copyright_storage_mode)
+      VALUES ('pre-diagnostic-document', 'https://example.test/pre-diagnostic', 'pre-diagnostic-url-hash', 'html', 'admitted', 'metadata_only');
+      INSERT INTO source_document_versions
+        (id, source_document_id, content_hash, transport_hash, normalized_content_hash,
+         hash_semantics_version, retrieved_url, retrieved_at, extraction_status)
+      VALUES ('pre-diagnostic-version', 'pre-diagnostic-document', '${"1".repeat(64)}', '${"1".repeat(64)}', '${"2".repeat(64)}',
+              'normalized_content_v1', 'https://example.test/pre-diagnostic', datetime('now'), 'metadata_only');
+      INSERT INTO source_document_version_observations
+        (id, source_document_version_id, transport_hash, normalized_content_hash,
+         hash_semantics_version, retrieved_url, retrieved_at, extraction_version)
+      VALUES ('pre-diagnostic-observation', 'pre-diagnostic-version', '${"1".repeat(64)}', '${"2".repeat(64)}',
+              'normalized_content_v1', 'https://example.test/pre-diagnostic', datetime('now'), 'source-normalized-html-v1');
+    `);
+    preDiagnosticDatabase.sqlite.exec(readFileSync("db/migration-0060-source-identity-component-diagnostics.sql", "utf8"));
+    const historical = preDiagnosticDatabase.sqlite.prepare(`
+      SELECT id, transport_hash, normalized_content_hash, normalized_metadata_hash,
+             normalized_blocks_hash, normalized_links_hash, normalized_structure_hash,
+             block_count, link_count, heading_count, extraction_container,
+             extraction_truncated, normalization_policy_version
+      FROM source_document_version_observations WHERE id = 'pre-diagnostic-observation'
+    `).get() as Record<string, unknown>;
+    assert.equal(historical.id, "pre-diagnostic-observation");
+    assert.equal(historical.transport_hash, "1".repeat(64));
+    assert.equal(historical.normalized_content_hash, "2".repeat(64));
+    for (const field of [
+      "normalized_metadata_hash", "normalized_blocks_hash", "normalized_links_hash", "normalized_structure_hash",
+      "block_count", "link_count", "heading_count", "extraction_container", "extraction_truncated",
+      "normalization_policy_version",
+    ]) assert.equal(historical[field], null, `0060 leaves historical ${field} unknown`);
+  } finally {
+    preDiagnosticDatabase.close();
   }
 }
 

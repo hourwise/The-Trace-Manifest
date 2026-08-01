@@ -176,13 +176,26 @@ export async function captureAdmittedSource(
         INSERT OR IGNORE INTO source_document_version_observations
           (id, source_document_version_id, transport_hash, normalized_content_hash,
            hash_semantics_version, retrieved_url, retrieved_at, http_status, media_type,
-           byte_length, extraction_version)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           byte_length, extraction_version, normalized_metadata_hash,
+           normalized_blocks_hash, normalized_links_hash, normalized_structure_hash,
+           block_count, link_count, heading_count, extraction_container,
+           extraction_truncated, normalization_policy_version)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).bind(
         `observation-${sourceDocumentVersionId}-${transportHash}`, sourceDocumentVersionId,
         transportHash, normalizedContentHash, SOURCE_HASH_SEMANTICS_VERSION,
         retrievedUrl, retrievedAt, input.httpStatus ?? null, input.contentType,
         bodyBytes.byteLength, policyVersionFor(input.mediaKind),
+        normalized.diagnostics.normalizedMetadataHash,
+        normalized.diagnostics.normalizedBlocksHash,
+        normalized.diagnostics.normalizedLinksHash,
+        normalized.diagnostics.normalizedStructureHash,
+        normalized.diagnostics.blockCount,
+        normalized.diagnostics.linkCount,
+        normalized.diagnostics.headingCount,
+        normalized.diagnostics.extractionContainer,
+        normalized.diagnostics.extractionTruncated ? 1 : 0,
+        normalized.diagnostics.normalizationPolicyVersion,
       ),
       env.DB.prepare(`
         UPDATE source_documents SET current_version_id = ?, last_seen_at = ?, updated_at = datetime('now') WHERE id = ?

@@ -1,4 +1,4 @@
-import type { ExtractedHtmlDocument, HtmlExtractionBlock } from "./source-extraction";
+import type { ExtractedHtmlDocument, HtmlExtractionBlock, HtmlExtractionContainer } from "./source-extraction";
 
 /** Hash semantics for source versions created after migration 0059. */
 export const SOURCE_HASH_SEMANTICS_VERSION = "normalized_content_v1" as const;
@@ -16,7 +16,35 @@ export interface SourceIdentityResult {
   normalizedContentHash: string;
   hashSemanticsVersion: typeof SOURCE_HASH_SEMANTICS_VERSION;
   canonicalContent: string;
+  diagnostics: SourceIdentityDiagnostics;
 }
+
+/** Privacy-safe component hashes for explaining normalized identity changes. */
+export interface SourceIdentityDiagnostics {
+  normalizedMetadataHash: string;
+  normalizedBlocksHash: string;
+  normalizedLinksHash: string;
+  normalizedStructureHash: string;
+  blockCount: number;
+  linkCount: number;
+  headingCount: number;
+  extractionContainer: HtmlExtractionContainer | "not_applicable";
+  extractionTruncated: boolean;
+  normalizationPolicyVersion: string;
+}
+
+type CanonicalIdentityParts = {
+  content: Record<string, unknown>;
+  metadata: Record<string, unknown>;
+  blocks: unknown;
+  links: unknown;
+  structure: Record<string, unknown>;
+  blockCount: number;
+  linkCount: number;
+  headingCount: number;
+  extractionContainer: SourceIdentityDiagnostics["extractionContainer"];
+  extractionTruncated: boolean;
+};
 
 /** Hash exact UTF-8 body bytes when a retrieval boundary has no byte hash. */
 export async function hashTransportBody(body: string): Promise<string> {
@@ -29,22 +57,50 @@ export async function hashTransportBody(body: string): Promise<string> {
  * scripts, styles, navigation, hydration and other non-evidence elements.
  */
 export function canonicalNormalizedContent(input: SourceIdentityInput): string {
+  return JSON.stringify(canonicalIdentityParts(input).content);
+}
+
+function canonicalIdentityParts(input: SourceIdentityInput): CanonicalIdentityParts {
   const policy = policyVersionFor(input.mediaKind);
   let content: Record<string, unknown>;
+  let metadata: Record<string, unknown> = { title: null, author: null, publishedAt: null, description: null };
+  let blocks: unknown = [];
+  let links: unknown = [];
+  let structure: Record<string, unknown> = { policy, mediaKind: input.mediaKind };
+  let blockCount = 0;
+  let linkCount = 0;
+  let headingCount = 0;
+  let extractionContainer: SourceIdentityDiagnostics["extractionContainer"] = "not_applicable";
+  let extractionTruncated = false;
   if (input.mediaKind === "html") {
     const extraction = input.extraction;
-    content = {
-      policy,
-      mediaKind: input.mediaKind,
+    metadata = {
       title: normalizeInline(extraction?.title),
       author: normalizeInline(extraction?.author),
       publishedAt: normalizeInline(extraction?.publishedAt),
       description: normalizeInline(extraction?.description),
-      blocks: (extraction?.blocks ?? []).map(normalizedBlock),
-      links: (extraction?.links ?? []).map((link) => ({
-        href: normalizeLink(link.href),
-        text: normalizeInline(link.text),
-      })),
+    };
+    blocks = (extraction?.blocks ?? []).map(normalizedBlock);
+    links = (extraction?.links ?? []).map((link) => ({
+      href: normalizeLink(link.href),
+      text: normalizeInline(link.text),
+    }));
+    const blockStructure = (blocks as Array<Record<string, unknown>>).map((block) => ({
+      kind: block.kind,
+      headingLevel: block.headingLevel,
+    }));
+    blockCount = extraction?.diagnostics.blockCount ?? blockStructure.length;
+    linkCount = extraction?.links.length ?? 0;
+    headingCount = extraction?.diagnostics.headingCount ?? blockStructure.filter((block) => block.kind === "heading").length;
+    extractionContainer = extraction?.diagnostics.container ?? "document";
+    extractionTruncated = extraction?.diagnostics.truncated ?? false;
+    structure = { policy, mediaKind: input.mediaKind, blocks: blockStructure, linkCount };
+    content = {
+      policy,
+      mediaKind: input.mediaKind,
+      ...metadata,
+      blocks,
+      links,
     };
   } else if (input.mediaKind === "json") {
     let parsed: unknown;
@@ -53,23 +109,51 @@ export function canonicalNormalizedContent(input: SourceIdentityInput): string {
     } catch {
       throw new Error("JSON source content is not valid JSON.");
     }
-    content = { policy, mediaKind: input.mediaKind, value: canonicalValue(parsed) };
+    const value = canonicalValue(parsed);
+    blocks = { value };
+    content = { policy, mediaKind: input.mediaKind, value };
   } else {
+    const text = normalizeLineContent(input.body);
+    blocks = { text };
     content = {
       policy,
       mediaKind: input.mediaKind,
-      text: normalizeLineContent(input.body),
+      text,
     };
   }
-  return JSON.stringify(content);
+  return {
+    content, metadata, blocks, links, structure,
+    blockCount, linkCount, headingCount, extractionContainer, extractionTruncated,
+  };
 }
 
 export async function hashNormalizedSourceContent(input: SourceIdentityInput): Promise<SourceIdentityResult> {
-  const canonicalContent = canonicalNormalizedContent(input);
+  const parts = canonicalIdentityParts(input);
+  const canonicalContent = JSON.stringify(parts.content);
+  const normalizationPolicyVersion = policyVersionFor(input.mediaKind);
+  const [normalizedContentHash, normalizedMetadataHash, normalizedBlocksHash, normalizedLinksHash, normalizedStructureHash] = await Promise.all([
+    sha256(canonicalContent),
+    sha256(JSON.stringify(parts.metadata)),
+    sha256(JSON.stringify(parts.blocks)),
+    sha256(JSON.stringify(parts.links)),
+    sha256(JSON.stringify(parts.structure)),
+  ]);
   return {
-    normalizedContentHash: await sha256(canonicalContent),
+    normalizedContentHash,
     hashSemanticsVersion: SOURCE_HASH_SEMANTICS_VERSION,
     canonicalContent,
+    diagnostics: {
+      normalizedMetadataHash,
+      normalizedBlocksHash,
+      normalizedLinksHash,
+      normalizedStructureHash,
+      blockCount: parts.blockCount,
+      linkCount: parts.linkCount,
+      headingCount: parts.headingCount,
+      extractionContainer: parts.extractionContainer,
+      extractionTruncated: parts.extractionTruncated,
+      normalizationPolicyVersion,
+    },
   };
 }
 

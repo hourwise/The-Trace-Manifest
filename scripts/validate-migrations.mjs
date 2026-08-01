@@ -77,6 +77,7 @@ try {
   // 0059 uses additive ALTER TABLE statements and is intentionally applied
   // once here; D1 applies each numbered migration once in production.
   db.exec(readFileSync("db/migration-0059-source-version-hash-semantics.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0060-source-identity-component-diagnostics.sql", "utf8"));
 
   const requiredTables = [
     "ai_requests", "ai_budget_reservations", "ai_usage_ledger", "ai_quota_usage",
@@ -129,6 +130,14 @@ try {
   const sourceVersionColumns = new Set(db.prepare("PRAGMA table_info(source_document_versions)").all().map((row) => row.name));
   for (const column of ["transport_hash", "normalized_content_hash", "hash_semantics_version"]) {
     if (!sourceVersionColumns.has(column)) throw new Error(`Missing source version hash column ${column}`);
+  }
+  const observationColumns = new Set(db.prepare("PRAGMA table_info(source_document_version_observations)").all().map((row) => row.name));
+  for (const column of [
+    "normalized_metadata_hash", "normalized_blocks_hash", "normalized_links_hash", "normalized_structure_hash",
+    "block_count", "link_count", "heading_count", "extraction_container", "extraction_truncated",
+    "normalization_policy_version",
+  ]) {
+    if (!observationColumns.has(column)) throw new Error(`Missing source identity diagnostic column ${column}`);
   }
   const backfillItemColumns = new Set(db.prepare("PRAGMA table_info(knowledge_source_backfill_items)").all().map((row) => row.name));
   for (const column of ["transport_hash", "normalized_content_hash", "hash_semantics_version"]) {

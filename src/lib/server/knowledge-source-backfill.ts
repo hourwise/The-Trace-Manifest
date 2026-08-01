@@ -136,6 +136,19 @@ export const KC11C_RUNTIME_SCHEMA_OBJECTS = Object.freeze([
   "knowledge_claim_conflict_cases",
 ] as const);
 
+export const KC11C_OBSERVATION_DIAGNOSTIC_COLUMNS = Object.freeze([
+  "normalized_metadata_hash",
+  "normalized_blocks_hash",
+  "normalized_links_hash",
+  "normalized_structure_hash",
+  "block_count",
+  "link_count",
+  "heading_count",
+  "extraction_container",
+  "extraction_truncated",
+  "normalization_policy_version",
+] as const);
+
 /** Fail closed on migration drift without mutating the backfill ledger. */
 export async function assertBackfillRuntimeSchema(env: BackfillEnv): Promise<void> {
   const placeholders = KC11C_RUNTIME_SCHEMA_OBJECTS.map(() => "?").join(", ");
@@ -149,6 +162,15 @@ export async function assertBackfillRuntimeSchema(env: BackfillEnv): Promise<voi
   const missing = KC11C_RUNTIME_SCHEMA_OBJECTS.filter((name) => !present.has(name));
   if (missing.length > 0) {
     throw new Error(`KC-11C runtime schema is incomplete; missing: ${missing.join(", ")}`);
+  }
+  const observationColumns = await env.DB.prepare("PRAGMA table_info(source_document_version_observations)")
+    .all<{ name: string }>();
+  const presentObservationColumns = new Set((observationColumns.results ?? []).map((row) => String(row.name)));
+  const missingObservationColumns = KC11C_OBSERVATION_DIAGNOSTIC_COLUMNS
+    .filter((name) => !presentObservationColumns.has(name));
+  if (missingObservationColumns.length > 0) {
+    throw new Error(`KC-11C runtime schema is incomplete; missing: ${missingObservationColumns
+      .map((name) => `source_document_version_observations.${name}`).join(", ")}`);
   }
 }
 
