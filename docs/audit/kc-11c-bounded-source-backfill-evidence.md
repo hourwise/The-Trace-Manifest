@@ -1,12 +1,12 @@
 # KC-11C bounded source backfill evidence
 
-Status: final integrity corrections are implemented and verified locally on
-`agent/kc-11c-bounded-source-backfill`. KC-11C remains unchecked and
-smoke-gated. The authenticated Preview retry completed, and exposed a second
-raw-transport identity defect now covered by the additive migration 0059
-design. Migration 0059 has not been applied and no new Preview deployment or
-batch execution was performed in this work unit. No production resource was
-modified, and KC-11D has not begun.
+Status: final integrity corrections are implemented, locally verified, and
+deployed to the isolated Preview Worker on
+`agent/kc-11c-bounded-source-backfill`. KC-11C remains unchecked and at its
+final fresh-smoke gate. Migration 0059 is applied to Preview and the corrected
+Worker is deployed; Pages remains unchanged. No fresh smoke batch has been
+approved or executed for this deployment record. Production is untouched,
+the completed historical batch must not be reused, and KC-11D has not begun.
 
 ## Boundary and integrity model
 
@@ -49,8 +49,25 @@ publication paths.
 - Full `npm run ci` passed for this correction, including diff checks, Astro and
   Worker typechecking, 119 ingestion tests, stabilisation tests,
   additive/legacy migration validation, security checks, evidence policy
-  evaluation, knowledge Markdown checks, and the production build. The code is
-  intentionally not deployed before migration 0059 is applied to Preview.
+  evaluation, knowledge Markdown checks, and the production build.
+- Hash-semantics commit:
+  `d010d8d258591d45d528c4b662c9d065785edd07`.
+- Preview Worker: `trace-manifest-ingestion-preview`.
+- Preview Worker version:
+  `4452c10c-d619-432d-aeb9-0c3c8e5cad13`.
+- Preview Worker URL:
+  `https://trace-manifest-ingestion-preview.philgeran.workers.dev`.
+- Preview D1: `trace-manifest-db-preview`.
+- Preview R2: `trace-manifest-raw-preview`.
+- Vectorize remained bound only to the Preview index. All public, editorial,
+  and scheduled AI flags remained disabled.
+- Preview cron triggers remained disabled by configuration.
+- Migration 0059 pre-application recovery bookmark:
+  `00000055-00000000-000050ba-37b1356fcdc5e0485218f3a7fc948e7a`.
+- Migration 0059 post-application recovery bookmark:
+  `00000056-00000006-000050ba-b3838886a3c8063377ce9f4ad70b647c`.
+- Pages was unchanged for this deployment. Production D1, R2, Worker, Pages,
+  Vectorize, flags, indexing, and backfill were untouched.
 - Migration 0058 Preview bookmark:
   `0000003e-00000008-000050b7-8c5fe23768d389d1d94810a7d1d3d827`.
 - Previous smoke-test Worker version:
@@ -263,9 +280,9 @@ request IDs, nonces, analytics/script hydration, and other transport shell
 fields are not evidence identity. ETag and Last-Modified are useful metadata
 only and must never be the sole identity.
 
-### Forward-compatible design (not yet applied to Preview)
+### Forward-compatible design deployed to Preview
 
-Migration 0059 will add explicit `transport_hash`,
+Migration 0059 adds explicit `transport_hash`,
 `normalized_content_hash`, and `hash_semantics_version` fields to source
 versions and backfill items, plus an append-only transport-observation table
 for later fetches that match an existing normalized version. Existing rows,
@@ -284,15 +301,186 @@ text policy. Extraction/normalization version changes produce a new identity
 policy rather than silently aliasing old rows. This migration is additive and
 will not rewrite the four smoke-test versions.
 
-No Preview migration or deployment is authorized in this work unit. Local
-migration validation and the complete CI suite must pass first; the eventual
-human Preview repair must use the exact backup and application commands in the
-follow-up deployment record. The implementation keeps `content_hash` as the
-exact transport hash for compatibility, adds `transport_hash` explicitly,
-deduplicates new versions by the versioned normalized hash, and appends every
-later transport observation without mutating a version row. The unchanged
-backfill path now goes through this observation write before replaying the
-idempotent review trigger.
+Migration 0059 was applied only to Preview after local migration validation and
+the complete CI suite passed. The pre- and post-application Time Travel
+bookmarks and deployed Worker version are recorded above. The implementation
+keeps `content_hash` as the exact transport hash for compatibility, adds
+`transport_hash` explicitly, deduplicates new versions by the versioned
+normalized hash, and appends every later transport observation without
+mutating a version row. The unchanged backfill path goes through this
+observation write before replaying the idempotent review trigger.
+
+## Final fresh two-pass Preview smoke runbook
+
+These commands are prepared but were not run for this deployment record. Run
+them only in one browser-console session at the allowlisted Preview Pages
+origin while authenticated through Cloudflare Access as a publisher. Pages
+performs server-side signing. Never call the Worker directly and never reuse
+completed batch `d0fb3d76-488d-4aa4-a431-3d6f9a282433`.
+
+First define a response helper:
+
+```js
+async function kc11cJson(response, label) {
+  const value = await response.json();
+  console.log(label, response.status, value);
+  if (!response.ok) throw new Error(`${label} failed with HTTP ${response.status}`);
+  return value;
+}
+```
+
+Discover the same two reviewed inventory records without approving or fetching
+anything. This dry-run may reproduce the historical plan hash and must not be
+approved:
+
+```js
+const kc11cDiscoveryResponse = await fetch("/api/admin/knowledge/backfill/plan", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    inventorySnapshotId: "df94ae62-92c7-408d-9ae8-13b5b8cae10f",
+    selection: { category: "source_url", limit: 2, newestFirst: true }
+  })
+});
+const kc11cDiscovery = await kc11cJson(kc11cDiscoveryResponse, "selection discovery");
+const kc11cRecordIds = kc11cDiscovery.plan.selected.map((item) => String(item.id));
+const kc11cExpectedUrls = kc11cDiscovery.plan.selected.map((item) => item.canonicalUrl).sort();
+if (kc11cRecordIds.length !== 2 || new Set(kc11cRecordIds).size !== 2) {
+  throw new Error("Expected exactly two distinct inventory records.");
+}
+console.log({ kc11cRecordIds, kc11cExpectedUrls, writes: kc11cDiscovery.writes, fetches: kc11cDiscovery.fetches });
+```
+
+Create pass 1 with an explicit record-ID selection. This produces a fresh plan
+hash while retaining the same two source URLs:
+
+```js
+const kc11cPass1PlanResponse = await fetch("/api/admin/knowledge/backfill/plan", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    inventorySnapshotId: "df94ae62-92c7-408d-9ae8-13b5b8cae10f",
+    selection: { recordIds: kc11cRecordIds, limit: 2 }
+  })
+});
+const kc11cPass1Plan = await kc11cJson(kc11cPass1PlanResponse, "pass 1 plan");
+const kc11cPass1Urls = kc11cPass1Plan.plan.selected.map((item) => item.canonicalUrl).sort();
+if (JSON.stringify(kc11cPass1Urls) !== JSON.stringify(kc11cExpectedUrls)) {
+  throw new Error("Pass 1 did not resolve to the reviewed source pair.");
+}
+if (kc11cPass1Plan.plan.planHash === "b6ebc48370fce5626c7c267c56ee918cf3788f54aaf4473af3c1546cdc289f28") {
+  throw new Error("Pass 1 unexpectedly reused the historical plan hash.");
+}
+console.log(kc11cPass1Plan.plan.planHash, kc11cPass1Plan.plan.selected);
+```
+
+After reviewing the complete returned plan, approve and execute pass 1:
+
+```js
+const kc11cPass1ApprovalKey = `kc11c-pass1-approve-${crypto.randomUUID()}`;
+const kc11cPass1ApprovalResponse = await fetch("/api/admin/knowledge/backfill/approve", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    plan: kc11cPass1Plan.plan,
+    planHash: kc11cPass1Plan.plan.planHash,
+    idempotencyKey: kc11cPass1ApprovalKey
+  })
+});
+const kc11cPass1Approval = await kc11cJson(kc11cPass1ApprovalResponse, "pass 1 approval");
+```
+
+```js
+const kc11cPass1ExecutionKey = `kc11c-pass1-execute-${crypto.randomUUID()}`;
+const kc11cPass1ExecutionResponse = await fetch("/api/admin/knowledge/backfill/execute", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    batchId: kc11cPass1Approval.batchId,
+    planHash: kc11cPass1Plan.plan.planHash,
+    idempotencyKey: kc11cPass1ExecutionKey
+  })
+});
+const kc11cPass1Execution = await kc11cJson(kc11cPass1ExecutionResponse, "pass 1 execution");
+console.log({
+  batchId: kc11cPass1Approval.batchId,
+  planHash: kc11cPass1Plan.plan.planHash,
+  approvalKey: kc11cPass1ApprovalKey,
+  executionKey: kc11cPass1ExecutionKey,
+  result: kc11cPass1Execution
+});
+```
+
+Stop before pass 2 unless D1 verification confirms that both pass-1 items link
+to `normalized_content_v1` versions and the batch completed without a
+retryable or terminal failure.
+
+Create pass 2 over the same records with the record-ID order reversed. The
+selected URLs must match pass 1 while the plan hash must differ:
+
+```js
+const kc11cPass2PlanResponse = await fetch("/api/admin/knowledge/backfill/plan", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    inventorySnapshotId: "df94ae62-92c7-408d-9ae8-13b5b8cae10f",
+    selection: { recordIds: [...kc11cRecordIds].reverse(), limit: 2 }
+  })
+});
+const kc11cPass2Plan = await kc11cJson(kc11cPass2PlanResponse, "pass 2 plan");
+const kc11cPass2Urls = kc11cPass2Plan.plan.selected.map((item) => item.canonicalUrl).sort();
+if (JSON.stringify(kc11cPass2Urls) !== JSON.stringify(kc11cPass1Urls)) {
+  throw new Error("Pass 2 did not resolve to the pass-1 source pair.");
+}
+if (kc11cPass2Plan.plan.planHash === kc11cPass1Plan.plan.planHash) {
+  throw new Error("Pass 2 must have a distinct approved plan hash.");
+}
+console.log(kc11cPass2Plan.plan.planHash, kc11cPass2Plan.plan.selected);
+```
+
+After reviewing the complete second plan, approve and execute pass 2:
+
+```js
+const kc11cPass2ApprovalKey = `kc11c-pass2-approve-${crypto.randomUUID()}`;
+const kc11cPass2ApprovalResponse = await fetch("/api/admin/knowledge/backfill/approve", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    plan: kc11cPass2Plan.plan,
+    planHash: kc11cPass2Plan.plan.planHash,
+    idempotencyKey: kc11cPass2ApprovalKey
+  })
+});
+const kc11cPass2Approval = await kc11cJson(kc11cPass2ApprovalResponse, "pass 2 approval");
+```
+
+```js
+const kc11cPass2ExecutionKey = `kc11c-pass2-execute-${crypto.randomUUID()}`;
+const kc11cPass2ExecutionResponse = await fetch("/api/admin/knowledge/backfill/execute", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    batchId: kc11cPass2Approval.batchId,
+    planHash: kc11cPass2Plan.plan.planHash,
+    idempotencyKey: kc11cPass2ExecutionKey
+  })
+});
+const kc11cPass2Execution = await kc11cJson(kc11cPass2ExecutionResponse, "pass 2 execution");
+console.log({
+  batchId: kc11cPass2Approval.batchId,
+  planHash: kc11cPass2Plan.plan.planHash,
+  approvalKey: kc11cPass2ApprovalKey,
+  executionKey: kc11cPass2ExecutionKey,
+  result: kc11cPass2Execution
+});
+```
+
+Pass 2 is successful only if it completes with `processed: 2`, `unchanged: 2`,
+no retryable or terminal failures, and the D1 checks below prove identical
+normalized version IDs with no additional source-version rows. If either
+transport hash did not change, its idempotent observation row may remain at
+one; transport-only reconciliation requires `transport_changed = 1` and two
+distinct observations for that source.
 
 ## Historical authenticated commands
 
@@ -379,7 +567,53 @@ The actual response was `state: "completed"`, `processed: 2`,
 version for each URL because the pre-0059 implementation treated transport
 hash as version identity. Do not retry this batch again.
 
-## D1 verification queries
+## Exact fresh-smoke D1 verification commands
+
+Before pass 1, record the immutable baseline. This is read-only and should show
+two legacy source versions per document and no `normalized_content_v1` version:
+
+```powershell
+npx wrangler d1 execute trace-manifest-db-preview --remote --command "SELECT source_document_id, COUNT(*) AS total_versions, SUM(CASE WHEN hash_semantics_version = 'legacy_raw_v1' THEN 1 ELSE 0 END) AS legacy_versions, SUM(CASE WHEN hash_semantics_version = 'normalized_content_v1' THEN 1 ELSE 0 END) AS normalized_versions FROM source_document_versions WHERE source_document_id IN ('source-f7fb7d70e0ff6a4e7a73f06ab6611f114f925c625fcbd6be38e12239d0145042','source-e283b9c34207eff8e62a1618cc1a5bc63348e8c9e67ea2af1dda80b41b6b3d9b') GROUP BY source_document_id ORDER BY source_document_id;"
+```
+
+After pass 1, copy the fresh `batchId` printed by the browser and run:
+
+```powershell
+$Pass1BatchId = "PASTE_FRESH_PASS_1_BATCH_ID"
+
+npx wrangler d1 execute trace-manifest-db-preview --remote --command "SELECT batch_id, inventory_record_id, outcome, reason_code, retry_count, source_document_id, source_document_version_id, content_hash, transport_hash, normalized_content_hash, hash_semantics_version FROM knowledge_source_backfill_items WHERE batch_id = '$Pass1BatchId' ORDER BY inventory_record_id;"
+
+npx wrangler d1 execute trace-manifest-db-preview --remote --command "SELECT version.id, version.source_document_id, version.content_hash, version.transport_hash, version.normalized_content_hash, version.hash_semantics_version, version.created_at FROM source_document_versions AS version JOIN knowledge_source_backfill_items AS item ON item.source_document_version_id = version.id WHERE item.batch_id = '$Pass1BatchId' ORDER BY version.source_document_id;"
+
+npx wrangler d1 execute trace-manifest-db-preview --remote --command "SELECT source_document_version_id, COUNT(*) AS observation_count, COUNT(DISTINCT transport_hash) AS distinct_transport_count, MIN(retrieved_at) AS first_observed_at, MAX(retrieved_at) AS last_observed_at FROM source_document_version_observations WHERE source_document_version_id IN (SELECT source_document_version_id FROM knowledge_source_backfill_items WHERE batch_id = '$Pass1BatchId') GROUP BY source_document_version_id ORDER BY source_document_version_id;"
+```
+
+Proceed to pass 2 only when both item rows are terminal successes linked to two
+distinct versions whose `hash_semantics_version` is
+`normalized_content_v1`, and each normalized version has one observation.
+
+After pass 2, copy its fresh batch ID and run the final reconciliation proof:
+
+```powershell
+$Pass2BatchId = "PASTE_FRESH_PASS_2_BATCH_ID"
+
+npx wrangler d1 execute trace-manifest-db-preview --remote --command "SELECT id, plan_hash, state, approved_by, approved_at, executed_at FROM knowledge_source_backfill_batches WHERE id IN ('$Pass1BatchId','$Pass2BatchId') ORDER BY created_at; SELECT batch_id, state, started_at, completed_at, result_json FROM knowledge_source_backfill_attempts WHERE batch_id IN ('$Pass1BatchId','$Pass2BatchId') ORDER BY started_at;"
+
+npx wrangler d1 execute trace-manifest-db-preview --remote --command "WITH paired AS (SELECT first.inventory_record_id, first.source_document_id, first.source_document_version_id AS pass1_version_id, second.source_document_version_id AS pass2_version_id, first.transport_hash AS pass1_transport_hash, second.transport_hash AS pass2_transport_hash, first.normalized_content_hash AS pass1_normalized_hash, second.normalized_content_hash AS pass2_normalized_hash, second.outcome AS pass2_outcome FROM knowledge_source_backfill_items AS first JOIN knowledge_source_backfill_items AS second ON second.inventory_record_id = first.inventory_record_id WHERE first.batch_id = '$Pass1BatchId' AND second.batch_id = '$Pass2BatchId') SELECT *, pass1_version_id = pass2_version_id AS same_version, pass1_transport_hash <> pass2_transport_hash AS transport_changed, pass1_normalized_hash = pass2_normalized_hash AS normalized_unchanged FROM paired ORDER BY inventory_record_id;"
+
+npx wrangler d1 execute trace-manifest-db-preview --remote --command "SELECT source_document_id, COUNT(*) AS total_versions, SUM(CASE WHEN hash_semantics_version = 'legacy_raw_v1' THEN 1 ELSE 0 END) AS legacy_versions, SUM(CASE WHEN hash_semantics_version = 'normalized_content_v1' THEN 1 ELSE 0 END) AS normalized_versions FROM source_document_versions WHERE source_document_id IN (SELECT source_document_id FROM knowledge_source_backfill_items WHERE batch_id = '$Pass1BatchId') GROUP BY source_document_id ORDER BY source_document_id;"
+
+npx wrangler d1 execute trace-manifest-db-preview --remote --command "SELECT source_document_version_id, COUNT(*) AS observation_count, COUNT(DISTINCT transport_hash) AS distinct_transport_count, MIN(retrieved_at) AS first_observed_at, MAX(retrieved_at) AS last_observed_at FROM source_document_version_observations WHERE source_document_version_id IN (SELECT source_document_version_id FROM knowledge_source_backfill_items WHERE batch_id = '$Pass1BatchId') GROUP BY source_document_version_id ORDER BY source_document_version_id; PRAGMA quick_check; PRAGMA foreign_key_check;"
+```
+
+The final gate requires both pass-2 items to be `unchanged`, both
+`same_version` and `normalized_unchanged` values to be `1`, no increase beyond
+one normalized version per source document, and two distinct observations for
+each source where `transport_changed = 1`. Preserve all returned IDs, hashes,
+timestamps, results, and bookmarks in this audit note. Do not retry either
+fresh batch if a gate fails; stop for review.
+
+## General D1 verification queries
 
 ```sql
 SELECT generation, authority_decision_id, snapshot_id, inventory_identity,
@@ -413,8 +647,9 @@ WHERE batch_id = ?
 ORDER BY created_at;
 ```
 
-Post-repair Preview verification returned one current authority generation and
-the smoke batch above in `partial`, with one completed initial execution
-attempt and two failed-retryable items retaining retry count `1`. KC-11C
-therefore remains unchecked until the authenticated corrective retry and its
-remote ledger outcomes are reviewed.
+Historical post-repair verification initially found the prior smoke batch in
+`partial`; the authenticated human recovery retry later completed it with the
+outcomes recorded above. It is immutable historical evidence and must not be
+used by the final smoke. KC-11C remains unchecked until two fresh authenticated
+Preview batches pass the normalized-version and delayed transport-observation
+proof in this runbook.
