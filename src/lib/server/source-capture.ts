@@ -11,7 +11,6 @@ import {
   hashTransportBody,
   policyVersionFor,
   SOURCE_HASH_SEMANTICS_VERSION,
-  LEGACY_SOURCE_HASH_SEMANTICS_VERSION,
 } from "./source-version-identity";
 
 export type SourceCaptureStorageMode = "metadata_only" | "short_excerpt" | "private_full_text" | "editor_supplied_document" | "prohibited";
@@ -47,7 +46,7 @@ export interface SourceCaptureResult {
   contentHash: string;
   transportHash: string;
   normalizedContentHash: string;
-  hashSemanticsVersion: typeof SOURCE_HASH_SEMANTICS_VERSION | typeof LEGACY_SOURCE_HASH_SEMANTICS_VERSION;
+  hashSemanticsVersion: typeof SOURCE_HASH_SEMANTICS_VERSION;
   r2OriginalKey: string | null;
   r2ExtractedKey: string | null;
   extractionStatus: "captured" | "metadata_only";
@@ -89,24 +88,32 @@ export async function captureAdmittedSource(
   if (!/^[0-9a-f]{64}$/i.test(transportHash)) {
     throw new SourceCaptureError("The source transport hash is invalid.", "invalid_input");
   }
-  const normalized = await hashNormalizedSourceContent({ mediaKind: input.mediaKind, body: input.body, extraction: input.extraction });
+  const normalized = await hashNormalizedSourceContent(input.mediaKind === "html"
+    ? { mediaKind: "html", body: input.body, extraction: input.extraction, canonicalUrl }
+    : { mediaKind: input.mediaKind, body: input.body, extraction: input.extraction });
   const normalizedContentHash = normalized.normalizedContentHash;
+  // The legacy table uniqueness key is (source_document_id, content_hash).
+  // Qualify its v2 compatibility value so an identical legacy/v1 transport
+  // cannot block a distinct semantics-qualified version. transport_hash keeps
+  // the exact response-byte identity.
+  const versionContentHash = await sha256(`${SOURCE_HASH_SEMANTICS_VERSION}:${transportHash}`);
   const sourceDocumentId = `source-${canonicalUrlHash}`;
   const existingVersion = await env.DB.prepare(`
-    SELECT id, hash_semantics_version, r2_original_key, r2_extracted_key, extraction_status
+    SELECT id, r2_original_key, r2_extracted_key, extraction_status
     FROM source_document_versions
     WHERE source_document_id = ?
-      AND (normalized_content_hash = ? OR (normalized_content_hash IS NULL AND content_hash = ?))
-    ORDER BY CASE WHEN normalized_content_hash = ? THEN 0 ELSE 1 END, created_at ASC
+      AND normalized_content_hash = ?
+      AND hash_semantics_version = ?
+    ORDER BY created_at ASC, id ASC
     LIMIT 1
-  `).bind(sourceDocumentId, normalizedContentHash, transportHash, normalizedContentHash).first<{
+  `).bind(sourceDocumentId, normalizedContentHash, SOURCE_HASH_SEMANTICS_VERSION).first<{
     id: string;
-    hash_semantics_version: string;
     r2_original_key: string | null;
     r2_extracted_key: string | null;
     extraction_status: "captured" | "metadata_only" | null;
   }>();
-  const sourceDocumentVersionId = existingVersion?.id ?? `source-version-${canonicalUrlHash}-${normalizedContentHash}`;
+  const sourceDocumentVersionId = existingVersion?.id
+    ?? `source-version-${canonicalUrlHash}-${SOURCE_HASH_SEMANTICS_VERSION}-${normalizedContentHash}`;
   const canStoreBody = input.copyrightStorageMode === "private_full_text" || input.copyrightStorageMode === "editor_supplied_document";
   const shouldStoreBody = canStoreBody && !existingVersion;
   const extractionStatus = shouldStoreBody
@@ -165,7 +172,7 @@ export async function captureAdmittedSource(
            extraction_status, extraction_method, extraction_version)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).bind(
-        sourceDocumentVersionId, sourceDocumentId, transportHash, transportHash, normalizedContentHash,
+        sourceDocumentVersionId, sourceDocumentId, versionContentHash, transportHash, normalizedContentHash,
         SOURCE_HASH_SEMANTICS_VERSION, retrievedUrl, retrievedAt,
         input.httpStatus ?? null, input.contentType, bodyBytes.byteLength,
         input.extraction.title, input.extraction.author, input.extraction.publishedAt,
@@ -224,8 +231,7 @@ export async function captureAdmittedSource(
   return {
     sourceDocumentId, sourceDocumentVersionId, canonicalUrlHash,
     contentHash: transportHash, transportHash, normalizedContentHash,
-    hashSemanticsVersion: existingVersion?.hash_semantics_version === LEGACY_SOURCE_HASH_SEMANTICS_VERSION
-      ? LEGACY_SOURCE_HASH_SEMANTICS_VERSION : SOURCE_HASH_SEMANTICS_VERSION,
+    hashSemanticsVersion: SOURCE_HASH_SEMANTICS_VERSION,
     r2OriginalKey, r2ExtractedKey, extractionStatus, idempotencyKey,
   };
 }

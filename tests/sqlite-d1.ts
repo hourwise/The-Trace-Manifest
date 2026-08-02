@@ -46,7 +46,11 @@ class SQLiteD1Statement {
 export class SQLiteD1 {
   readonly sqlite = new DatabaseSync(":memory:");
 
-  constructor(applyLegacyClaimsCutover = true, applySourceIdentityDiagnostics = true) {
+  constructor(
+    applyLegacyClaimsCutover = true,
+    applySourceIdentityDiagnostics = true,
+    applySourceIdentityV2 = applySourceIdentityDiagnostics,
+  ) {
     this.sqlite.exec(readFileSync("db/schema.sql", "utf8"));
     this.sqlite.exec(readFileSync("db/migration-5e-publication.sql", "utf8"));
     this.sqlite.exec(readFileSync("db/migration-stabilisation-security.sql", "utf8"));
@@ -85,6 +89,9 @@ export class SQLiteD1 {
     this.sqlite.exec(readFileSync("db/migration-0059-source-version-hash-semantics.sql", "utf8"));
     if (applySourceIdentityDiagnostics) {
       this.sqlite.exec(readFileSync("db/migration-0060-source-identity-component-diagnostics.sql", "utf8"));
+      if (applySourceIdentityV2) {
+        this.sqlite.exec(readFileSync("db/migration-0061-normalized-content-v2.sql", "utf8"));
+      }
     }
   }
 

@@ -20,6 +20,7 @@ interface IndexOperation {
 interface SourceDocumentVersion {
   id: string;
   content_hash: string;
+  transport_hash: string | null;
   r2_original_key: string | null;
   r2_extracted_key: string | null;
 }
@@ -108,13 +109,13 @@ async function reconcileR2Put(
     return markRepairRequired(env, operation, trigger, "r2_put_subject_invalid");
   }
   const version = await env.DB.prepare(`
-    SELECT id, content_hash, r2_original_key, r2_extracted_key
+    SELECT id, content_hash, transport_hash, r2_original_key, r2_extracted_key
     FROM source_document_versions WHERE id = ?
   `).bind(operation.subject_id).first<SourceDocumentVersion>();
   if (!version || !version.r2_original_key) {
     return markRepairRequired(env, operation, trigger, "r2_put_target_missing");
   }
-  if (operation.desired_content_hash && version.content_hash !== operation.desired_content_hash) {
+  if (operation.desired_content_hash && (version.transport_hash ?? version.content_hash) !== operation.desired_content_hash) {
     return markRepairRequired(env, operation, trigger, "r2_put_hash_mismatch");
   }
 

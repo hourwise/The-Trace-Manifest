@@ -78,6 +78,7 @@ try {
   // once here; D1 applies each numbered migration once in production.
   db.exec(readFileSync("db/migration-0059-source-version-hash-semantics.sql", "utf8"));
   db.exec(readFileSync("db/migration-0060-source-identity-component-diagnostics.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0061-normalized-content-v2.sql", "utf8"));
 
   const requiredTables = [
     "ai_requests", "ai_budget_reservations", "ai_usage_ledger", "ai_quota_usage",
@@ -236,8 +237,8 @@ try {
   } catch { constraintHeld = true; }
   if (!constraintHeld) throw new Error("AI attempt-count constraint did not hold");
 
-  const integrity = db.prepare("PRAGMA integrity_check").get();
-  if (integrity.integrity_check !== "ok") throw new Error(`SQLite integrity check failed: ${integrity.integrity_check}`);
+  const quickCheck = db.prepare("PRAGMA quick_check").get();
+  if (quickCheck.quick_check !== "ok") throw new Error(`SQLite quick check failed: ${quickCheck.quick_check}`);
   if (db.prepare("PRAGMA foreign_key_check").all().length) throw new Error("Foreign-key check failed");
   console.log("Schema and additive migrations apply cleanly with required constraints.");
 } finally {

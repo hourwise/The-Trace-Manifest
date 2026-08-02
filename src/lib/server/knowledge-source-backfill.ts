@@ -2,20 +2,25 @@
 import { extractHtmlDocument } from "./source-extraction";
 import { captureAdmittedSource, normaliseSourceUrl, type SourceCaptureStorageMode } from "./source-capture";
 import { retrieveRemoteSource, SourceRetrievalError } from "./source-retrieval";
-import { hashNormalizedSourceContent, type SourceIdentityMediaKind } from "./source-version-identity";
+import {
+  hashNormalizedSourceContent,
+  SOURCE_HASH_SEMANTICS_VERSION,
+  SOURCE_NORMALIZATION_POLICY_VERSIONS,
+  type SourceIdentityMediaKind,
+} from "./source-version-identity";
 
 export const BACKFILL_CEILINGS = Object.freeze({
   maxRecords: 25, maxConcurrency: 1, maxRedirects: 3, maxBytesPerRecord: 512 * 1024,
   maxTotalBytes: 5 * 1024 * 1024, maxRetries: 2, maxDurationMs: 30_000,
   staleExecutionSeconds: 120,
 });
-export const BACKFILL_POLICY_VERSION = "kc-11c-v1" as const;
+export const BACKFILL_POLICY_VERSION = "kc-11c-v2" as const;
 export const BACKFILL_INVENTORY_SCHEMA_VERSION = "kc-11a-v1" as const;
 export type BackfillOutcome = "planned" | "captured_new_document" | "captured_new_version" | "unchanged" | "metadata_only" | "unavailable" | "excluded" | "held_for_review" | "failed_retryable" | "failed_terminal";
 export type InventoryRecord = { id: string; label?: string; state?: string; url?: string; origin?: string | string[]; category?: string };
 export type BackfillSelection = { category?: string; recordIds?: string[]; limit: number; newestFirst?: boolean };
 export type BackfillPlanItem = InventoryRecord & { category: string; canonicalUrl: string | null; fetchability: "eligible" | "ineligible"; admissionOutcome: "eligible" | "excluded"; duplicateOutcome: "unknown_until_fetch" | "not_applicable"; storageMode: SourceCaptureStorageMode; exclusionReason?: string };
-export type BackfillPlan = { schemaVersion: "kc-11a-v1"; planVersion: "kc-11c-v1"; inventorySnapshotId: string; inventoryIdentity: string; selection: BackfillSelection; ceilings: typeof BACKFILL_CEILINGS; selected: BackfillPlanItem[]; excluded: Array<{ recordId: string; category: string; reason: string }>; estimatedRequestCount: number; estimatedStorageBytesCeiling: number; planHash: string };
+export type BackfillPlan = { schemaVersion: "kc-11a-v1"; planVersion: "kc-11c-v2"; sourceHashSemanticsVersion: typeof SOURCE_HASH_SEMANTICS_VERSION; normalizationPolicyVersions: typeof SOURCE_NORMALIZATION_POLICY_VERSIONS; inventorySnapshotId: string; inventoryIdentity: string; selection: BackfillSelection; ceilings: typeof BACKFILL_CEILINGS; selected: BackfillPlanItem[]; excluded: Array<{ recordId: string; category: string; reason: string }>; estimatedRequestCount: number; estimatedStorageBytesCeiling: number; planHash: string };
 export type BackfillInventory = { schemaVersion?: string; generatedAt?: string; categories?: Record<string, InventoryRecord[]>; [key: string]: unknown };
 export type InventoryAuthorityResult = {
   snapshotId: string;
@@ -96,17 +101,37 @@ export async function buildBackfillPlan(inventory: BackfillInventory, selection:
   }
   for (const record of all) if (!selected.some((item) => item.id === record.id) && !excluded.some((item) => item.recordId === record.id)) excluded.push({ recordId: record.id, category: record.category ?? "unknown", reason: "outside_explicit_limit" });
   const inventoryIdentity = await inventoryIdentityFor(inventory);
-  const unsigned = { schemaVersion: "kc-11a-v1" as const, planVersion: "kc-11c-v1" as const, inventorySnapshotId, inventoryIdentity, selection: canonicalSelection, ceilings: BACKFILL_CEILINGS, selected, excluded, estimatedRequestCount: selected.length, estimatedStorageBytesCeiling: selected.length * BACKFILL_CEILINGS.maxBytesPerRecord };
+  const unsigned = {
+    schemaVersion: "kc-11a-v1" as const,
+    planVersion: BACKFILL_POLICY_VERSION,
+    sourceHashSemanticsVersion: SOURCE_HASH_SEMANTICS_VERSION,
+    normalizationPolicyVersions: SOURCE_NORMALIZATION_POLICY_VERSIONS,
+    inventorySnapshotId,
+    inventoryIdentity,
+    selection: canonicalSelection,
+    ceilings: BACKFILL_CEILINGS,
+    selected,
+    excluded,
+    estimatedRequestCount: selected.length,
+    estimatedStorageBytesCeiling: selected.length * BACKFILL_CEILINGS.maxBytesPerRecord,
+  };
   return { ...unsigned, planHash: await sha256(stable(unsigned)) };
 }
 
 export async function verifyPlanHash(plan: BackfillPlan, expected: string): Promise<boolean> {
   try {
+    if (!usesActivePlanPolicy(plan)) return false;
     const { planHash: _ignored, ...unsigned } = plan;
     return (await sha256(stable(unsigned))) === expected && plan.planHash === expected;
   } catch {
     return false;
   }
+}
+
+function usesActivePlanPolicy(plan: BackfillPlan): boolean {
+  return plan.planVersion === BACKFILL_POLICY_VERSION
+    && plan.sourceHashSemanticsVersion === SOURCE_HASH_SEMANTICS_VERSION
+    && stable(plan.normalizationPolicyVersions) === stable(SOURCE_NORMALIZATION_POLICY_VERSIONS);
 }
 
 export type BackfillDb = Pick<D1Database, "prepare" | "batch" | "exec" | "dump" | "withSession">;
@@ -178,6 +203,7 @@ function parseBody(value: unknown): Record<string, unknown> | null { return valu
 function idempotencyFor(batchId: string, recordId: string): string { return `kc11c:${batchId}:${recordId}`; }
 
 async function authoritativeSnapshot(env: BackfillEnv, plan: BackfillPlan): Promise<void> {
+  if (!usesActivePlanPolicy(plan)) throw new Error("The plan does not use the active KC-11C source identity policy.");
   if (!plan.inventorySnapshotId || plan.inventorySnapshotId === "local-untrusted") throw new Error("An authoritative KC-11A inventory snapshot is required.");
   const snapshot = await env.DB.prepare(`
     SELECT snapshot_id, schema_version, inventory_identity, policy_version
@@ -307,8 +333,8 @@ export async function approveBackfillPlan(env: BackfillEnv, plan: BackfillPlan, 
     .bind(batchId, plan.schemaVersion, plan.inventoryIdentity, planHash, JSON.stringify(plan), JSON.stringify(plan.selection), JSON.stringify(plan.ceilings), actor, idempotencyKey, correlationId)];
   for (const item of plan.selected) {
     const itemId = crypto.randomUUID();
-    statements.push(env.DB.prepare(`INSERT INTO knowledge_source_backfill_items (id, batch_id, inventory_record_id, category, canonical_url, outcome, reason_code, correlation_id, idempotency_key, actor) VALUES (?, ?, ?, ?, ?, 'planned', NULL, ?, ?, ?)`)
-      .bind(itemId, batchId, item.id, item.category, item.canonicalUrl, correlationId, idempotencyFor(batchId, item.id), actor));
+    statements.push(env.DB.prepare(`INSERT INTO knowledge_source_backfill_items (id, batch_id, inventory_record_id, category, canonical_url, outcome, reason_code, hash_semantics_version, correlation_id, idempotency_key, actor) VALUES (?, ?, ?, ?, ?, 'planned', NULL, ?, ?, ?, ?)`)
+      .bind(itemId, batchId, item.id, item.category, item.canonicalUrl, SOURCE_HASH_SEMANTICS_VERSION, correlationId, idempotencyFor(batchId, item.id), actor));
     statements.push(env.DB.prepare(`INSERT INTO knowledge_source_backfill_item_events (id, batch_id, item_id, outcome, metadata_json, actor, correlation_id) VALUES (?, ?, ?, 'planned', ?, ?, ?)`)
       .bind(crypto.randomUUID(), batchId, itemId, JSON.stringify({ planHash, canonicalUrl: item.canonicalUrl }), actor, correlationId));
   }
@@ -365,18 +391,21 @@ export async function executeBackfill(env: BackfillEnv, batchId: string, planHas
       const extraction = mediaKind === "html"
         ? extractHtmlDocument(retrieved.body)
         : extractHtmlDocument(`<main><p>${retrieved.body.slice(0, 12000)}</p></main>`);
-      normalizedContentHash = (await hashNormalizedSourceContent({ mediaKind, body: retrieved.body, extraction })).normalizedContentHash;
-      hashSemanticsVersion = "normalized_content_v1";
+      normalizedContentHash = (await hashNormalizedSourceContent(mediaKind === "html"
+        ? { mediaKind: "html", body: retrieved.body, extraction, canonicalUrl: selected.canonicalUrl }
+        : { mediaKind, body: retrieved.body, extraction })).normalizedContentHash;
+      hashSemanticsVersion = SOURCE_HASH_SEMANTICS_VERSION;
       const existingDocument = await env.DB.prepare("SELECT id FROM source_documents WHERE canonical_url = ?").bind(selected.canonicalUrl).first<{ id: string }>();
       sourceDocumentId = existingDocument?.id ?? null;
       const existingVersion = existingDocument ? await env.DB.prepare(`
         SELECT id, hash_semantics_version
         FROM source_document_versions
         WHERE source_document_id = ?
-          AND (normalized_content_hash = ? OR (normalized_content_hash IS NULL AND content_hash = ?))
-        ORDER BY CASE WHEN normalized_content_hash = ? THEN 0 ELSE 1 END, created_at ASC
+          AND normalized_content_hash = ?
+          AND hash_semantics_version = ?
+        ORDER BY created_at ASC, id ASC
         LIMIT 1
-      `).bind(existingDocument.id, normalizedContentHash, contentHash, normalizedContentHash).first<{ id: string; hash_semantics_version: string }>() : null;
+      `).bind(existingDocument.id, normalizedContentHash, SOURCE_HASH_SEMANTICS_VERSION).first<{ id: string; hash_semantics_version: string }>() : null;
       if (existingVersion) {
         // Route the unchanged path through capture so the exact transport
         // observation is retained and the idempotent review trigger is replayed
@@ -423,10 +452,11 @@ export async function executeBackfill(env: BackfillEnv, batchId: string, planHas
           FROM source_documents document
           JOIN source_document_versions version ON version.source_document_id = document.id
           WHERE document.canonical_url = ?
-            AND (version.normalized_content_hash = ? OR (version.normalized_content_hash IS NULL AND version.content_hash = ?))
-          ORDER BY CASE WHEN version.normalized_content_hash = ? THEN 0 ELSE 1 END, version.created_at ASC
+            AND version.normalized_content_hash = ?
+            AND version.hash_semantics_version = ?
+          ORDER BY version.created_at ASC, version.id ASC
           LIMIT 1
-        `).bind(selected.canonicalUrl, normalizedContentHash, contentHash, normalizedContentHash).first<{ source_document_id: string; source_document_version_id: string; normalized_content_hash: string | null; hash_semantics_version: string | null }>().catch(() => null);
+        `).bind(selected.canonicalUrl, normalizedContentHash, SOURCE_HASH_SEMANTICS_VERSION).first<{ source_document_id: string; source_document_version_id: string; normalized_content_hash: string | null; hash_semantics_version: string | null }>().catch(() => null);
         if (committed) {
           sourceDocumentId = committed.source_document_id;
           sourceDocumentVersionId = committed.source_document_version_id;

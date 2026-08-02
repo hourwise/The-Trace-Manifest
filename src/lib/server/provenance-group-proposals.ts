@@ -17,21 +17,23 @@ export async function generateProvenanceGroupProposals(
   input: { sourceDocumentVersionId?: string; maxGroups?: number } = {},
 ): Promise<ProvenanceGroupProposalResult> {
   const hashes = input.sourceDocumentVersionId
-    ? await db.prepare("SELECT content_hash FROM source_document_versions WHERE id = ?")
+    ? await db.prepare("SELECT COALESCE(transport_hash, content_hash) AS content_hash FROM source_document_versions WHERE id = ?")
       .bind(input.sourceDocumentVersionId).all<{ content_hash: string }>()
     : await db.prepare(`
-        SELECT content_hash FROM source_document_versions
-        WHERE content_hash IS NOT NULL AND content_hash <> ''
-        GROUP BY content_hash HAVING COUNT(DISTINCT source_document_id) > 1
+        SELECT COALESCE(transport_hash, content_hash) AS content_hash FROM source_document_versions
+        WHERE COALESCE(transport_hash, content_hash) <> ''
+        GROUP BY COALESCE(transport_hash, content_hash)
+        HAVING COUNT(DISTINCT source_document_id) > 1
         LIMIT 100
       `).all<{ content_hash: string }>();
   const candidates: SourceOriginRow[] = [];
   for (const hashRow of hashes.results ?? []) {
     const rows = await db.prepare(`
-      SELECT source_document_id, content_hash, MIN(retrieved_at) AS earliest_retrieved_at
+      SELECT source_document_id, COALESCE(transport_hash, content_hash) AS content_hash,
+             MIN(retrieved_at) AS earliest_retrieved_at
       FROM source_document_versions
-      WHERE content_hash = ?
-      GROUP BY source_document_id, content_hash
+      WHERE COALESCE(transport_hash, content_hash) = ?
+      GROUP BY source_document_id, COALESCE(transport_hash, content_hash)
       HAVING COUNT(*) >= 1
       ORDER BY earliest_retrieved_at ASC, source_document_id ASC
     `).bind(hashRow.content_hash).all<SourceOriginRow>();

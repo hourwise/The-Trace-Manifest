@@ -1,16 +1,38 @@
 import type { ExtractedHtmlDocument, HtmlExtractionBlock, HtmlExtractionContainer } from "./source-extraction";
 
-/** Hash semantics for source versions created after migration 0059. */
-export const SOURCE_HASH_SEMANTICS_VERSION = "normalized_content_v1" as const;
+/** Hash semantics for source versions created after migration 0061. */
+export const SOURCE_HASH_SEMANTICS_VERSION = "normalized_content_v2" as const;
 export const LEGACY_SOURCE_HASH_SEMANTICS_VERSION = "legacy_raw_v1" as const;
 
 export type SourceIdentityMediaKind = "html" | "markdown" | "plain_text" | "json" | "pdf" | "image" | "other";
 
-export interface SourceIdentityInput {
-  mediaKind: SourceIdentityMediaKind;
+type NonHtmlSourceIdentityMediaKind = Exclude<SourceIdentityMediaKind, "html">;
+
+type CommonSourceIdentityInput = {
   body: string;
   extraction?: ExtractedHtmlDocument | null;
-}
+};
+
+export type SourceIdentityInput =
+  | (CommonSourceIdentityInput & {
+    mediaKind: "html";
+    /** Normalized admitted source URL used only to resolve link destinations. */
+    canonicalUrl: string;
+  })
+  | (CommonSourceIdentityInput & {
+    mediaKind: NonHtmlSourceIdentityMediaKind;
+    canonicalUrl?: never;
+  });
+
+export const SOURCE_NORMALIZATION_POLICY_VERSIONS = Object.freeze({
+  html: "source-normalized-html-v2",
+  markdown: "source-normalized-markdown-v2",
+  plain_text: "source-normalized-plain_text-v2",
+  json: "source-normalized-json-v2",
+  pdf: "source-normalized-pdf-v2",
+  image: "source-normalized-image-v2",
+  other: "source-normalized-other-v2",
+} as const satisfies Record<SourceIdentityMediaKind, string>);
 
 export interface SourceIdentityResult {
   normalizedContentHash: string;
@@ -81,10 +103,7 @@ function canonicalIdentityParts(input: SourceIdentityInput): CanonicalIdentityPa
       description: normalizeInline(extraction?.description),
     };
     blocks = (extraction?.blocks ?? []).map(normalizedBlock);
-    links = (extraction?.links ?? []).map((link) => ({
-      href: normalizeLink(link.href),
-      text: normalizeInline(link.text),
-    }));
+    links = canonicalLinkRecords(extraction?.links ?? [], input.canonicalUrl);
     const blockStructure = (blocks as Array<Record<string, unknown>>).map((block) => ({
       kind: block.kind,
       headingLevel: block.headingLevel,
@@ -158,7 +177,7 @@ export async function hashNormalizedSourceContent(input: SourceIdentityInput): P
 }
 
 export function policyVersionFor(mediaKind: SourceIdentityMediaKind): string {
-  return `source-normalized-${mediaKind}-v1`;
+  return SOURCE_NORMALIZATION_POLICY_VERSIONS[mediaKind];
 }
 
 function normalizedBlock(block: HtmlExtractionBlock): Record<string, unknown> {
@@ -189,8 +208,50 @@ function normalizeLineContent(value: string): string {
     .trim();
 }
 
-function normalizeLink(value: string): string {
-  return value.replace(/\s+/g, " ").trim();
+const NON_EVIDENCE_TRACKING_PARAMETERS = new Set([
+  "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
+  "ref", "source", "fbclid", "gclid",
+]);
+
+function canonicalLinkRecords(
+  links: ExtractedHtmlDocument["links"],
+  canonicalUrl: string,
+): Array<{ destination: string; text: string }> {
+  const base = new URL(canonicalUrl);
+  if ((base.protocol !== "http:" && base.protocol !== "https:") || base.username || base.password) {
+    throw new Error("HTML source identity requires an admitted HTTP(S) canonical URL.");
+  }
+  return links
+    .map((link) => ({
+      destination: normalizeLinkDestination(link.href, base),
+      text: normalizeInline(link.text) ?? "",
+    }))
+    .sort((left, right) => compareCanonicalText(left.destination, right.destination)
+      || compareCanonicalText(left.text, right.text));
+}
+
+function normalizeLinkDestination(value: string, base: URL): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  try {
+    const url = new URL(normalized, base);
+    url.hash = "";
+    if (url.protocol === "http:" || url.protocol === "https:") {
+      const parameters = [...url.searchParams.entries()]
+        .filter(([key]) => !NON_EVIDENCE_TRACKING_PARAMETERS.has(key.toLowerCase()))
+        .sort(([leftKey, leftValue], [rightKey, rightValue]) => compareCanonicalText(leftKey, rightKey)
+          || compareCanonicalText(leftValue, rightValue));
+      url.search = "";
+      for (const [key, parameterValue] of parameters) url.searchParams.append(key, parameterValue);
+    }
+    return url.href;
+  } catch {
+    // An unparsable destination remains observable instead of being dropped.
+    return normalized;
+  }
+}
+
+function compareCanonicalText(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 function canonicalValue(value: unknown): unknown {
