@@ -62,7 +62,7 @@ export type SourceObservationClassification =
   | "transport_only_drift"
   | "unchanged";
 
-export type SourceCaptureErrorCode = "invalid_input" | "storage_not_permitted" | "body_too_large" | "r2_write_failed" | "database_write_failed";
+export type SourceCaptureErrorCode = "invalid_input" | "storage_not_permitted" | "body_too_large" | "r2_write_failed" | "database_write_failed" | "review_trigger_failed";
 
 export class SourceCaptureError extends Error {
   constructor(message: string, readonly code: SourceCaptureErrorCode, readonly status: 400 | 413 | 500 = 400) {
@@ -127,7 +127,7 @@ export async function captureAdmittedSource(
     SELECT transport_hash, normalized_links_hash
     FROM source_document_version_observations
     WHERE source_document_version_id = ?
-    ORDER BY created_at DESC, id DESC
+    ORDER BY julianday(retrieved_at) DESC, retrieved_at DESC, id DESC
     LIMIT 1
   `).bind(existingVersion.id).first<{ transport_hash: string; normalized_links_hash: string | null }>() : null;
   const observationClassification: SourceObservationClassification = !existingVersion
@@ -245,12 +245,20 @@ export async function captureAdmittedSource(
   }
 
   if (!existingVersion || input.replayEvidenceReview) {
-    await triggerKnowledgeReview(env.DB, {
-      kind: "evidence_changed",
-      sourceDocumentIds: [sourceDocumentId],
-      sourceDocumentVersionId,
-      eventId: sourceDocumentVersionId,
-    });
+    try {
+      await triggerKnowledgeReview(env.DB, {
+        kind: "evidence_changed",
+        sourceDocumentIds: [sourceDocumentId],
+        sourceDocumentVersionId,
+        eventId: sourceDocumentVersionId,
+      });
+    } catch {
+      throw new SourceCaptureError(
+        "The source version was committed but its evidence review trigger failed.",
+        "review_trigger_failed",
+        500,
+      );
+    }
   }
 
   return {

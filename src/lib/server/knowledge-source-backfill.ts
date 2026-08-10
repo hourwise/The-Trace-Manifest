@@ -1,6 +1,6 @@
 /** KC-11C: bounded, review-gated source-document backfill. */
 import { extractHtmlDocument } from "./source-extraction";
-import { captureAdmittedSource, normaliseSourceUrl, type SourceCaptureStorageMode } from "./source-capture";
+import { captureAdmittedSource, normaliseSourceUrl, SourceCaptureError, type SourceCaptureStorageMode } from "./source-capture";
 import { retrieveRemoteSource, SourceRetrievalError } from "./source-retrieval";
 import {
   hashNormalizedSourceContent,
@@ -408,8 +408,11 @@ export async function executeBackfill(env: BackfillEnv, batchId: string, planHas
       `).bind(existingDocument.id, normalizedContentHash, SOURCE_HASH_SEMANTICS_VERSION).first<{ id: string; hash_semantics_version: string }>() : null;
       if (existingVersion) {
         // Route the unchanged path through capture so the exact transport
-        // observation is retained and the idempotent review trigger is replayed
-        // after a post-commit failure without creating a new version.
+        // observation is retained. Review replay is allowed only when this
+        // item records the exact post-commit review-trigger failure.
+        const replayEvidenceReview = item.reason_code === "review_trigger_failed"
+          && Number(item.retry_count ?? 0) > 0
+          && item.source_document_version_id === existingVersion.id;
         capture = await captureAdmittedSource(env, {
           canonicalUrl: selected.canonicalUrl,
           retrievedUrl: retrieved.finalUrl,
@@ -423,7 +426,7 @@ export async function executeBackfill(env: BackfillEnv, batchId: string, planHas
           correlationId: batch.correlation_id,
           maximumBytes,
           transportHash: retrieved.transportHash,
-          replayEvidenceReview: Number(item.retry_count ?? 0) > 0,
+          replayEvidenceReview,
         });
         sourceDocumentId = capture.sourceDocumentId;
         sourceDocumentVersionId = capture.sourceDocumentVersionId;
@@ -467,7 +470,9 @@ export async function executeBackfill(env: BackfillEnv, batchId: string, planHas
           hashSemanticsVersion = committed.hash_semantics_version;
         }
       }
-      reason = error instanceof SourceRetrievalError ? error.code : error instanceof Error ? error.message.slice(0, 120) : "capture_failed";
+      reason = error instanceof SourceRetrievalError || error instanceof SourceCaptureError
+        ? error.code
+        : error instanceof Error ? error.message.slice(0, 120) : "capture_failed";
       const retryCount = Number(item.retry_count ?? 0) + 1;
       outcome = error instanceof SourceRetrievalError && ["url_ineligible", "redirect_rejected", "content_type_rejected", "response_status_rejected", "response_too_large"].includes(error.code) ? "excluded" : retryCount >= BACKFILL_CEILINGS.maxRetries ? "failed_terminal" : "failed_retryable";
     }

@@ -105,6 +105,19 @@ async function canonicalLinkPolicyTests(): Promise<void> {
   assert.equal(hrefOnly.normalizedContentHash, canonicalDestination.normalizedContentHash, "destination-only changes reuse the content identity");
   assert.notEqual(hrefOnly.diagnostics.normalizedLinksHash, canonicalDestination.diagnostics.normalizedLinksHash, "destination-only changes remain reference-observable");
 
+  const paragraphAnchorA = await htmlIdentity("<article><p>Read <a href=\"/paper-a\">the paper</a>.</p></article>");
+  const paragraphAnchorText = await htmlIdentity("<article><p>Read <a href=\"/paper-a\">the specification</a>.</p></article>");
+  assert.notEqual(paragraphAnchorA.diagnostics.normalizedBlocksHash, paragraphAnchorText.diagnostics.normalizedBlocksHash, "visible paragraph anchor text remains block evidence");
+  assert.notEqual(paragraphAnchorA.normalizedContentHash, paragraphAnchorText.normalizedContentHash, "visible paragraph anchor text changes v3 content identity");
+  const paragraphAnchorHref = await htmlIdentity("<article><p>Read <a href=\"/paper-b\">the paper</a>.</p></article>");
+  assert.equal(paragraphAnchorA.diagnostics.normalizedBlocksHash, paragraphAnchorHref.diagnostics.normalizedBlocksHash, "href-only paragraph changes preserve block identity");
+  assert.equal(paragraphAnchorA.normalizedContentHash, paragraphAnchorHref.normalizedContentHash, "href-only paragraph changes preserve v3 content identity");
+  assert.notEqual(paragraphAnchorA.diagnostics.normalizedLinksHash, paragraphAnchorHref.diagnostics.normalizedLinksHash, "href-only paragraph changes remain reference-observable");
+
+  const listAnchorA = await htmlIdentity("<article><ul><li>Read <a href=\"/paper-a\">the paper</a>.</li></ul></article>");
+  const listAnchorText = await htmlIdentity("<article><ul><li>Read <a href=\"/paper-a\">the specification</a>.</li></ul></article>");
+  assert.notEqual(listAnchorA.normalizedContentHash, listAnchorText.normalizedContentHash, "visible list-item anchor text changes v3 content identity");
+
   const relative = await htmlIdentity(linkFixture('<a href="../evidence?b=2&a=1#fragment">Relative</a>'));
   const absolute = await htmlIdentity(linkFixture('<a href="https://example.test/evidence?a=1&b=2">Relative</a>'));
   assert.equal(relative.diagnostics.normalizedLinksHash, absolute.diagnostics.normalizedLinksHash);
@@ -204,6 +217,41 @@ async function versionSeparationAndReuseTests(): Promise<void> {
     assert.ok(observations.every((row) => row.hash_semantics_version === "normalized_content_v3"));
     assert.ok(observations.every((row) => row.extraction_version === "source-normalized-html-v3"));
     assert.ok(observations.every((row) => row.normalization_policy_version === "source-normalized-html-v3"));
+  } finally {
+    database.close();
+  }
+}
+
+async function observationChronologyTests(): Promise<void> {
+  const database = new SQLiteD1();
+  try {
+    const rawStore = { put: async () => undefined, delete: async () => undefined } as unknown as Pick<R2Bucket, "put" | "delete">;
+    const canonicalUrl = "https://example.test/observation-chronology";
+    const capture = (body: string, retrievedAt: string, transportHash: string) => captureAdmittedSource({ DB: database.asD1(), RAW_STORE: rawStore }, {
+      canonicalUrl,
+      retrievedUrl: canonicalUrl,
+      contentType: "text/html",
+      body,
+      extraction: extractHtmlDocument(body),
+      mediaKind: "html",
+      admissionState: "admitted",
+      copyrightStorageMode: "metadata_only",
+      httpStatus: 200,
+      retrievedAt,
+      transportHash,
+    });
+    const paperA = "<article><p>Read <a href=\"/paper-a\">the paper</a>.</p></article>";
+    const paperB = "<article><p>Read <a href=\"/paper-b\">the paper</a>.</p></article>";
+    await capture(paperA, "2026-08-10T00:00:01Z", "1".repeat(64));
+    await capture(paperB, "2026-08-10T00:00:03Z", "0".repeat(64));
+    database.sqlite.exec("UPDATE source_document_version_observations SET created_at = '2026-08-10 00:00:00'");
+    const latestByRetrievedAt = await capture(paperA, "2026-08-10T00:00:02Z", "f".repeat(64));
+    assert.equal(latestByRetrievedAt.observationClassification, "reference_only_drift", "classification uses the latest retrieved observation, not hash-derived observation ID order");
+    const retrievedOrder = database.sqlite.prepare(`
+      SELECT retrieved_at FROM source_document_version_observations
+      ORDER BY julianday(retrieved_at) DESC, retrieved_at DESC, id DESC
+    `).all().map((row) => row.retrieved_at);
+    assert.deepEqual(retrievedOrder, ["2026-08-10T00:00:03Z", "2026-08-10T00:00:02Z", "2026-08-10T00:00:01Z"]);
   } finally {
     database.close();
   }
@@ -462,6 +510,7 @@ function migrationPreservationTests(): void {
 await canonicalLinkPolicyTests();
 await anthropicRegressionTests();
 await versionSeparationAndReuseTests();
+await observationChronologyTests();
 await planPolicyBindingTests();
 migrationPreservationTests();
 console.log("normalized_content_v3 identity, reference drift, plan, authority, and v1/v2 preservation tests passed");

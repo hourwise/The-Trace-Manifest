@@ -247,13 +247,14 @@ async function kc11cBackfillIntegrityTests(): Promise<void> {
       globalThis.fetch = (async () => new Response(recoveryBody, { status: 200, headers: { "Content-Type": "text/html" } })) as typeof fetch;
       let failedResult: Record<string, unknown>;
       let retryResult: Record<string, unknown>;
-      let failedItem: { outcome: string; retry_count: number; source_document_id: string; source_document_version_id: string } | null;
+      let failedItem: { outcome: string; reason_code: string; retry_count: number; source_document_id: string; source_document_version_id: string } | null;
       try {
         failedResult = await executeBackfill(recoveryEnv, recoveryApproval.batchId, recoveryPlan.planHash, "publisher@example.com", "execute-recovery-initial", "initial");
         assert.equal(failedResult!.state, "partial", `post-commit review failure leaves a partial batch: ${JSON.stringify(failedResult)}`);
         assert.equal(failedResult!.failed_retryable, 1, "post-commit review failure remains retryable");
-        failedItem = await recoveryDatabase.prepare("SELECT outcome, retry_count, source_document_id, source_document_version_id FROM knowledge_source_backfill_items WHERE id = ?").bind(recoveryItem.id).first<{ outcome: string; retry_count: number; source_document_id: string; source_document_version_id: string }>();
+        failedItem = await recoveryDatabase.prepare("SELECT outcome, reason_code, retry_count, source_document_id, source_document_version_id FROM knowledge_source_backfill_items WHERE id = ?").bind(recoveryItem.id).first<{ outcome: string; reason_code: string; retry_count: number; source_document_id: string; source_document_version_id: string }>();
         assert.equal(failedItem?.outcome, "failed_retryable");
+        assert.equal(failedItem?.reason_code, "review_trigger_failed");
         assert.equal(failedItem?.retry_count, 1);
         assert.equal(failedItem?.source_document_id, recoveryDocumentId, "committed source document ID is retained after downstream failure");
         assert.notEqual(failedItem?.source_document_version_id, recoveryOldVersionId, "the newly committed version ID is retained");
@@ -288,21 +289,33 @@ async function kc11cBackfillIntegrityTests(): Promise<void> {
       const existingFailurePlan = await buildBackfillPlan(existingFailureInventory, { category: "source_url", limit: 1 }, existingFailureAuthority.snapshotId);
       const existingFailureApproval = await approveBackfillPlan(recoveryEnv, existingFailurePlan, existingFailurePlan.planHash, "publisher@example.com", "approval-recovery-existing");
       const existingFailureItem = recoveryDatabase.sqlite.prepare("SELECT id FROM knowledge_source_backfill_items WHERE batch_id = ?").get(existingFailureApproval.batchId) as { id: string };
+      const proposalCountBeforeGenericRetry = (await recoveryDatabase.prepare("SELECT COUNT(*) AS count FROM knowledge_change_proposals WHERE knowledge_document_id = 'recovery-knowledge'").first<{ count: number }>())?.count;
       const existingOriginalFetch = globalThis.fetch;
-      globalThis.fetch = (async () => new Response(recoveryBody, { status: 200, headers: { "Content-Type": "text/html" } })) as typeof fetch;
       let existingFailureResult: Record<string, unknown>;
+      let existingRetryResult: Record<string, unknown>;
       try {
+        globalThis.fetch = (async () => { throw new Error("transient network failure"); }) as typeof fetch;
         existingFailureResult = await executeBackfill(recoveryEnv, existingFailureApproval.batchId, existingFailurePlan.planHash, "publisher@example.com", "execute-existing-review-failure", "initial");
+        assert.equal(existingFailureResult!.state, "partial", "generic retryable failure leaves the batch retryable before capture");
+        assert.equal(existingFailureResult!.failed_retryable, 1);
+        const failedGenericItem = await recoveryDatabase.prepare("SELECT outcome, reason_code, retry_count, source_document_version_id FROM knowledge_source_backfill_items WHERE id = ?").bind(existingFailureItem.id).first<{ outcome: string; reason_code: string; retry_count: number; source_document_version_id: string }>();
+        assert.equal(failedGenericItem?.outcome, "failed_retryable");
+        assert.equal(failedGenericItem?.reason_code, "response_unavailable");
+        assert.equal(failedGenericItem?.retry_count, 1);
+        assert.equal(failedGenericItem?.source_document_version_id, null);
+        globalThis.fetch = (async () => new Response(recoveryBody, { status: 200, headers: { "Content-Type": "text/html" } })) as typeof fetch;
+        existingRetryResult = await executeBackfill(recoveryEnv, existingFailureApproval.batchId, existingFailurePlan.planHash, "publisher@example.com", "execute-existing-review-retry", "retry");
       } finally {
         globalThis.fetch = existingOriginalFetch;
       }
-      assert.equal(existingFailureResult!.state, "completed", "existing-version observation does not create an evidence review failure");
-      assert.equal(existingFailureResult!.unchanged, 1);
+      assert.equal(existingRetryResult!.state, "completed", "generic retry can settle an existing version without review replay");
+      assert.equal(existingRetryResult!.unchanged, 1);
       const existingFailureItemRow = await recoveryDatabase.prepare("SELECT outcome, retry_count, source_document_id, source_document_version_id FROM knowledge_source_backfill_items WHERE id = ?").bind(existingFailureItem.id).first<{ outcome: string; retry_count: number; source_document_id: string; source_document_version_id: string }>();
       assert.equal(existingFailureItemRow?.outcome, "unchanged");
-      assert.equal(existingFailureItemRow?.retry_count, 0);
+      assert.equal(existingFailureItemRow?.retry_count, 1);
       assert.equal(existingFailureItemRow?.source_document_id, recoveryDocumentId);
       assert.equal(existingFailureItemRow?.source_document_version_id, recoveredItem?.source_document_version_id);
+      assert.equal((await recoveryDatabase.prepare("SELECT COUNT(*) AS count FROM knowledge_change_proposals WHERE knowledge_document_id = 'recovery-knowledge'").first<{ count: number }>())?.count, proposalCountBeforeGenericRetry, "ordinary retry does not generate an evidence_changed proposal");
     } finally {
       recoveryDatabase.close();
     }
