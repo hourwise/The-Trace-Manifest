@@ -1,13 +1,58 @@
 # KC-11C bounded source backfill evidence
 
-Status: the two-pass authenticated Preview smoke completed, but only the
+Status: migration 0061 and its Preview Worker deployment checkpoint completed;
+the two-pass authenticated Preview smoke completed, but only the
 GitHub source passed normalized-identity reconciliation. Anthropic produced a
 second `normalized_content_v1` identity from retrievals with the same visible
 metadata and byte length. Privacy-safe component diagnostics are now
-implemented locally behind additive migration 0060; migration 0060 has not
-been applied and this code has not been deployed. KC-11C remains unchecked.
-Production and Pages are untouched, no completed batch may be reused, and
-KC-11D has not begun.
+implemented behind additive migration 0060, and migrations 0060 and 0061 are
+now applied only to Preview. The migration-0061 Worker checkpoint is recorded
+below; KC-11C remains unchecked. Production and Pages are untouched, no
+completed batch may be reused, and KC-11D has not begun.
+
+## Migration 0061 and Preview Worker checkpoint
+
+This checkpoint resumed from the exact branch `agent/kc-11c-bounded-source-backfill`
+at HEAD `1d496dc38ec160eafe5932f1c035800759098c63` with a clean working tree.
+Preview operator authentication succeeded.
+
+- Preview D1: `trace-manifest-db-preview`
+  (`f312f662-2252-4005-8103-1a40d546e16b`)
+- Immediate PRE-0061 Time Travel bookmark:
+  `00000081-00000000-000050c3-521c1940f4ad87612b6b7c7033d2ed6f`
+- Migration 0061 applied once to the explicit Preview D1 database; no
+  production or migration-directory application was performed.
+- Migration result: 38 queries executed, 21,421 rows read, 1,498 rows
+  written, and final execution bookmark
+  `00000081-00000008-000050c3-c98284cee7e4d651fd81e56b5a6f2cc0`.
+- Post-0061 integrity: v2 policy expressions are present for source versions,
+  observations, backfill items, inventory snapshots, and inventory authority;
+  all migration-0060 observation diagnostics remain; the authority view,
+  immutability triggers, and expected indexes exist; observed counts are
+  `source_document_versions=9`, `source_document_version_observations=8`,
+  `knowledge_source_backfill_items=10`, `inventory_snapshots=1`, and
+  `inventory_authority=1`; `PRAGMA quick_check` returned `ok`; and
+  `PRAGMA foreign_key_check` returned no rows.
+- POST-0061 Time Travel bookmark:
+  `00000081-00000008-000050c3-c98284cee7e4d651fd81e56b5a6f2cc0`.
+- Preview binding safety: the canonical dry run resolved only
+  `trace-manifest-ingestion-preview`, `trace-manifest-db-preview`,
+  `trace-manifest-raw-preview`, and
+  `trace-manifest-knowledge-preview-bge-m3-v1`; public/editorial/scheduled
+  AI flags were false; Preview cron triggers were empty; no Pages deployment
+  was involved.
+- Preview Worker deployment: `trace-manifest-ingestion-preview`, version
+  `15c2ea21-b031-478d-ab5d-9f2e858cda0a`, started at
+  `2026-08-10T08:19:01.0864339Z`, URL
+  `https://trace-manifest-ingestion-preview.philgeran.workers.dev`.
+- Health/preflight: the deployed Worker root returned HTTP 200 with
+  `The Trace Manifest — Ingestion Worker`; the remote schema checks recognized
+  migration-0060 diagnostics and the migration-0061/v2 policy, with no missing
+  schema error. After deployment, `cron_runs` remained `0`, and no source
+  version or observation rows were added.
+- Explicit non-actions: no production Worker, D1, R2, Vectorize, or Pages
+  action; no Pages deployment; no backfill plan, approval, smoke pass, source
+  fetch, source job enqueue, R2 write, Vectorize write, or KC-11D work.
 
 ## Boundary and integrity model
 
