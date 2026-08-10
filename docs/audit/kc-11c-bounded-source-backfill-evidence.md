@@ -1,14 +1,15 @@
 # KC-11C bounded source backfill evidence
 
 Status: migration 0061 and its Preview Worker deployment checkpoint completed;
-the two-pass authenticated Preview smoke completed, but only the
+the two-pass authenticated normalized-content-v2 smoke completed, but only the
 GitHub source passed normalized-identity reconciliation. Anthropic produced a
-second `normalized_content_v1` identity from retrievals with the same visible
-metadata and byte length. Privacy-safe component diagnostics are now
+different normalized-content-v2 identity whose diagnostic difference was
+isolated to normalized links. Privacy-safe component diagnostics are now
 implemented behind additive migration 0060, and migrations 0060 and 0061 are
-now applied only to Preview. The migration-0061 Worker checkpoint is recorded
-below; KC-11C remains unchecked. Production and Pages are untouched, no
-completed batch may be reused, and KC-11D has not begun.
+now applied only to Preview. The migration-0061 Worker checkpoint and the
+two-pass v2 result are recorded below; KC-11C remains open. Production and
+Pages are untouched, no completed batch may be reused, and KC-11D has not
+begun.
 
 ## Migration 0061 and Preview Worker checkpoint
 
@@ -53,6 +54,55 @@ Preview operator authentication succeeded.
 - Explicit non-actions: no production Worker, D1, R2, Vectorize, or Pages
   action; no Pages deployment; no backfill plan, approval, smoke pass, source
   fetch, source job enqueue, R2 write, Vectorize write, or KC-11D work.
+
+## Normalized-content-v2 two-pass smoke result
+
+The fresh two-pass smoke used the generation-2 Preview authority without
+regenerating inventory or appending another authority decision:
+
+- Authority: generation `2`, snapshot
+  `59d7da80-2716-4bba-a6cf-93d66f89b9a2`, policy `kc-11c-v2`, inventory
+  identity
+  `9cdf7eb3be7e0debc3702da8caee39b266f4fefe47f6cc66f8f3647d5a198dec`.
+- PASS 1 batch: `7ea3bad5-7265-4e06-b6ec-934663a24561`; attempt:
+  `bbdc1718-2e75-48ea-895d-684ee50d645d`.
+- PASS 1 normalized v2 hashes: GitHub
+  `f218f9c0b62eb22683ce1f28a6916f8918155deac0b89db132c2d1b3a2b5b809`;
+  Anthropic
+  `1853b967ef6055b1057524036e58b262915561e440c55714f7cbe882ba3c7e25`.
+- PASS 2 batch: `d138e7b0-7c45-4a0e-97bd-7cf049a70d2a`; attempt:
+  `3217457f-5e16-40df-a9d1-16b2c4de878a`; plan hash:
+  `f37b8392e7d626c8810246ec7712147c98fe371f402370035f9dec84c53a2877`.
+- PASS 2 normalized v2 hashes: GitHub unchanged at
+  `f218f9c0b62eb22683ce1f28a6916f8918155deac0b89db132c2d1b3a2b5b809`;
+  Anthropic changed to
+  `80ee786f16e75bafd4b48b47c594b374026df601cc71c799226dd3b61b87abcd`.
+- GitHub passed: its existing v2 version was reused and a second observation
+  was added. Transport hash changed, but normalized identity and all measured
+  diagnostics remained stable.
+- Anthropic failed the v2 stability criterion: a new v2 version was created.
+  Metadata, blocks, structure, counts, container, truncation, and policy were
+  unchanged; only `normalized_links_hash` changed from
+  `8355096a1b2821bd4ae7b239d55806dcabb16795ab81255944e250f464bd0262` to
+  `326ed2f5b842b0f2313ded5478fbc325356e64e556905af6febe3a39e7d15dbc`.
+- Count deltas from PASS 1 to PASS 2: source documents `+0`, source document
+  versions `+1` (Anthropic), observations `+2`, batches `+1`, items `+2`, and
+  attempts `+1`.
+- POST-PASS-2 integrity: batch and attempt were terminal; `cron_runs` remained
+  `0`; `knowledge_index_operations` remained `0`; `PRAGMA quick_check` was
+  `ok`; and `PRAGMA foreign_key_check` returned no rows.
+- POST-PASS-2 Time Travel bookmark:
+  `0000008b-00000036-000050c3-e6d91eca4d8cb1a895b48bf0ceb3e6d1`.
+- KC-11C remains open. The general bounded source backfill and a third smoke
+  pass are not authorised. No normalization semantics were changed.
+
+The initial PASS-2 dry run deterministically reproduced the PASS-1 plan hash,
+as expected for an identical canonical plan. The later explicit
+`newestFirst:false` field produced a distinct hash without changing the
+effective selection. This was retained as procedural evidence only; future
+runs must not manipulate semantically equivalent plan fields to force unique
+plan hashes. Run distinctness should come from batch, approval, execution, and
+idempotency identities while deterministic plan hashes may repeat.
 
 ## Boundary and integrity model
 
