@@ -1,7 +1,7 @@
 import type { ExtractedHtmlDocument, HtmlExtractionBlock, HtmlExtractionContainer } from "./source-extraction";
 
-/** Hash semantics for source versions created after migration 0061. */
-export const SOURCE_HASH_SEMANTICS_VERSION = "normalized_content_v2" as const;
+/** Hash semantics for source versions created after migration 0062. */
+export const SOURCE_HASH_SEMANTICS_VERSION = "normalized_content_v3" as const;
 export const LEGACY_SOURCE_HASH_SEMANTICS_VERSION = "legacy_raw_v1" as const;
 
 export type SourceIdentityMediaKind = "html" | "markdown" | "plain_text" | "json" | "pdf" | "image" | "other";
@@ -25,7 +25,7 @@ export type SourceIdentityInput =
   });
 
 export const SOURCE_NORMALIZATION_POLICY_VERSIONS = Object.freeze({
-  html: "source-normalized-html-v2",
+  html: "source-normalized-html-v3",
   markdown: "source-normalized-markdown-v2",
   plain_text: "source-normalized-plain_text-v2",
   json: "source-normalized-json-v2",
@@ -114,12 +114,14 @@ function canonicalIdentityParts(input: SourceIdentityInput): CanonicalIdentityPa
     extractionContainer = extraction?.diagnostics.container ?? "document";
     extractionTruncated = extraction?.diagnostics.truncated ?? false;
     structure = { policy, mediaKind: input.mediaKind, blocks: blockStructure, linkCount };
+    // Link destinations are observation-level reference state. Visible anchor
+    // text remains in blocks, so changing the readable evidence still changes
+    // content identity without promoting destination-only drift to a version.
     content = {
       policy,
       mediaKind: input.mediaKind,
       ...metadata,
       blocks,
-      links,
     };
   } else if (input.mediaKind === "json") {
     let parsed: unknown;

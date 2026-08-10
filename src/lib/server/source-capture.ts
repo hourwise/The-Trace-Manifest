@@ -36,6 +36,8 @@ export interface SourceCaptureInput {
   maximumBytes?: number;
   /** Exact response-byte hash from the retrieval boundary, when available. */
   transportHash?: string;
+  /** Replays a previously committed new-version review after a post-commit failure. */
+  replayEvidenceReview?: boolean;
 }
 
 export interface SourceCaptureResult {
@@ -51,7 +53,14 @@ export interface SourceCaptureResult {
   r2ExtractedKey: string | null;
   extractionStatus: "captured" | "metadata_only";
   idempotencyKey: string | null;
+  observationClassification: SourceObservationClassification;
 }
+
+export type SourceObservationClassification =
+  | "substantive_content_change"
+  | "reference_only_drift"
+  | "transport_only_drift"
+  | "unchanged";
 
 export type SourceCaptureErrorCode = "invalid_input" | "storage_not_permitted" | "body_too_large" | "r2_write_failed" | "database_write_failed";
 
@@ -114,6 +123,20 @@ export async function captureAdmittedSource(
   }>();
   const sourceDocumentVersionId = existingVersion?.id
     ?? `source-version-${canonicalUrlHash}-${SOURCE_HASH_SEMANTICS_VERSION}-${normalizedContentHash}`;
+  const previousObservation = existingVersion ? await env.DB.prepare(`
+    SELECT transport_hash, normalized_links_hash
+    FROM source_document_version_observations
+    WHERE source_document_version_id = ?
+    ORDER BY created_at DESC, id DESC
+    LIMIT 1
+  `).bind(existingVersion.id).first<{ transport_hash: string; normalized_links_hash: string | null }>() : null;
+  const observationClassification: SourceObservationClassification = !existingVersion
+    ? "substantive_content_change"
+    : previousObservation?.transport_hash === transportHash
+      ? "unchanged"
+      : previousObservation?.normalized_links_hash !== normalized.diagnostics.normalizedLinksHash
+        ? "reference_only_drift"
+        : "transport_only_drift";
   const canStoreBody = input.copyrightStorageMode === "private_full_text" || input.copyrightStorageMode === "editor_supplied_document";
   const shouldStoreBody = canStoreBody && !existingVersion;
   const extractionStatus = shouldStoreBody
@@ -221,18 +244,20 @@ export async function captureAdmittedSource(
     throw new SourceCaptureError("The source metadata could not be recorded.", "database_write_failed", 500);
   }
 
-  await triggerKnowledgeReview(env.DB, {
-    kind: "evidence_changed",
-    sourceDocumentIds: [sourceDocumentId],
-    sourceDocumentVersionId,
-    eventId: sourceDocumentVersionId,
-  });
+  if (!existingVersion || input.replayEvidenceReview) {
+    await triggerKnowledgeReview(env.DB, {
+      kind: "evidence_changed",
+      sourceDocumentIds: [sourceDocumentId],
+      sourceDocumentVersionId,
+      eventId: sourceDocumentVersionId,
+    });
+  }
 
   return {
     sourceDocumentId, sourceDocumentVersionId, canonicalUrlHash,
     contentHash: transportHash, transportHash, normalizedContentHash,
     hashSemanticsVersion: SOURCE_HASH_SEMANTICS_VERSION,
-    r2OriginalKey, r2ExtractedKey, extractionStatus, idempotencyKey,
+    r2OriginalKey, r2ExtractedKey, extractionStatus, idempotencyKey, observationClassification,
   };
 }
 

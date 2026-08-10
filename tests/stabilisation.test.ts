@@ -146,7 +146,7 @@ async function kc11cBackfillIntegrityTests(): Promise<void> {
         schemaVersion: "kc-11a-v1", generatedAt: "2026-07-28T00:00:00Z",
         categories: { source_url: [{ id: "missing-schema", label: "Missing schema", url: "https://example.test/missing-schema" }] },
       };
-      const missingAuthority = await establishAuthoritativeInventory(missingEnv, missingInventory, "kc-11c-v2", "reviewer@example.com", "authority-missing-schema");
+      const missingAuthority = await establishAuthoritativeInventory(missingEnv, missingInventory, "kc-11c-v3", "reviewer@example.com", "authority-missing-schema");
       const missingPlan = await buildBackfillPlan(missingInventory, { category: "source_url", limit: 1 }, missingAuthority.snapshotId);
       const missingApproval = await approveBackfillPlan(missingEnv, missingPlan, missingPlan.planHash, "publisher@example.com", "approval-missing-schema");
       missingDatabase.sqlite.exec("DROP TABLE knowledge_claim_conflict_cases");
@@ -177,7 +177,7 @@ async function kc11cBackfillIntegrityTests(): Promise<void> {
         schemaVersion: "kc-11a-v1", generatedAt: "2026-07-28T00:00:00Z",
         categories: { source_url: [{ id: "missing-diagnostics", label: "Missing diagnostics", url: "https://example.test/missing-diagnostics" }] },
       };
-      const authority = await establishAuthoritativeInventory(missingDiagnosticsEnv, missingDiagnosticsInventory, "kc-11c-v2", "reviewer@example.com", "authority-missing-diagnostics");
+      const authority = await establishAuthoritativeInventory(missingDiagnosticsEnv, missingDiagnosticsInventory, "kc-11c-v3", "reviewer@example.com", "authority-missing-diagnostics");
       const plan = await buildBackfillPlan(missingDiagnosticsInventory, { category: "source_url", limit: 1 }, authority.snapshotId);
       const approval = await approveBackfillPlan(missingDiagnosticsEnv, plan, plan.planHash, "publisher@example.com", "approval-missing-diagnostics");
       missingDiagnosticsDatabase.sqlite.exec("ALTER TABLE source_document_version_observations DROP COLUMN normalized_metadata_hash");
@@ -209,7 +209,7 @@ async function kc11cBackfillIntegrityTests(): Promise<void> {
         schemaVersion: "kc-11a-v1", generatedAt: "2026-07-28T00:00:00Z",
         categories: { source_url: [{ id: "recovery-source", label: "Recovery source", url: "https://example.test/recovery" }] },
       };
-      const recoveryAuthority = await establishAuthoritativeInventory(recoveryEnv, recoveryInventory, "kc-11c-v2", "reviewer@example.com", "authority-recovery");
+      const recoveryAuthority = await establishAuthoritativeInventory(recoveryEnv, recoveryInventory, "kc-11c-v3", "reviewer@example.com", "authority-recovery");
       const recoveryPlan = await buildBackfillPlan(recoveryInventory, { category: "source_url", limit: 1 }, recoveryAuthority.snapshotId);
       const recoveryApproval = await approveBackfillPlan(recoveryEnv, recoveryPlan, recoveryPlan.planHash, "publisher@example.com", "approval-recovery");
       const recoveryItem = recoveryDatabase.sqlite.prepare("SELECT id FROM knowledge_source_backfill_items WHERE batch_id = ?").get(recoveryApproval.batchId) as { id: string };
@@ -278,17 +278,16 @@ async function kc11cBackfillIntegrityTests(): Promise<void> {
       assert.deepEqual(repeatedRetry, retryResult, "repeating the retry idempotency key returns the settled result");
       assert.equal((await recoveryDatabase.prepare("SELECT COUNT(*) AS count FROM knowledge_change_proposals WHERE knowledge_document_id = 'recovery-knowledge'").first<{ count: number }>())?.count, 1);
 
-      // A review-trigger failure on an already-existing version remains
-      // retryable and retains both discovered source identifiers.
+      // Reusing an existing v3 version is reference/transport observation work,
+      // not an evidence-change review trigger.
       const existingFailureInventory = {
         schemaVersion: "kc-11a-v1", generatedAt: "2026-07-29T00:00:00Z",
         categories: { source_url: [{ id: "recovery-source-existing", label: "Recovery source existing", url: "https://example.test/recovery" }] },
       };
-      const existingFailureAuthority = await establishAuthoritativeInventory(recoveryEnv, existingFailureInventory, "kc-11c-v2", "reviewer@example.com", "authority-recovery-existing");
+      const existingFailureAuthority = await establishAuthoritativeInventory(recoveryEnv, existingFailureInventory, "kc-11c-v3", "reviewer@example.com", "authority-recovery-existing");
       const existingFailurePlan = await buildBackfillPlan(existingFailureInventory, { category: "source_url", limit: 1 }, existingFailureAuthority.snapshotId);
       const existingFailureApproval = await approveBackfillPlan(recoveryEnv, existingFailurePlan, existingFailurePlan.planHash, "publisher@example.com", "approval-recovery-existing");
       const existingFailureItem = recoveryDatabase.sqlite.prepare("SELECT id FROM knowledge_source_backfill_items WHERE batch_id = ?").get(existingFailureApproval.batchId) as { id: string };
-      recoveryDatabase.sqlite.prepare("CREATE TRIGGER kc11c_test_existing_review_failure BEFORE INSERT ON knowledge_change_proposals BEGIN SELECT RAISE(ABORT, 'forced existing review failure'); END").run();
       const existingOriginalFetch = globalThis.fetch;
       globalThis.fetch = (async () => new Response(recoveryBody, { status: 200, headers: { "Content-Type": "text/html" } })) as typeof fetch;
       let existingFailureResult: Record<string, unknown>;
@@ -297,12 +296,11 @@ async function kc11cBackfillIntegrityTests(): Promise<void> {
       } finally {
         globalThis.fetch = existingOriginalFetch;
       }
-      recoveryDatabase.sqlite.prepare("DROP TRIGGER kc11c_test_existing_review_failure").run();
-      assert.equal(existingFailureResult!.state, "partial", "existing-version review failure leaves the batch partial");
-      assert.equal(existingFailureResult!.failed_retryable, 1);
+      assert.equal(existingFailureResult!.state, "completed", "existing-version observation does not create an evidence review failure");
+      assert.equal(existingFailureResult!.unchanged, 1);
       const existingFailureItemRow = await recoveryDatabase.prepare("SELECT outcome, retry_count, source_document_id, source_document_version_id FROM knowledge_source_backfill_items WHERE id = ?").bind(existingFailureItem.id).first<{ outcome: string; retry_count: number; source_document_id: string; source_document_version_id: string }>();
-      assert.equal(existingFailureItemRow?.outcome, "failed_retryable");
-      assert.equal(existingFailureItemRow?.retry_count, 1);
+      assert.equal(existingFailureItemRow?.outcome, "unchanged");
+      assert.equal(existingFailureItemRow?.retry_count, 0);
       assert.equal(existingFailureItemRow?.source_document_id, recoveryDocumentId);
       assert.equal(existingFailureItemRow?.source_document_version_id, recoveredItem?.source_document_version_id);
     } finally {
@@ -316,7 +314,7 @@ async function kc11cBackfillIntegrityTests(): Promise<void> {
       schemaVersion: "kc-11a-v1", generatedAt: "2026-07-28T00:00:00Z",
       categories: { source_url: [{ id: "volatile-source", label: "Volatile source", url: "https://example.test/volatile" }] },
     };
-    const volatileAuthority = await establishAuthoritativeInventory(env, volatileInventory, "kc-11c-v2", "reviewer@example.com", "authority-volatile");
+      const volatileAuthority = await establishAuthoritativeInventory(env, volatileInventory, "kc-11c-v3", "reviewer@example.com", "authority-volatile");
     const volatilePlan = await buildBackfillPlan(volatileInventory, { category: "source_url", limit: 1 }, volatileAuthority.snapshotId);
     const volatileApproval = await approveBackfillPlan(env, volatilePlan, volatilePlan.planHash, "publisher@example.com", "approval-volatile-1");
     const volatileBodyA = "<html><head><title>Volatile evidence</title><script nonce='a'>requestId='a'</script></head><body><main><p>Stable evidence with value 7.</p></main></body></html>";
@@ -326,7 +324,7 @@ async function kc11cBackfillIntegrityTests(): Promise<void> {
       globalThis.fetch = (async () => new Response(volatileBodyA, { status: 200, headers: { "Content-Type": "text/html" } })) as typeof fetch;
       const firstVolatileResult = await executeBackfill(env, volatileApproval.batchId, volatilePlan.planHash, "publisher@example.com", "execute-volatile-1", "initial");
       assert.equal(firstVolatileResult.metadata_only, 1);
-      await establishAuthoritativeInventory(env, volatileInventory, "kc-11c-v2", "reviewer@example.com", "authority-volatile-repeat");
+      await establishAuthoritativeInventory(env, volatileInventory, "kc-11c-v3", "reviewer@example.com", "authority-volatile-repeat");
       const secondVolatilePlan = await buildBackfillPlan(volatileInventory, { category: "source_url", limit: 1, newestFirst: false }, volatileAuthority.snapshotId);
       const secondVolatileApproval = await approveBackfillPlan(env, secondVolatilePlan, secondVolatilePlan.planHash, "publisher@example.com", "approval-volatile-2");
       globalThis.fetch = (async () => new Response(volatileBodyB, { status: 200, headers: { "Content-Type": "text/html" } })) as typeof fetch;
@@ -345,11 +343,11 @@ async function kc11cBackfillIntegrityTests(): Promise<void> {
       schemaVersion: "kc-11a-v1", generatedAt: "2026-07-28T00:00:00Z",
       categories: { source_url: [{ id: "safe-1", label: "Safe one", url: "https://example.com/one" }] },
     };
-    const authority1 = await establishAuthoritativeInventory(env, inventory1, "kc-11c-v2", "reviewer@example.com", "authority-1", "correlation-authority-1");
-    const repeatedAuthority1 = await establishAuthoritativeInventory(env, inventory1, "kc-11c-v2", "reviewer@example.com", "authority-1", "correlation-authority-repeat");
+      const authority1 = await establishAuthoritativeInventory(env, inventory1, "kc-11c-v3", "reviewer@example.com", "authority-1", "correlation-authority-1");
+      const repeatedAuthority1 = await establishAuthoritativeInventory(env, inventory1, "kc-11c-v3", "reviewer@example.com", "authority-1", "correlation-authority-repeat");
     assert.deepEqual(repeatedAuthority1, authority1, "authority establishment is idempotent");
     await assert.rejects(() => establishAuthoritativeInventory(env, inventory1, "arbitrary-policy", "reviewer@example.com", "authority-bad-policy"), /Unsupported backfill policy/);
-    await assert.rejects(() => establishAuthoritativeInventory(env, { ...inventory1, schemaVersion: "kc-11a-v999" }, "kc-11c-v2", "reviewer@example.com", "authority-bad-schema"), /KC-11A versioned inventory/);
+      await assert.rejects(() => establishAuthoritativeInventory(env, { ...inventory1, schemaVersion: "kc-11a-v999" }, "kc-11c-v3", "reviewer@example.com", "authority-bad-schema"), /KC-11A versioned inventory/);
 
     const oldPlan = await buildBackfillPlan(inventory1, { category: "source_url", limit: 1 }, authority1.snapshotId);
     const transportedOldPlan = JSON.parse(JSON.stringify(oldPlan));
@@ -364,7 +362,7 @@ async function kc11cBackfillIntegrityTests(): Promise<void> {
       schemaVersion: "kc-11a-v1", generatedAt: "2026-07-29T00:00:00Z",
       categories: { source_url: [{ id: "safe-2", label: "Safe two", url: "https://example.org/two" }] },
     };
-    const authority2 = await establishAuthoritativeInventory(env, inventory2, "kc-11c-v2", "reviewer@example.com", "authority-2", "correlation-authority-2");
+      const authority2 = await establishAuthoritativeInventory(env, inventory2, "kc-11c-v3", "reviewer@example.com", "authority-2", "correlation-authority-2");
     assert.notEqual(authority2.snapshotId, authority1.snapshotId);
     assert.equal(database.sqlite.prepare("SELECT snapshot_id FROM knowledge_source_backfill_current_inventory_authority").get()?.snapshot_id, authority2.snapshotId);
     assert.equal(database.sqlite.prepare("SELECT state FROM knowledge_source_backfill_batches WHERE id = ?").get(oldApproval.batchId)?.state, "cancelled", "new authority invalidates an unexecuted old approval");
@@ -1348,7 +1346,11 @@ async function kc03cCaptureTests(): Promise<void> {
     };
     const first = await captureAdmittedSource({ DB: database.asD1(), RAW_STORE: rawStore }, input);
     const second = await captureAdmittedSource({ DB: database.asD1(), RAW_STORE: rawStore }, input);
-    assert.deepEqual(second, first, "repeating a capture returns the same content-addressed identifiers");
+    const { observationClassification: firstClassification, ...firstIdentity } = first;
+    const { observationClassification: secondClassification, ...secondIdentity } = second;
+    assert.deepEqual(secondIdentity, firstIdentity, "repeating a capture returns the same content-addressed identifiers");
+    assert.equal(firstClassification, "substantive_content_change");
+    assert.equal(secondClassification, "unchanged");
     assert.equal(stored.size, 2, "the original and structured extraction are kept in private R2");
     assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM source_documents").first<{ count: number }>())?.count, 1);
     assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM source_document_versions").first<{ count: number }>())?.count, 1);
@@ -1398,12 +1400,12 @@ async function sourceVersionHashSemanticsTests(): Promise<void> {
   assert.equal(stableIdentity.diagnostics.normalizedLinksHash, changedIdentity.diagnostics.normalizedLinksHash);
   assert.equal(stableIdentity.diagnostics.normalizedStructureHash, changedIdentity.diagnostics.normalizedStructureHash);
   assert.match(stableIdentity.diagnostics.normalizedMetadataHash, /^[0-9a-f]{64}$/);
-  assert.equal(stableIdentity.diagnostics.normalizationPolicyVersion, "source-normalized-html-v2");
+  assert.equal(stableIdentity.diagnostics.normalizationPolicyVersion, "source-normalized-html-v3");
   assert.deepEqual(
     { blocks: stableIdentity.diagnostics.blockCount, links: stableIdentity.diagnostics.linkCount, headings: stableIdentity.diagnostics.headingCount },
     { blocks: 5, links: 1, headings: 1 },
   );
-  assert.equal(stableIdentity.hashSemanticsVersion, "normalized_content_v2");
+  assert.equal(stableIdentity.hashSemanticsVersion, "normalized_content_v3");
   assert.ok(stableExtraction.links.some((link) => link.href === "https://example.test/evidence"), "meaningful links remain in extraction");
 
   const componentIdentity = async (body: string, maxTextCharacters?: number) => hashNormalizedSourceContent({
@@ -1514,13 +1516,13 @@ async function sourceVersionHashSemanticsTests(): Promise<void> {
       assert.equal(observation.heading_count, 1);
       assert.equal(observation.extraction_container, "main");
       assert.equal(observation.extraction_truncated, 0);
-      assert.equal(observation.normalization_policy_version, "source-normalized-html-v2");
+      assert.equal(observation.normalization_policy_version, "source-normalized-html-v3");
     }
     const changed = await capture(changedBody, extractHtmlDocument(changedBody));
     assert.notEqual(changed.sourceDocumentVersionId, first.sourceDocumentVersionId, "substantive content creates one new source version");
     assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM source_document_versions").first<{ count: number }>())?.count, 2);
     const versions = await database.prepare("SELECT content_hash, transport_hash, normalized_content_hash, hash_semantics_version FROM source_document_versions ORDER BY created_at, id").all<{ content_hash: string; transport_hash: string; normalized_content_hash: string; hash_semantics_version: string }>();
-    assert.ok(versions.results?.every((version) => /^[0-9a-f]{64}$/.test(version.content_hash) && /^[0-9a-f]{64}$/.test(version.transport_hash) && version.hash_semantics_version === "normalized_content_v2"));
+    assert.ok(versions.results?.every((version) => /^[0-9a-f]{64}$/.test(version.content_hash) && /^[0-9a-f]{64}$/.test(version.transport_hash) && version.hash_semantics_version === "normalized_content_v3"));
     assert.ok(versions.results?.every((version) => /^[0-9a-f]{64}$/.test(version.normalized_content_hash)));
   } finally {
     database.close();
@@ -1582,8 +1584,8 @@ async function sourceVersionHashSemanticsTests(): Promise<void> {
       copyrightStorageMode: "metadata_only",
     });
     assert.notEqual(result.sourceDocumentVersionId, "legacy-version");
-    assert.match(result.sourceDocumentVersionId, /-normalized_content_v2-/);
-    assert.equal(result.hashSemanticsVersion, "normalized_content_v2");
+    assert.match(result.sourceDocumentVersionId, /-normalized_content_v3-/);
+    assert.equal(result.hashSemanticsVersion, "normalized_content_v3");
     const legacy = await legacyDatabase.prepare("SELECT id, content_hash, transport_hash, normalized_content_hash, hash_semantics_version FROM source_document_versions WHERE id = 'legacy-version'").first<{ id: string; content_hash: string; transport_hash: string; normalized_content_hash: string | null; hash_semantics_version: string }>();
     assert.equal(legacy?.id, "legacy-version");
     assert.equal(legacy?.content_hash, legacyTransport);
@@ -1592,7 +1594,7 @@ async function sourceVersionHashSemanticsTests(): Promise<void> {
     assert.equal(legacy?.hash_semantics_version, "legacy_raw_v1", "legacy source identity remains unchanged and explicitly labelled");
     assert.equal((await legacyDatabase.prepare("SELECT COUNT(*) AS count FROM source_document_versions").first<{ count: number }>())?.count, 2);
     const current = await legacyDatabase.prepare("SELECT hash_semantics_version FROM source_document_versions WHERE id = ?").bind(result.sourceDocumentVersionId).first<{ hash_semantics_version: string }>();
-    assert.equal(current?.hash_semantics_version, "normalized_content_v2");
+    assert.equal(current?.hash_semantics_version, "normalized_content_v3");
   } finally {
     legacyDatabase.close();
   }

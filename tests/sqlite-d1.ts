@@ -91,6 +91,7 @@ export class SQLiteD1 {
       this.sqlite.exec(readFileSync("db/migration-0060-source-identity-component-diagnostics.sql", "utf8"));
       if (applySourceIdentityV2) {
         this.sqlite.exec(readFileSync("db/migration-0061-normalized-content-v2.sql", "utf8"));
+        this.sqlite.exec(readFileSync("db/migration-0062-normalized-content-v3-reference-drift.sql", "utf8"));
       }
     }
   }

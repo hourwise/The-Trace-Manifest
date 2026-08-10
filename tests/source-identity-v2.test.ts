@@ -44,8 +44,8 @@ async function sha256(value: string): Promise<string> {
 }
 
 async function canonicalLinkPolicyTests(): Promise<void> {
-  assert.equal(SOURCE_HASH_SEMANTICS_VERSION, "normalized_content_v2");
-  assert.equal(SOURCE_NORMALIZATION_POLICY_VERSIONS.html, "source-normalized-html-v2");
+  assert.equal(SOURCE_HASH_SEMANTICS_VERSION, "normalized_content_v3");
+  assert.equal(SOURCE_NORMALIZATION_POLICY_VERSIONS.html, "source-normalized-html-v3");
 
   const ordered = await htmlIdentity(linkFixture([
     '<a href="https://evidence.test/a">Alpha</a>',
@@ -99,6 +99,11 @@ async function canonicalLinkPolicyTests(): Promise<void> {
   }
   const changedText = await htmlIdentity(linkFixture('<a href="https://evidence.test/report?a=1&b=2">Changed source</a>'));
   assert.notEqual(changedText.diagnostics.normalizedLinksHash, canonicalDestination.diagnostics.normalizedLinksHash);
+  assert.equal(changedText.normalizedContentHash, canonicalDestination.normalizedContentHash, "href-only changes do not alter v3 readable-content identity");
+
+  const hrefOnly = await htmlIdentity(linkFixture('<a href="https://evidence.test/different?a=1&b=2">Source</a>'));
+  assert.equal(hrefOnly.normalizedContentHash, canonicalDestination.normalizedContentHash, "destination-only changes reuse the content identity");
+  assert.notEqual(hrefOnly.diagnostics.normalizedLinksHash, canonicalDestination.diagnostics.normalizedLinksHash, "destination-only changes remain reference-observable");
 
   const relative = await htmlIdentity(linkFixture('<a href="../evidence?b=2&a=1#fragment">Relative</a>'));
   const absolute = await htmlIdentity(linkFixture('<a href="https://example.test/evidence?a=1&b=2">Relative</a>'));
@@ -179,9 +184,13 @@ async function versionSeparationAndReuseTests(): Promise<void> {
     });
     const first = await capture(bodyA);
     const second = await capture(bodyB);
+    const referenceOnly = await capture(bodyB.replace("/evidence", "/different"));
     assert.notEqual(first.sourceDocumentVersionId, "historical-v1-version");
-    assert.match(first.sourceDocumentVersionId, /-normalized_content_v2-/);
+    assert.match(first.sourceDocumentVersionId, /-normalized_content_v3-/);
     assert.equal(second.sourceDocumentVersionId, first.sourceDocumentVersionId);
+    assert.equal(second.observationClassification, "transport_only_drift");
+    assert.equal(referenceOnly.sourceDocumentVersionId, first.sourceDocumentVersionId);
+    assert.equal(referenceOnly.observationClassification, "reference_only_drift");
     assert.notEqual(first.transportHash, second.transportHash);
     assert.equal(first.normalizedContentHash, second.normalizedContentHash);
     assert.deepEqual(database.sqlite.prepare("SELECT * FROM source_document_versions WHERE id = 'historical-v1-version'").get(), historicalBefore);
@@ -191,10 +200,10 @@ async function versionSeparationAndReuseTests(): Promise<void> {
       FROM source_document_version_observations
       WHERE source_document_version_id = ? ORDER BY id
     `).all(first.sourceDocumentVersionId);
-    assert.equal(observations.length, 2);
-    assert.ok(observations.every((row) => row.hash_semantics_version === "normalized_content_v2"));
-    assert.ok(observations.every((row) => row.extraction_version === "source-normalized-html-v2"));
-    assert.ok(observations.every((row) => row.normalization_policy_version === "source-normalized-html-v2"));
+    assert.equal(observations.length, 3);
+    assert.ok(observations.every((row) => row.hash_semantics_version === "normalized_content_v3"));
+    assert.ok(observations.every((row) => row.extraction_version === "source-normalized-html-v3"));
+    assert.ok(observations.every((row) => row.normalization_policy_version === "source-normalized-html-v3"));
   } finally {
     database.close();
   }
@@ -223,14 +232,14 @@ async function planPolicyBindingTests(): Promise<void> {
     `).run();
     await assert.rejects(() => loadCurrentBackfillInventory(env, "historical-v1-snapshot"), /not currently authorised/);
 
-    const authority = await establishAuthoritativeInventory(env, inventory, "kc-11c-v2", "reviewer@example.test", "v2-authority-key");
+    const authority = await establishAuthoritativeInventory(env, inventory, "kc-11c-v3", "reviewer@example.test", "v3-authority-key");
     assert.equal(authority.snapshotId, "historical-v1-snapshot", "immutable inventory bytes may be reused without reusing their authority decision");
     const authorityPolicies = database.sqlite.prepare("SELECT policy_version FROM knowledge_source_backfill_inventory_authority ORDER BY generation").all();
-    assert.deepEqual(authorityPolicies.map((row) => row.policy_version), ["kc-11c-v1", "kc-11c-v2"]);
+    assert.deepEqual(authorityPolicies.map((row) => row.policy_version), ["kc-11c-v1", "kc-11c-v3"]);
 
     const plan = await buildBackfillPlan(inventory, { recordIds: ["fixture"], limit: 1 }, authority.snapshotId);
-    assert.equal(plan.planVersion, "kc-11c-v2");
-    assert.equal(plan.sourceHashSemanticsVersion, "normalized_content_v2");
+    assert.equal(plan.planVersion, "kc-11c-v3");
+    assert.equal(plan.sourceHashSemanticsVersion, "normalized_content_v3");
     assert.deepEqual(plan.normalizationPolicyVersions, SOURCE_NORMALIZATION_POLICY_VERSIONS);
     assert.equal(await verifyPlanHash(plan, plan.planHash), true);
 
@@ -358,6 +367,14 @@ function migrationPreservationTests(): void {
     assert.deepEqual(incomingForeignKeys(database), beforeForeignKeys, "all incoming foreign-key definitions are preserved");
     assert.equal(database.sqlite.prepare("SELECT authority_decision_id FROM knowledge_source_backfill_current_inventory_authority").get()?.authority_decision_id, "migration-v1-authority");
 
+    const beforeV3Rows = Object.fromEntries(preservedTables.map(([table, order]) => [table, rows(database, table, order)]));
+    const beforeV3Objects = schemaObjects(database);
+    const beforeV3ForeignKeys = incomingForeignKeys(database);
+    database.sqlite.exec(readFileSync("db/migration-0062-normalized-content-v3-reference-drift.sql", "utf8"));
+    for (const [table, order] of preservedTables) assert.deepEqual(rows(database, table, order), beforeV3Rows[table], `${table} v1/v2 rows are preserved exactly by v3 migration`);
+    assert.deepEqual(schemaObjects(database), beforeV3Objects, "v3 migration preserves associated indexes, triggers, and authority view");
+    assert.deepEqual(incomingForeignKeys(database), beforeV3ForeignKeys, "v3 migration preserves incoming foreign-key definitions");
+
     database.sqlite.prepare(`
       INSERT INTO source_document_versions
         (id, source_document_id, content_hash, transport_hash, normalized_content_hash, hash_semantics_version,
@@ -366,12 +383,26 @@ function migrationPreservationTests(): void {
               'https://example.test/migration', '2026-08-02T00:00:00Z', 'metadata_only', 'source-normalized-html-v2')
     `).run("7".repeat(64), "7".repeat(64), "8".repeat(64));
     database.sqlite.prepare(`
+      INSERT INTO source_document_versions
+        (id, source_document_id, content_hash, transport_hash, normalized_content_hash, hash_semantics_version,
+         retrieved_url, retrieved_at, extraction_status, extraction_version)
+      VALUES ('migration-v3-version', 'migration-document', ?, ?, ?, 'normalized_content_v3',
+              'https://example.test/migration', '2026-08-03T00:00:00Z', 'metadata_only', 'source-normalized-html-v3')
+    `).run("9".repeat(64), "9".repeat(64), "a".repeat(64));
+    database.sqlite.prepare(`
       INSERT INTO source_document_version_observations
         (id, source_document_version_id, transport_hash, normalized_content_hash, hash_semantics_version,
          retrieved_url, retrieved_at, extraction_version, normalization_policy_version)
       VALUES ('migration-v2-observation', 'migration-v2-version', ?, ?, 'normalized_content_v2',
               'https://example.test/migration', '2026-08-02T00:00:00Z', 'source-normalized-html-v2', 'source-normalized-html-v2')
     `).run("7".repeat(64), "8".repeat(64));
+    database.sqlite.prepare(`
+      INSERT INTO source_document_version_observations
+        (id, source_document_version_id, transport_hash, normalized_content_hash, hash_semantics_version,
+         retrieved_url, retrieved_at, extraction_version, normalization_policy_version)
+      VALUES ('migration-v3-observation', 'migration-v3-version', ?, ?, 'normalized_content_v3',
+              'https://example.test/migration', '2026-08-03T00:00:00Z', 'source-normalized-html-v3', 'source-normalized-html-v3')
+    `).run("9".repeat(64), "a".repeat(64));
     database.sqlite.prepare(`
       INSERT INTO knowledge_source_backfill_items
         (id, batch_id, inventory_record_id, category, outcome, hash_semantics_version,
@@ -381,13 +412,20 @@ function migrationPreservationTests(): void {
     `).run();
     database.sqlite.prepare(`
       INSERT INTO knowledge_source_backfill_items
+        (id, batch_id, inventory_record_id, category, outcome, hash_semantics_version,
+         correlation_id, idempotency_key, actor)
+      VALUES ('migration-v3-item', 'migration-batch', 'migration-v3-record', 'source_url', 'planned',
+              'normalized_content_v3', 'migration-correlation', 'migration-v3-item-key', 'migration-actor')
+    `).run();
+    database.sqlite.prepare(`
+      INSERT INTO knowledge_source_backfill_items
         (id, batch_id, inventory_record_id, category, outcome, correlation_id, idempotency_key, actor)
       VALUES ('migration-legacy-item', 'migration-batch', 'migration-legacy-record', 'source_url', 'planned',
               'migration-correlation', 'migration-legacy-item-key', 'migration-actor')
     `).run();
-    assert.deepEqual(database.sqlite.prepare("SELECT DISTINCT hash_semantics_version FROM source_document_versions ORDER BY hash_semantics_version").all().map((row) => row.hash_semantics_version), ["legacy_raw_v1", "normalized_content_v1", "normalized_content_v2"]);
-    assert.deepEqual(database.sqlite.prepare("SELECT DISTINCT hash_semantics_version FROM source_document_version_observations ORDER BY hash_semantics_version").all().map((row) => row.hash_semantics_version), ["normalized_content_v1", "normalized_content_v2"]);
-    assert.deepEqual(database.sqlite.prepare("SELECT DISTINCT hash_semantics_version FROM knowledge_source_backfill_items ORDER BY hash_semantics_version").all().map((row) => row.hash_semantics_version), ["legacy_raw_v1", "normalized_content_v1", "normalized_content_v2"]);
+    assert.deepEqual(database.sqlite.prepare("SELECT DISTINCT hash_semantics_version FROM source_document_versions ORDER BY hash_semantics_version").all().map((row) => row.hash_semantics_version), ["legacy_raw_v1", "normalized_content_v1", "normalized_content_v2", "normalized_content_v3"]);
+    assert.deepEqual(database.sqlite.prepare("SELECT DISTINCT hash_semantics_version FROM source_document_version_observations ORDER BY hash_semantics_version").all().map((row) => row.hash_semantics_version), ["normalized_content_v1", "normalized_content_v2", "normalized_content_v3"]);
+    assert.deepEqual(database.sqlite.prepare("SELECT DISTINCT hash_semantics_version FROM knowledge_source_backfill_items ORDER BY hash_semantics_version").all().map((row) => row.hash_semantics_version), ["legacy_raw_v1", "normalized_content_v1", "normalized_content_v2", "normalized_content_v3"]);
 
     rejectsSql(database, `INSERT INTO source_document_versions (id, source_document_id, content_hash, hash_semantics_version, retrieved_url, retrieved_at) VALUES ('bad-version', 'migration-document', 'bad-version-hash', 'unknown', 'https://example.test', '2026-08-02')`);
     rejectsSql(database, `INSERT INTO source_document_version_observations (id, source_document_version_id, transport_hash, normalized_content_hash, hash_semantics_version, retrieved_url, retrieved_at, extraction_version) VALUES ('bad-observation', 'migration-v2-version', 'bad-observation-transport', 'bad-observation-normalized', 'unknown', 'https://example.test', '2026-08-02', 'bad')`);
@@ -403,6 +441,11 @@ function migrationPreservationTests(): void {
       INSERT INTO knowledge_source_backfill_inventory_authority
         (id, snapshot_id, schema_version, policy_version, decision, actor, idempotency_key, correlation_id)
       VALUES ('migration-v2-authority', 'migration-v2-snapshot', 'kc-11a-v1', 'kc-11c-v2', 'authorised', 'migration-actor', 'migration-v2-authority-key', 'migration-correlation')
+    `).run();
+    database.sqlite.prepare(`
+      INSERT INTO knowledge_source_backfill_inventory_snapshots
+        (id, schema_version, inventory_identity, snapshot_json, policy_version, created_by)
+      VALUES ('migration-v3-snapshot', 'kc-11a-v1', 'migration-inventory-v3', '{}', 'kc-11c-v3', 'migration-actor')
     `).run();
     rejectsSql(database, `INSERT INTO knowledge_source_backfill_inventory_snapshots (id, schema_version, inventory_identity, snapshot_json, policy_version, created_by) VALUES ('bad-snapshot', 'kc-11a-v1', 'bad-inventory', '{}', 'kc-11c-v999', 'migration-actor')`);
 
@@ -421,4 +464,4 @@ await anthropicRegressionTests();
 await versionSeparationAndReuseTests();
 await planPolicyBindingTests();
 migrationPreservationTests();
-console.log("normalized_content_v2 identity, plan, authority, and migration tests passed");
+console.log("normalized_content_v3 identity, reference drift, plan, authority, and v1/v2 preservation tests passed");

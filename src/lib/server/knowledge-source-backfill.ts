@@ -14,13 +14,13 @@ export const BACKFILL_CEILINGS = Object.freeze({
   maxTotalBytes: 5 * 1024 * 1024, maxRetries: 2, maxDurationMs: 30_000,
   staleExecutionSeconds: 120,
 });
-export const BACKFILL_POLICY_VERSION = "kc-11c-v2" as const;
+export const BACKFILL_POLICY_VERSION = "kc-11c-v3" as const;
 export const BACKFILL_INVENTORY_SCHEMA_VERSION = "kc-11a-v1" as const;
 export type BackfillOutcome = "planned" | "captured_new_document" | "captured_new_version" | "unchanged" | "metadata_only" | "unavailable" | "excluded" | "held_for_review" | "failed_retryable" | "failed_terminal";
 export type InventoryRecord = { id: string; label?: string; state?: string; url?: string; origin?: string | string[]; category?: string };
 export type BackfillSelection = { category?: string; recordIds?: string[]; limit: number; newestFirst?: boolean };
 export type BackfillPlanItem = InventoryRecord & { category: string; canonicalUrl: string | null; fetchability: "eligible" | "ineligible"; admissionOutcome: "eligible" | "excluded"; duplicateOutcome: "unknown_until_fetch" | "not_applicable"; storageMode: SourceCaptureStorageMode; exclusionReason?: string };
-export type BackfillPlan = { schemaVersion: "kc-11a-v1"; planVersion: "kc-11c-v2"; sourceHashSemanticsVersion: typeof SOURCE_HASH_SEMANTICS_VERSION; normalizationPolicyVersions: typeof SOURCE_NORMALIZATION_POLICY_VERSIONS; inventorySnapshotId: string; inventoryIdentity: string; selection: BackfillSelection; ceilings: typeof BACKFILL_CEILINGS; selected: BackfillPlanItem[]; excluded: Array<{ recordId: string; category: string; reason: string }>; estimatedRequestCount: number; estimatedStorageBytesCeiling: number; planHash: string };
+export type BackfillPlan = { schemaVersion: "kc-11a-v1"; planVersion: "kc-11c-v3"; sourceHashSemanticsVersion: typeof SOURCE_HASH_SEMANTICS_VERSION; normalizationPolicyVersions: typeof SOURCE_NORMALIZATION_POLICY_VERSIONS; inventorySnapshotId: string; inventoryIdentity: string; selection: BackfillSelection; ceilings: typeof BACKFILL_CEILINGS; selected: BackfillPlanItem[]; excluded: Array<{ recordId: string; category: string; reason: string }>; estimatedRequestCount: number; estimatedStorageBytesCeiling: number; planHash: string };
 export type BackfillInventory = { schemaVersion?: string; generatedAt?: string; categories?: Record<string, InventoryRecord[]>; [key: string]: unknown };
 export type InventoryAuthorityResult = {
   snapshotId: string;
@@ -423,6 +423,7 @@ export async function executeBackfill(env: BackfillEnv, batchId: string, planHas
           correlationId: batch.correlation_id,
           maximumBytes,
           transportHash: retrieved.transportHash,
+          replayEvidenceReview: Number(item.retry_count ?? 0) > 0,
         });
         sourceDocumentId = capture.sourceDocumentId;
         sourceDocumentVersionId = capture.sourceDocumentVersionId;
@@ -430,7 +431,9 @@ export async function executeBackfill(env: BackfillEnv, batchId: string, planHas
         normalizedContentHash = capture.normalizedContentHash;
         hashSemanticsVersion = capture.hashSemanticsVersion;
         outcome = "unchanged";
-        reason = "normalized_content_hash_unchanged";
+        reason = capture.observationClassification === "reference_only_drift"
+          ? "reference_only_drift"
+          : "normalized_content_hash_unchanged";
       }
       else {
         capture = await captureAdmittedSource(env, { canonicalUrl: selected.canonicalUrl, retrievedUrl: retrieved.finalUrl, contentType: retrieved.contentType, body: retrieved.body, extraction, mediaKind, admissionState: "admitted", copyrightStorageMode: selected.storageMode, httpStatus: retrieved.responseStatus, correlationId: batch.correlation_id, maximumBytes, transportHash: retrieved.transportHash });
