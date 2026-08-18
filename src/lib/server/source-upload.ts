@@ -1,5 +1,5 @@
 import { extractHtmlDocument, extractMarkdownDocument, extractPlainTextDocument, type ExtractedSourceDocument } from "./source-extraction";
-import { captureAdmittedSource } from "./source-capture";
+import { captureAdmittedPdfSource, captureAdmittedSource, isValidPdfEnvelope } from "./source-capture";
 import { extractStructuredSource } from "./source-structured-extraction";
 import { recordVersionExtractionState } from "./source-governance-state";
 import { SOURCE_HASH_SEMANTICS_VERSION } from "./source-version-identity";
@@ -7,8 +7,8 @@ import { SOURCE_HASH_SEMANTICS_VERSION } from "./source-version-identity";
 export const MAX_UPLOAD_BYTES = 2 * 1024 * 1024;
 export const MAX_UPLOAD_FILENAME_LENGTH = 255;
 
-export type UploadMediaKind = "html" | "markdown" | "plain_text";
-export type UploadOutcomeState = "extracted" | "metadata_only" | "unsupported" | "extraction_failed";
+export type UploadMediaKind = "html" | "markdown" | "plain_text" | "pdf";
+export type UploadOutcomeState = "extracted" | "extraction_pending" | "metadata_only" | "unsupported" | "extraction_failed";
 
 export interface SourceUploadEnvironment {
   DB: D1Database;
@@ -67,12 +67,14 @@ const MEDIA_TYPES: Record<string, UploadMediaKind> = {
   "text/x-markdown": "markdown",
   "text/html": "html",
   "application/xhtml+xml": "html",
+  "application/pdf": "pdf",
 };
 
 const EXTENSIONS: Record<UploadMediaKind, ReadonlySet<string>> = {
   plain_text: new Set([".txt", ".text"]),
   markdown: new Set([".md", ".markdown"]),
   html: new Set([".html", ".htm"]),
+  pdf: new Set([".pdf"]),
 };
 
 export async function ingestUploadedDocument(
@@ -115,6 +117,62 @@ export async function ingestUploadedDocument(
       contentHash,
       reason: validation.reason ?? "unsupported_media_type",
     });
+  }
+  if (validation.mediaKind === "pdf") {
+    let capture;
+    try {
+      capture = await captureAdmittedPdfSource(
+        { DB: env.DB, RAW_STORE: env.RAW_STORE },
+        {
+          canonicalUrl: `https://uploads.trace.invalid/${identityHash}`,
+          retrievedUrl: `https://uploads.trace.invalid/${identityHash}`,
+          bytes,
+          contentType: mediaType,
+          displayName: displayFilename,
+          admissionState: "admitted",
+          copyrightStorageMode: "editor_supplied_document",
+          retrievedAt: input.retrievedAt,
+          correlationId: input.correlationId,
+          transportHash: contentHash,
+          maximumBytes: MAX_UPLOAD_BYTES,
+        },
+      );
+    } catch (error) {
+      if (error instanceof SourceUploadError) throw error;
+      throw new SourceUploadError("The PDF could not be captured.", "upload_failed", 500);
+    }
+    const diagnostics = { parser: "none", extractionState: capture.extractionState, displayFilename };
+    const intakeId = `upload-intake-${await sha256(idempotencyKey)}`;
+    await insertIntake(env.DB, {
+      id: intakeId,
+      sourceDocumentId: capture.sourceDocumentId,
+      sourceDocumentVersionId: capture.sourceDocumentVersionId,
+      idempotencyKey,
+      uploadIdentityHash: identityHash,
+      uploaderEmail: input.uploaderEmail.trim().toLowerCase(),
+      displayFilename,
+      mediaType,
+      mediaKind: "pdf",
+      contentHash,
+      byteLength: bytes.byteLength,
+      outcomeState: capture.extractionState === "pending" ? "extraction_pending" : "metadata_only",
+      stateReason: capture.extractionState === "pending" ? "pdf_extraction_pending" : "pdf_metadata_only",
+      diagnostics,
+    });
+    return {
+      intakeId,
+      sourceDocumentId: capture.sourceDocumentId,
+      sourceDocumentVersionId: capture.sourceDocumentVersionId,
+      displayFilename,
+      mediaType,
+      mediaKind: "pdf",
+      byteLength: bytes.byteLength,
+      contentHash,
+      state: capture.extractionState === "pending" ? "extraction_pending" : "metadata_only",
+      reason: capture.extractionState === "pending" ? "pdf_extraction_pending" : "pdf_metadata_only",
+      diagnostics,
+      idempotentReplay: false,
+    };
   }
   if (!validation.decodedBody) throw new SourceUploadError("The uploaded document could not be decoded as UTF-8 text.", "invalid_upload");
 
@@ -307,9 +365,16 @@ async function persistUnsupportedUpload(env: SourceUploadEnvironment, input: Uns
 }
 
 function validateUpload(bytes: Uint8Array, filename: string, mediaType: string, mediaKind: UploadMediaKind | "unsupported"): ValidatedUpload {
-  if (mediaKind === "unsupported") return { mediaKind, reason: `unsupported_media_type:${mediaType}`, decodedBody: null };
   const extension = filename.slice(filename.lastIndexOf(".")).toLowerCase();
+  const looksLikePdf = bytes.byteLength >= 5 && new TextDecoder().decode(bytes.slice(0, 5)) === "%PDF-";
+  if (looksLikePdf && mediaKind !== "pdf") throw new SourceUploadError("PDF bytes require an application/pdf upload.", "invalid_upload");
+  if (extension === ".pdf" && mediaKind !== "pdf") throw new SourceUploadError("A .pdf file must be uploaded as application/pdf.", "invalid_upload");
+  if (mediaKind === "unsupported") return { mediaKind, reason: `unsupported_media_type:${mediaType}`, decodedBody: null };
   if (!EXTENSIONS[mediaKind].has(extension)) return { mediaKind: "unsupported", reason: `filename_extension_mismatch:${extension}`, decodedBody: null };
+  if (mediaKind === "pdf") {
+    if (!isValidPdfEnvelope(bytes)) throw new SourceUploadError("The uploaded PDF signature or envelope is invalid.", "invalid_upload");
+    return { mediaKind, reason: null, decodedBody: null };
+  }
   if (bytes.includes(0)) return { mediaKind: "unsupported", reason: "embedded_null_byte", decodedBody: null };
   try {
     return { mediaKind, reason: null, decodedBody: new TextDecoder("utf-8", { fatal: true }).decode(bytes) };

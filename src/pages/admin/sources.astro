@@ -63,10 +63,10 @@ const safeHttpUrl = (value: string): string | null => {
     <p class="meta" style="margin-bottom:2rem;"><a href="/admin/jobs">Jobs</a> · <a href="/admin/review">Review</a> · <a href="/admin">Admin home</a></p>
 
     <section class="card" style="margin-bottom:2rem;">
-      <h2>Upload ordinary source document</h2>
-      <p class="meta">Publisher-only server processing. Supported inputs are UTF-8 plain text, Markdown, and ordinary HTML up to 2 MiB. Uploads remain private source material and never publish or become accepted evidence automatically.</p>
+      <h2>Upload governed source document</h2>
+      <p class="meta">Publisher-only server processing. UTF-8 plain text, Markdown, and ordinary HTML are extracted deterministically up to 2 MiB. PDFs up to 2 MiB are stored privately as opaque originals; text extraction is not enabled. Uploads remain private source material and never publish or become accepted evidence automatically.</p>
       <form id="source-upload-form" style="display:flex;gap:1rem;align-items:end;flex-wrap:wrap;margin-top:1rem;">
-        <label style="display:grid;gap:0.35rem;">Document file<input id="source-upload-file" name="file" type="file" accept=".txt,.text,.md,.markdown,.html,.htm,text/plain,text/markdown,text/html,application/xhtml+xml" required /></label>
+        <label style="display:grid;gap:0.35rem;">Document file<input id="source-upload-file" name="file" type="file" accept=".txt,.text,.md,.markdown,.html,.htm,.pdf,text/plain,text/markdown,text/html,application/xhtml+xml,application/pdf" required /></label>
         <button type="submit">Upload for governed extraction</button>
       </form>
       <p id="source-upload-result" class="meta" role="status" style="margin-top:1rem;"></p>
@@ -77,7 +77,7 @@ const safeHttpUrl = (value: string): string | null => {
             {uploads.map((upload) => <tr style="vertical-align:top;border-bottom:1px solid var(--border);">
               <td>{upload.display_filename}<br /><span class="meta">{upload.byte_length.toLocaleString("en-GB")} bytes</span></td>
               <td><code>{upload.media_type}</code><br /><span class="meta">{upload.media_kind}</span></td>
-              <td><span class={`badge badge-${upload.outcome_state === "extracted" ? "confirmed" : upload.outcome_state === "extraction_failed" ? "disputed" : "provisional"}`}>{upload.outcome_state}</span><br /><span class="meta">{upload.state_reason ?? upload.extraction_state ?? "—"}</span></td>
+              <td><span class={`badge badge-${upload.outcome_state === "extracted" ? "confirmed" : upload.outcome_state === "extraction_failed" ? "disputed" : "provisional"}`}>{upload.media_kind === "pdf" && upload.outcome_state === "extraction_pending" ? "PDF stored privately — text extraction not enabled" : upload.media_kind === "pdf" && upload.outcome_state === "metadata_only" ? "PDF metadata only" : upload.outcome_state}</span><br /><span class="meta">{upload.state_reason ?? upload.extraction_state ?? "—"}</span></td>
               <td class="meta">{upload.source_document_id ?? "—"}<br />{upload.source_document_version_id ?? "—"}<br />{upload.storage_state ?? "—"}</td>
               <td class="mono">{upload.content_hash.slice(0, 16)}…</td>
               <td class="meta">{fmt(upload.created_at)}</td>
@@ -130,7 +130,7 @@ const safeHttpUrl = (value: string): string | null => {
   form?.addEventListener("submit", async (event) => {
     event.preventDefault();
     if (!fileInput?.files?.[0] || !result) return;
-    result.textContent = "Uploading and extracting deterministically…";
+    result.textContent = "Uploading under the governed source boundary…";
     const body = new FormData();
     body.set("file", fileInput.files[0]);
     try {

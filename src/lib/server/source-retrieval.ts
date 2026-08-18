@@ -12,7 +12,8 @@ export type SourceRetrievalErrorCode =
   | "content_type_rejected"
   | "response_too_large"
   | "response_empty"
-  | "response_timeout";
+  | "response_timeout"
+  | "content_invalid";
 
 export type SourceRetrievalAuditEvent = {
   phase: "admitted" | "redirected" | "retrieved" | "rejected" | "failed";
@@ -41,6 +42,8 @@ export interface RetrievedRemoteSource {
   contentType: string;
   byteLength: number;
   body: string;
+  /** Exact response bytes. In byte mode text is not decoded. */
+  bodyBytes: Uint8Array;
   redirectCount: number;
   responseStatus: number;
   /** SHA-256 of the exact bytes read from the response body. */
@@ -54,6 +57,8 @@ export interface SourceRetrievalOptions {
   maxRedirects: number;
   userAgent: string;
   acceptHeader?: string;
+  /** Byte mode is used for governed binary capture; it never decodes the body. */
+  responseMode?: "text" | "bytes";
   onAudit?: (event: SourceRetrievalAuditEvent) => void | Promise<void>;
   fetcher?: typeof fetch;
 }
@@ -108,11 +113,11 @@ function readNextChunk(
   });
 }
 
-async function readBoundedText(
+async function readBoundedBytes(
   response: Response,
   maximumBytes: number,
   deadline: number,
-): Promise<{ body: string; byteLength: number; transportHash: string }> {
+): Promise<{ bodyBytes: Uint8Array; byteLength: number; transportHash: string }> {
   const declaredLength = Number(response.headers.get("Content-Length") ?? "0");
   if (Number.isFinite(declaredLength) && declaredLength > maximumBytes) {
     await cancelResponse(response);
@@ -150,7 +155,7 @@ async function readBoundedText(
     bytes.set(chunk, offset);
     offset += chunk.byteLength;
   }
-  return { body: new TextDecoder().decode(bytes), byteLength: totalBytes, transportHash: await sha256Bytes(bytes) };
+  return { bodyBytes: bytes, byteLength: totalBytes, transportHash: await sha256Bytes(bytes) };
 }
 
 async function sha256Bytes(value: Uint8Array): Promise<string> {
@@ -238,12 +243,20 @@ export async function retrieveRemoteSource(
         throw new SourceRetrievalError("The URL did not return an allowed content type.", 422, "content_type_rejected");
       }
 
-      const content = await readBoundedText(response, options.maximumBytes, deadline);
+      const content = await readBoundedBytes(response, options.maximumBytes, deadline);
       await emitAudit(options, {
         phase: "retrieved", code: "retrieved", redirectCount, responseStatus: response.status,
         contentType, byteLength: content.byteLength,
       });
-      return { initialUrl: initialUrl.href, finalUrl: currentUrl.href, contentType, redirectCount, responseStatus: response.status, ...content };
+      return {
+        initialUrl: initialUrl.href,
+        finalUrl: currentUrl.href,
+        contentType,
+        redirectCount,
+        responseStatus: response.status,
+        body: options.responseMode === "bytes" ? "" : new TextDecoder().decode(content.bodyBytes),
+        ...content,
+      };
     }
   } finally {
     clearTimeout(timeout);

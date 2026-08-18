@@ -62,6 +62,15 @@ export async function extractStructuredSource(
     correlationId?: string;
   },
 ): Promise<StructuredExtractionResult> {
+  const sourceState = await db.prepare(`
+    SELECT document.media_kind, version.extraction_state
+    FROM source_document_versions version
+    JOIN source_documents document ON document.id = version.source_document_id
+    WHERE version.id = ?
+  `).bind(input.sourceDocumentVersionId).first<{ media_kind: string; extraction_state: string | null }>();
+  if (sourceState?.media_kind === "pdf" || sourceState?.extraction_state === "metadata_only" || sourceState?.extraction_state === "unsupported" || sourceState?.extraction_state === "extraction_failed") {
+    throw new Error("source_version_not_extractable");
+  }
   const run = await beginExtractionRun(db, input);
   if (run.alreadyCompleted) {
     return {

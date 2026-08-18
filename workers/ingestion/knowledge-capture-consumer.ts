@@ -3,7 +3,7 @@
 
 import { extractHtmlDocument } from "../../src/lib/server/source-extraction";
 import { extractStructuredSource } from "../../src/lib/server/source-structured-extraction";
-import { captureAdmittedSource, SourceCaptureError, normaliseSourceUrl, type SourceCaptureStorageMode } from "../../src/lib/server/source-capture";
+import { captureAdmittedPdfSource, captureAdmittedSource, isValidPdfEnvelope, SourceCaptureError, normaliseSourceUrl, type SourceCaptureStorageMode } from "../../src/lib/server/source-capture";
 import { retrieveRemoteSource, SourceRetrievalError } from "../../src/lib/server/source-retrieval";
 import { recordSourceCaptureState, recordSourceRetrievalState, recordVersionExtractionState } from "../../src/lib/server/source-governance-state";
 import { hashURL } from "./dedup";
@@ -66,57 +66,87 @@ export async function processKnowledgeCaptureMessage(
   let capturedVersionId: string | null = null;
   try {
     const retrieved = await retrieveRemoteSource(canonicalUrl, {
-      allowedContentTypes: ["text/html", "application/xhtml+xml"],
+      allowedContentTypes: ["text/html", "application/xhtml+xml", "application/pdf"],
       maximumBytes: 512 * 1024,
       timeoutMs: 12_000,
       maxRedirects: 3,
       userAgent: "TheTraceManifest/0.1 (knowledge capture; +https://thetracemanifest.com)",
-      acceptHeader: "text/html,application/xhtml+xml;q=0.9",
+      acceptHeader: "text/html,application/xhtml+xml;q=0.9,application/pdf;q=0.8",
+      responseMode: "bytes",
       fetcher,
       onAudit: (event) => {
         console.log(JSON.stringify({ stage: "knowledge_capture_retrieval", code: event.code, phase: event.phase, redirectCount: event.redirectCount, responseStatus: event.responseStatus }));
       },
     });
-    const extraction = extractHtmlDocument(retrieved.body);
-    const capture = await captureAdmittedSource(
-      { DB: env.DB, RAW_STORE: env.RAW_STORE },
-      {
-        canonicalUrl,
-        retrievedUrl: retrieved.finalUrl,
-        contentType: retrieved.contentType,
-        body: retrieved.body,
-        extraction,
-        mediaKind: "html",
-        admissionState: "admitted",
-        copyrightStorageMode: admission.copyright_storage_mode,
-        sourceId: admission.source_id,
-        httpStatus: retrieved.responseStatus,
-        correlationId: message.correlationId,
-      },
-    );
+    const capture = retrieved.contentType === "application/pdf"
+      ? await (async () => {
+        if (!isValidPdfEnvelope(retrieved.bodyBytes)) {
+          throw new SourceRetrievalError("The remote response is not a valid PDF envelope.", 422, "content_invalid", retrieved.responseStatus);
+        }
+        const pdf = await captureAdmittedPdfSource(
+          { DB: env.DB, RAW_STORE: env.RAW_STORE },
+          {
+            canonicalUrl,
+            retrievedUrl: retrieved.finalUrl,
+            bytes: retrieved.bodyBytes,
+            contentType: retrieved.contentType,
+            admissionState: "admitted",
+            copyrightStorageMode: admission.copyright_storage_mode,
+            sourceId: admission.source_id,
+            httpStatus: retrieved.responseStatus,
+            correlationId: message.correlationId,
+            transportHash: retrieved.transportHash,
+            maximumBytes: 512 * 1024,
+          },
+        );
+        return { sourceDocumentVersionId: pdf.sourceDocumentVersionId, contentHash: pdf.contentHash, extractionStatus: pdf.extractionState === "pending" ? "pending" : "metadata_only" as const, extraction: null };
+      })()
+      : await (async () => {
+        const extraction = extractHtmlDocument(new TextDecoder().decode(retrieved.bodyBytes));
+        const html = await captureAdmittedSource(
+          { DB: env.DB, RAW_STORE: env.RAW_STORE },
+          {
+            canonicalUrl,
+            retrievedUrl: retrieved.finalUrl,
+            contentType: retrieved.contentType,
+            body: new TextDecoder().decode(retrieved.bodyBytes),
+            extraction,
+            mediaKind: "html",
+            admissionState: "admitted",
+            copyrightStorageMode: admission.copyright_storage_mode,
+            sourceId: admission.source_id,
+            httpStatus: retrieved.responseStatus,
+            correlationId: message.correlationId,
+            transportHash: retrieved.transportHash,
+          },
+        );
+        return { sourceDocumentVersionId: html.sourceDocumentVersionId, contentHash: html.contentHash, extractionStatus: html.extractionStatus as "captured" | "metadata_only", extraction };
+      })();
     capturedVersionId = capture.sourceDocumentVersionId;
-    structureJobId = `structure-job-${capture.sourceDocumentVersionId}`;
-    await env.DB.prepare(`
-      INSERT OR IGNORE INTO knowledge_processing_jobs
-        (id, job_kind, subject_type, subject_id, content_hash, idempotency_key, state, correlation_id)
-      VALUES (?, 'extract_structure', 'source_document_version', ?, ?, ?, 'running', ?)
-    `).bind(
-      structureJobId, capture.sourceDocumentVersionId, capture.contentHash,
-      `extract-structure:${capture.sourceDocumentVersionId}`, message.correlationId,
-    ).run();
-    if (capture.extractionStatus === "captured") {
-      await extractStructuredSource(env.DB, {
-        sourceDocumentVersionId: capture.sourceDocumentVersionId,
-        sourceContentHash: capture.contentHash,
-        extraction,
-        correlationId: message.correlationId,
-      });
+    if (retrieved.contentType !== "application/pdf") {
+      structureJobId = `structure-job-${capture.sourceDocumentVersionId}`;
+      await env.DB.prepare(`
+        INSERT OR IGNORE INTO knowledge_processing_jobs
+          (id, job_kind, subject_type, subject_id, content_hash, idempotency_key, state, correlation_id)
+        VALUES (?, 'extract_structure', 'source_document_version', ?, ?, ?, 'running', ?)
+      `).bind(
+        structureJobId, capture.sourceDocumentVersionId, capture.contentHash,
+        `extract-structure:${capture.sourceDocumentVersionId}`, message.correlationId,
+      ).run();
+      if (capture.extractionStatus === "captured" && capture.extraction) {
+        await extractStructuredSource(env.DB, {
+          sourceDocumentVersionId: capture.sourceDocumentVersionId,
+          sourceContentHash: capture.contentHash,
+          extraction: capture.extraction,
+          correlationId: message.correlationId,
+        });
+      }
+      await env.DB.prepare(`
+        UPDATE knowledge_processing_jobs
+        SET state = 'completed', completed_at = datetime('now'), updated_at = datetime('now'), error_code = NULL, error_detail = NULL
+        WHERE id = ?
+      `).bind(structureJobId).run();
     }
-    await env.DB.prepare(`
-      UPDATE knowledge_processing_jobs
-      SET state = 'completed', completed_at = datetime('now'), updated_at = datetime('now'), error_code = NULL, error_detail = NULL
-      WHERE id = ?
-    `).bind(structureJobId).run();
     await env.DB.prepare(`
       UPDATE knowledge_processing_jobs
       SET state = 'completed', content_hash = ?, completed_at = datetime('now'), updated_at = datetime('now')
@@ -126,7 +156,7 @@ export async function processKnowledgeCaptureMessage(
   } catch (error) {
     const classified = classifyCaptureError(error);
     if (error instanceof SourceRetrievalError) {
-      if (error.code === "content_type_rejected") {
+      if (error.code === "content_type_rejected" || error.code === "content_invalid") {
         await recordSourceCaptureState(env.DB, {
           sourceDocumentId: message.sourceDocumentId,
           state: "unsupported",

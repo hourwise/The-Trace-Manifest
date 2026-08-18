@@ -90,6 +90,7 @@ export async function loadKnowledgeImpactQueues(
           WHERE assertion.canonical_claim_id = claim.id
             AND assertion.admission_state = 'admitted' AND assertion.reviewer_state IN ('accepted', 'amended')
             AND assertion.freshness_state IN ('current', 'unknown') AND source.admission_state = 'admitted'
+            AND source.media_kind <> 'pdf'
             AND ((version.extraction_status IN ('captured', 'extracted') AND version.extraction_state IN ('extracted', 'pending')) OR version.extraction_method = 'feed_claim_compatibility')
         )
         AND NOT EXISTS (SELECT 1 FROM story_claims story_link WHERE story_link.canonical_claim_id = claim.id)

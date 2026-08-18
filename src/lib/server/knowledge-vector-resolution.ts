@@ -199,6 +199,7 @@ async function resolveCanonicalClaim(db: D1Database, candidate: KnowledgeVectorC
       AND assertion.evidence_treatment NOT IN ('discovery_only', 'internal_synthesis')
       AND document.admission_state = 'admitted'
       AND version.extraction_status IN ('captured', 'extracted')
+      AND document.media_kind <> 'pdf'
       AND ((version.extraction_status IN ('captured', 'extracted') AND version.extraction_state IN ('extracted', 'pending')) OR version.extraction_method = 'feed_claim_compatibility')
     ORDER BY CASE WHEN assertion.source_role = 'evidence' THEN 0 ELSE 1 END, assertion.reviewed_at DESC
     LIMIT 1

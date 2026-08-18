@@ -105,6 +105,7 @@ interface CitationRow {
   extraction_status: string | null;
   extraction_state: string | null;
   extraction_method: string | null;
+  media_kind: string | null;
   retrieved_at: string | null;
   canonical_url: string | null;
   document_admission: string | null;
@@ -127,6 +128,7 @@ function classify(citation: KnowledgeCitationInput, row: CitationRow | null): Kn
   if (!row.version_id || row.version_id !== citation.sourceDocumentVersionId || row.assertion_version_id !== citation.sourceDocumentVersionId) {
     return "source_version_mismatch";
   }
+  if (row.media_kind === "pdf") return "version_not_eligible";
   if (!row.extraction_status || !["captured", "extracted"].includes(row.extraction_status)
     || (row.extraction_state !== "extracted" && row.extraction_state !== "pending" && row.extraction_method !== "feed_claim_compatibility")) return "version_not_eligible";
   if (!row.chunk_id) return "source_chunk_not_found";
@@ -185,7 +187,7 @@ export async function resolveKnowledgeCitations(
              assertion.reviewed_by, assertion.reviewed_at,
              version.id AS version_id, version.source_document_id,
              version.source_language, version.extraction_status, version.extraction_state, version.extraction_method, version.retrieved_at,
-             document.canonical_url, document.admission_state AS document_admission,
+             document.media_kind, document.canonical_url, document.admission_state AS document_admission,
              chunk.id AS chunk_id, chunk.source_document_version_id AS chunk_version_id,
              chunk.start_locator AS chunk_start, chunk.end_locator AS chunk_end,
              chunk.text_excerpt AS chunk_text

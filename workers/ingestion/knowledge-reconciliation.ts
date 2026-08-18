@@ -23,6 +23,7 @@ interface SourceDocumentVersion {
   transport_hash: string | null;
   r2_original_key: string | null;
   r2_extracted_key: string | null;
+  media_kind: string;
 }
 
 interface VectorDeleteIndex {
@@ -109,8 +110,11 @@ async function reconcileR2Put(
     return markRepairRequired(env, operation, trigger, "r2_put_subject_invalid");
   }
   const version = await env.DB.prepare(`
-    SELECT id, content_hash, transport_hash, r2_original_key, r2_extracted_key
-    FROM source_document_versions WHERE id = ?
+    SELECT version.id, version.content_hash, version.transport_hash, version.r2_original_key,
+           version.r2_extracted_key, document.media_kind
+    FROM source_document_versions version
+    JOIN source_documents document ON document.id = version.source_document_id
+    WHERE version.id = ?
   `).bind(operation.subject_id).first<SourceDocumentVersion>();
   if (!version || !version.r2_original_key) {
     return markRepairRequired(env, operation, trigger, "r2_put_target_missing");
@@ -136,11 +140,11 @@ async function reconcileR2Put(
 
   await env.DB.prepare(`
     UPDATE source_document_versions
-    SET extraction_status = CASE WHEN extraction_status = 'pending' THEN 'captured' ELSE extraction_status END,
-        extraction_state = CASE WHEN extraction_state = 'pending' THEN 'extracted' ELSE extraction_state END,
+    SET extraction_status = CASE WHEN extraction_status = 'pending' AND ? <> 'pdf' THEN 'captured' ELSE extraction_status END,
+        extraction_state = CASE WHEN extraction_state = 'pending' AND ? <> 'pdf' THEN 'extracted' ELSE extraction_state END,
         storage_state = CASE WHEN storage_state IN ('not_stored', 'private_pending') THEN 'private_stored' ELSE storage_state END
     WHERE id = ?
-  `).bind(version.id).run();
+  `).bind(version.media_kind, version.media_kind, version.id).run();
   return markCompleted(env, operation, trigger, "r2_object_attached");
 }
 

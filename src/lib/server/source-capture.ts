@@ -12,6 +12,7 @@ import {
   policyVersionFor,
   SOURCE_HASH_SEMANTICS_VERSION,
 } from "./source-version-identity";
+import { pdfExtractionStateForStorageMode } from "./source-governance-state";
 
 export type SourceCaptureStorageMode = "metadata_only" | "short_excerpt" | "private_full_text" | "editor_supplied_document" | "prohibited";
 
@@ -69,6 +70,36 @@ export class SourceCaptureError extends Error {
     super(message);
     this.name = "SourceCaptureError";
   }
+}
+
+export interface PdfCaptureInput {
+  canonicalUrl: string;
+  retrievedUrl: string;
+  bytes: Uint8Array;
+  contentType: string;
+  admissionState: "admitted";
+  copyrightStorageMode: SourceCaptureStorageMode;
+  displayName?: string | null;
+  sourceId?: number | null;
+  httpStatus?: number | null;
+  retrievedAt?: string;
+  correlationId?: string;
+  maximumBytes?: number;
+  transportHash?: string;
+}
+
+export interface PdfCaptureResult {
+  sourceDocumentId: string;
+  sourceDocumentVersionId: string;
+  canonicalUrlHash: string;
+  contentHash: string;
+  transportHash: string;
+  normalizedContentHash: string;
+  r2OriginalKey: string | null;
+  extractionState: "pending" | "metadata_only";
+  storageState: "private_stored";
+  idempotencyKey: string;
+  observationClassification: SourceObservationClassification;
 }
 
 const DEFAULT_MAXIMUM_BYTES = 512 * 1024;
@@ -286,6 +317,209 @@ export async function captureAdmittedSource(
     hashSemanticsVersion: SOURCE_HASH_SEMANTICS_VERSION,
     r2OriginalKey, r2ExtractedKey, extractionStatus, idempotencyKey, observationClassification,
   };
+}
+
+/**
+ * KC-03H: retain an admitted PDF as an opaque private artifact. This function
+ * deliberately accepts bytes, never decodes them, and never creates an
+ * extraction artifact, chunk, claim, summary, embedding, or evidence record.
+ */
+export async function captureAdmittedPdfSource(
+  env: SourceCaptureEnvironment,
+  input: PdfCaptureInput,
+): Promise<PdfCaptureResult> {
+  const canonicalUrl = normaliseSourceUrl(input.canonicalUrl);
+  const retrievedUrl = normaliseSourceUrl(input.retrievedUrl);
+  const maximumBytes = boundedMaximum(input.maximumBytes);
+  if (!canonicalUrl || !retrievedUrl || input.admissionState !== "admitted" || input.contentType !== "application/pdf" || input.bytes.byteLength === 0) {
+    throw new SourceCaptureError("Only an admitted, non-empty PDF can be captured.", "invalid_input");
+  }
+  if (input.bytes.byteLength > maximumBytes) {
+    throw new SourceCaptureError("The PDF exceeds the capture size limit.", "body_too_large", 413);
+  }
+  if (input.copyrightStorageMode === "prohibited") {
+    throw new SourceCaptureError("This source storage mode prohibits capture.", "storage_not_permitted");
+  }
+  if (!isValidPdfEnvelope(input.bytes)) {
+    throw new SourceCaptureError("The uploaded bytes are not a valid PDF envelope.", "invalid_input");
+  }
+
+  const canonicalUrlHash = await sha256(canonicalUrl);
+  const transportHash = input.transportHash ?? await sha256Bytes(input.bytes);
+  if (!/^[0-9a-f]{64}$/i.test(transportHash)) {
+    throw new SourceCaptureError("The PDF transport hash is invalid.", "invalid_input");
+  }
+  const normalizedContentHash = transportHash.toLowerCase();
+  const versionContentHash = await sha256(`${SOURCE_HASH_SEMANTICS_VERSION}:${transportHash}`);
+  const sourceDocumentId = `source-${canonicalUrlHash}`;
+  const existingVersion = await env.DB.prepare(`
+    SELECT id, r2_original_key, storage_state, extraction_state
+    FROM source_document_versions
+    WHERE source_document_id = ? AND normalized_content_hash = ? AND hash_semantics_version = ?
+    ORDER BY created_at ASC, id ASC LIMIT 1
+  `).bind(sourceDocumentId, normalizedContentHash, SOURCE_HASH_SEMANTICS_VERSION).first<{
+    id: string;
+    r2_original_key: string | null;
+    storage_state: string | null;
+    extraction_state: string | null;
+  }>();
+  const sourceDocumentVersionId = existingVersion?.id
+    ?? `source-version-${canonicalUrlHash}-${SOURCE_HASH_SEMANTICS_VERSION}-${normalizedContentHash}`;
+  const extractionState = pdfExtractionStateForStorageMode(input.copyrightStorageMode);
+  const observationClassification: SourceObservationClassification = existingVersion ? "unchanged" : "substantive_content_change";
+  const r2OriginalKey = existingVersion?.r2_original_key ?? `knowledge/${canonicalUrlHash}/versions/${transportHash}/original`;
+  const idempotencyKey = `r2-put:${sourceDocumentVersionId}`;
+  const retrievedAt = input.retrievedAt ?? new Date().toISOString();
+  const diagnostics = {
+    artifact: "opaque_pdf_original",
+    parser: "none",
+    extractionState,
+    displayName: input.displayName ? input.displayName.slice(0, 255) : null,
+  };
+  const metadataHash = await sha256(JSON.stringify({ mediaKind: "pdf", displayName: input.displayName ?? null }));
+  const emptyHash = await sha256("[]");
+  const structureHash = await sha256(JSON.stringify({ mediaKind: "pdf", parser: "none" }));
+  const shouldSeedMetadata = !existingVersion;
+
+  try {
+    await env.DB.batch([
+      env.DB.prepare(`
+        INSERT OR IGNORE INTO source_documents
+          (id, canonical_url, canonical_url_hash, source_id, media_kind, admission_state, copyright_storage_mode)
+        VALUES (?, ?, ?, ?, 'pdf', 'admitted', ?)
+      `).bind(sourceDocumentId, canonicalUrl, canonicalUrlHash, input.sourceId ?? null, input.copyrightStorageMode),
+      env.DB.prepare(`
+        UPDATE source_documents
+        SET source_id = COALESCE(?, source_id), media_kind = 'pdf', admission_state = 'admitted',
+            copyright_storage_mode = ?, retrieval_state = 'available', retrieval_reason = NULL,
+            retrieval_diagnostics_json = '{}', retrieval_retryable = 0,
+            capture_state = 'captured', capture_reason = ?, capture_diagnostics_json = ?, capture_retryable = 0,
+            last_seen_at = ?, updated_at = datetime('now')
+        WHERE id = ?
+      `).bind(
+        input.sourceId ?? null, input.copyrightStorageMode,
+        extractionState === "pending" ? "pdf_original_stored_extraction_pending" : "pdf_original_stored_metadata_only",
+        JSON.stringify(diagnostics), retrievedAt, sourceDocumentId,
+      ),
+      ...(shouldSeedMetadata ? [env.DB.prepare(`
+        INSERT OR IGNORE INTO source_document_versions
+          (id, source_document_id, content_hash, transport_hash, normalized_content_hash,
+           hash_semantics_version, retrieved_url, retrieved_at, http_status, media_type,
+           byte_length, title, r2_original_key, r2_extracted_key,
+           extraction_status, extraction_method, extraction_version,
+           extraction_state, storage_state, state_reason, state_diagnostics_json, processing_retryable)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL,
+                'pending', 'none', 'kc-03h-v1', 'pending', 'private_pending', ?, ?, 0)
+      `).bind(
+        sourceDocumentVersionId, sourceDocumentId, versionContentHash, transportHash, normalizedContentHash,
+        SOURCE_HASH_SEMANTICS_VERSION, retrievedUrl, retrievedAt, input.httpStatus ?? null, input.contentType,
+        input.bytes.byteLength, input.displayName ?? null, r2OriginalKey,
+        extractionState === "pending" ? "pdf_extraction_pending" : "pdf_metadata_only",
+        JSON.stringify(diagnostics),
+      )] : []),
+      env.DB.prepare(`
+        INSERT OR IGNORE INTO source_document_version_observations
+          (id, source_document_version_id, transport_hash, normalized_content_hash,
+           hash_semantics_version, retrieved_url, retrieved_at, http_status, media_type,
+           byte_length, extraction_version, normalized_metadata_hash, normalized_blocks_hash,
+           normalized_links_hash, normalized_structure_hash, block_count, link_count,
+           heading_count, extraction_container, extraction_truncated, normalization_policy_version)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'kc-03h-v1', ?, ?, ?, ?, 0, 0, 0, 'not_applicable', 0, 'source-normalized-pdf-v2')
+      `).bind(
+        `observation-${sourceDocumentVersionId}-${transportHash}`, sourceDocumentVersionId,
+        transportHash, normalizedContentHash, SOURCE_HASH_SEMANTICS_VERSION, retrievedUrl,
+        retrievedAt, input.httpStatus ?? null, input.contentType, input.bytes.byteLength,
+        metadataHash, emptyHash, emptyHash, structureHash,
+      ),
+      env.DB.prepare(`
+        UPDATE source_documents SET current_version_id = ?, last_seen_at = ?, updated_at = datetime('now') WHERE id = ?
+      `).bind(sourceDocumentVersionId, retrievedAt, sourceDocumentId),
+      env.DB.prepare(`
+        INSERT OR IGNORE INTO knowledge_index_operations
+          (id, operation_kind, subject_type, subject_id, desired_content_hash, idempotency_key)
+        VALUES (?, 'r2_put', 'source_document_version', ?, ?, ?)
+      `).bind(`operation-${idempotencyKey}`, sourceDocumentVersionId, transportHash, idempotencyKey),
+    ]);
+  } catch {
+    throw new SourceCaptureError("The PDF metadata could not be recorded.", "database_write_failed", 500);
+  }
+
+  const mustWriteArtifact = !existingVersion || existingVersion.storage_state !== "private_stored";
+  if (mustWriteArtifact) {
+    try {
+      await env.RAW_STORE.put(r2OriginalKey, input.bytes, {
+        httpMetadata: { contentType: "application/pdf" },
+        customMetadata: {
+          artifact_kind: "source_original",
+          content_hash: transportHash,
+          source_document_id: sourceDocumentId,
+          source_document_version_id: sourceDocumentVersionId,
+          parser: "none",
+        },
+      });
+      await env.DB.batch([
+        env.DB.prepare(`
+        UPDATE source_document_versions
+          SET extraction_status = ?, extraction_state = ?, storage_state = 'private_stored', state_reason = ?, state_diagnostics_json = ?, processing_retryable = 0
+          WHERE id = ?
+        `).bind(
+          extractionState === "pending" ? "pending" : "metadata_only", extractionState,
+          extractionState === "pending" ? "pdf_extraction_pending" : "pdf_metadata_only",
+          JSON.stringify(diagnostics), sourceDocumentVersionId,
+        ),
+      ]);
+    } catch {
+      await env.DB.prepare(`
+        UPDATE source_document_versions
+        SET storage_state = 'reconciliation_required', state_reason = 'pdf_private_storage_failed',
+            state_diagnostics_json = ?, processing_retryable = 1
+        WHERE id = ?
+      `).bind(JSON.stringify({ ...diagnostics, retryable: true }), sourceDocumentVersionId).run().catch(() => undefined);
+      throw new SourceCaptureError("The PDF could not be written to private storage.", "r2_write_failed", 500);
+    }
+  }
+  if (!mustWriteArtifact) {
+    await env.DB.prepare(`
+      UPDATE source_document_versions
+      SET extraction_status = ?, extraction_state = ?, storage_state = 'private_stored',
+          state_reason = ?, state_diagnostics_json = ?, processing_retryable = 0
+      WHERE id = ?
+    `).bind(
+      extractionState === "pending" ? "pending" : "metadata_only", extractionState,
+      extractionState === "pending" ? "pdf_extraction_pending" : "pdf_metadata_only",
+      JSON.stringify(diagnostics), sourceDocumentVersionId,
+    ).run();
+  }
+
+  if (!existingVersion) {
+    try {
+      await triggerKnowledgeReview(env.DB, {
+        kind: "evidence_changed",
+        sourceDocumentIds: [sourceDocumentId],
+        sourceDocumentVersionId,
+        eventId: sourceDocumentVersionId,
+      });
+    } catch {
+      throw new SourceCaptureError("The PDF version was committed but its review trigger failed.", "review_trigger_failed", 500);
+    }
+  }
+
+  return {
+    sourceDocumentId, sourceDocumentVersionId, canonicalUrlHash,
+    contentHash: transportHash, transportHash, normalizedContentHash,
+    r2OriginalKey, extractionState, storageState: "private_stored", idempotencyKey,
+    observationClassification,
+  };
+}
+
+/** Minimal envelope check only; this is intentionally not a PDF parser. */
+export function isValidPdfEnvelope(bytes: Uint8Array): boolean {
+  if (bytes.byteLength < 8) return false;
+  const header = new TextDecoder().decode(bytes.slice(0, 5));
+  if (header !== "%PDF-") return false;
+  const tailStart = Math.max(0, bytes.byteLength - 1024);
+  const tail = new TextDecoder().decode(bytes.slice(tailStart));
+  return tail.includes("%%EOF");
 }
 
 function boundedMaximum(value: number | undefined): number {

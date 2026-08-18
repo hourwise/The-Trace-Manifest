@@ -12,7 +12,7 @@
     "deploy:worker": "wrangler deploy --config wrangler.worker.toml",
     "worker:dev": "wrangler dev --config wrangler.worker.toml --test-scheduled",
     "typecheck": "astro check && tsc --noEmit -p workers/tsconfig.json",
-    "test": "tsx workers/ingestion/__tests__/run-tests.ts && tsx tests/stabilisation.test.ts && tsx tests/ask-trace-deterministic-first.test.ts && tsx tests/source-identity-v2.test.ts && tsx tests/kc-03f-03g-document-upload-source-states.test.ts",
+    "test": "tsx workers/ingestion/__tests__/run-tests.ts && tsx tests/stabilisation.test.ts && tsx tests/ask-trace-deterministic-first.test.ts && tsx tests/source-identity-v2.test.ts && tsx tests/kc-03f-03g-document-upload-source-states.test.ts && tsx tests/kc-03h-pdf-private-capture.test.ts",
     "test:security": "node scripts/security-check.mjs",
     "test:evidence-policy": "tsx scripts/evaluate-evidence-policy.ts",
     "test:knowledge-markdown": "tsx scripts/check-knowledge-markdown.ts",

@@ -81,6 +81,7 @@ try {
   db.exec(readFileSync("db/migration-0061-normalized-content-v2.sql", "utf8"));
   db.exec(readFileSync("db/migration-0062-normalized-content-v3-reference-drift.sql", "utf8"));
   db.exec(readFileSync("db/migration-0063-kc-03f-upload-source-states.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0064-kc-03h-pdf-upload-state.sql", "utf8"));
 
   const requiredTables = [
     "ai_requests", "ai_budget_reservations", "ai_usage_ledger", "ai_quota_usage",
@@ -149,6 +150,10 @@ try {
   }
   for (const column of ["extraction_state", "storage_state", "state_reason", "state_diagnostics_json", "processing_retryable"]) {
     if (!sourceVersionColumns.has(column)) throw new Error(`Missing source version state column ${column}`);
+  }
+  const uploadIntakeSql = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'source_upload_intakes'").get()?.sql ?? "";
+  if (!uploadIntakeSql.includes("'pdf'") || !uploadIntakeSql.includes("'extraction_pending'")) {
+    throw new Error("KC-03H upload intake state contract is missing");
   }
   const backfillItemColumns = new Set(db.prepare("PRAGMA table_info(knowledge_source_backfill_items)").all().map((row) => row.name));
   for (const column of ["transport_hash", "normalized_content_hash", "hash_semantics_version"]) {
