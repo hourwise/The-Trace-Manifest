@@ -58,7 +58,8 @@ export async function matchKnowledgeImpacts(
           AND assertion.source_role IN ('evidence', 'reported_claim')
           AND assertion.evidence_treatment IN ('factual_support', 'attributed_opinion')
           AND source.admission_state = 'admitted'
-          AND version.extraction_status IN ('captured', 'extracted', 'metadata_only')
+          AND version.extraction_status IN ('captured', 'extracted')
+          AND ((version.extraction_status IN ('captured', 'extracted') AND version.extraction_state IN ('extracted', 'pending')) OR version.extraction_method = 'feed_claim_compatibility')
       )
     ORDER BY claim.id
   `).bind(...requested).all<ClaimRow>();

@@ -10,8 +10,17 @@ interface SourceRow {
   consecutive_failures: number;
 }
 
+interface UploadRow {
+  id: string; display_filename: string; media_type: string; media_kind: string;
+  content_hash: string; byte_length: number; outcome_state: string; state_reason: string | null;
+  created_at: string; source_document_id: string | null; source_document_version_id: string | null;
+  retrieval_state: string | null; extraction_state: string | null; storage_state: string | null;
+}
+
 let sources: SourceRow[] = [];
 let loadError: string | null = null;
+let uploads: UploadRow[] = [];
+let uploadLoadError: string | null = null;
 try {
   sources = (await Astro.locals.runtime.env.DB.prepare(`
     SELECT id, name, url, tier, treatment, ingestion_type, cadence_minutes, health_status,
@@ -20,6 +29,20 @@ try {
   `).all<SourceRow>()).results;
 } catch {
   loadError = "Source health is unavailable. Verify the D1 binding and schema migrations.";
+}
+try {
+  uploads = (await Astro.locals.runtime.env.DB.prepare(`
+    SELECT intake.id, intake.display_filename, intake.media_type, intake.media_kind,
+           intake.content_hash, intake.byte_length, intake.outcome_state, intake.state_reason,
+           intake.created_at, intake.source_document_id, intake.source_document_version_id,
+           document.retrieval_state, version.extraction_state, version.storage_state
+    FROM source_upload_intakes intake
+    LEFT JOIN source_documents document ON document.id = intake.source_document_id
+    LEFT JOIN source_document_versions version ON version.id = intake.source_document_version_id
+    ORDER BY intake.created_at DESC, intake.id DESC LIMIT 25
+  `).all<UploadRow>()).results;
+} catch {
+  uploadLoadError = "Document upload status is unavailable until the KC-03F/03G migration is applied.";
 }
 
 const implemented = new Set(["rss", "github_api", "arxiv_api", "hackernews_api"]);
@@ -38,6 +61,32 @@ const safeHttpUrl = (value: string): string | null => {
   <div class="wrap">
     <h1>Admin: Sources</h1>
     <p class="meta" style="margin-bottom:2rem;"><a href="/admin/jobs">Jobs</a> · <a href="/admin/review">Review</a> · <a href="/admin">Admin home</a></p>
+
+    <section class="card" style="margin-bottom:2rem;">
+      <h2>Upload ordinary source document</h2>
+      <p class="meta">Publisher-only server processing. Supported inputs are UTF-8 plain text, Markdown, and ordinary HTML up to 2 MiB. Uploads remain private source material and never publish or become accepted evidence automatically.</p>
+      <form id="source-upload-form" style="display:flex;gap:1rem;align-items:end;flex-wrap:wrap;margin-top:1rem;">
+        <label style="display:grid;gap:0.35rem;">Document file<input id="source-upload-file" name="file" type="file" accept=".txt,.text,.md,.markdown,.html,.htm,text/plain,text/markdown,text/html,application/xhtml+xml" required /></label>
+        <button type="submit">Upload for governed extraction</button>
+      </form>
+      <p id="source-upload-result" class="meta" role="status" style="margin-top:1rem;"></p>
+      {uploadLoadError ? <p class="meta">{uploadLoadError}</p> : <div style="overflow-x:auto;margin-top:1rem;">
+        <table style="width:100%;border-collapse:collapse;font-size:0.82rem;">
+          <thead><tr style="text-align:left;border-bottom:2px solid var(--border);"><th>File</th><th>Type</th><th>State</th><th>Source/version</th><th>Digest</th><th>Received</th></tr></thead>
+          <tbody>
+            {uploads.map((upload) => <tr style="vertical-align:top;border-bottom:1px solid var(--border);">
+              <td>{upload.display_filename}<br /><span class="meta">{upload.byte_length.toLocaleString("en-GB")} bytes</span></td>
+              <td><code>{upload.media_type}</code><br /><span class="meta">{upload.media_kind}</span></td>
+              <td><span class={`badge badge-${upload.outcome_state === "extracted" ? "confirmed" : upload.outcome_state === "extraction_failed" ? "disputed" : "provisional"}`}>{upload.outcome_state}</span><br /><span class="meta">{upload.state_reason ?? upload.extraction_state ?? "—"}</span></td>
+              <td class="meta">{upload.source_document_id ?? "—"}<br />{upload.source_document_version_id ?? "—"}<br />{upload.storage_state ?? "—"}</td>
+              <td class="mono">{upload.content_hash.slice(0, 16)}…</td>
+              <td class="meta">{fmt(upload.created_at)}</td>
+            </tr>)}
+            {uploads.length === 0 && <tr><td colspan="6" class="meta" style="padding:1rem;text-align:center;">No document uploads recorded.</td></tr>}
+          </tbody>
+        </table>
+      </div>}
+    </section>
 
     {loadError ? <div class="card"><p class="meta">{loadError}</p></div> : <>
       <section class="grid-3" style="margin-bottom:2rem;">
@@ -73,3 +122,30 @@ const safeHttpUrl = (value: string): string | null => {
     </>}
   </div>
 </BaseLayout>
+
+<script>
+  const form = document.querySelector<HTMLFormElement>("#source-upload-form");
+  const fileInput = document.querySelector<HTMLInputElement>("#source-upload-file");
+  const result = document.querySelector<HTMLElement>("#source-upload-result");
+  form?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!fileInput?.files?.[0] || !result) return;
+    result.textContent = "Uploading and extracting deterministically…";
+    const body = new FormData();
+    body.set("file", fileInput.files[0]);
+    try {
+      const response = await fetch("/api/admin/source-upload", {
+        method: "POST",
+        body,
+        headers: { "Idempotency-Key": crypto.randomUUID() },
+        credentials: "include",
+      });
+      const payload = await response.json() as { state?: string; reason?: string; sourceDocumentVersionId?: string; error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "Upload failed.");
+      result.textContent = `${payload.state ?? "received"}${payload.reason ? ` — ${payload.reason}` : ""}. Version: ${payload.sourceDocumentVersionId ?? "metadata-only"}.`;
+      window.setTimeout(() => window.location.reload(), 700);
+    } catch (error) {
+      result.textContent = error instanceof Error ? error.message : "Upload failed.";
+    }
+  });
+</script>

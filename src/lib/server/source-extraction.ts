@@ -34,7 +34,7 @@ export interface HtmlExtractionLink {
 }
 
 export interface HtmlExtractionDiagnostics {
-  extractionMethod: "deterministic_html_v1";
+  extractionMethod: "deterministic_html_v1" | "deterministic_plain_text_v1" | "deterministic_markdown_v1";
   inputBytes: number;
   outputCharacters: number;
   blockCount: number;
@@ -45,7 +45,7 @@ export interface HtmlExtractionDiagnostics {
   warnings: string[];
 }
 
-export interface ExtractedHtmlDocument {
+export interface ExtractedSourceDocument {
   extractionState: "extracted" | "metadata_only";
   title: string | null;
   author: string | null;
@@ -64,6 +64,9 @@ export interface ExtractedHtmlDocument {
   text: string;
   diagnostics: HtmlExtractionDiagnostics;
 }
+
+/** Compatibility name retained for the existing HTML capture/identity APIs. */
+export type ExtractedHtmlDocument = ExtractedSourceDocument;
 
 export interface HtmlExtractionOptions {
   maxTextCharacters?: number;
@@ -363,4 +366,217 @@ function decodeHtml(value: string): string {
       const codePoint = entity.toLowerCase().startsWith("x") ? Number.parseInt(entity.slice(1), 16) : Number.parseInt(entity, 10);
       return Number.isFinite(codePoint) && codePoint >= 0 && codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : "";
     });
+}
+
+/** Deterministic plain-text extraction for publisher-supplied ordinary documents. */
+export function extractPlainTextDocument(
+  body: string,
+  options: HtmlExtractionOptions = {},
+): ExtractedSourceDocument {
+  const value = body.replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n");
+  return buildTextDocument(value, options);
+}
+
+/**
+ * Deterministic Markdown extraction. Markdown is treated as source material:
+ * raw HTML, scripts, forms, and executable constructs are removed or rendered
+ * as inert text; links are retained only as untrusted metadata.
+ */
+export function extractMarkdownDocument(
+  body: string,
+  options: HtmlExtractionOptions = {},
+): ExtractedSourceDocument {
+  const value = body.replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n");
+  const maxTextCharacters = boundedPositive(options.maxTextCharacters, DEFAULT_MAX_TEXT_CHARACTERS);
+  const maxBlocks = boundedPositive(options.maxBlocks, DEFAULT_MAX_BLOCKS);
+  const blocks: HtmlExtractionBlock[] = [];
+  const headings: ExtractedSourceDocument["headings"] = [];
+  const links: HtmlExtractionLink[] = [];
+  const warnings: string[] = [];
+  const lines = value.split("\n");
+  let paragraphStart = -1;
+  let paragraphLines: string[] = [];
+  let offset = 0;
+
+  const flush = (end: number) => {
+    if (paragraphStart < 0) return;
+    const start = paragraphStart;
+    const raw = paragraphLines.join("\n");
+    const headingMatch = raw.match(/^ {0,3}(#{1,6})\s+(.+?)\s*#*\s*$/);
+    const rendered = renderMarkdownText(raw);
+    paragraphStart = -1;
+    paragraphLines = [];
+    if (!rendered) return;
+    const headingLevel = headingMatch ? headingMatch[1].length : undefined;
+    const kind: HtmlExtractionBlockKind = headingLevel ? "heading"
+      : /^ {0,3}(?:[-+*]|\d+[.)])\s+/.test(raw) ? "list_item" : "paragraph";
+    const sourceEnd = Math.max(start, end);
+    const block: HtmlExtractionBlock = {
+      kind,
+      text: rendered,
+      sourceStart: start,
+      sourceEnd,
+      locator: `markdown:${start}-${sourceEnd}`,
+      ...(headingLevel ? { headingLevel } : {}),
+    };
+    blocks.push(block);
+    if (headingLevel) headings.push({
+      level: headingLevel,
+      text: rendered,
+      sourceStart: start,
+      sourceEnd,
+      locator: block.locator,
+    });
+    for (const match of raw.matchAll(/!?\[([^\]]*)\]\(([^)\s]+)(?:\s+["'][^"']*["'])?\)/g)) {
+      const label = match[1] ?? "";
+      const href = match[2] ?? "";
+      const relative = match.index ?? 0;
+      links.push({
+        href,
+        text: renderMarkdownText(label),
+        sourceStart: start + relative,
+        sourceEnd: start + relative + match[0].length,
+        locator: `markdown:${start + relative}-${start + relative + match[0].length}`,
+      });
+    }
+  };
+
+  for (const line of lines) {
+    const lineEnd = offset + line.length;
+    if (!line.trim()) flush(lineEnd);
+    else {
+      if (paragraphStart < 0) paragraphStart = offset;
+      paragraphLines.push(line);
+    }
+    offset = lineEnd + 1;
+  }
+  flush(value.length);
+
+  if (blocks.length > maxBlocks) {
+    blocks.length = maxBlocks;
+    warnings.push(`Block output was capped at ${maxBlocks}.`);
+  }
+  let remaining = maxTextCharacters;
+  let truncated = false;
+  const retained: HtmlExtractionBlock[] = [];
+  for (const block of blocks) {
+    if (remaining <= 0) { truncated = true; break; }
+    const text = block.text.slice(0, remaining).trimEnd();
+    if (text.length < block.text.length) truncated = true;
+    if (text) retained.push({ ...block, text });
+    remaining -= text.length + (retained.length > 1 ? 2 : 0);
+  }
+  if (truncated) warnings.push("Markdown output was truncated to the configured extraction bounds.");
+  const text = retained.map((block) => block.text).join("\n\n");
+  const title = headings[0]?.text ?? null;
+  return {
+    extractionState: text ? "extracted" : title ? "metadata_only" : "metadata_only",
+    title,
+    author: null,
+    authorHandle: null,
+    publishedAt: null,
+    description: null,
+    links,
+    headings: headings.filter((heading) => retained.some((block) => block.locator === heading.locator)),
+    blocks: retained,
+    text,
+    diagnostics: {
+      extractionMethod: "deterministic_markdown_v1",
+      inputBytes: new TextEncoder().encode(value).byteLength,
+      outputCharacters: text.length,
+      blockCount: retained.length,
+      headingCount: retained.filter((block) => block.kind === "heading").length,
+      container: "document",
+      truncated,
+      removedElements: { html: countRemovedMarkdownElements(value) },
+      warnings,
+    },
+  };
+}
+
+function buildTextDocument(
+  value: string,
+  options: HtmlExtractionOptions,
+): ExtractedSourceDocument {
+  const maxTextCharacters = boundedPositive(options.maxTextCharacters, DEFAULT_MAX_TEXT_CHARACTERS);
+  const maxBlocks = boundedPositive(options.maxBlocks, DEFAULT_MAX_BLOCKS);
+  const blocks: HtmlExtractionBlock[] = [];
+  const paragraphs = /\S[\s\S]*?(?=\n\s*\n|$)/g;
+  for (const match of value.matchAll(paragraphs)) {
+    const text = match[0].trim();
+    if (!text) continue;
+    const sourceStart = match.index ?? 0;
+    const sourceEnd = sourceStart + match[0].length;
+    blocks.push({
+      kind: "paragraph",
+      text,
+      sourceStart,
+      sourceEnd,
+      locator: `text:${sourceStart}-${sourceEnd}`,
+    });
+  }
+  const warnings: string[] = [];
+  if (blocks.length > maxBlocks) {
+    blocks.length = maxBlocks;
+    warnings.push(`Block output was capped at ${maxBlocks}.`);
+  }
+  let remaining = maxTextCharacters;
+  let truncated = false;
+  const retained: HtmlExtractionBlock[] = [];
+  for (const block of blocks) {
+    if (remaining <= 0) { truncated = true; break; }
+    const text = block.text.slice(0, remaining).trimEnd();
+    if (text.length < block.text.length) truncated = true;
+    if (text) retained.push({ ...block, text });
+    remaining -= text.length + (retained.length > 1 ? 2 : 0);
+  }
+  if (truncated) warnings.push("Plain-text output was truncated to the configured extraction bounds.");
+  const text = retained.map((block) => block.text).join("\n\n");
+  return {
+    extractionState: text ? "extracted" : "metadata_only",
+    title: null,
+    author: null,
+    authorHandle: null,
+    publishedAt: null,
+    description: null,
+    links: [],
+    headings: [],
+    blocks: retained,
+    text,
+    diagnostics: {
+      extractionMethod: "deterministic_plain_text_v1",
+      inputBytes: new TextEncoder().encode(value).byteLength,
+      outputCharacters: text.length,
+      blockCount: retained.length,
+      headingCount: 0,
+      container: "document",
+      truncated,
+      removedElements: {},
+      warnings,
+    },
+  };
+}
+
+function renderMarkdownText(value: string): string {
+  return neutraliseMarkdownHtml(value)
+    .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, "$1")
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1")
+    .replace(/^ {0,3}#{1,6}\s+/, "")
+    .replace(/^\s*(?:[-+*]|\d+[.)])\s+/, "")
+    .replace(/`{1,3}/g, "")
+    .replace(/\*{1,3}|_{1,3}|~{2}/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function neutraliseMarkdownHtml(value: string): string {
+  let result = value.replace(/<!--[\s\S]*?(?:-->|$)/g, " ");
+  for (const tag of ["script", "style", "noscript", "iframe", "object", "embed", "form", "svg", "template"]) {
+    result = result.replace(new RegExp(`<${tag}\\b[^>]*>[\\s\\S]*?(?:<\\/${tag}\\s*>|$)`, "gi"), " ");
+  }
+  return result.replace(/<[^>]*>/g, " ");
+}
+
+function countRemovedMarkdownElements(value: string): number {
+  return (value.match(/<!--[\s\S]*?(?:-->|$)|<\/?[a-z][^>]*>/gi) ?? []).length;
 }

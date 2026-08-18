@@ -5,6 +5,7 @@ import { extractHtmlDocument } from "../../src/lib/server/source-extraction";
 import { extractStructuredSource } from "../../src/lib/server/source-structured-extraction";
 import { captureAdmittedSource, SourceCaptureError, normaliseSourceUrl, type SourceCaptureStorageMode } from "../../src/lib/server/source-capture";
 import { retrieveRemoteSource, SourceRetrievalError } from "../../src/lib/server/source-retrieval";
+import { recordSourceCaptureState, recordSourceRetrievalState, recordVersionExtractionState } from "../../src/lib/server/source-governance-state";
 import { hashURL } from "./dedup";
 import type { KnowledgeCaptureMessage } from "./knowledge-capture-queue";
 
@@ -62,6 +63,7 @@ export async function processKnowledgeCaptureMessage(
   `).bind(jobId).run();
 
   let structureJobId: string | null = null;
+  let capturedVersionId: string | null = null;
   try {
     const retrieved = await retrieveRemoteSource(canonicalUrl, {
       allowedContentTypes: ["text/html", "application/xhtml+xml"],
@@ -92,6 +94,7 @@ export async function processKnowledgeCaptureMessage(
         correlationId: message.correlationId,
       },
     );
+    capturedVersionId = capture.sourceDocumentVersionId;
     structureJobId = `structure-job-${capture.sourceDocumentVersionId}`;
     await env.DB.prepare(`
       INSERT OR IGNORE INTO knowledge_processing_jobs
@@ -122,6 +125,43 @@ export async function processKnowledgeCaptureMessage(
     return "completed";
   } catch (error) {
     const classified = classifyCaptureError(error);
+    if (error instanceof SourceRetrievalError) {
+      if (error.code === "content_type_rejected") {
+        await recordSourceCaptureState(env.DB, {
+          sourceDocumentId: message.sourceDocumentId,
+          state: "unsupported",
+          reason: "unsupported_remote_content_type",
+          diagnostics: { responseStatus: error.responseStatus ?? null },
+          retryable: false,
+        }).catch(() => undefined);
+      } else {
+        const retrievalState = error.code === "paywall_detected" ? "paywalled"
+          : error.code === "policy_restricted" ? "policy_restricted" : "unavailable";
+        await recordSourceRetrievalState(env.DB, {
+          sourceDocumentId: message.sourceDocumentId,
+          state: retrievalState,
+          reason: `retrieval_${error.code}`,
+          diagnostics: { responseStatus: error.responseStatus ?? null },
+          retryable: classified.retryable,
+        }).catch(() => undefined);
+      }
+    } else if (capturedVersionId) {
+      await recordVersionExtractionState(env.DB, {
+        sourceDocumentVersionId: capturedVersionId,
+        state: "extraction_failed",
+        storageState: "private_stored",
+        reason: classified.detail,
+        diagnostics: { code: classified.code },
+        retryable: classified.retryable,
+      }).catch(() => undefined);
+      await recordSourceCaptureState(env.DB, {
+        sourceDocumentId: message.sourceDocumentId,
+        state: "extraction_failed",
+        reason: classified.detail,
+        diagnostics: { code: classified.code },
+        retryable: classified.retryable,
+      }).catch(() => undefined);
+    }
     if (structureJobId) {
       await env.DB.prepare(`
         UPDATE knowledge_processing_jobs
@@ -149,7 +189,8 @@ export async function consumeKnowledgeCaptureBatch(
       message.ack();
     } catch (error) {
       const retryable = error instanceof KnowledgeCaptureConsumerError ? error.retryable : true;
-      message.retry();
+      if (retryable) message.retry();
+      else message.ack();
       console.error(JSON.stringify({ stage: "knowledge_capture_consumer", code: error instanceof KnowledgeCaptureConsumerError ? error.code : "capture_consumer_error", retryable }));
     }
   }

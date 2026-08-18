@@ -152,7 +152,7 @@ async function resolveSourceChunk(db: D1Database, candidate: KnowledgeVectorCand
   const row = await db.prepare(`
     SELECT chunk.id, chunk.source_document_version_id, chunk.start_locator, chunk.end_locator,
            chunk.embedding_state, chunk.embedding_model, chunk.embedding_version,
-           version.source_document_id, version.source_language, version.extraction_status,
+           version.source_document_id, version.source_language, version.extraction_status, version.extraction_state,
            document.admission_state
     FROM source_chunks chunk
     JOIN source_document_versions version ON version.id = chunk.source_document_version_id
@@ -161,10 +161,10 @@ async function resolveSourceChunk(db: D1Database, candidate: KnowledgeVectorCand
   `).bind(parsed.recordId).first<{
     id: string; source_document_version_id: string; start_locator: string | null; end_locator: string | null;
     embedding_state: string; embedding_model: string | null; embedding_version: string | null;
-    source_document_id: string; source_language: string | null; extraction_status: string; admission_state: string;
+    source_document_id: string; source_language: string | null; extraction_status: string; extraction_state: string; admission_state: string;
   }>();
   if (!row) return { id: candidate.id, score: candidate.score, reason: "record_not_found" };
-  if (row.admission_state !== "admitted" || !["captured", "extracted"].includes(row.extraction_status)
+  if (row.admission_state !== "admitted" || !["extracted", "pending"].includes(row.extraction_state) || !["captured", "extracted"].includes(row.extraction_status)
     || !row.start_locator || !row.end_locator || row.embedding_state !== "indexed"
     || row.embedding_model !== KC09_EMBEDDING_POLICY.embeddingModel
     || row.embedding_version !== KC09_EMBEDDING_POLICY.policyVersion) {
@@ -199,6 +199,7 @@ async function resolveCanonicalClaim(db: D1Database, candidate: KnowledgeVectorC
       AND assertion.evidence_treatment NOT IN ('discovery_only', 'internal_synthesis')
       AND document.admission_state = 'admitted'
       AND version.extraction_status IN ('captured', 'extracted')
+      AND ((version.extraction_status IN ('captured', 'extracted') AND version.extraction_state IN ('extracted', 'pending')) OR version.extraction_method = 'feed_claim_compatibility')
     ORDER BY CASE WHEN assertion.source_role = 'evidence' THEN 0 ELSE 1 END, assertion.reviewed_at DESC
     LIMIT 1
   `).bind(parsed.recordId).first<{

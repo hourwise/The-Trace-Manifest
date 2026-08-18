@@ -136,7 +136,9 @@ async function reconcileR2Put(
 
   await env.DB.prepare(`
     UPDATE source_document_versions
-    SET extraction_status = CASE WHEN extraction_status = 'pending' THEN 'captured' ELSE extraction_status END
+    SET extraction_status = CASE WHEN extraction_status = 'pending' THEN 'captured' ELSE extraction_status END,
+        extraction_state = CASE WHEN extraction_state = 'pending' THEN 'extracted' ELSE extraction_state END,
+        storage_state = CASE WHEN storage_state IN ('not_stored', 'private_pending') THEN 'private_stored' ELSE storage_state END
     WHERE id = ?
   `).bind(version.id).run();
   return markCompleted(env, operation, trigger, "r2_object_attached");

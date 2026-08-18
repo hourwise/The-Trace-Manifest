@@ -128,6 +128,7 @@ export async function retrievePublishedEvidence(
       AND ca.evidence_treatment NOT IN ('discovery_only', 'internal_synthesis')
       AND cc.current_state NOT IN ('corrected', 'superseded', 'retired')
       AND (legacy_map.assertion_id IS NOT NULL OR sv.id IS NOT NULL)
+      AND (sv.id IS NULL OR (sv.extraction_status IN ('captured', 'extracted') AND sv.extraction_state IN ('extracted', 'pending')) OR sv.extraction_method = 'feed_claim_compatibility')
       AND (${predicates})
     ORDER BY is_disputed ASC,
       CASE s.tier WHEN 'A' THEN 0 WHEN 'B' THEN 1 ELSE 2 END,
@@ -367,6 +368,7 @@ export async function retrieveApprovedKnowledge(
         AND ca.evidence_treatment <> 'internal_synthesis'
         AND cc.current_state NOT IN ('corrected', 'superseded', 'retired')
         AND sd.admission_state = 'admitted'
+        AND ((sv.extraction_status IN ('captured', 'extracted') AND sv.extraction_state IN ('extracted', 'pending')) OR sv.extraction_method = 'feed_claim_compatibility')
         AND ca.start_locator IS NOT NULL AND ca.end_locator IS NOT NULL
         AND chunk.start_locator IS NOT NULL AND chunk.end_locator IS NOT NULL
       ORDER BY kda.section_key, ca.id

@@ -114,6 +114,7 @@ async function allCandidates(db: D1Database, limit: number): Promise<KnowledgeEm
     JOIN source_documents document ON document.id = version.source_document_id
     WHERE document.admission_state = 'admitted'
       AND version.extraction_status IN ('captured', 'extracted')
+      AND version.extraction_state IN ('extracted', 'pending')
       AND chunk.start_locator IS NOT NULL AND chunk.end_locator IS NOT NULL
       AND length(chunk.text_excerpt) > 0
       AND (chunk.embedding_state <> 'indexed'

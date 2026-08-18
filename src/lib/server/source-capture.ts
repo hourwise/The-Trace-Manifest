@@ -184,16 +184,30 @@ export async function captureAdmittedSource(
       env.DB.prepare(`
         UPDATE source_documents
         SET source_id = COALESCE(?, source_id), admission_state = 'admitted',
-            copyright_storage_mode = ?, last_seen_at = ?, updated_at = datetime('now')
+            copyright_storage_mode = ?, retrieval_state = 'available', retrieval_reason = NULL,
+            retrieval_diagnostics_json = '{}', retrieval_retryable = 0,
+            capture_state = ?, capture_reason = ?, capture_diagnostics_json = ?, capture_retryable = 0,
+            last_seen_at = ?, updated_at = datetime('now')
         WHERE id = ?
-      `).bind(input.sourceId ?? null, input.copyrightStorageMode, retrievedAt, sourceDocumentId),
+      `).bind(
+        input.sourceId ?? null, input.copyrightStorageMode,
+        input.extraction.extractionState === "extracted" ? "captured" : "metadata_only",
+        input.extraction.extractionState === "extracted" ? null : "no_usable_extracted_text",
+        JSON.stringify({ warnings: input.extraction.diagnostics.warnings }),
+        retrievedAt, sourceDocumentId,
+      ),
       ...(existingVersion ? [] : [env.DB.prepare(`
         INSERT OR IGNORE INTO source_document_versions
           (id, source_document_id, content_hash, transport_hash, normalized_content_hash,
            hash_semantics_version, retrieved_url, retrieved_at, http_status, media_type,
            byte_length, title, author, published_at, r2_original_key, r2_extracted_key,
-           extraction_status, extraction_method, extraction_version)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           extraction_status, extraction_method, extraction_version,
+           extraction_state, storage_state, state_reason, state_diagnostics_json, processing_retryable)
+        VALUES (
+          ?, ?, ?, ?, ?, ?, ?, ?,
+          ?, ?, ?, ?, ?, ?, ?, ?,
+          ?, ?, ?, ?, ?, ?, ?, ?
+        )
       `).bind(
         sourceDocumentVersionId, sourceDocumentId, versionContentHash, transportHash, normalizedContentHash,
         SOURCE_HASH_SEMANTICS_VERSION, retrievedUrl, retrievedAt,
@@ -201,6 +215,11 @@ export async function captureAdmittedSource(
         input.extraction.title, input.extraction.author, input.extraction.publishedAt,
         r2OriginalKey, r2ExtractedKey, extractionStatus,
         input.extraction.diagnostics.extractionMethod, policyVersionFor(input.mediaKind),
+        input.extraction.extractionState === "extracted" ? "extracted" : "metadata_only",
+        r2OriginalKey ? "private_stored" : "metadata_only",
+        input.extraction.extractionState === "extracted" ? null : "no_usable_extracted_text",
+        JSON.stringify({ warnings: input.extraction.diagnostics.warnings }),
+        0,
       )]),
       env.DB.prepare(`
         INSERT OR IGNORE INTO source_document_version_observations

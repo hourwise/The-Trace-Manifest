@@ -103,6 +103,8 @@ interface CitationRow {
   source_document_id: string | null;
   source_language: string | null;
   extraction_status: string | null;
+  extraction_state: string | null;
+  extraction_method: string | null;
   retrieved_at: string | null;
   canonical_url: string | null;
   document_admission: string | null;
@@ -125,7 +127,8 @@ function classify(citation: KnowledgeCitationInput, row: CitationRow | null): Kn
   if (!row.version_id || row.version_id !== citation.sourceDocumentVersionId || row.assertion_version_id !== citation.sourceDocumentVersionId) {
     return "source_version_mismatch";
   }
-  if (!row.extraction_status || !["captured", "extracted"].includes(row.extraction_status)) return "version_not_eligible";
+  if (!row.extraction_status || !["captured", "extracted"].includes(row.extraction_status)
+    || (row.extraction_state !== "extracted" && row.extraction_state !== "pending" && row.extraction_method !== "feed_claim_compatibility")) return "version_not_eligible";
   if (!row.chunk_id) return "source_chunk_not_found";
   if (row.chunk_id !== citation.sourceChunkId || row.assertion_chunk_id !== citation.sourceChunkId || row.chunk_version_id !== citation.sourceDocumentVersionId) {
     return "source_chunk_mismatch";
@@ -181,7 +184,7 @@ export async function resolveKnowledgeCitations(
              assertion.provenance_group_id, assertion.reviewer_state,
              assertion.reviewed_by, assertion.reviewed_at,
              version.id AS version_id, version.source_document_id,
-             version.source_language, version.extraction_status, version.retrieved_at,
+             version.source_language, version.extraction_status, version.extraction_state, version.extraction_method, version.retrieved_at,
              document.canonical_url, document.admission_state AS document_admission,
              chunk.id AS chunk_id, chunk.source_document_version_id AS chunk_version_id,
              chunk.start_locator AS chunk_start, chunk.end_locator AS chunk_end,

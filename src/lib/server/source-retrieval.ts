@@ -4,6 +4,9 @@
 export type SourceRetrievalErrorCode =
   | "url_ineligible"
   | "redirect_rejected"
+  | "source_unavailable"
+  | "paywall_detected"
+  | "policy_restricted"
   | "response_unavailable"
   | "response_status_rejected"
   | "content_type_rejected"
@@ -25,6 +28,7 @@ export class SourceRetrievalError extends Error {
     message: string,
     readonly status: 400 | 422 | 503,
     readonly code: SourceRetrievalErrorCode,
+    readonly responseStatus?: number,
   ) {
     super(message);
     this.name = "SourceRetrievalError";
@@ -215,8 +219,17 @@ export async function retrieveRemoteSource(
 
       if (!response.ok) {
         await cancelResponse(response);
-        await emitAudit(options, { phase: "rejected", code: "response_status_rejected", redirectCount, responseStatus: response.status });
-        throw new SourceRetrievalError("The URL did not return an eligible public response.", 422, "response_status_rejected");
+        const code: SourceRetrievalErrorCode = response.status === 404 || response.status === 410
+          ? "source_unavailable"
+          : response.status === 402
+            ? "paywall_detected"
+            : response.status === 451
+              ? "policy_restricted"
+              : response.status >= 500
+                ? "response_unavailable"
+                : "response_status_rejected";
+        await emitAudit(options, { phase: "rejected", code, redirectCount, responseStatus: response.status });
+        throw new SourceRetrievalError("The URL did not return an eligible public response.", response.status >= 500 ? 503 : 422, code, response.status);
       }
       const contentType = (response.headers.get("Content-Type") ?? "").split(";", 1)[0].trim().toLowerCase();
       if (!options.allowedContentTypes.includes(contentType)) {

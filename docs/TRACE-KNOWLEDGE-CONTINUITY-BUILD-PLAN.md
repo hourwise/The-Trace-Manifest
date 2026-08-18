@@ -1,6 +1,6 @@
 # TRACE Knowledge Continuity and Story Memory Build Plan
 
-**Status:** Canonical implementation plan (KC-02, KC-03A–E, KC-04A–F, KC-05A–G, KC-06A–E, KC-07A–F, KC-08A–H, KC-09A–J, and KC-10A complete locally; Preview rollout and first bounded run completed against an empty corpus)
+**Status:** Canonical implementation plan (KC-02, KC-03A–G, KC-04A–F, KC-05A–G, KC-06A–E, KC-07A–F, KC-08A–H, KC-09A–J, and KC-10A complete locally; Preview rollout and first bounded run completed against an empty corpus)
 
 **Date:** 24 July 2026
 
@@ -630,19 +630,19 @@ Exit: current public pages and Ask TRACE no longer overstate independence, repro
 
 Exit: additive migrations pass locally and in Preview without publishing or rewriting existing records. Evidence: [`kc-02-schema-foundation-evidence.md`](audit/kc-02-schema-foundation-evidence.md).
 
-### KC-03 — Safe content absorption (complete; KC-03A–E complete)
+### KC-03 — Safe content absorption (complete; KC-03A–G complete)
 
 - [x] **KC-03A:** Refactor the safe triage URL fetcher into a shared server-side retrieval service with URL admission, redirect revalidation, time/size limits, content preflight, and audit. The service is not yet a capture consumer or persistence path; KC-03B–D must use it only after source admission.
 - [x] **KC-03B:** Add bounded deterministic HTML main-content extraction with title, author, publication date, headings, text, source locators, and extraction diagnostics. The shared triage wrapper uses this parser; no extracted content is persisted, queued, AI-processed, or promoted by this task.
 - [x] **KC-03C:** Store permitted immutable originals/extractions in private R2 and metadata/hashes in D1, preserving the reusable boundary that large source bodies and later ADR 0019 artefacts/logs do not enter D1. Capture is content-addressed and records an idempotent R2 reconciliation operation; it does not connect feed ingestion or Queue production yet.
 - [x] **KC-03D:** Connect RSS/feed items to admitted source documents and enqueue bounded, idempotent capture jobs after feed-item admission, never before. Preview has the producer binding; production remains unbound until a reviewed capture consumer and deployment gate exist.
 - [x] **KC-03E:** Add the Queue capture consumer and publisher-only manual URL capture using the same retrieval, extraction, and storage pipeline. Preview has bounded retry/DLQ consumer configuration; production remains unbound pending a deployment gate.
-- [ ] **KC-03F:** Add publisher-only document upload for supported text/HTML/Markdown inputs, with type, size, retention, and untrusted-content controls.
-- [ ] **KC-03G:** Add explicit states for unavailable, paywalled, robots/policy restricted, unsupported, extraction failed, and metadata-only sources.
+- [x] **KC-03F:** Add publisher-only document upload for supported text/HTML/Markdown inputs, with type, size, retention, and untrusted-content controls. The upload reuses the canonical source/version, private artifact, deterministic extraction/chunk, reconciliation, audit, and review-gated candidate paths; it cannot publish or establish accepted evidence.
+- [x] **KC-03G:** Add explicit retrieval, capture, extraction, and storage states for unavailable, paywalled, robots/policy restricted, unsupported, extraction failed, and metadata-only sources, with durable diagnostics, retryability, and fail-closed downstream eligibility.
 - [ ] **KC-03H:** PDF v1 stores the permitted original privately in R2 with metadata and hash, and records `extraction_pending` or `metadata_only`; it does not add a parser to the main ingestion Worker.
 - [ ] **KC-03I:** Run a separate PDF v2 parser/provider spike for accuracy, memory, security, and cost. It must pass before PDF text enters claim extraction, but it must not block ordinary HTML, Markdown, or plain-text capture.
 
-Exit: one admitted feed article and one editor-supplied ordinary text document can be captured, versioned, retrieved privately, and audited without entering public evidence automatically; PDF remains explicitly metadata-only or pending until its spike passes. KC-03A evidence: [`kc-03a-shared-source-retrieval-evidence.md`](audit/kc-03a-shared-source-retrieval-evidence.md). KC-03B evidence: [`kc-03b-html-extraction-evidence.md`](audit/kc-03b-html-extraction-evidence.md). KC-03C evidence: [`kc-03c-private-source-capture-evidence.md`](audit/kc-03c-private-source-capture-evidence.md). KC-03D evidence: [`kc-03d-feed-capture-queue-evidence.md`](audit/kc-03d-feed-capture-queue-evidence.md). KC-03E evidence: [`kc-03e-capture-consumer-manual-url-evidence.md`](audit/kc-03e-capture-consumer-manual-url-evidence.md).
+Exit: one admitted feed article and one editor-supplied ordinary text document can be captured, versioned, retrieved privately, and audited without entering public evidence automatically; unsupported/PDF material is explicitly metadata-only and no PDF parser is enabled. KC-03A evidence: [`kc-03a-shared-source-retrieval-evidence.md`](audit/kc-03a-shared-source-retrieval-evidence.md). KC-03B evidence: [`kc-03b-html-extraction-evidence.md`](audit/kc-03b-html-extraction-evidence.md). KC-03C evidence: [`kc-03c-private-source-capture-evidence.md`](audit/kc-03c-private-source-capture-evidence.md). KC-03D evidence: [`kc-03d-feed-capture-queue-evidence.md`](audit/kc-03d-feed-capture-queue-evidence.md). KC-03E evidence: [`kc-03e-capture-consumer-manual-url-evidence.md`](audit/kc-03e-capture-consumer-manual-url-evidence.md). KC-03F/G evidence: [`kc-03f-03g-document-upload-source-states-evidence.md`](audit/kc-03f-03g-document-upload-source-states-evidence.md).
 
 ### KC-04 — Structured extraction and source summaries (complete; KC-04A–F complete)
 

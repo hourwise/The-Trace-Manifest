@@ -79,6 +79,8 @@ try {
   db.exec(readFileSync("db/migration-0059-source-version-hash-semantics.sql", "utf8"));
   db.exec(readFileSync("db/migration-0060-source-identity-component-diagnostics.sql", "utf8"));
   db.exec(readFileSync("db/migration-0061-normalized-content-v2.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0062-normalized-content-v3-reference-drift.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0063-kc-03f-upload-source-states.sql", "utf8"));
 
   const requiredTables = [
     "ai_requests", "ai_budget_reservations", "ai_usage_ledger", "ai_quota_usage",
@@ -95,6 +97,7 @@ try {
     "knowledge_source_backfill_inventory_snapshots", "knowledge_source_backfill_inventory_authority",
     "knowledge_source_backfill_attempts",
     "source_document_version_observations",
+    "source_upload_intakes",
     "knowledge_extraction_runs", "knowledge_extraction_run_outputs",
     "knowledge_extraction_reviews",
     "knowledge_claim_match_candidates",
@@ -129,6 +132,7 @@ try {
     if (!embeddingRunColumns.has(column)) throw new Error(`Missing embedding run counter column ${column}`);
   }
   const sourceVersionColumns = new Set(db.prepare("PRAGMA table_info(source_document_versions)").all().map((row) => row.name));
+  const sourceDocumentColumns = new Set(db.prepare("PRAGMA table_info(source_documents)").all().map((row) => row.name));
   for (const column of ["transport_hash", "normalized_content_hash", "hash_semantics_version"]) {
     if (!sourceVersionColumns.has(column)) throw new Error(`Missing source version hash column ${column}`);
   }
@@ -139,6 +143,12 @@ try {
     "normalization_policy_version",
   ]) {
     if (!observationColumns.has(column)) throw new Error(`Missing source identity diagnostic column ${column}`);
+  }
+  for (const column of ["retrieval_state", "retrieval_reason", "retrieval_diagnostics_json", "retrieval_retryable", "capture_state", "capture_reason", "capture_diagnostics_json", "capture_retryable"]) {
+    if (!sourceDocumentColumns.has(column)) throw new Error(`Missing source document state column ${column}`);
+  }
+  for (const column of ["extraction_state", "storage_state", "state_reason", "state_diagnostics_json", "processing_retryable"]) {
+    if (!sourceVersionColumns.has(column)) throw new Error(`Missing source version state column ${column}`);
   }
   const backfillItemColumns = new Set(db.prepare("PRAGMA table_info(knowledge_source_backfill_items)").all().map((row) => row.name));
   for (const column of ["transport_hash", "normalized_content_hash", "hash_semantics_version"]) {
