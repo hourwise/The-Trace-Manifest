@@ -10,6 +10,8 @@ interface EvidenceRow {
   source_tier: string;
   source_treatment: string;
   claim_id: string;
+  canonical_claim_id?: string;
+  source_role?: "evidence" | "reported_claim" | "discovery_context" | "internal_synthesis";
   claim_text: string;
   evidence_quality: string;
   is_disputed: number;
@@ -20,6 +22,13 @@ interface EvidenceRow {
   observed_at: string;
   source_published_at: string | null;
   story_published_at: string | null;
+  source_document_id?: string | null;
+  source_document_version_id?: string | null;
+  source_chunk_id?: string | null;
+  start_locator?: string | null;
+  end_locator?: string | null;
+  provenance_group_id?: string | null;
+  directness?: "direct" | "indirect" | "derivative" | "unknown" | null;
 }
 
 const STOP_WORDS = new Set([
@@ -80,7 +89,8 @@ export async function retrievePublishedEvidence(
            COALESCE(sd.canonical_url, fi.url) AS source_url,
            COALESCE(s.tier, legacy_s.tier, 'C') AS source_tier,
            COALESCE(s.treatment, legacy_s.treatment, 'unclassified') AS source_treatment,
-           ca.id AS claim_id, cc.canonical_text AS claim_text,
+           ca.id AS claim_id, ca.canonical_claim_id AS canonical_claim_id, ca.source_role,
+           cc.canonical_text AS claim_text,
            CASE cc.current_state WHEN 'disputed' THEN 'disputed'
              WHEN 'corrected' THEN 'disputed' WHEN 'superseded' THEN 'disputed'
              ELSE 'unrated' END AS evidence_quality,
@@ -88,7 +98,10 @@ export async function retrievePublishedEvidence(
            ca.relationship, ca.assertion_text AS evidence_summary,
            COALESCE(fi.title, sv.title, cc.canonical_text) AS item_title,
            fi.content_excerpt, fi.fetched_at AS observed_at,
-           fi.published_at AS source_published_at, sc.published_at AS story_published_at
+           fi.published_at AS source_published_at, sc.published_at AS story_published_at,
+           sd.id AS source_document_id, ca.source_document_version_id,
+           ca.source_chunk_id, ca.start_locator, ca.end_locator,
+           ca.provenance_group_id, ca.directness
     FROM claim_assertions ca
     JOIN canonical_claims cc ON cc.id = ca.canonical_claim_id
     JOIN story_claims story_claim ON story_claim.canonical_claim_id = cc.id
@@ -110,6 +123,9 @@ export async function retrievePublishedEvidence(
       AND (fi.id IS NULL OR fi.ingestion_status = 'published')
       AND ca.admission_state = 'admitted'
       AND ca.reviewer_state = 'accepted'
+      AND ca.freshness_state = 'current'
+      AND ca.source_role IN ('evidence', 'reported_claim')
+      AND ca.evidence_treatment NOT IN ('discovery_only', 'internal_synthesis')
       AND cc.current_state NOT IN ('corrected', 'superseded', 'retired')
       AND (legacy_map.assertion_id IS NOT NULL OR sv.id IS NOT NULL)
       AND (${predicates})
@@ -132,11 +148,16 @@ export async function retrievePublishedEvidence(
     return {
       sourceId: `source:${row.source_id}`,
       sourceKind,
-      sourceRole: sourceRoleFor(sourceKind),
+      sourceRole: row.source_role === "reported_claim"
+        ? "reported_claim"
+        : row.source_role === "evidence"
+          ? "evidence"
+          : sourceRoleFor(sourceKind),
       admissionState: "admitted",
       freshnessState: freshnessStateFor(row.observed_at),
       independentEvidenceWeight: independentEvidenceWeightFor(sourceKind),
       claimId: `claim:${row.claim_id}`,
+      canonicalClaimId: row.canonical_claim_id ?? row.claim_id,
       text,
       sourceClassification: `Tier ${row.source_tier}; ${row.source_treatment}`,
       sourceName: row.source_name,
@@ -146,6 +167,12 @@ export async function retrievePublishedEvidence(
       trustNotes: `Evidence quality: ${row.evidence_quality}`,
       relationship: row.relationship,
       isDisputed: Boolean(row.is_disputed),
+      directness: row.directness ?? "unknown",
+      provenanceGroupIds: row.provenance_group_id ? [row.provenance_group_id] : [],
+      sourceDocumentVersionId: row.source_document_version_id ?? undefined,
+      sourceChunkId: row.source_chunk_id ?? undefined,
+      startLocator: row.start_locator ?? undefined,
+      endLocator: row.end_locator ?? undefined,
     };
   });
 }
@@ -238,6 +265,8 @@ interface KnowledgeAssertionEvidenceRow {
   chunk_start_locator: string | null;
   chunk_end_locator: string | null;
   is_disputed: number;
+  provenance_group_id: string | null;
+  directness: "direct" | "indirect" | "derivative" | "unknown" | null;
 }
 
 function boundaryReached(value: string | null | undefined, now = Date.now()): boolean {
@@ -310,7 +339,8 @@ export async function retrieveApprovedKnowledge(
       SELECT ca.id AS assertion_id, cc.id AS canonical_claim_id, cc.canonical_text,
              ca.assertion_text, ca.relationship, ca.source_role, ca.evidence_treatment,
              ca.source_document_version_id, ca.source_chunk_id, ca.start_locator,
-             ca.end_locator, sv.retrieved_at, sv.published_at, sv.retrieved_url,
+             ca.end_locator, ca.provenance_group_id, ca.directness,
+             sv.retrieved_at, sv.published_at, sv.retrieved_url,
              sd.canonical_url, sd.id AS source_document_id, s.name AS source_name,
              s.tier AS source_tier, s.treatment AS source_treatment,
              chunk.text_excerpt AS chunk_text,
@@ -406,6 +436,7 @@ export async function retrieveApprovedKnowledge(
         freshnessState: "current",
         independentEvidenceWeight: independentEvidenceWeightFor(sourceKind),
         claimId: `claim:${assertion.assertion_id}`,
+        canonicalClaimId: assertion.canonical_claim_id,
         text: [
           `Inherited knowledge claim: ${cleanEvidenceText(assertion.canonical_text, 700)}`,
           `Assertion relationship: ${assertion.relationship}.`,
@@ -420,6 +451,8 @@ export async function retrieveApprovedKnowledge(
         trustNotes: `Inherited from TRACE Knowledge ${row.id}; assertion ${assertion.assertion_id}; locator ${locator}.`,
         relationship: assertion.relationship,
         isDisputed: Boolean(assertion.is_disputed),
+        provenanceGroupIds: assertion.provenance_group_id ? [assertion.provenance_group_id] : [],
+        directness: assertion.directness ?? "unknown",
         externalEvidenceResolved: true,
         assertionId: assertion.assertion_id,
         sourceDocumentVersionId: assertion.source_document_version_id,

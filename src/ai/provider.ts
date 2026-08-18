@@ -31,8 +31,30 @@ export interface TraceAnswerInput {
   taskType: "ask_trace";
   question: string;
   evidenceExcerpts: EvidenceExcerpt[];
+  /** Application-owned KC-09 decision. The provider may only render it. */
+  decision: TraceAnswerDecision;
   timeWindow?: { from?: string; to?: string };
   maxOutputTokens: number;
+}
+
+export interface TraceAnswerDecision {
+  evidenceMode: "knowledge" | "researched" | "insufficient" | "out_of_scope" | "refused";
+  conclusionMode: "supported" | "qualified_lean" | "multiple_positions" | "insufficient_evidence";
+  confidence: "high" | "medium" | "low" | "insufficient_evidence";
+  confidenceScore: number;
+  confidenceReasons: string[];
+  leanPositionId: string | null;
+  positionIds: string[];
+  positions: TraceAnswerPosition[];
+  competitions: Array<{
+    leftPositionId: string;
+    rightPositionId: string;
+    relationships: string[];
+  }>;
+  evidenceIds: string[];
+  claimIds: string[];
+  assertionIds: string[];
+  whatCouldChange: string[];
 }
 
 export interface TraceEditorialInput {
@@ -85,6 +107,10 @@ export interface EvidenceExcerpt {
   startLocator?: string;
   endLocator?: string;
   knowledgeDocumentId?: string;
+  /** KC-09F/G application-owned grouping metadata. */
+  canonicalClaimId?: string;
+  provenanceGroupIds?: string[];
+  directness?: "direct" | "indirect" | "derivative" | "unknown";
 }
 
 // ============================================================

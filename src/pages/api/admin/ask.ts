@@ -11,6 +11,7 @@ import type { APIRoute } from "astro";
 import { buildConfig } from "../../../ai/config";
 import { askTrace, hashPrivateIdentifier } from "../../../ai/trace-model-gateway";
 import { retrievePublishedEvidence, retrieveApprovedKnowledge } from "../../../lib/server/ask-evidence";
+import { buildAskTraceDecisionPacket } from "../../../lib/server/ask-trace-decision";
 import { authenticateAccessRequest, type AccessEnvironment } from "../../../security/access-auth";
 
 export const prerender = false;
@@ -116,36 +117,6 @@ export const POST: APIRoute = async ({ request, locals }) => {
   const uniqueKnowledge = knowledgeEvidence.filter((e) => !seenSourceIds.has(e.sourceId));
   const evidence = [...storyEvidence, ...uniqueKnowledge];
 
-  if (evidence.length === 0) {
-    // ADR 0017: record the unanswered question before returning.
-    await recordQuestionGap(env.DB, question, "knowledge_missing");
-    return Response.json({
-      answer: "No published evidence matches your question. Try broader terms, or publish relevant stories first via the Review queue.",
-      evidenceMode: "insufficient",
-      conclusionMode: "insufficient_evidence",
-      directAnswer: "No published evidence matches this question.",
-      lean: null,
-      whyLean: "No defensible lean was selected.",
-      positions: [],
-      sourceSummaries: [],
-      keyPoints: [],
-      claims: [],
-      citations: [],
-      confidence: "insufficient_evidence",
-      confidenceScore: 0,
-      confidenceReasons: ["No published evidence matched the question terms."],
-      limitations: ["No published evidence matched the question terms."],
-      unresolvedQuestions: [],
-      freshestObservedAt: null,
-      hasMaterialDisagreement: false,
-      disagreements: [],
-      caveats: ["The knowledge base has no published stories with claims matching these search terms."],
-      whatCouldChange: "Publishing relevant stories with extracted claims would make an answer possible.",
-      requestId: `admin_ask_${crypto.randomUUID()}`,
-      nonAnswer: true,
-    }, { headers: { "Cache-Control": "no-store" } });
-  }
-
   const requestId = `admin_ask_${crypto.randomUUID()}`;
   const secret = env.TRACE_INTERNAL_SERVICE_SECRET ?? "admin-research";
   const visitorSecret = env.TRACE_VISITOR_HASH_SECRET ?? secret;
@@ -157,6 +128,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
     questionHash: await hashPrivateIdentifier(`admin-q:${visitorSecret}:${question.toLowerCase()}`),
     question,
     evidenceExcerpts: evidence,
+    decisionPacket: await buildAskTraceDecisionPacket(env.DB, evidence),
     adminOverride: true,
   });
 

@@ -716,6 +716,13 @@ Exit: a manually entered knowledge page can answer through its inherited externa
 
 Exit: Ask TRACE can return the ADR 0016 evidence mode plus supported, qualified-lean, multiple-position, and insufficient-evidence conclusions with assertion-level citations and source summaries.
 
+The local Ask TRACE gateway integration now consumes the KC-09F/G decision
+packet before model invocation. Insufficient, refused, and out-of-scope
+responses use the durable no-model path; supported, qualified-lean, and
+multiple-position responses retain bounded synthesis only after the
+application has fixed the evidence, conclusion, confidence, position, lean,
+and citation universe. See [`ask-trace-deterministic-first-inference-boundary.md`](audit/ask-trace-deterministic-first-inference-boundary.md).
+
 ### KC-10 — Knowledge-impact proposals and revisions
 
 - [x] **KC-10A:** Match new accepted claims to approved knowledge documents, Guides, model profiles, and earlier stories with the bounded, deterministic, read-only `kc-10a-v1` matcher. Eligibility re-checks accepted/admitted/current claim evidence, publication state, hard expiry, and open change proposals; no proposals or revisions are written. See [`docs/audit/kc-10a-knowledge-impact-matching-evidence.md`](audit/kc-10a-knowledge-impact-matching-evidence.md).

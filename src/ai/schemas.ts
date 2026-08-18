@@ -8,7 +8,7 @@ import type {
 } from "./provider";
 import {
   independentEvidenceWeightFor, isKnownAdmissionState, isKnownFreshnessState,
-  isKnownSourceKind, sourceRoleFor,
+  isKnownSourceKind, isTraceSourceKind, sourceRoleFor,
 } from "./task-policy";
 
 // ============================================================
@@ -69,10 +69,12 @@ export function validateEvidenceExcerpt(v: unknown): v is EvidenceExcerpt {
     "observedAt", "publishedAt", "trustNotes", "relationship", "isDisputed",
     "externalEvidenceResolved", "assertionId", "sourceDocumentVersionId", "sourceChunkId",
     "startLocator", "endLocator", "knowledgeDocumentId",
+    "canonicalClaimId", "provenanceGroupIds", "directness",
   ])
     && isString(e.sourceId, 128)
     && isKnownSourceKind(e.sourceKind)
-    && e.sourceRole === sourceRoleFor(e.sourceKind)
+    && (e.sourceRole === sourceRoleFor(e.sourceKind)
+      || (e.sourceRole === "reported_claim" && !isTraceSourceKind(e.sourceKind)))
     && isKnownAdmissionState(e.admissionState)
     && isKnownFreshnessState(e.freshnessState)
     && e.independentEvidenceWeight === independentEvidenceWeightFor(e.sourceKind)
@@ -92,7 +94,10 @@ export function validateEvidenceExcerpt(v: unknown): v is EvidenceExcerpt {
     && isOptionalString(e.sourceChunkId, 128)
     && isOptionalString(e.startLocator, 500)
     && isOptionalString(e.endLocator, 500)
-    && isOptionalString(e.knowledgeDocumentId, 128);
+    && isOptionalString(e.knowledgeDocumentId, 128)
+    && isOptionalString(e.canonicalClaimId, 128)
+    && (e.provenanceGroupIds === undefined || isStringArray(e.provenanceGroupIds, 32))
+    && (e.directness === undefined || ["direct", "indirect", "derivative", "unknown"].includes(e.directness as string));
 }
 
 export function validateEvidenceExcerpts(excerpts: unknown, minimum = 0): ValidationResult {
@@ -118,7 +123,7 @@ export function validateAskTraceInput(input: unknown): ValidationResult {
 
   if (i.taskType !== "ask_trace") return fail("taskType must be 'ask_trace'");
   if (!isString(i.question, 1000)) return fail("question is required, max 1000 characters");
-  const evResult = validateEvidenceExcerpts(i.evidenceExcerpts, 1);
+  const evResult = validateEvidenceExcerpts(i.evidenceExcerpts, 0);
   if (!evResult.valid) return evResult;
   if (i.timeWindow !== undefined) {
     if (!i.timeWindow || typeof i.timeWindow !== "object" || Array.isArray(i.timeWindow)) {

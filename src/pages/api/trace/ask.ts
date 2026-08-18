@@ -2,6 +2,7 @@ import type { APIRoute } from "astro";
 import { buildConfig } from "../../../ai/config";
 import { askTrace, hashPrivateIdentifier, type TraceAIRuntimeEnvironment } from "../../../ai/trace-model-gateway";
 import { retrievePublishedEvidence, retrieveApprovedKnowledge } from "../../../lib/server/ask-evidence";
+import { buildAskTraceDecisionPacket } from "../../../lib/server/ask-trace-decision";
 import { corsHeaders, isAllowedOrigin, type OriginPolicyEnvironment } from "../../../security/origin-policy";
 
 export const prerender = false;
@@ -138,6 +139,7 @@ export async function handleAskRequest(request: Request, env: AskEnvironment): P
 
   let result;
   try {
+    const decisionPacket = await buildAskTraceDecisionPacket(env.DB, evidence);
     result = await askTrace(env, {
       requestId,
       idempotencyKeyHash,
@@ -145,6 +147,7 @@ export async function handleAskRequest(request: Request, env: AskEnvironment): P
       questionHash,
       question: validation.data.question,
       evidenceExcerpts: evidence,
+      decisionPacket,
     });
   } catch {
     console.error(JSON.stringify({ message: "Ask TRACE request failed closed", requestId }));

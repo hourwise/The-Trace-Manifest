@@ -106,15 +106,17 @@ export function selectKnowledgeConclusion(
   const noAnswerMode = input.evidenceMode === "insufficient" || input.evidenceMode === "out_of_scope" || input.evidenceMode === "refused";
   const eligible = positions.filter(item => item.score > 0 && !item.position.derivativeOnly);
   const totalIndependentGroups = Math.max(0, ...eligible.map(item => boundedInteger(item.position.independentProvenanceGroupCount)));
-  const strongest = positions[0];
-  const runnerUp = positions[1];
+  const strongest = eligible[0];
+  const runnerUp = eligible[1];
   const competitionPairs = (input.competitions ?? []).filter(pair => pair.unresolved !== false);
-  const hasMaterialCompetition = competitionPairs.length > 0 && positions.length > 1;
+  const hasMaterialCompetition = competitionPairs.length > 0 && eligible.length > 1;
   const strongestScore = strongest?.score ?? 0;
   const runnerUpScore = runnerUp?.score ?? 0;
   const margin = strongestScore - runnerUpScore;
   const corroborated = totalIndependentGroups >= MIN_INDEPENDENT_GROUPS;
-  const strongSinglePosition = strongestScore >= MIN_SUPPORTED_SCORE && corroborated;
+  const strongSinglePosition = strongestScore >= MIN_SUPPORTED_SCORE
+    && corroborated
+    && (strongest?.position.directEvidenceCount ?? 0) > 0;
 
   let conclusionMode: KnowledgeConclusionMode;
   let sufficient = false;
@@ -123,7 +125,9 @@ export function selectKnowledgeConclusion(
     conclusionMode = "insufficient_evidence";
     reasons.push("The selected evidence mode does not permit a grounded conclusion.");
   } else if (hasMaterialCompetition) {
-    if (strongestScore >= MIN_LEAN_SCORE && margin >= 20 && (strongest?.position.independentProvenanceGroupCount ?? 0) >= 1) {
+    if (strongestScore >= MIN_LEAN_SCORE && margin >= 20
+      && (strongest?.position.independentProvenanceGroupCount ?? 0) >= 1
+      && (strongest?.position.directEvidenceCount ?? 0) > 0) {
       conclusionMode = "qualified_lean";
       sufficient = true;
       leanPositionId = strongest.position.positionId;

@@ -28,7 +28,10 @@ export interface AnswerPolicyExpectation {
   evidenceMode: "knowledge" | "researched" | "insufficient" | "out_of_scope" | "refused";
   conclusionMode: "supported" | "qualified_lean" | "multiple_positions" | "insufficient_evidence";
   confidence: "high" | "medium" | "low" | "insufficient_evidence";
+  confidenceScore?: number;
   leanPositionId?: string | null;
+  positionIds?: string[];
+  whatCouldChange?: string;
 }
 
 // ============================================================
@@ -59,8 +62,25 @@ export function validateAnswerOutput(
     if (answer.evidenceMode !== expectedPolicy.evidenceMode) failures.push("Model changed the application-selected evidenceMode.");
     if (answer.conclusionMode !== expectedPolicy.conclusionMode) failures.push("Model changed the application-selected conclusionMode.");
     if (answer.confidence !== expectedPolicy.confidence) failures.push("Model changed the application-selected confidence.");
+    if (expectedPolicy.confidenceScore !== undefined && answer.confidenceScore !== expectedPolicy.confidenceScore) {
+      failures.push("Model changed the application-selected confidence score.");
+    }
     if (expectedPolicy.leanPositionId !== undefined && answer.lean !== expectedPolicy.leanPositionId) {
       failures.push("Model changed the application-selected lean position.");
+    }
+    if (expectedPolicy.positionIds) {
+      const expectedPositions = new Set(expectedPolicy.positionIds);
+      const actualPositions = new Set(answer.positions.map(position => position.positionId));
+      if ([...actualPositions].some(positionId => !expectedPositions.has(positionId))) {
+        failures.push("Model introduced a position outside the application-selected position set.");
+      }
+      if (expectedPolicy.conclusionMode !== "insufficient_evidence"
+        && (actualPositions.size !== expectedPositions.size || [...expectedPositions].some(id => !actualPositions.has(id)))) {
+        failures.push("Model changed the application-selected position set.");
+      }
+    }
+    if (expectedPolicy.whatCouldChange !== undefined && answer.whatCouldChange !== expectedPolicy.whatCouldChange) {
+      failures.push("Model changed the application-selected whatCouldChange guidance.");
     }
   }
 

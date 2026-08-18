@@ -1,6 +1,6 @@
 import type {
   EvidenceExcerpt, TraceAIConfig, TraceAnswerDraft, TraceAnswerClaim, TraceAnswerPosition,
-  TraceAnswerSourceSummary, TraceEditorialDraft, TraceModelId,
+  TraceAnswerSourceSummary, TraceEditorialDraft, TraceModelId, TraceModelProvider, TraceAnswerDecision,
 } from "./provider";
 import { DeepSeekAPIError, DeepSeekProvider } from "./providers/deepseek";
 import { buildConfig, configuredTaskDailyBudget, type TraceAIEnvironment } from "./config";
@@ -18,8 +18,17 @@ import {
 } from "../lib/server/ask-evidence";
 import { isAnswerEligibleEvidence } from "./task-policy";
 import { resolveAndValidateCitationReferences } from "../lib/server/knowledge-citation-resolution";
+import {
+  buildAskTraceDecisionPacket,
+  type AskTraceDecisionPacket,
+} from "../lib/server/ask-trace-decision";
+import type { KnowledgeEvidenceMode } from "../lib/server/knowledge-conclusion-policy";
 
-export type TraceAIRuntimeEnvironment = TraceAIEnvironment & { DB?: D1Database };
+export type TraceAIRuntimeEnvironment = TraceAIEnvironment & {
+  DB?: D1Database;
+  /** Test-only/provider-neutral seam; production defaults to DeepSeek. */
+  TRACE_MODEL_PROVIDER?: TraceModelProvider;
+};
 
 export interface AskTraceContext {
   requestId: string;
@@ -28,6 +37,10 @@ export interface AskTraceContext {
   questionHash: string;
   question: string;
   evidenceExcerpts: EvidenceExcerpt[];
+  /** Optional application-selected disposition for deterministic refusals/scope responses. */
+  requestedEvidenceMode?: KnowledgeEvidenceMode;
+  /** Routes may precompute this packet after retrieval; the gateway verifies and consumes it. */
+  decisionPacket?: AskTraceDecisionPacket;
   /** When true, allows editorial-enabled override of the public Ask TRACE gate. */
   adminOverride?: boolean;
 }
@@ -124,8 +137,10 @@ function safeNonAnswer(
     evidenceMode,
     conclusionMode,
     directAnswer: "TRACE does not have enough eligible published evidence to answer this question reliably.",
-    lean: null,
-    whyLean: "No defensible lean was selected.",
+    lean: policy?.leanPositionId ?? null,
+    whyLean: policy?.leanPositionId
+      ? "TRACE selected this lean from the deterministic evidence policy."
+      : "No defensible lean was selected.",
     positions: [],
     sourceSummaries: [],
     keyPoints: [],
@@ -141,7 +156,7 @@ function safeNonAnswer(
     hasMaterialDisagreement: confidence.hasMaterialDisagreement,
     disagreements: [],
     caveats: [reason],
-    whatCouldChange: "Additional reviewed and published evidence may make an answer possible.",
+    whatCouldChange: policy?.whatCouldChange ?? "Additional reviewed and published evidence may make an answer possible.",
     requestId,
     nonAnswer: true,
   };
@@ -184,20 +199,92 @@ function citationsFor(draft: TraceAnswerDraft, evidence: EvidenceExcerpt[]): Pub
     }));
 }
 
-function answerPolicyFor(evidence: EvidenceExcerpt[], confidence: DeterministicConfidence): AnswerPolicyExpectation {
-  const insufficient = confidence.label === "insufficient_evidence";
+function policyExpectationFromDecision(decision: AskTraceDecisionPacket): AnswerPolicyExpectation {
   return {
-    evidenceMode: insufficient
-      ? "insufficient"
-      : evidence.some((item) => item.sourceKind === "trace_knowledge" && item.externalEvidenceResolved === true)
-        ? "knowledge" : "researched",
-    conclusionMode: insufficient ? "insufficient_evidence" : "supported",
-    confidence: confidence.label,
-    // KC-09G's full position packet will supply a concrete lean in the next
-    // retrieval integration. Until then the application explicitly selects no
-    // lean rather than allowing the model to invent one.
-    leanPositionId: null,
+    evidenceMode: decision.evidenceMode,
+    conclusionMode: decision.conclusionMode,
+    confidence: decision.confidence,
+    confidenceScore: decision.confidenceScore,
+    leanPositionId: decision.leanPositionId,
+    positionIds: decision.positions.map(position => position.id),
+    whatCouldChange: decision.whatCouldChange.join(" "),
   };
+}
+
+/**
+ * Compatibility adapter for direct pre-KC-09 gateway callers that provide only
+ * the old excerpt shape. Public/admin routes always provide structured D1
+ * grouping metadata and never use this fallback.
+ */
+function legacyDecisionPacket(confidence: DeterministicConfidence, evidence: EvidenceExcerpt[]): AskTraceDecisionPacket {
+  const supported = confidence.label !== "insufficient_evidence";
+  const positionId = "position:legacy-supported";
+  return {
+    evidenceMode: "researched",
+    conclusionMode: supported ? "supported" : "insufficient_evidence",
+    confidence: supported ? confidence.label : "insufficient_evidence",
+    confidenceScore: confidence.score,
+    confidenceReasons: confidence.reasons,
+    leanPositionId: supported ? positionId : null,
+    sufficient: supported,
+    whatCouldChange: ["A material correction, supersession, or newly reviewed contradictory source."],
+    positions: supported ? [{
+      id: positionId,
+      claimIds: [...new Set(evidence.map(item => item.claimId).filter((id): id is string => Boolean(id)))],
+      evidenceIds: evidence.map((item, index) => item.assertionId ? `assertion:${item.assertionId}` : `${item.sourceId}:${item.claimId ?? index}`),
+      statements: ["The supplied evidence supports the bounded answer."],
+      provenanceGroupIds: [],
+      score: confidence.score,
+    }] : [],
+    competitions: [],
+    eligibleEvidenceIds: [...new Set(evidence.map(item => item.sourceId))],
+    eligibleClaimIds: [...new Set(evidence.map(item => item.claimId).filter((id): id is string => Boolean(id)))],
+    eligibleAssertionIds: [...new Set(evidence.map(item => item.assertionId).filter((id): id is string => Boolean(id)))],
+    synthesisMode: supported ? "model" : "none",
+  };
+}
+
+function decisionPacketsMatch(left: AskTraceDecisionPacket, right: AskTraceDecisionPacket): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function providerDecision(decision: AskTraceDecisionPacket, evidence: EvidenceExcerpt[]): TraceAnswerDecision {
+  return {
+    evidenceMode: decision.evidenceMode,
+    conclusionMode: decision.conclusionMode,
+    confidence: decision.confidence,
+    confidenceScore: decision.confidenceScore,
+    confidenceReasons: decision.confidenceReasons,
+    leanPositionId: decision.leanPositionId,
+    positionIds: decision.positions.map(position => position.id),
+    positions: providerPositions(decision, evidence),
+    competitions: decision.competitions.map(competition => ({
+      leftPositionId: competition.leftPositionId,
+      rightPositionId: competition.rightPositionId,
+      relationships: competition.relationships,
+    })),
+    evidenceIds: [...new Set(evidence.map(item => item.sourceId))],
+    claimIds: [...new Set(evidence.map(item => item.claimId).filter((id): id is string => Boolean(id)))],
+    assertionIds: [...new Set(evidence.map(item => item.assertionId).filter((id): id is string => Boolean(id)))],
+    whatCouldChange: decision.whatCouldChange,
+  };
+}
+
+function providerPositions(decision: AskTraceDecisionPacket, evidence: EvidenceExcerpt[]): TraceAnswerPosition[] {
+  return decision.positions.map(position => {
+    const members = evidence.filter(item => {
+      const canonical = item.canonicalClaimId ?? item.claimId;
+      return position.claimIds.includes(canonical ?? "");
+    });
+    return {
+      positionId: position.id,
+      label: position.statements[0] ?? position.id,
+      summary: position.statements.join(" "),
+      supportingClaimIds: [...new Set(members.filter(item => item.relationship !== "contradicts").map(item => item.claimId).filter((id): id is string => Boolean(id)))],
+      contradictingClaimIds: [...new Set(members.filter(item => item.relationship === "contradicts").map(item => item.claimId).filter((id): id is string => Boolean(id)))],
+      sourceIds: [...new Set(members.map(item => item.sourceId))],
+    };
+  });
 }
 
 function answerPayload(
@@ -208,10 +295,12 @@ function answerPayload(
   knowledgeWarning?: string | null,
   exposeNumericScore = false,
   policy?: AnswerPolicyExpectation,
+  decision?: AskTraceDecisionPacket,
 ): AskTracePayload {
-  const confidenceReasons = knowledgeWarning
-    ? [...confidence.reasons, knowledgeWarning]
-    : confidence.reasons;
+  const confidenceReasons = [
+    ...(decision?.confidenceReasons ?? confidence.reasons),
+    ...(knowledgeWarning ? [knowledgeWarning] : []),
+  ];
   const caveats = knowledgeWarning
     ? [...draft.caveats, knowledgeWarning]
     : draft.caveats;
@@ -227,8 +316,8 @@ function answerPayload(
     keyPoints: draft.keyPoints,
     claims: draft.claims,
     citations: citationsFor(draft, evidence),
-    confidence: confidence.label,
-    confidenceScore: exposeNumericScore ? confidence.score : null,
+    confidence: decision?.confidence ?? confidence.label,
+    confidenceScore: exposeNumericScore ? (decision?.confidenceScore ?? confidence.score) : null,
     confidenceReasons,
     limitations: draft.limitations,
     unresolvedQuestions: draft.unresolvedQuestions,
@@ -237,7 +326,7 @@ function answerPayload(
     hasMaterialDisagreement: confidence.hasMaterialDisagreement,
     disagreements: draft.disagreements,
     caveats,
-    whatCouldChange: draft.whatCouldChange,
+    whatCouldChange: decision?.whatCouldChange.join(" ") ?? draft.whatCouldChange,
     requestId,
     nonAnswer: false,
   };
@@ -368,15 +457,27 @@ export async function askTrace(env: TraceAIRuntimeEnvironment, context: AskTrace
   const excludedEvidence = context.evidenceExcerpts.length - eligibleEvidence.length;
   const knowledgeWarning = unresolvedKnowledgeWarning(context.evidenceExcerpts);
   const confidence = calculateDeterministicConfidence(eligibleEvidence);
-  const answerPolicy = answerPolicyFor(eligibleEvidence, confidence);
-  if (confidence.label === "insufficient_evidence") {
+  const hasStructuredDecisionInputs = context.evidenceExcerpts.some((item) =>
+    item.canonicalClaimId !== undefined || item.provenanceGroupIds !== undefined,
+  );
+  const derivedDecision = hasStructuredDecisionInputs
+    ? await buildAskTraceDecisionPacket(env.DB, context.evidenceExcerpts, context.requestedEvidenceMode)
+    : legacyDecisionPacket(confidence, eligibleEvidence);
+  // A route may pass its precomputed packet for observability, but D1-derived
+  // state is authoritative and the gateway refuses a packet that does not
+  // exactly match a fresh deterministic derivation.
+  const decision = context.decisionPacket && decisionPacketsMatch(context.decisionPacket, derivedDecision)
+    ? context.decisionPacket
+    : derivedDecision;
+  const answerPolicy = policyExpectationFromDecision(decision);
+  if (decision.synthesisMode === "none") {
     const exclusionReason = excludedEvidence > 0
       ? `${excludedEvidence} supplied record${excludedEvidence === 1 ? " was" : "s were"} excluded because it was not admitted, current external evidence.`
       : "Eligible evidence did not meet the minimum corroboration policy.";
     const payload = safeNonAnswer(
       context.requestId,
       confidence,
-      [knowledgeWarning, exclusionReason].filter(Boolean).join(" "),
+      [knowledgeWarning, exclusionReason, ...decision.confidenceReasons].filter(Boolean).join(" "),
       Boolean(context.adminOverride),
       answerPolicy,
     );
@@ -384,7 +485,11 @@ export async function askTrace(env: TraceAIRuntimeEnvironment, context: AskTrace
     return { status: "ok", requestId: context.requestId, payload };
   }
 
-  const input = { ...originalInput, evidenceExcerpts: eligibleEvidence };
+  const input = {
+    ...originalInput,
+    evidenceExcerpts: eligibleEvidence,
+    decision: providerDecision(decision, eligibleEvidence),
+  };
 
   if (await governance.anyCircuitOpen(["global_kill", "public_ask", "provider_deepseek", "model_flash", "daily_budget", "monthly_budget", "balance", "auth_error"])) {
     await governance.reject(context.requestId, "Ask TRACE is temporarily unavailable.", "circuit_open");
@@ -399,7 +504,7 @@ export async function askTrace(env: TraceAIRuntimeEnvironment, context: AskTrace
     return { status: "temporarily_unavailable", requestId: context.requestId, message: "Ask TRACE is temporarily unavailable." };
   }
 
-  const provider = new DeepSeekProvider(config);
+  const provider = env.TRACE_MODEL_PROVIDER ?? new DeepSeekProvider(config);
   if (!await governance.startProvider(context.requestId, config.provider, config.publicModel)) {
     return { status: "in_progress", requestId: context.requestId, message: "The request is already processing." };
   }
@@ -417,7 +522,7 @@ export async function askTrace(env: TraceAIRuntimeEnvironment, context: AskTrace
       : null;
     const answerValidated = validation.passed && (!citationResolution || citationResolution.passed);
     const payload = answerValidated
-      ? answerPayload(context.requestId, generation.output, eligibleEvidence, confidence, knowledgeWarning, Boolean(context.adminOverride), answerPolicy)
+      ? answerPayload(context.requestId, generation.output, eligibleEvidence, confidence, knowledgeWarning, Boolean(context.adminOverride), answerPolicy, decision)
       : safeNonAnswer(
         context.requestId,
         confidence,
