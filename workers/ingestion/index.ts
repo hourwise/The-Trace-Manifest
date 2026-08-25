@@ -32,6 +32,7 @@ import { consumeKnowledgeCaptureBatch } from "./knowledge-capture-consumer";
 import { recalculateEvidenceScores, recalculateExpiredEvidence } from "../../src/lib/server/evidence-recalculation";
 import { reconcileKnowledgeIndexOperations } from "./knowledge-reconciliation";
 import { indexKnowledgeEmbeddings } from "./knowledge-embedding-index";
+import { runKc11GH } from "./kc-11g-h";
 import {
   approveBackfillPlan,
   buildBackfillPlan,
@@ -78,6 +79,7 @@ const WRITE_ADMIN_ROUTES = new Set([
   "/admin/related-items",
   "/admin/candidates", "/admin/social-signals", "/admin/knowledge/capture-url",
   "/admin/knowledge/capture-missing", "/admin/knowledge/index-preview",
+  "/admin/knowledge/kc-11g-h",
   "/admin/knowledge/backfill/snapshot", "/admin/knowledge/backfill/plan", "/admin/knowledge/backfill/approve",
   "/admin/knowledge/backfill/execute", "/admin/knowledge/backfill/retry", "/admin/knowledge/backfill/recover",
 ]);
@@ -1085,6 +1087,8 @@ async function handleAdminRoute(
       return handleKnowledgeDocumentCapture(request, env, operator);
     case "/admin/knowledge/index-preview":
       return handleKnowledgeEmbeddingIndex(request, env);
+    case "/admin/knowledge/kc-11g-h":
+      return handleKc11GH(request, env);
     case "/admin/knowledge/backfill/snapshot":
       return handleKnowledgeBackfillSnapshot(request, env, operator);
     case "/admin/knowledge/backfill/approve":
@@ -1150,6 +1154,37 @@ async function handleKnowledgeEmbeddingIndex(request: Request, env: Env): Promis
     return Response.json({ error: "Preview embedding bindings are unavailable.", result }, { status: 503 });
   }
   return Response.json(result, { status: result.state === "failed" ? 502 : 200 });
+}
+
+async function handleKc11GH(request: Request, env: Env): Promise<Response> {
+  const body = await readAdminObject(request, ["scoreLimit", "scoreCursor", "indexLimit", "dryRun"]);
+  if (!body) return Response.json({ error: "Invalid request body." }, { status: 400 });
+  const scoreLimit = body.scoreLimit;
+  const indexLimit = body.indexLimit;
+  const scoreCursor = body.scoreCursor;
+  if (scoreLimit !== undefined && (!Number.isInteger(scoreLimit) || Number(scoreLimit) < 1 || Number(scoreLimit) > 100)) {
+    return Response.json({ error: "scoreLimit must be an integer between 1 and 100." }, { status: 400 });
+  }
+  if (indexLimit !== undefined && (!Number.isInteger(indexLimit) || Number(indexLimit) < 1 || Number(indexLimit) > 100)) {
+    return Response.json({ error: "indexLimit must be an integer between 1 and 100." }, { status: 400 });
+  }
+  if (scoreCursor !== undefined && scoreCursor !== null
+    && (typeof scoreCursor !== "string" || scoreCursor.length === 0 || scoreCursor.length > 200)) {
+    return Response.json({ error: "scoreCursor must be a bounded string or null." }, { status: 400 });
+  }
+  if (body.dryRun !== undefined && typeof body.dryRun !== "boolean") {
+    return Response.json({ error: "dryRun must be a boolean." }, { status: 400 });
+  }
+  const result = await runKc11GH(env, {
+    scoreLimit: typeof scoreLimit === "number" ? scoreLimit : undefined,
+    scoreCursor: typeof scoreCursor === "string" ? scoreCursor : null,
+    indexLimit: typeof indexLimit === "number" ? indexLimit : undefined,
+    dryRun: body.dryRun === true,
+  });
+  const status = result.state === "disabled" ? 503
+    : result.state === "evaluation_blocked" ? 409
+      : result.state === "failed" ? 502 : 200;
+  return Response.json(result, { status });
 }
 
 async function handleKnowledgeBackfillPlan(request: Request, env: Env): Promise<Response> {

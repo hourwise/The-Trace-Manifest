@@ -20,7 +20,8 @@ type RecalculationEvent =
   | "expiry_reached"
   | "story_withdrawn"
   | "story_superseded"
-  | "story_archived";
+  | "story_archived"
+  | "historical_backfill_initial";
 
 interface ClaimRow {
   id: string;
@@ -71,6 +72,8 @@ export interface RecalculateEvidenceInput {
   claimIds?: string[];
   storyIds?: number[];
   triggeringEvent: RecalculationEvent;
+  /** Optional stable identity for a replay-safe bootstrap snapshot. */
+  snapshotIdentity?: string;
 }
 
 export interface RecalculateEvidenceResult {
@@ -94,6 +97,14 @@ export interface RecalculateExpiredEvidenceResult extends RecalculateEvidenceRes
   nextCursor: string | null;
   /** Null means the bounded probe found that more work may remain. */
   remaining: number | null;
+}
+
+export function deterministicScoreSnapshotId(
+  kind: "claim" | "story",
+  subjectId: string,
+  snapshotIdentity: string,
+): string {
+  return `score-snapshot:${snapshotIdentity}:${kind}:${subjectId}`;
 }
 
 const DEFAULT_EXPIRED_EVIDENCE_LIMIT = 25;
@@ -300,17 +311,23 @@ export async function recalculateEvidenceScores(
   }
 
   const statements: D1PreparedStatement[] = [];
+  const claimSnapshotStatementIndexes: number[] = [];
+  const storySnapshotStatementIndexes: number[] = [];
   const statusStatementIndexes: number[] = [];
   const approvalStatementIndexes: number[] = [];
+  const snapshotInsert = input.snapshotIdentity ? "INSERT OR IGNORE" : "INSERT";
   for (const score of claimScores.values()) {
-    const snapshotId = crypto.randomUUID();
+    const snapshotId = input.snapshotIdentity
+      ? deterministicScoreSnapshotId("claim", score.claimId, input.snapshotIdentity)
+      : crypto.randomUUID();
     const componentJson = JSON.stringify(score.components);
     const before = await loadPreviousSnapshot(db, "claim", score.claimId);
     const explanation = explainSnapshot(
       "claim", before, score.score, score.evidenceStatus, componentJson, input.triggeringEvent,
     );
+    claimSnapshotStatementIndexes.push(statements.length);
     statements.push(db.prepare(`
-      INSERT INTO canonical_claim_score_snapshots
+      ${snapshotInsert} INTO canonical_claim_score_snapshots
         (id, canonical_claim_id, score, evidence_status, component_json, policy_version, triggering_event)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `).bind(
@@ -318,13 +335,13 @@ export async function recalculateEvidenceScores(
       componentJson, EVIDENCE_SCORE_POLICY_VERSION, input.triggeringEvent,
     ));
     statements.push(db.prepare(`
-      INSERT INTO evidence_score_snapshot_explanations
+      ${snapshotInsert} INTO evidence_score_snapshot_explanations
         (id, snapshot_kind, snapshot_id, subject_id, before_score, before_evidence_status,
          before_component_json, after_score, after_evidence_status, after_component_json,
          policy_version, triggering_event, explanation)
       VALUES (?, 'claim', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).bind(
-      crypto.randomUUID(), snapshotId, score.claimId,
+      input.snapshotIdentity ? `score-explanation:${snapshotId}` : crypto.randomUUID(), snapshotId, score.claimId,
       before?.score ?? null, before?.evidence_status ?? null, before?.component_json ?? null,
       score.score, score.evidenceStatus, componentJson,
       EVIDENCE_SCORE_POLICY_VERSION, input.triggeringEvent, explanation,
@@ -335,14 +352,17 @@ export async function recalculateEvidenceScores(
   let approvalRequests = 0;
   for (const [storyId, claims] of storyClaims) {
     const score = scoreStory(claims);
-    const snapshotId = crypto.randomUUID();
+    const snapshotId = input.snapshotIdentity
+      ? deterministicScoreSnapshotId("story", String(storyId), input.snapshotIdentity)
+      : crypto.randomUUID();
     const componentJson = JSON.stringify({ claimScores: score.claimScores });
     const before = await loadPreviousSnapshot(db, "story", String(storyId));
     const explanation = explainSnapshot(
       "story", before, score.score, score.evidenceStatus, componentJson, input.triggeringEvent,
     );
+    storySnapshotStatementIndexes.push(statements.length);
     statements.push(db.prepare(`
-      INSERT INTO evidence_score_snapshots
+      ${snapshotInsert} INTO evidence_score_snapshots
         (id, story_cluster_id, score, evidence_status, component_json, policy_version, triggering_event)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `).bind(
@@ -350,13 +370,13 @@ export async function recalculateEvidenceScores(
       componentJson, EVIDENCE_SCORE_POLICY_VERSION, input.triggeringEvent,
     ));
     statements.push(db.prepare(`
-      INSERT INTO evidence_score_snapshot_explanations
+      ${snapshotInsert} INTO evidence_score_snapshot_explanations
         (id, snapshot_kind, snapshot_id, subject_id, before_score, before_evidence_status,
          before_component_json, after_score, after_evidence_status, after_component_json,
          policy_version, triggering_event, explanation)
       VALUES (?, 'story', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).bind(
-      crypto.randomUUID(), snapshotId, String(storyId),
+      input.snapshotIdentity ? `score-explanation:${snapshotId}` : crypto.randomUUID(), snapshotId, String(storyId),
       before?.score ?? null, before?.evidence_status ?? null, before?.component_json ?? null,
       score.score, score.evidenceStatus, componentJson,
       EVIDENCE_SCORE_POLICY_VERSION, input.triggeringEvent, explanation,
@@ -374,7 +394,10 @@ export async function recalculateEvidenceScores(
         VALUES (?, 'status_change', 'story_cluster', ?, ?, ?, ?, 'pending',
                 'system:recalculation', ?, ?, ?)
       `).bind(
-        crypto.randomUUID(), String(storyId), currentStory.evidence_status,
+        input.snapshotIdentity
+          ? `score-approval:${input.snapshotIdentity}:${storyId}:${score.evidenceStatus}`
+          : crypto.randomUUID(),
+        String(storyId), currentStory.evidence_status,
         score.evidenceStatus, snapshotId, explanation,
         JSON.stringify({ policyVersion: EVIDENCE_SCORE_POLICY_VERSION, triggeringEvent: input.triggeringEvent }),
         `status-change:${storyId}:${score.evidenceStatus}:${input.triggeringEvent}`,
@@ -391,20 +414,34 @@ export async function recalculateEvidenceScores(
 
   if (statements.length > 0) {
     const results = await db.batch(statements);
+    const inserted = (indexes: number[]) => indexes.reduce(
+      (count, index) => count + (Number(results[index]?.meta.changes ?? 0) > 0 ? 1 : 0), 0,
+    );
+    const claimSnapshotCount = input.snapshotIdentity ? inserted(claimSnapshotStatementIndexes) : claimScores.size;
+    const storySnapshotCount = input.snapshotIdentity ? inserted(storySnapshotStatementIndexes) : storyClaims.size;
     for (const index of statusStatementIndexes) {
       statusChanges += Number(results[index]?.meta.changes ?? 0) > 0 ? 1 : 0;
     }
     for (const index of approvalStatementIndexes) {
       approvalRequests += Number(results[index]?.meta.changes ?? 0) > 0 ? 1 : 0;
     }
+    return {
+      triggeringEvent: input.triggeringEvent,
+      claimIds: [...claimScores.keys()],
+      storyIds: [...storyClaims.keys()],
+      claimSnapshots: claimSnapshotCount,
+      storySnapshots: storySnapshotCount,
+      statusChanges,
+      approvalRequests,
+    };
   }
 
   return {
     triggeringEvent: input.triggeringEvent,
     claimIds: [...claimScores.keys()],
     storyIds: [...storyClaims.keys()],
-    claimSnapshots: claimScores.size,
-    storySnapshots: storyClaims.size,
+    claimSnapshots: 0,
+    storySnapshots: 0,
     statusChanges,
     approvalRequests,
   };
