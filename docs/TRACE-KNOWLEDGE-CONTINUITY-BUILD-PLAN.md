@@ -1,6 +1,6 @@
 # TRACE Knowledge Continuity and Story Memory Build Plan
 
-**Status:** Canonical implementation plan (KC-02, KC-03A–H, KC-04A–F, KC-05A–G, KC-06A–E, KC-07A–F, KC-08A–H, KC-09A–J, and KC-10A complete locally; Preview rollout and first bounded run completed against an empty corpus)
+**Status:** Canonical implementation plan (KC-02, KC-03A–H, KC-04A–F, KC-05A–G, KC-06A–E, KC-07A–F, KC-08A–H, KC-09A–J, KC-10A–E, and KC-12A–C complete locally; Preview rollout and first bounded run completed against an empty corpus)
 
 **Date:** 24 July 2026
 
@@ -748,15 +748,15 @@ Exit: every published story and approved knowledge document has an explicit back
 
 ### KC-12 — Public presentation and rollout
 
-- [ ] **KC-12A:** Show related stories from reviewed graph relationships rather than same-topic recency alone.
-- [ ] **KC-12B:** Show source summaries, claim relationships, provenance/independence explanation, score components, and freshness on story pages.
-- [ ] **KC-12C:** Show linked stories, claims, sources, revisions, limitations, and affected-by-new-evidence state on knowledge pages.
+- [x] **KC-12A:** Show related stories from reviewed graph relationships rather than same-topic recency alone. Public story pages use only reviewed relationships whose other endpoint passes the published-story gate; same-topic recency is no longer presented as a relationship.
+- [x] **KC-12B:** Show source summaries, claim relationships, provenance/independence explanation, score components, and freshness on story pages. The local projection shows reviewed claim assertions, source roles, locator links, provenance origin, bounded qualitative status, and explicit unresolved-claim counts; numeric scores remain disabled.
+- [x] **KC-12C:** Show linked stories, claims, sources, revisions, limitations, and affected-by-new-evidence state on knowledge pages. Approved D1 knowledge pages now show reviewed claim/assertion mappings, source/provenance/locator data, and retain existing revision, limitation, expiry, and open-proposal banners.
 - [ ] **KC-12D:** Add Preview feature flags for capture, AI extraction, scoring, semantic retrieval, knowledge inheritance, and multi-position answers.
 - [ ] **KC-12E:** Run security, migration, retrieval, evidence, cost, accessibility, and performance gates in Preview.
 - [ ] **KC-12F:** Enable production capabilities one at a time with rollback evidence and monitoring.
 - [ ] **KC-12G:** Keep public numeric evidence scores disabled until KC-07F passes; launch with qualitative bands and explanations, then enable numeric snapshots only through a reviewed policy-version rollout.
 
-Exit: the complete system is enabled in bounded stages, and every public claim can be traced through TRACE synthesis to admitted external evidence.
+Exit: the complete system is enabled in bounded stages, and every public claim can be traced through TRACE synthesis to admitted external evidence. KC-12A–C evidence: [`kc-12-public-evidence-evidence.md`](audit/kc-12-public-evidence-evidence.md).
 
 ## 10A. Deferred post-KC extensions
 

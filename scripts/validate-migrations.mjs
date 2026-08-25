@@ -82,6 +82,7 @@ try {
   db.exec(readFileSync("db/migration-0062-normalized-content-v3-reference-drift.sql", "utf8"));
   db.exec(readFileSync("db/migration-0063-kc-03f-upload-source-states.sql", "utf8"));
   db.exec(readFileSync("db/migration-0064-kc-03h-pdf-upload-state.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0065-public-evidence-graph-indexes.sql", "utf8"));
 
   const requiredTables = [
     "ai_requests", "ai_budget_reservations", "ai_usage_ledger", "ai_quota_usage",

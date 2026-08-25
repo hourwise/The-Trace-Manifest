@@ -3,6 +3,7 @@
 // Renders approved knowledge_documents with evidence, provenance, and freshness.
 import BaseLayout from "../../../layouts/BaseLayout.astro";
 import { isKnowledgeHardExpired, isKnowledgeReviewDue } from "../../../lib/server/ask-evidence";
+import { getPublicKnowledgeEvidence } from "../../../lib/server/public-evidence";
 
 export const prerender = false;
 
@@ -41,6 +42,8 @@ const doc = await db
 if (!doc || isKnowledgeHardExpired(doc.hard_expiry)) {
   return new Response("Not found", { status: 404 });
 }
+
+const evidence = await getPublicKnowledgeEvidence(db, doc.id);
 
 const reviewDue = isKnowledgeReviewDue(doc.review_after);
 const reviewRequired = Number(doc.open_change_count ?? 0) > 0;
@@ -144,6 +147,46 @@ function typeLabel(t: string): string {
           </div>
         )
       }
+
+      <section class="card" style="margin-top:1rem;">
+        <h2 style="font-size:1rem;margin-top:0;">Linked evidence</h2>
+        {evidence.totalClaimCount === 0 ? (
+          <p class="meta">No reviewed claim mappings are currently available for this document.</p>
+        ) : (
+          <>
+            <p class="meta">
+              {evidence.resolvedClaimCount} of {evidence.totalClaimCount} reviewed claim mapping{evidence.totalClaimCount === 1 ? "" : "s"} resolve to current, locator-backed source evidence.
+              {evidence.provenanceGroupCount > 0 && <> Evidence spans {evidence.provenanceGroupCount} provenance group{evidence.provenanceGroupCount === 1 ? "" : "s"}.</>}
+            </p>
+            {evidence.unresolvedClaimCount > 0 && (
+              <p class="meta" style="color:var(--ev-outdated);">
+                {evidence.unresolvedClaimCount} mapped claim{evidence.unresolvedClaimCount === 1 ? "" : "s"} remain unresolved and are not presented as supported evidence.
+              </p>
+            )}
+            <div style="display:flex;flex-direction:column;gap:0.75rem;margin-top:0.75rem;">
+              {evidence.claims.map((claim) => (
+                <article style="padding-top:0.75rem;border-top:1px solid var(--border);">
+                  <p class="meta" style="margin:0 0 0.3rem;">{claim.sectionKey} · {claim.relationship?.replace(/_/g, " ")}</p>
+                  <p style="margin:0;font-weight:600;">{claim.statement}</p>
+                  <ul style="margin:0.5rem 0 0;padding-left:1.2rem;">
+                    {claim.assertions.map((assertion) => (
+                      <li style="margin-bottom:0.55rem;">
+                        <p class="meta" style="margin:0;">{assertion.assertionText} ({assertion.relationship.replace(/_/g, " ")})</p>
+                        <p class="meta" style="margin:0.2rem 0 0;font-size:0.78rem;">
+                          {assertion.sourceUrl ? <a href={assertion.sourceUrl} rel="noopener noreferrer">{assertion.sourceName}</a> : assertion.sourceName}
+                          {assertion.sourceTier && <> · Tier {assertion.sourceTier}</>}
+                          {assertion.provenanceOriginType && <> · {assertion.provenanceOriginType.replace(/_/g, " ")}</>}
+                          {assertion.startLocator && assertion.endLocator && <> · locator {assertion.startLocator}–{assertion.endLocator}</>}
+                        </p>
+                      </li>
+                    ))}
+                  </ul>
+                </article>
+              ))}
+            </div>
+          </>
+        )}
+      </section>
 
       <div class="card" style="margin-top:2rem;background:var(--surface-2);font-size:0.85rem;">
         <p class="meta">

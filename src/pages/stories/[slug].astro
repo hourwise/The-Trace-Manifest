@@ -6,8 +6,8 @@ import {
   getPublishedStoryBySlug,
   getPublishedSourcesForStory,
   getCorrectionsForStory,
-  getRelatedStories,
 } from "../../lib/server/d1";
+import { getPublicRelatedStories, getPublicStoryEvidence } from "../../lib/server/public-evidence";
 
 export const prerender = false;
 
@@ -27,13 +27,18 @@ if (!story) {
 // Fetch supporting data
 let sources: Awaited<ReturnType<typeof getPublishedSourcesForStory>> = [];
 let corrections: Awaited<ReturnType<typeof getCorrectionsForStory>> = [];
-let relatedStories: Awaited<ReturnType<typeof getRelatedStories>> = [];
+let relatedStories: Awaited<ReturnType<typeof getPublicRelatedStories>> = [];
+let evidence: Awaited<ReturnType<typeof getPublicStoryEvidence>> = {
+  claims: [], totalClaimCount: 0, resolvedClaimCount: 0, unresolvedClaimCount: 0,
+  assertionCount: 0, sourceCount: 0, provenanceGroupCount: 0,
+};
 
 try {
-  [sources, corrections, relatedStories] = await Promise.all([
+  [sources, corrections, relatedStories, evidence] = await Promise.all([
     getPublishedSourcesForStory(db, story.id),
     getCorrectionsForStory(db, story.id),
-    getRelatedStories(db, story.id, 4),
+    getPublicRelatedStories(db, story.id, 6),
+    getPublicStoryEvidence(db, story.id),
   ]);
 } catch {
   // Supporting data fetch failed — story page still renders, just without enrichments
@@ -140,6 +145,51 @@ const hasConflicts = story.evidenceStatus === "disputed";
       </div>
     )}
 
+    <!-- KC-12B: claim-level evidence is a reviewed projection, not a source-body viewer. -->
+    <section style="margin-top:2rem;">
+      <h2>Claim-level evidence</h2>
+      {evidence.totalClaimCount === 0 ? (
+        <p class="meta">No claim-level evidence has been publicly resolved for this story yet. The source links above are references, not a claim-level corroboration count.</p>
+      ) : (
+        <>
+          <p class="meta">
+            {evidence.resolvedClaimCount} of {evidence.totalClaimCount} linked claim{evidence.totalClaimCount === 1 ? "" : "s"} have current, locator-backed evidence from {evidence.sourceCount} source{evidence.sourceCount === 1 ? "" : "s"}.
+            {evidence.provenanceGroupCount > 0 && <> Evidence spans {evidence.provenanceGroupCount} reviewed provenance group{evidence.provenanceGroupCount === 1 ? "" : "s"}.</>}
+          </p>
+          {evidence.unresolvedClaimCount > 0 && (
+            <p class="meta" style="color:var(--ev-outdated);">
+              {evidence.unresolvedClaimCount} linked claim{evidence.unresolvedClaimCount === 1 ? "" : "s"} remain unresolved and are omitted from the evidence display.
+            </p>
+          )}
+          <div style="display:flex;flex-direction:column;gap:0.75rem;margin-top:1rem;">
+            {evidence.claims.map((claim) => (
+              <article class="card" style="padding:1rem;">
+                <p class="meta" style="margin:0 0 0.35rem;text-transform:capitalize;">
+                  {claim.role} claim · {claim.materiality} materiality{claim.evidenceStatus && <> · {claim.evidenceStatus.replace(/_/g, " ")}</>}
+                </p>
+                <p style="margin:0;font-weight:600;">{claim.statement}</p>
+                <ul style="margin:0.75rem 0 0;padding-left:1.2rem;">
+                  {claim.assertions.map((assertion) => (
+                    <li style="margin-bottom:0.65rem;">
+                      <p class="meta" style="margin:0;">
+                        {assertion.assertionText} <span>({assertion.relationship.replace(/_/g, " ")}; {assertion.sourceRole.replace(/_/g, " ")})</span>
+                      </p>
+                      <p class="meta" style="margin:0.2rem 0 0;font-size:0.78rem;">
+                        {assertion.sourceUrl ? <a href={assertion.sourceUrl} rel="noopener noreferrer">{assertion.sourceName}</a> : assertion.sourceName}
+                        {assertion.sourceTier && <> · Tier {assertion.sourceTier}</>}
+                        {assertion.provenanceOriginType && <> · {assertion.provenanceOriginType.replace(/_/g, " ")}</>}
+                        {assertion.startLocator && assertion.endLocator && <> · locator {assertion.startLocator}–{assertion.endLocator}</>}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              </article>
+            ))}
+          </div>
+        </>
+      )}
+    </section>
+
     <!-- Related stories -->
     {relatedStories.length > 0 && (
       <div style="margin-top:2rem;">
@@ -147,8 +197,10 @@ const hasConflicts = story.evidenceStatus === "disputed";
         <div style="display:flex;flex-direction:column;gap:0.5rem;">
           {relatedStories.map(r => (
             <div class="card" style="padding:0.6rem 1rem;">
+              <p class="meta" style="margin:0 0 0.2rem;">{r.relationshipLabel}</p>
               <a href={`/stories/${r.slug}`} style="font-size:0.9rem;">{r.headline}</a>
               {r.topic && <span class="meta" style="margin-left:0.75rem;">{r.topic}</span>}
+              {r.explanation && <p class="meta" style="margin:0.35rem 0 0;">{r.explanation}</p>}
             </div>
           ))}
         </div>
