@@ -5,10 +5,12 @@ import { extractStructuredSource, STRUCTURED_EXTRACTION_POLICY_VERSION, STRUCTUR
 import { claimKnowledgeExtractionRun, EXTRACTION_RUN_STALE_AFTER_SECONDS } from "../src/lib/server/knowledge-extraction-cache";
 import { captureAdmittedSource } from "../src/lib/server/source-capture";
 import {
+  BACKFILL_CEILINGS,
   approveBackfillPlan,
   buildBackfillPlan,
   establishAuthoritativeInventory,
   executeBackfill,
+  recoverStaleBackfill,
 } from "../src/lib/server/knowledge-source-backfill";
 import { recalculateExpiredEvidence } from "../src/lib/server/evidence-recalculation";
 import { runCrossSourceMatching } from "../workers/ingestion/cross-source-match";
@@ -84,6 +86,73 @@ async function staleExtractionRunRecoveryTests(): Promise<void> {
     const freshContender = await claimKnowledgeExtractionRun(database.asD1(), cacheInput);
     assert.equal(freshContender.status, "in_progress", "a fresh running extraction cannot be stolen");
 
+    globalThis.fetch = (async () => new Response(body, { status: 200, headers: { "Content-Type": "text/html" } })) as typeof fetch;
+
+    let outerAttempt = 0;
+    const recoverOuterAndRetry = async (): Promise<Record<string, unknown>> => {
+      outerAttempt++;
+      const startedAt = new Date(Date.now() - (BACKFILL_CEILINGS.staleExecutionSeconds + 1) * 1_000).toISOString();
+      database.sqlite.prepare(`
+        UPDATE knowledge_source_backfill_batches
+        SET state = 'running', executed_at = ?, updated_at = ?
+        WHERE id = ?
+      `).run(startedAt, startedAt, approval.batchId);
+      database.sqlite.prepare(`
+        INSERT INTO knowledge_source_backfill_attempts
+          (id, batch_id, idempotency_key, actor, state, started_at, correlation_id)
+        VALUES (?, ?, ?, ?, 'running', ?, ?)
+      `).run(
+        `kc11d-outer-attempt-${outerAttempt}`,
+        approval.batchId,
+        `kc11d-outer-idempotency-${outerAttempt}`,
+        "publisher@example.com",
+        startedAt,
+        "kc11d-outer-coordination",
+      );
+      const recoveredOuter = await recoverStaleBackfill(
+        env,
+        approval.batchId,
+        plan.planHash,
+        "publisher@example.com",
+        Date.now(),
+      );
+      assert.equal(recoveredOuter.state, "recovered", "the outer 120-second execution lease is recovered before retry");
+      return executeBackfill(
+        env,
+        approval.batchId,
+        plan.planHash,
+        "publisher@example.com",
+        `kc11d-outer-retry-${outerAttempt}`,
+        "retry",
+      );
+    };
+
+    // The outer worker is recovered twice while the inner extraction remains
+    // younger than 900 seconds. Waiting must remain selectable and must not
+    // consume the ordinary failure budget.
+    const earlyRetry = await recoverOuterAndRetry();
+    assert.equal(earlyRetry.state, "partial");
+    assert.equal(earlyRetry.dependencyWaits, 1, "fresh extraction ownership is reported as a dependency wait");
+    assert.equal(earlyRetry.retries, 0, "dependency waiting does not count as a failed retry");
+    assert.equal(earlyRetry.failed_terminal, 0);
+    let item = await database.prepare("SELECT outcome, reason_code, retry_count FROM knowledge_source_backfill_items WHERE batch_id = ?").bind(approval.batchId).first<{ outcome: string; reason_code: string; retry_count: number }>();
+    assert.equal(item?.outcome, "failed_retryable");
+    assert.equal(item?.reason_code, "extraction_run_in_progress");
+    assert.equal(item?.retry_count, 0);
+
+    const secondEarlyRetry = await recoverOuterAndRetry();
+    assert.equal(secondEarlyRetry.state, "partial");
+    assert.equal(secondEarlyRetry.dependencyWaits, 1);
+    assert.equal(secondEarlyRetry.retries, 0);
+    assert.equal(secondEarlyRetry.failed_terminal, 0);
+    item = await database.prepare("SELECT outcome, reason_code, retry_count FROM knowledge_source_backfill_items WHERE batch_id = ?").bind(approval.batchId).first<{ outcome: string; reason_code: string; retry_count: number }>();
+    assert.equal(item?.outcome, "failed_retryable", "repeated outer retries leave the item selectable");
+    assert.equal(item?.reason_code, "extraction_run_in_progress");
+    assert.equal(item?.retry_count, 0, "repeated outer retries still leave the item with no failure-budget consumption");
+
+    // Now move the inner run past its 15-minute stale threshold. Verify the
+    // already-reviewed atomic takeover still admits one owner, then simulate
+    // that reclaiming worker dying before the outer retry completes it.
     database.sqlite.prepare(`
       UPDATE knowledge_extraction_runs
       SET started_at = datetime('now', ?), updated_at = datetime('now', ?)
@@ -94,15 +163,9 @@ async function staleExtractionRunRecoveryTests(): Promise<void> {
       initial.runId,
     );
     const staleOwner = await claimKnowledgeExtractionRun(database.asD1(), cacheInput);
-    assert.equal(staleOwner.status, "owned", "a stale deterministic run can be reclaimed");
+    assert.equal(staleOwner.status, "owned", "the stale deterministic run can finally be reclaimed");
     const staleRacer = await claimKnowledgeExtractionRun(database.asD1(), cacheInput);
     assert.equal(staleRacer.status, "in_progress", "a competing stale takeover cannot also obtain ownership");
-    const firstAudit = JSON.parse((await database.prepare("SELECT audit_json FROM knowledge_extraction_runs WHERE id = ?").bind(initial.runId).first<{ audit_json: string }>())?.audit_json ?? "{}");
-    assert.equal(firstAudit.last_recovery_reason, "stale_extraction_run_reclaimed");
-    assert.equal(firstAudit.stale_recovery_count, 1);
-
-    // Simulate the reclaiming worker dying too. The outer historical retry must
-    // reclaim the same logical run rather than creating a second run identity.
     database.sqlite.prepare(`
       UPDATE knowledge_extraction_runs
       SET started_at = datetime('now', ?), updated_at = datetime('now', ?)
@@ -112,11 +175,15 @@ async function staleExtractionRunRecoveryTests(): Promise<void> {
       `-${EXTRACTION_RUN_STALE_AFTER_SECONDS + 1} seconds`,
       initial.runId,
     );
-    globalThis.fetch = (async () => new Response(body, { status: 200, headers: { "Content-Type": "text/html" } })) as typeof fetch;
-    const recovered = await executeBackfill(env, approval.batchId, plan.planHash, "publisher@example.com", "kc11d-execute-stale");
-    assert.equal(recovered.state, "completed", "historical retry completes after stale extraction ownership is reclaimed");
-    assert.equal(recovered.failed_terminal, 0, "recoverable stale extraction does not become terminal failure");
-    assert.equal(recovered.extractionRuns, 1, "the retry finishes the same deterministic extraction run");
+
+    const recovered = await recoverOuterAndRetry();
+    assert.equal(recovered.state, "completed", "the late retry reclaims and completes the same extraction run");
+    assert.equal(recovered.failed_terminal, 0);
+    assert.equal(recovered.dependencyWaits, 0);
+    assert.equal(recovered.extractionRuns, 1);
+    item = await database.prepare("SELECT outcome, reason_code, retry_count FROM knowledge_source_backfill_items WHERE batch_id = ?").bind(approval.batchId).first<{ outcome: string; reason_code: string; retry_count: number }>();
+    assert.equal(item?.outcome, "unchanged");
+    assert.equal(item?.retry_count, 0, "successful stale recovery does not manufacture a failure retry");
 
     const replay = await extractStructuredSource(database.asD1(), {
       sourceDocumentVersionId: captured.sourceDocumentVersionId,
@@ -134,6 +201,41 @@ async function staleExtractionRunRecoveryTests(): Promise<void> {
     const secondAudit = JSON.parse((await database.prepare("SELECT audit_json FROM knowledge_extraction_runs WHERE id = ?").bind(initial.runId).first<{ audit_json: string }>())?.audit_json ?? "{}");
     assert.equal(secondAudit.stale_recovery_count, 2, "a second stale interruption remains recoverable and auditable");
     assert.equal(secondAudit.last_recovery_reason, "stale_extraction_run_reclaimed");
+  } finally {
+    globalThis.fetch = originalFetch;
+    database.close();
+  }
+}
+
+async function genuineFailureBudgetTests(): Promise<void> {
+  const database = new SQLiteD1();
+  const env = previewEnv(database);
+  const inventory = {
+    schemaVersion: "kc-11a-v1",
+    generatedAt: "2026-08-25T00:00:00Z",
+    categories: {
+      source_url: [{ id: "historical-genuine-failure", label: "Historical genuine failure", url: "https://history.example/genuine-failure" }],
+    },
+  };
+  const originalFetch = globalThis.fetch;
+  try {
+    const authority = await establishAuthoritativeInventory(env, inventory, "kc-11c-v3", "reviewer@example.com", "kc11d-authority-failure");
+    const plan = await buildBackfillPlan(inventory, { category: "source_url", limit: 1 }, authority.snapshotId);
+    const approval = await approveBackfillPlan(env, plan, plan.planHash, "publisher@example.com", "kc11d-approval-failure");
+    globalThis.fetch = (async () => { throw new Error("temporary historical retrieval outage"); }) as typeof fetch;
+    const first = await executeBackfill(env, approval.batchId, plan.planHash, "publisher@example.com", "kc11d-failure-1");
+    assert.equal(first.state, "partial");
+    assert.equal(first.retries, 1, "a genuine retryable retrieval failure consumes one retry");
+    let item = await database.prepare("SELECT outcome, retry_count FROM knowledge_source_backfill_items WHERE batch_id = ?").bind(approval.batchId).first<{ outcome: string; retry_count: number }>();
+    assert.equal(item?.outcome, "failed_retryable");
+    assert.equal(item?.retry_count, 1);
+
+    const second = await executeBackfill(env, approval.batchId, plan.planHash, "publisher@example.com", "kc11d-failure-2", "retry");
+    assert.equal(second.state, "completed");
+    assert.equal(second.failed_terminal, 1, "the genuine retryable failure reaches terminal state at the configured ceiling");
+    item = await database.prepare("SELECT outcome, retry_count FROM knowledge_source_backfill_items WHERE batch_id = ?").bind(approval.batchId).first<{ outcome: string; retry_count: number }>();
+    assert.equal(item?.outcome, "failed_terminal");
+    assert.equal(item?.retry_count, 2);
   } finally {
     globalThis.fetch = originalFetch;
     database.close();
@@ -283,6 +385,7 @@ async function boundedOperationalBatchTests(): Promise<void> {
 
 await boundedHistoricalReplayTests();
 await staleExtractionRunRecoveryTests();
+await genuineFailureBudgetTests();
 await pdfContainmentTests();
 await boundedOperationalBatchTests();
 console.log("KC-11D historical continuity tests passed");

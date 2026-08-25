@@ -458,7 +458,8 @@ export async function executeBackfill(env: BackfillEnv, batchId: string, planHas
     unchangedVersionsReused: 0, changedOrNewVersions: 0, extractionRuns: 0,
     extractionsCreated: 0, summariesCreated: 0, claimsCreated: 0,
     matchCandidatesCreated: 0, provenanceProposalsCreated: 0, reviewHolds: 0,
-    storyReferences: 0, knowledgeReferences: 0, retries: 0, reconciliationRequired: 0,
+    storyReferences: 0, knowledgeReferences: 0, retries: 0, dependencyWaits: 0,
+    reconciliationRequired: 0,
   };
   let totalBytes = 0;
   for (const item of (items.results ?? [])) {
@@ -621,18 +622,34 @@ export async function executeBackfill(env: BackfillEnv, batchId: string, planHas
           hashSemanticsVersion = committed.hash_semantics_version;
         }
       }
-      reason = error instanceof SourceRetrievalError || error instanceof SourceCaptureError
+      const waitingForExtraction = error instanceof Error && error.message === "extraction_run_in_progress";
+      reason = waitingForExtraction
+        ? "extraction_run_in_progress"
+        : error instanceof SourceRetrievalError || error instanceof SourceCaptureError
         ? error.code
         : error instanceof Error ? error.message.slice(0, 120) : "capture_failed";
-      const retryCount = Number(item.retry_count ?? 0) + 1;
-      outcome = error instanceof SourceRetrievalError && ["url_ineligible", "redirect_rejected", "content_type_rejected", "response_status_rejected", "response_too_large", "content_invalid"].includes(error.code) ? "excluded" : retryCount >= BACKFILL_CEILINGS.maxRetries ? "failed_terminal" : "failed_retryable";
-      if (outcome === "failed_retryable") counters.retries++;
+      if (waitingForExtraction) {
+        // Another valid extraction owner is a dependency wait, not a failed
+        // historical attempt. Keep the item selectable without consuming the
+        // ordinary failure budget; the next bounded operator/scheduled retry
+        // can reuse a completed run or reach the inner stale takeover.
+        outcome = "failed_retryable";
+        counters.dependencyWaits++;
+      } else {
+        const retryCount = Number(item.retry_count ?? 0) + 1;
+        outcome = error instanceof SourceRetrievalError && ["url_ineligible", "redirect_rejected", "content_type_rejected", "response_status_rejected", "response_too_large", "content_invalid"].includes(error.code) ? "excluded" : retryCount >= BACKFILL_CEILINGS.maxRetries ? "failed_terminal" : "failed_retryable";
+        if (outcome === "failed_retryable") counters.retries++;
+      }
     }
     const operationCount = sourceDocumentVersionId
       ? await env.DB.prepare("SELECT COUNT(*) AS count FROM knowledge_index_operations WHERE subject_type = 'source_document_version' AND subject_id = ? AND state IN ('pending','failed','reconciliation_required','running')").bind(sourceDocumentVersionId).first<{ count: number }>()
       : null;
     counters.reconciliationRequired += Number(operationCount?.count ?? 0);
-    await settleItem(env, batch, item, outcome, reason, actor, counters, { sourceDocumentId, sourceDocumentVersionId, httpStatus: retrieved?.responseStatus ?? null, retrievedUrl: retrieved?.finalUrl ?? null, redirectCount: retrieved?.redirectCount ?? null, byteLength: retrieved?.byteLength ?? null, contentHash, transportHash: contentHash, normalizedContentHash, hashSemanticsVersion });
+    await settleItem(
+      env, batch, item, outcome, reason, actor, counters,
+      { sourceDocumentId, sourceDocumentVersionId, httpStatus: retrieved?.responseStatus ?? null, retrievedUrl: retrieved?.finalUrl ?? null, redirectCount: retrieved?.redirectCount ?? null, byteLength: retrieved?.byteLength ?? null, contentHash, transportHash: contentHash, normalizedContentHash, hashSemanticsVersion },
+      reason !== "extraction_run_in_progress",
+    );
   }
   const remainingRows = await env.DB.prepare("SELECT COUNT(*) AS count FROM knowledge_source_backfill_items WHERE batch_id = ? AND outcome IN ('planned','failed_retryable')").bind(batchId).first<{ count: number }>();
   const continuationRow = await env.DB.prepare(`
@@ -728,10 +745,10 @@ export async function recoverStaleBackfill(
   };
 }
 
-async function settleItem(env: BackfillEnv, batch: any, item: any, outcome: BackfillOutcome, reason: string, actor: string, counters: Record<string, number>, fields: Record<string, unknown> = {}): Promise<void> {
+async function settleItem(env: BackfillEnv, batch: any, item: any, outcome: BackfillOutcome, reason: string, actor: string, counters: Record<string, number>, fields: Record<string, unknown> = {}, incrementRetryCount = true): Promise<void> {
   counters[outcome] = (counters[outcome] ?? 0) + 1; counters.processed++;
   await env.DB.prepare("UPDATE knowledge_source_backfill_items SET outcome = ?, reason_code = ?, source_document_id = ?, source_document_version_id = ?, http_status = ?, retrieved_url = ?, redirect_count = ?, byte_length = ?, content_hash = ?, transport_hash = ?, normalized_content_hash = ?, hash_semantics_version = ?, retry_count = retry_count + CASE WHEN ? IN ('failed_retryable','failed_terminal') THEN 1 ELSE 0 END, updated_at = datetime('now') WHERE id = ?")
-    .bind(outcome, reason, fields.sourceDocumentId ?? null, fields.sourceDocumentVersionId ?? null, fields.httpStatus ?? null, fields.retrievedUrl ?? null, fields.redirectCount ?? null, fields.byteLength ?? null, fields.contentHash ?? null, fields.transportHash ?? null, fields.normalizedContentHash ?? null, fields.hashSemanticsVersion ?? item.hash_semantics_version ?? "legacy_raw_v1", outcome, item.id).run();
+    .bind(outcome, reason, fields.sourceDocumentId ?? null, fields.sourceDocumentVersionId ?? null, fields.httpStatus ?? null, fields.retrievedUrl ?? null, fields.redirectCount ?? null, fields.byteLength ?? null, fields.contentHash ?? null, fields.transportHash ?? null, fields.normalizedContentHash ?? null, fields.hashSemanticsVersion ?? item.hash_semantics_version ?? "legacy_raw_v1", incrementRetryCount ? outcome : "waiting_dependency", item.id).run();
   await env.DB.prepare("INSERT INTO knowledge_source_backfill_item_events (id, batch_id, item_id, outcome, reason_code, metadata_json, actor, correlation_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
     .bind(crypto.randomUUID(), batch.id, item.id, outcome, reason, JSON.stringify(fields), actor, batch.correlation_id).run();
 }
