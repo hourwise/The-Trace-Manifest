@@ -1,7 +1,7 @@
 // KC-02H: retry-safe reconciliation for records that span D1, R2, and Vectorize.
-// This module is deliberately not a Queue consumer yet. KC-03 owns source capture;
-// KC-09 owns embedding/index production. It provides the auditable repair primitive
-// those later tasks will call after their respective admission and policy gates.
+// This module is a bounded scheduled repair primitive. D1 remains authoritative;
+// R2 and Vectorize state is only confirmed and attached after the recorded remote
+// operation is observed to have completed.
 
 type OperationKind = "r2_put" | "r2_delete" | "vector_upsert" | "vector_delete";
 type OperationState = "pending" | "running" | "failed" | "reconciliation_required";
@@ -27,7 +27,7 @@ interface SourceDocumentVersion {
 }
 
 interface VectorDeleteIndex {
-  deleteByIds(ids: string[]): Promise<{ mutationId: string }>;
+  deleteByIds(ids: string[]): Promise<{ mutationId?: string; ids?: string[]; count?: number }>;
   getByIds(ids: string[]): Promise<Array<{ id: string }>>;
 }
 
@@ -41,6 +41,7 @@ export interface KnowledgeReconciliationEnvironment {
 export interface ReconciliationOptions {
   limit?: number;
   trigger?: ReconciliationTrigger;
+  staleAfterSeconds?: number;
 }
 
 export interface ReconciliationSummary {
@@ -52,10 +53,17 @@ export interface ReconciliationSummary {
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
+const DEFAULT_STALE_AFTER_SECONDS = 120;
+const MAX_STALE_AFTER_SECONDS = 900;
 
 function boundedLimit(value: number | undefined): number {
   if (!Number.isFinite(value)) return DEFAULT_LIMIT;
   return Math.min(Math.max(Math.floor(value ?? DEFAULT_LIMIT), 1), MAX_LIMIT);
+}
+
+function boundedStaleAfterSeconds(value: number | undefined): number {
+  if (!Number.isInteger(value)) return DEFAULT_STALE_AFTER_SECONDS;
+  return Math.min(Math.max(value as number, 30), MAX_STALE_AFTER_SECONDS);
 }
 
 async function recordRun(
@@ -165,11 +173,12 @@ async function reconcileVectorDelete(
 
   if (!receipt) {
     const mutation = await index.deleteByIds([operation.subject_id]);
+    const remoteOperationId = mutation.mutationId ?? `vector-delete:${operation.id}`;
     await env.DB.batch([
       env.DB.prepare(`
         INSERT INTO knowledge_index_operation_receipts (operation_id, remote_operation_id)
         VALUES (?, ?)
-      `).bind(operation.id, mutation.mutationId),
+      `).bind(operation.id, remoteOperationId),
       env.DB.prepare(`
         UPDATE knowledge_index_operations
         SET state = 'running', last_error = NULL, updated_at = datetime('now')
@@ -221,22 +230,38 @@ export async function reconcileKnowledgeIndexOperations(
 ): Promise<ReconciliationSummary> {
   const trigger = options.trigger ?? "manual";
   const limit = boundedLimit(options.limit);
+  const staleAfterSeconds = boundedStaleAfterSeconds(options.staleAfterSeconds);
+  const staleInterval = `-${staleAfterSeconds} seconds`;
   const candidates = await env.DB.prepare(`
     SELECT id, operation_kind, subject_type, subject_id, desired_content_hash, state
     FROM knowledge_index_operations
     WHERE state IN ('pending', 'failed', 'reconciliation_required')
-       OR (state = 'running' AND operation_kind = 'vector_delete')
+       OR (state = 'running' AND (
+            updated_at <= datetime('now', ?)
+            OR (operation_kind = 'vector_delete' AND EXISTS (
+              SELECT 1 FROM knowledge_index_operation_receipts receipt
+              WHERE receipt.operation_id = knowledge_index_operations.id
+            ))
+          ))
     ORDER BY updated_at ASC
     LIMIT ?
-  `).bind(limit).all<IndexOperation>();
+  `).bind(staleInterval, limit).all<IndexOperation>();
   const summary: ReconciliationSummary = { completed: 0, deferred: 0, repairRequired: 0, failed: 0 };
 
   for (const operation of candidates.results) {
     const claimed = await env.DB.prepare(`
       UPDATE knowledge_index_operations
       SET state = 'running', attempt_count = attempt_count + 1, updated_at = datetime('now')
-      WHERE id = ? AND state IN ('pending', 'failed', 'reconciliation_required')
-    `).bind(operation.id).run();
+      WHERE id = ?
+        AND (state IN ('pending', 'failed', 'reconciliation_required')
+          OR (state = 'running' AND (
+            updated_at <= datetime('now', ?)
+            OR (operation_kind = 'vector_delete' AND EXISTS (
+              SELECT 1 FROM knowledge_index_operation_receipts receipt
+              WHERE receipt.operation_id = knowledge_index_operations.id
+            ))
+          )))
+    `).bind(operation.id, staleInterval).run();
     if (operation.state !== "running" && Number(claimed.meta.changes ?? 0) !== 1) continue;
 
     const outcome = await reconcileOperation(env, operation, trigger);

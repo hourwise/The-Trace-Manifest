@@ -83,6 +83,27 @@ export interface RecalculateEvidenceResult {
   approvalRequests: number;
 }
 
+export interface RecalculateExpiredEvidenceOptions {
+  limit?: number;
+  /** Last canonical claim ID returned by the previous bounded page. */
+  cursor?: string | null;
+}
+
+export interface RecalculateExpiredEvidenceResult extends RecalculateEvidenceResult {
+  processed: number;
+  nextCursor: string | null;
+  /** Null means the bounded probe found that more work may remain. */
+  remaining: number | null;
+}
+
+const DEFAULT_EXPIRED_EVIDENCE_LIMIT = 25;
+const MAX_EXPIRED_EVIDENCE_LIMIT = 100;
+
+function boundedExpiredEvidenceLimit(value: number | undefined): number {
+  if (!Number.isInteger(value)) return DEFAULT_EXPIRED_EVIDENCE_LIMIT;
+  return Math.min(Math.max(value as number, 1), MAX_EXPIRED_EVIDENCE_LIMIT);
+}
+
 function originFromTreatment(treatment: string): ScoringAssertion["provenanceOriginType"] {
   if (treatment.includes("vendor")) return "vendor_statement";
   if (treatment.includes("community") || treatment === "discovery") return "community";
@@ -389,21 +410,71 @@ export async function recalculateEvidenceScores(
   };
 }
 
-/** Scheduled expiry hook: stale assertions are already classified by ingestion/review. */
-export async function recalculateExpiredEvidence(db: D1Database): Promise<RecalculateEvidenceResult> {
+/**
+ * Scheduled expiry hook with deterministic claim-level paging.
+ *
+ * Assertions are marked only after the score/review fan-out succeeds. A later
+ * transition into `stale` clears that marker through migration 0066, so an
+ * unchanged stale assertion is not reconsidered on every scheduled run.
+ */
+export async function recalculateExpiredEvidence(
+  db: D1Database,
+  options: RecalculateExpiredEvidenceOptions = {},
+): Promise<RecalculateExpiredEvidenceResult> {
+  const limit = boundedExpiredEvidenceLimit(options.limit);
+  const cursor = options.cursor ?? null;
   const rows = await db.prepare(`
-    SELECT DISTINCT canonical_claim_id
+    SELECT canonical_claim_id
     FROM claim_assertions
     WHERE freshness_state = 'stale'
-  `).all<{ canonical_claim_id: string }>();
+      AND expiry_recalculated_at IS NULL
+      AND (? IS NULL OR canonical_claim_id > ?)
+    GROUP BY canonical_claim_id
+    ORDER BY canonical_claim_id ASC
+    LIMIT ?
+  `).bind(cursor, cursor, limit).all<{ canonical_claim_id: string }>();
+  const claimIds = (rows.results ?? []).map((row) => row.canonical_claim_id);
+  if (claimIds.length === 0) {
+    return {
+      triggeringEvent: "expiry_reached",
+      claimIds: [], storyIds: [], claimSnapshots: 0, storySnapshots: 0,
+      statusChanges: 0, approvalRequests: 0,
+      processed: 0, nextCursor: null, remaining: 0,
+    };
+  }
   const result = await recalculateEvidenceScores(db, {
-    claimIds: (rows.results ?? []).map((row) => row.canonical_claim_id),
+    claimIds,
     triggeringEvent: "expiry_reached",
   });
   await triggerKnowledgeReview(db, {
     kind: "expiry_reached",
-    claimIds: (rows.results ?? []).map((row) => row.canonical_claim_id),
-    eventId: "scheduled-expiry",
+    claimIds,
+    eventId: `scheduled-expiry:${cursor ?? "start"}:${claimIds.at(-1)}`,
   });
-  return result;
+
+  const placeholders = asPlaceholders(claimIds);
+  await db.prepare(`
+    UPDATE claim_assertions
+    SET expiry_recalculated_at = datetime('now')
+    WHERE freshness_state = 'stale'
+      AND canonical_claim_id IN (${placeholders})
+  `).bind(...claimIds).run();
+
+  const nextCursor = claimIds.length === limit ? claimIds.at(-1)! : null;
+  const remainingProbe = nextCursor
+    ? await db.prepare(`
+        SELECT 1 AS present
+        FROM claim_assertions
+        WHERE freshness_state = 'stale'
+          AND expiry_recalculated_at IS NULL
+          AND canonical_claim_id > ?
+        LIMIT 1
+      `).bind(nextCursor).first<{ present: number }>()
+    : null;
+  return {
+    ...result,
+    processed: claimIds.length,
+    nextCursor,
+    remaining: remainingProbe ? null : 0,
+  };
 }

@@ -78,6 +78,36 @@ function evidenceQualityFor(value: string | null | undefined): TraceEvidenceQual
   return isKnownEvidenceQuality(value) ? value : "unrated";
 }
 
+/**
+ * Legacy claims.evidence_quality was written by pre-cutover ingestion and has
+ * no independently verifiable reviewed lifecycle. Ask TRACE therefore derives
+ * its bounded quality label only from current canonical assertion fields. A
+ * provenance-backed, direct factual assertion can be strong; an accepted
+ * current assertion with known directness is moderate; everything else is
+ * unrated. This is intentionally a SQL projection, not display-text parsing.
+ */
+function canonicalEvidenceQualitySql(assertionAlias = "ca", claimAlias = "cc"): string {
+  return `CASE
+    WHEN ${claimAlias}.current_state IN ('disputed', 'corrected', 'superseded') THEN 'disputed'
+    WHEN ${assertionAlias}.reviewer_state = 'accepted'
+      AND ${assertionAlias}.admission_state = 'admitted'
+      AND ${assertionAlias}.freshness_state = 'current'
+      AND ${assertionAlias}.source_role = 'evidence'
+      AND ${assertionAlias}.directness = 'direct'
+      AND ${assertionAlias}.evidence_treatment = 'factual_support'
+      AND ${assertionAlias}.relationship IN ('supports', 'reproduces')
+      AND ${assertionAlias}.provenance_group_id IS NOT NULL THEN 'strong'
+    WHEN ${assertionAlias}.reviewer_state = 'accepted'
+      AND ${assertionAlias}.admission_state = 'admitted'
+      AND ${assertionAlias}.freshness_state = 'current'
+      AND ${assertionAlias}.source_role IN ('evidence', 'reported_claim')
+      AND ${assertionAlias}.directness IN ('direct', 'indirect', 'derivative')
+      AND ${assertionAlias}.evidence_treatment IN ('factual_support', 'attributed_opinion')
+      AND ${assertionAlias}.relationship IN ('supports', 'reproduces', 'partially_supports', 'reports') THEN 'moderate'
+    ELSE 'unrated'
+  END`;
+}
+
 export async function retrievePublishedEvidence(
   db: D1Database,
   question: string,
@@ -99,10 +129,7 @@ export async function retrievePublishedEvidence(
            COALESCE(s.treatment, legacy_s.treatment, 'unclassified') AS source_treatment,
            ca.id AS claim_id, ca.canonical_claim_id AS canonical_claim_id, ca.source_role,
            cc.canonical_text AS claim_text,
-           COALESCE(legacy_claim.evidence_quality,
-             CASE cc.current_state WHEN 'disputed' THEN 'disputed'
-               WHEN 'corrected' THEN 'disputed' WHEN 'superseded' THEN 'disputed'
-               ELSE 'unrated' END) AS evidence_quality,
+           ${canonicalEvidenceQualitySql()} AS evidence_quality,
            CASE WHEN cc.current_state = 'disputed' THEN 1 ELSE 0 END AS is_disputed,
            ca.relationship, ca.assertion_text AS evidence_summary,
            COALESCE(fi.title, sv.title, cc.canonical_text) AS item_title,
@@ -120,7 +147,6 @@ export async function retrievePublishedEvidence(
     LEFT JOIN sources s ON s.id = sd.source_id
     LEFT JOIN legacy_claim_evidence_map legacy_map ON legacy_map.assertion_id = ca.id
     LEFT JOIN claim_evidence ce ON ce.id = legacy_map.legacy_evidence_id
-    LEFT JOIN claims legacy_claim ON legacy_claim.id = ca.legacy_claim_id
     LEFT JOIN feed_items fi ON fi.id = ce.feed_item_id
     LEFT JOIN sources legacy_s ON legacy_s.id = fi.source_id
     WHERE sc.publication_status = 'published'
@@ -355,7 +381,7 @@ export async function retrieveApprovedKnowledge(
              ca.assertion_text, ca.relationship, ca.source_role, ca.evidence_treatment,
              ca.source_document_version_id, ca.source_chunk_id, ca.start_locator,
              ca.end_locator, ca.provenance_group_id, ca.directness,
-             legacy_claim.evidence_quality,
+             ${canonicalEvidenceQualitySql()} AS evidence_quality,
              sv.retrieved_at, sv.published_at, sv.retrieved_url,
              sd.canonical_url, sd.id AS source_document_id, s.name AS source_name,
              s.tier AS source_tier, s.treatment AS source_treatment,
@@ -375,7 +401,6 @@ export async function retrieveApprovedKnowledge(
       JOIN source_document_versions sv ON sv.id = ca.source_document_version_id
       JOIN source_documents sd ON sd.id = sv.source_document_id
       JOIN source_chunks chunk ON chunk.id = ca.source_chunk_id
-      LEFT JOIN claims legacy_claim ON legacy_claim.id = ca.legacy_claim_id
       LEFT JOIN sources s ON s.id = sd.source_id
       WHERE kda.knowledge_document_id = ?
         AND ca.reviewer_state = 'accepted'

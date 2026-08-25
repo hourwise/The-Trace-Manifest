@@ -1016,6 +1016,18 @@ async function kc05gLegacyCutoverTests(): Promise<void> {
       VALUES (901, 'Must fail', 'community_report', 'general', 'test');
     `), /read-only/, "legacy claims reject post-cutover writes");
     assert.throws(() => database.sqlite.exec("DELETE FROM claim_evidence WHERE id = 901"), /read-only/, "legacy evidence rejects post-cutover writes");
+    database.sqlite.exec(`
+      UPDATE story_clusters
+      SET slug = 'legacy-story', summary = 'A reviewed legacy story.', publication_status = 'published'
+      WHERE id = 901;
+    `);
+    database.sqlite.exec("UPDATE claim_assertions SET freshness_state = 'current' WHERE id = 'legacy-evidence-901';");
+    const legacyEvidence = await retrievePublishedEvidence(database.asD1(), "legacy model shipped", 4);
+    assert.equal(legacyEvidence.length, 1, "reviewed legacy evidence remains addressable through the explicit compatibility map");
+    assert.notEqual(legacyEvidence[0]?.evidenceQuality, "strong",
+      "opaque claims.evidence_quality cannot manufacture strong Ask TRACE evidence");
+    assert.equal(legacyEvidence[0]?.evidenceQuality, "unrated",
+      "legacy evidence quality fails closed until canonical reviewed provenance exists");
   } finally {
     database.close();
   }

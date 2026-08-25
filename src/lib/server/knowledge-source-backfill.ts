@@ -1,24 +1,26 @@
 /** KC-11C: bounded, review-gated source-document backfill. */
-import { extractHtmlDocument } from "./source-extraction";
-import { captureAdmittedSource, normaliseSourceUrl, SourceCaptureError, type SourceCaptureStorageMode } from "./source-capture";
+import { extractHtmlDocument, extractMarkdownDocument, extractPlainTextDocument } from "./source-extraction";
+import { captureAdmittedPdfSource, captureAdmittedSource, isValidPdfEnvelope, normaliseSourceUrl, SourceCaptureError, type SourceCaptureStorageMode } from "./source-capture";
 import { retrieveRemoteSource, SourceRetrievalError } from "./source-retrieval";
+import { extractStructuredSource } from "./source-structured-extraction";
+import { generateProvenanceGroupProposals } from "./provenance-group-proposals";
 import {
   hashNormalizedSourceContent,
   SOURCE_HASH_SEMANTICS_VERSION,
   SOURCE_NORMALIZATION_POLICY_VERSIONS,
-  type SourceIdentityMediaKind,
 } from "./source-version-identity";
 
 export const BACKFILL_CEILINGS = Object.freeze({
   maxRecords: 25, maxConcurrency: 1, maxRedirects: 3, maxBytesPerRecord: 512 * 1024,
   maxTotalBytes: 5 * 1024 * 1024, maxRetries: 2, maxDurationMs: 30_000,
+  maxExtractedBlocks: 200, maxCandidatesPerRecord: 100, maxProvenanceGroups: 10,
   staleExecutionSeconds: 120,
 });
 export const BACKFILL_POLICY_VERSION = "kc-11c-v3" as const;
 export const BACKFILL_INVENTORY_SCHEMA_VERSION = "kc-11a-v1" as const;
 export type BackfillOutcome = "planned" | "captured_new_document" | "captured_new_version" | "unchanged" | "metadata_only" | "unavailable" | "excluded" | "held_for_review" | "failed_retryable" | "failed_terminal";
 export type InventoryRecord = { id: string; label?: string; state?: string; url?: string; origin?: string | string[]; category?: string };
-export type BackfillSelection = { category?: string; recordIds?: string[]; limit: number; newestFirst?: boolean };
+export type BackfillSelection = { category?: string; recordIds?: string[]; limit: number; newestFirst?: boolean; storageMode?: SourceCaptureStorageMode };
 export type BackfillPlanItem = InventoryRecord & { category: string; canonicalUrl: string | null; fetchability: "eligible" | "ineligible"; admissionOutcome: "eligible" | "excluded"; duplicateOutcome: "unknown_until_fetch" | "not_applicable"; storageMode: SourceCaptureStorageMode; exclusionReason?: string };
 export type BackfillPlan = { schemaVersion: "kc-11a-v1"; planVersion: "kc-11c-v3"; sourceHashSemanticsVersion: typeof SOURCE_HASH_SEMANTICS_VERSION; normalizationPolicyVersions: typeof SOURCE_NORMALIZATION_POLICY_VERSIONS; inventorySnapshotId: string; inventoryIdentity: string; selection: BackfillSelection; ceilings: typeof BACKFILL_CEILINGS; selected: BackfillPlanItem[]; excluded: Array<{ recordId: string; category: string; reason: string }>; estimatedRequestCount: number; estimatedStorageBytesCeiling: number; planHash: string };
 export type BackfillInventory = { schemaVersion?: string; generatedAt?: string; categories?: Record<string, InventoryRecord[]>; [key: string]: unknown };
@@ -79,6 +81,9 @@ export async function buildBackfillPlan(inventory: BackfillInventory, selection:
   if ("recordIds" in selection && selection.recordIds !== undefined && (!Array.isArray(selection.recordIds) || selection.recordIds.length === 0 || selection.recordIds.length > BACKFILL_CEILINGS.maxRecords || selection.recordIds.some((id) => typeof id !== "string" || id.length === 0))) throw new Error("recordIds must be a bounded, non-empty list of strings.");
   if (selection.category !== undefined && (typeof selection.category !== "string" || selection.category.length === 0)) throw new Error("category must be a non-empty string when supplied.");
   if (selection.newestFirst !== undefined && typeof selection.newestFirst !== "boolean") throw new Error("newestFirst must be a boolean when supplied.");
+  if (selection.storageMode !== undefined && !["metadata_only", "short_excerpt", "private_full_text", "editor_supplied_document"].includes(selection.storageMode)) {
+    throw new Error("storageMode must be an allowed non-prohibited capture mode when supplied.");
+  }
   const ids = selection.recordIds === undefined ? [] : selection.recordIds.map(String);
   if (!selection.category && ids.length === 0) throw new Error("An explicit category or recordIds selection is required.");
   const canonicalSelection: BackfillSelection = {
@@ -86,6 +91,7 @@ export async function buildBackfillPlan(inventory: BackfillInventory, selection:
     ...(selection.category !== undefined ? { category: selection.category } : {}),
     ...(ids.length > 0 ? { recordIds: ids } : {}),
     ...(selection.newestFirst !== undefined ? { newestFirst: selection.newestFirst } : {}),
+    ...(selection.storageMode !== undefined ? { storageMode: selection.storageMode } : {}),
   };
   const all = inventoryRecords(inventory).filter((record) => (!selection.category || record.category === selection.category) && (ids.length === 0 || ids.includes(record.id)));
   const ordered = [...all].sort((a, b) => a.id.localeCompare(b.id));
@@ -97,7 +103,10 @@ export async function buildBackfillPlan(inventory: BackfillInventory, selection:
     const canonicalUrl = record.url ? normaliseSourceUrl(record.url) : null;
     if (!canonicalUrl || !eligibleRemoteUrl(canonicalUrl)) { excluded.push({ recordId: record.id, category, reason: "url_ineligible_or_private" }); continue; }
     if (selected.length >= selection.limit) { excluded.push({ recordId: record.id, category, reason: "outside_explicit_limit" }); continue; }
-    selected.push({ ...record, category, canonicalUrl, fetchability: "eligible", admissionOutcome: "eligible", duplicateOutcome: "unknown_until_fetch", storageMode: "metadata_only" });
+    selected.push({
+      ...record, category, canonicalUrl, fetchability: "eligible", admissionOutcome: "eligible",
+      duplicateOutcome: "unknown_until_fetch", storageMode: selection.storageMode ?? "metadata_only",
+    });
   }
   for (const record of all) if (!selected.some((item) => item.id === record.id) && !excluded.some((item) => item.recordId === record.id)) excluded.push({ recordId: record.id, category: record.category ?? "unknown", reason: "outside_explicit_limit" });
   const inventoryIdentity = await inventoryIdentityFor(inventory);
@@ -159,6 +168,12 @@ export const KC11C_RUNTIME_SCHEMA_OBJECTS = Object.freeze([
   "canonical_claims",
   "knowledge_change_proposals",
   "knowledge_claim_conflict_cases",
+  "source_extractions",
+  "source_summaries",
+  "knowledge_extraction_runs",
+  "knowledge_extraction_run_outputs",
+  "knowledge_claim_match_candidates",
+  "knowledge_provenance_group_proposals",
 ] as const);
 
 export const KC11C_OBSERVATION_DIAGNOSTIC_COLUMNS = Object.freeze([
@@ -342,6 +357,72 @@ export async function approveBackfillPlan(env: BackfillEnv, plan: BackfillPlan, 
   return { batchId };
 }
 
+type HistoricalMediaKind = "html" | "markdown" | "plain_text" | "pdf" | "other";
+
+function mediaKindForContentType(contentType: string): HistoricalMediaKind {
+  if (contentType === "text/html" || contentType === "application/xhtml+xml") return "html";
+  if (contentType === "text/markdown") return "markdown";
+  if (contentType === "text/plain") return "plain_text";
+  if (contentType === "application/pdf") return "pdf";
+  return "other";
+}
+
+function extractionForContent(contentType: string, body: string) {
+  const mediaKind = mediaKindForContentType(contentType);
+  if (mediaKind === "html") {
+    return { mediaKind, extraction: extractHtmlDocument(body, {
+      maxTextCharacters: 80_000,
+      maxBlocks: BACKFILL_CEILINGS.maxExtractedBlocks,
+    }) };
+  }
+  if (mediaKind === "markdown") {
+    return { mediaKind, extraction: extractMarkdownDocument(body, {
+      maxTextCharacters: 80_000,
+      maxBlocks: BACKFILL_CEILINGS.maxExtractedBlocks,
+    }) };
+  }
+  return { mediaKind, extraction: extractPlainTextDocument(body, {
+    maxTextCharacters: 80_000,
+    maxBlocks: BACKFILL_CEILINGS.maxExtractedBlocks,
+  }) };
+}
+
+async function sourceRegistryIdForUrl(env: BackfillEnv, canonicalUrl: string): Promise<number | null> {
+  const row = await env.DB.prepare(
+    "SELECT id FROM sources WHERE url = ? ORDER BY id LIMIT 1",
+  ).bind(canonicalUrl).first<{ id: number }>();
+  return row?.id ?? null;
+}
+
+function historicalDriftReason(canonicalUrl: string, retrievedUrl: string, extraction: { extractionState: string; text: string }): string | null {
+  const finalUrl = normaliseSourceUrl(retrievedUrl);
+  if (!finalUrl || finalUrl === canonicalUrl) return null;
+  if (extraction.extractionState === "metadata_only" || extraction.text.length < 200) {
+    return "historical_source_drift_unresolved";
+  }
+  return null;
+}
+
+async function historicalLinkSummary(env: BackfillEnv, canonicalUrl: string): Promise<{ storyReferences: number; knowledgeReferences: number }> {
+  const [stories, knowledge] = await Promise.all([
+    env.DB.prepare(`
+      SELECT COUNT(DISTINCT member.cluster_id) AS count
+      FROM story_cluster_members member
+      JOIN feed_items item ON item.id = member.feed_item_id
+      WHERE item.url = ?
+    `).bind(canonicalUrl).first<{ count: number }>(),
+    env.DB.prepare(`
+      SELECT COUNT(*) AS count
+      FROM knowledge_document_sources
+      WHERE source_reference = ?
+    `).bind(canonicalUrl).first<{ count: number }>(),
+  ]);
+  return {
+    storyReferences: Number(stories?.count ?? 0),
+    knowledgeReferences: Number(knowledge?.count ?? 0),
+  };
+}
+
 export async function executeBackfill(env: BackfillEnv, batchId: string, planHash: string, actor: string, idempotencyKey: string, mode: "initial" | "retry" = "initial"): Promise<Record<string, unknown>> {
   if (env.TRACE_ENVIRONMENT !== "preview") throw new Error("KC-11C backfill is Preview-only.");
   if (!idempotencyKey || idempotencyKey.length > 200) throw new Error("A bounded execution idempotency key is required.");
@@ -361,16 +442,34 @@ export async function executeBackfill(env: BackfillEnv, batchId: string, planHas
   const acquired = await env.DB.prepare("UPDATE knowledge_source_backfill_batches SET state = 'running', executed_at = datetime('now'), updated_at = datetime('now') WHERE id = ? AND state = ?").bind(batchId, requiredState).run();
   if (Number(acquired.meta.changes ?? 0) !== 1) { await env.DB.prepare("UPDATE knowledge_source_backfill_attempts SET state = 'failed', completed_at = datetime('now'), result_json = ? WHERE id = ?").bind(JSON.stringify({ error: "execution_lease_lost" }), attemptId).run(); throw new Error("Another execution already owns this batch."); }
   const started = Date.now();
-  const items = await env.DB.prepare("SELECT * FROM knowledge_source_backfill_items WHERE batch_id = ? AND (outcome = 'planned' OR (outcome = 'failed_retryable' AND retry_count < ?)) ORDER BY id").bind(batchId, BACKFILL_CEILINGS.maxRetries).all<any>();
+  const items = await env.DB.prepare(`
+    SELECT *
+    FROM knowledge_source_backfill_items
+    WHERE batch_id = ?
+      AND (outcome = 'planned' OR (outcome = 'failed_retryable' AND retry_count < ?))
+    ORDER BY id
+    LIMIT ?
+  `).bind(batchId, BACKFILL_CEILINGS.maxRetries, BACKFILL_CEILINGS.maxRecords).all<any>();
   const plan = JSON.parse(batch.plan_json) as BackfillPlan;
-  const counters: Record<string, number> = { captured_new_document: 0, captured_new_version: 0, unchanged: 0, metadata_only: 0, unavailable: 0, excluded: 0, held_for_review: 0, failed_retryable: 0, failed_terminal: 0, processed: 0 };
+  const counters: Record<string, number> = {
+    captured_new_document: 0, captured_new_version: 0, unchanged: 0, metadata_only: 0,
+    unavailable: 0, excluded: 0, held_for_review: 0, failed_retryable: 0, failed_terminal: 0,
+    processed: 0, recordsConsidered: 0, recordsAdmitted: 0, recordsSkipped: 0,
+    unchangedVersionsReused: 0, changedOrNewVersions: 0, extractionRuns: 0,
+    extractionsCreated: 0, summariesCreated: 0, claimsCreated: 0,
+    matchCandidatesCreated: 0, provenanceProposalsCreated: 0, reviewHolds: 0,
+    storyReferences: 0, knowledgeReferences: 0, retries: 0, reconciliationRequired: 0,
+  };
   let totalBytes = 0;
-  for (const item of (items.results ?? []).slice(0, BACKFILL_CEILINGS.maxRecords)) {
+  for (const item of (items.results ?? [])) {
+    counters.recordsConsidered++;
     const selected = plan.selected.find((candidate) => candidate.id === item.inventory_record_id);
     if (!selected?.canonicalUrl) { await settleItem(env, batch, item, "excluded", "approved_plan_item_missing", actor, counters); continue; }
     const remaining = BACKFILL_CEILINGS.maxTotalBytes - totalBytes;
-    if (Date.now() - started > BACKFILL_CEILINGS.maxDurationMs || remaining <= 0) { await settleItem(env, batch, item, "held_for_review", "bounded_execution_ceiling", actor, counters); continue; }
-    let outcome: BackfillOutcome = "failed_retryable"; let reason = "unknown"; let retrieved: Awaited<ReturnType<typeof retrieveRemoteSource>> | null = null; let capture: Awaited<ReturnType<typeof captureAdmittedSource>> | null = null;
+    if (Date.now() - started > BACKFILL_CEILINGS.maxDurationMs || remaining <= 0) break;
+    let outcome: BackfillOutcome = "failed_retryable";
+    let reason = "unknown";
+    let retrieved: Awaited<ReturnType<typeof retrieveRemoteSource>> | null = null;
     let contentHash: string | null = item.transport_hash ?? item.content_hash ?? null;
     let normalizedContentHash: string | null = item.normalized_content_hash ?? null;
     let hashSemanticsVersion: string | null = item.hash_semantics_version ?? null;
@@ -378,50 +477,76 @@ export async function executeBackfill(env: BackfillEnv, batchId: string, planHas
     let sourceDocumentVersionId: string | null = item.source_document_version_id ?? null;
     try {
       const maximumBytes = Math.min(BACKFILL_CEILINGS.maxBytesPerRecord, remaining);
-      retrieved = await retrieveRemoteSource(selected.canonicalUrl, { allowedContentTypes: ["text/html", "text/plain", "text/markdown", "application/pdf"], maximumBytes, timeoutMs: 8_000, maxRedirects: BACKFILL_CEILINGS.maxRedirects, userAgent: "TRACE-KC11C-Preview/1.0" });
+      retrieved = await retrieveRemoteSource(selected.canonicalUrl, {
+        allowedContentTypes: ["text/html", "application/xhtml+xml", "text/plain", "text/markdown", "application/pdf"],
+        maximumBytes, timeoutMs: 8_000, maxRedirects: BACKFILL_CEILINGS.maxRedirects,
+        userAgent: "TRACE-KC11C-Preview/1.0", responseMode: "bytes",
+      });
       totalBytes += retrieved.byteLength;
       contentHash = retrieved.transportHash;
-      const mediaKind: SourceIdentityMediaKind = retrieved.contentType === "text/html"
-        ? "html"
-        : retrieved.contentType === "text/markdown"
-          ? "markdown"
-          : retrieved.contentType === "application/pdf"
-            ? "pdf"
-            : "plain_text";
-      const extraction = mediaKind === "html"
-        ? extractHtmlDocument(retrieved.body)
-        : extractHtmlDocument(`<main><p>${retrieved.body.slice(0, 12000)}</p></main>`);
-      normalizedContentHash = (await hashNormalizedSourceContent(mediaKind === "html"
-        ? { mediaKind: "html", body: retrieved.body, extraction, canonicalUrl: selected.canonicalUrl }
-        : { mediaKind, body: retrieved.body, extraction })).normalizedContentHash;
-      hashSemanticsVersion = SOURCE_HASH_SEMANTICS_VERSION;
-      const existingDocument = await env.DB.prepare("SELECT id FROM source_documents WHERE canonical_url = ?").bind(selected.canonicalUrl).first<{ id: string }>();
-      sourceDocumentId = existingDocument?.id ?? null;
-      const existingVersion = existingDocument ? await env.DB.prepare(`
-        SELECT id, hash_semantics_version
-        FROM source_document_versions
-        WHERE source_document_id = ?
-          AND normalized_content_hash = ?
-          AND hash_semantics_version = ?
-        ORDER BY created_at ASC, id ASC
-        LIMIT 1
-      `).bind(existingDocument.id, normalizedContentHash, SOURCE_HASH_SEMANTICS_VERSION).first<{ id: string; hash_semantics_version: string }>() : null;
-      if (existingVersion) {
-        // Route the unchanged path through capture so the exact transport
-        // observation is retained. Review replay is allowed only when this
-        // item records the exact post-commit review-trigger failure.
+      const mediaKind = mediaKindForContentType(retrieved.contentType);
+      if (mediaKind === "pdf") {
+        normalizedContentHash = retrieved.transportHash;
+        if (!isValidPdfEnvelope(retrieved.bodyBytes)) {
+          throw new SourceRetrievalError("The retrieved PDF bytes are not a valid PDF envelope.", 422, "content_invalid", retrieved.responseStatus);
+        }
+        const pdfCapture = await captureAdmittedPdfSource(env as any, {
+          canonicalUrl: selected.canonicalUrl,
+          retrievedUrl: retrieved.finalUrl,
+          bytes: retrieved.bodyBytes,
+          contentType: "application/pdf",
+          admissionState: "admitted",
+          copyrightStorageMode: selected.storageMode,
+          displayName: selected.label ?? null,
+          sourceId: await sourceRegistryIdForUrl(env, selected.canonicalUrl),
+          httpStatus: retrieved.responseStatus,
+          correlationId: batch.correlation_id,
+          maximumBytes,
+          transportHash: retrieved.transportHash,
+        });
+        sourceDocumentId = pdfCapture.sourceDocumentId;
+        sourceDocumentVersionId = pdfCapture.sourceDocumentVersionId;
+        hashSemanticsVersion = SOURCE_HASH_SEMANTICS_VERSION;
+        outcome = "metadata_only";
+        reason = "pdf_opaque_capture";
+        counters.recordsAdmitted++;
+        counters.changedOrNewVersions += pdfCapture.observationClassification === "unchanged" ? 0 : 1;
+        const provenance = await generateProvenanceGroupProposals(env.DB as D1Database, {
+          sourceDocumentVersionId, maxGroups: BACKFILL_CEILINGS.maxProvenanceGroups,
+        });
+        counters.provenanceProposalsCreated += provenance.proposalsCreated;
+      } else {
+        const body = new TextDecoder().decode(retrieved.bodyBytes);
+        const prepared = extractionForContent(retrieved.contentType, body);
+        const extraction = prepared.extraction;
+        normalizedContentHash = (await hashNormalizedSourceContent(prepared.mediaKind === "html"
+          ? { mediaKind: "html", body, extraction, canonicalUrl: selected.canonicalUrl }
+          : { mediaKind: prepared.mediaKind, body, extraction })).normalizedContentHash;
+        const driftReason = historicalDriftReason(selected.canonicalUrl, retrieved.finalUrl, extraction);
+        const sourceId = await sourceRegistryIdForUrl(env, selected.canonicalUrl);
+        const existingDocument = await env.DB.prepare("SELECT id FROM source_documents WHERE canonical_url = ?").bind(selected.canonicalUrl).first<{ id: string }>();
+        const existingVersion = existingDocument ? await env.DB.prepare(`
+          SELECT id
+          FROM source_document_versions
+          WHERE source_document_id = ?
+            AND normalized_content_hash = ?
+            AND hash_semantics_version = ?
+          ORDER BY created_at ASC, id ASC
+          LIMIT 1
+        `).bind(existingDocument.id, normalizedContentHash, SOURCE_HASH_SEMANTICS_VERSION).first<{ id: string }>() : null;
         const replayEvidenceReview = item.reason_code === "review_trigger_failed"
           && Number(item.retry_count ?? 0) > 0
-          && item.source_document_version_id === existingVersion.id;
-        capture = await captureAdmittedSource(env, {
+          && item.source_document_version_id === existingVersion?.id;
+        const capture = await captureAdmittedSource(env as any, {
           canonicalUrl: selected.canonicalUrl,
           retrievedUrl: retrieved.finalUrl,
           contentType: retrieved.contentType,
-          body: retrieved.body,
+          body,
           extraction,
-          mediaKind,
+          mediaKind: prepared.mediaKind,
           admissionState: "admitted",
           copyrightStorageMode: selected.storageMode,
+          sourceId,
           httpStatus: retrieved.responseStatus,
           correlationId: batch.correlation_id,
           maximumBytes,
@@ -430,22 +555,48 @@ export async function executeBackfill(env: BackfillEnv, batchId: string, planHas
         });
         sourceDocumentId = capture.sourceDocumentId;
         sourceDocumentVersionId = capture.sourceDocumentVersionId;
-        contentHash = capture.transportHash;
-        normalizedContentHash = capture.normalizedContentHash;
-        hashSemanticsVersion = capture.hashSemanticsVersion;
-        outcome = "unchanged";
-        reason = capture.observationClassification === "reference_only_drift"
-          ? "reference_only_drift"
-          : "normalized_content_hash_unchanged";
-      }
-      else {
-        capture = await captureAdmittedSource(env, { canonicalUrl: selected.canonicalUrl, retrievedUrl: retrieved.finalUrl, contentType: retrieved.contentType, body: retrieved.body, extraction, mediaKind, admissionState: "admitted", copyrightStorageMode: selected.storageMode, httpStatus: retrieved.responseStatus, correlationId: batch.correlation_id, maximumBytes, transportHash: retrieved.transportHash });
-        sourceDocumentId = capture.sourceDocumentId;
-        sourceDocumentVersionId = capture.sourceDocumentVersionId;
         contentHash = capture.contentHash;
         normalizedContentHash = capture.normalizedContentHash;
         hashSemanticsVersion = capture.hashSemanticsVersion;
-        outcome = capture.extractionStatus === "metadata_only" ? "metadata_only" : (existingDocument ? "captured_new_version" : "captured_new_document"); reason = "captured_admitted_source";
+        counters.recordsAdmitted++;
+        if (capture.observationClassification === "unchanged" || existingVersion) counters.unchangedVersionsReused++;
+        else counters.changedOrNewVersions++;
+
+        const provenance = await generateProvenanceGroupProposals(env.DB as D1Database, {
+          sourceDocumentVersionId, maxGroups: BACKFILL_CEILINGS.maxProvenanceGroups,
+        });
+        counters.provenanceProposalsCreated += provenance.proposalsCreated;
+        const links = await historicalLinkSummary(env, selected.canonicalUrl);
+        counters.storyReferences += links.storyReferences;
+        counters.knowledgeReferences += links.knowledgeReferences;
+
+        if (driftReason) {
+          outcome = "held_for_review";
+          reason = driftReason;
+          counters.reviewHolds++;
+        } else if (capture.extractionStatus === "captured" && extraction.extractionState === "extracted") {
+          const structured = await extractStructuredSource(env.DB as D1Database, {
+            sourceDocumentVersionId,
+            sourceContentHash: capture.contentHash,
+            extraction,
+            correlationId: batch.correlation_id,
+            maxChunks: BACKFILL_CEILINGS.maxExtractedBlocks,
+            maxCandidates: BACKFILL_CEILINGS.maxCandidatesPerRecord,
+          });
+          counters.extractionRuns++;
+          counters.extractionsCreated += structured.candidatesCreated;
+          counters.summariesCreated += structured.summaryCreated ? 1 : 0;
+          counters.claimsCreated += structured.claimsCreated;
+          counters.matchCandidatesCreated += structured.matchCandidatesCreated;
+          outcome = existingVersion ? "unchanged" : (existingDocument ? "captured_new_version" : "captured_new_document");
+          reason = existingVersion ? "normalized_content_hash_unchanged" : "captured_and_proposed_for_review";
+        } else if (existingVersion) {
+          outcome = "unchanged";
+          reason = "normalized_content_hash_unchanged";
+        } else {
+          outcome = "metadata_only";
+          reason = "capture_metadata_only";
+        }
       }
     } catch (error) {
       // A capture commits deterministic source rows before it invokes the
@@ -474,13 +625,31 @@ export async function executeBackfill(env: BackfillEnv, batchId: string, planHas
         ? error.code
         : error instanceof Error ? error.message.slice(0, 120) : "capture_failed";
       const retryCount = Number(item.retry_count ?? 0) + 1;
-      outcome = error instanceof SourceRetrievalError && ["url_ineligible", "redirect_rejected", "content_type_rejected", "response_status_rejected", "response_too_large"].includes(error.code) ? "excluded" : retryCount >= BACKFILL_CEILINGS.maxRetries ? "failed_terminal" : "failed_retryable";
+      outcome = error instanceof SourceRetrievalError && ["url_ineligible", "redirect_rejected", "content_type_rejected", "response_status_rejected", "response_too_large", "content_invalid"].includes(error.code) ? "excluded" : retryCount >= BACKFILL_CEILINGS.maxRetries ? "failed_terminal" : "failed_retryable";
+      if (outcome === "failed_retryable") counters.retries++;
     }
+    const operationCount = sourceDocumentVersionId
+      ? await env.DB.prepare("SELECT COUNT(*) AS count FROM knowledge_index_operations WHERE subject_type = 'source_document_version' AND subject_id = ? AND state IN ('pending','failed','reconciliation_required','running')").bind(sourceDocumentVersionId).first<{ count: number }>()
+      : null;
+    counters.reconciliationRequired += Number(operationCount?.count ?? 0);
     await settleItem(env, batch, item, outcome, reason, actor, counters, { sourceDocumentId, sourceDocumentVersionId, httpStatus: retrieved?.responseStatus ?? null, retrievedUrl: retrieved?.finalUrl ?? null, redirectCount: retrieved?.redirectCount ?? null, byteLength: retrieved?.byteLength ?? null, contentHash, transportHash: contentHash, normalizedContentHash, hashSemanticsVersion });
   }
-  const remainingRows = await env.DB.prepare("SELECT COUNT(*) AS count FROM knowledge_source_backfill_items WHERE batch_id = ? AND outcome IN ('planned','failed_retryable','failed_terminal')").bind(batchId).first<{ count: number }>();
+  const remainingRows = await env.DB.prepare("SELECT COUNT(*) AS count FROM knowledge_source_backfill_items WHERE batch_id = ? AND outcome IN ('planned','failed_retryable')").bind(batchId).first<{ count: number }>();
+  const continuationRow = await env.DB.prepare(`
+    SELECT id
+    FROM knowledge_source_backfill_items
+    WHERE batch_id = ? AND outcome IN ('planned','failed_retryable')
+    ORDER BY id
+    LIMIT 1
+  `).bind(batchId).first<{ id: string }>();
+  const remaining = Number(remainingRows?.count ?? 0);
+  counters.recordsSkipped = remaining;
   const state = Number(remainingRows?.count ?? 0) > 0 ? "partial" : "completed";
-  const result = { state, batchId, planHash, mode, ...counters, totalBytes };
+  const result = {
+    state, batchId, planHash, mode, ...counters, totalBytes,
+    remaining, hasMore: remaining > 0,
+    continuation: continuationRow ? { itemId: continuationRow.id } : null,
+  };
   await env.DB.prepare("UPDATE knowledge_source_backfill_batches SET state = ?, updated_at = datetime('now') WHERE id = ? AND state = 'running'").bind(state, batchId).run();
   await env.DB.prepare("UPDATE knowledge_source_backfill_attempts SET state = 'completed', completed_at = datetime('now'), result_json = ? WHERE id = ?").bind(JSON.stringify(result), attemptId).run();
   return result;

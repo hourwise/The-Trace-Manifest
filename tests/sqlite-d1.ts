@@ -97,6 +97,7 @@ export class SQLiteD1 {
       this.sqlite.exec(readFileSync("db/migration-0064-kc-03h-pdf-upload-state.sql", "utf8"));
     }
     this.sqlite.exec(readFileSync("db/migration-0065-public-evidence-graph-indexes.sql", "utf8"));
+    this.sqlite.exec(readFileSync("db/migration-0066-kc-11d-bounded-expiry.sql", "utf8"));
   }
 
   prepare(query: string): SQLiteD1Statement {

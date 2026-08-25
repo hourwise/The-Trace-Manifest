@@ -83,6 +83,7 @@ try {
   db.exec(readFileSync("db/migration-0063-kc-03f-upload-source-states.sql", "utf8"));
   db.exec(readFileSync("db/migration-0064-kc-03h-pdf-upload-state.sql", "utf8"));
   db.exec(readFileSync("db/migration-0065-public-evidence-graph-indexes.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0066-kc-11d-bounded-expiry.sql", "utf8"));
 
   const requiredTables = [
     "ai_requests", "ai_budget_reservations", "ai_usage_ledger", "ai_quota_usage",
@@ -160,6 +161,8 @@ try {
   for (const column of ["transport_hash", "normalized_content_hash", "hash_semantics_version"]) {
     if (!backfillItemColumns.has(column)) throw new Error(`Missing backfill item hash column ${column}`);
   }
+  const assertionColumns = new Set(db.prepare("PRAGMA table_info(claim_assertions)").all().map((row) => row.name));
+  if (!assertionColumns.has("expiry_recalculated_at")) throw new Error("Missing bounded expiry recalculation column");
 
   const jobColumns = new Set(db.prepare("PRAGMA table_info(ingestion_jobs)").all().map((row) => row.name));
   for (const column of ["result_status", "items_rejected", "items_skipped", "outcome_detail"]) {

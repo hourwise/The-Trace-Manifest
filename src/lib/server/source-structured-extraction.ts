@@ -60,15 +60,21 @@ export async function extractStructuredSource(
     sourceContentHash: string;
     extraction: ExtractedHtmlDocument;
     correlationId?: string;
+    maxChunks?: number;
+    maxCandidates?: number;
   },
 ): Promise<StructuredExtractionResult> {
   const sourceState = await db.prepare(`
-    SELECT document.media_kind, version.extraction_state
+    SELECT document.media_kind, version.extraction_state, version.storage_state
     FROM source_document_versions version
     JOIN source_documents document ON document.id = version.source_document_id
     WHERE version.id = ?
-  `).bind(input.sourceDocumentVersionId).first<{ media_kind: string; extraction_state: string | null }>();
-  if (sourceState?.media_kind === "pdf" || sourceState?.extraction_state === "metadata_only" || sourceState?.extraction_state === "unsupported" || sourceState?.extraction_state === "extraction_failed") {
+  `).bind(input.sourceDocumentVersionId).first<{ media_kind: string; extraction_state: string | null; storage_state: string | null }>();
+  if (sourceState?.media_kind === "pdf"
+    || sourceState?.storage_state === "metadata_only"
+    || sourceState?.extraction_state === "metadata_only"
+    || sourceState?.extraction_state === "unsupported"
+    || sourceState?.extraction_state === "extraction_failed") {
     throw new Error("source_version_not_extractable");
   }
   const run = await beginExtractionRun(db, input);
@@ -138,10 +144,20 @@ async function beginExtractionRun(
 
 async function persistStructuredExtraction(
   db: D1Database,
-  input: { sourceDocumentVersionId: string; sourceContentHash: string; extraction: ExtractedHtmlDocument },
+  input: {
+    sourceDocumentVersionId: string;
+    sourceContentHash: string;
+    extraction: ExtractedHtmlDocument;
+    maxChunks?: number;
+    maxCandidates?: number;
+  },
   extractionRunId: string,
 ): Promise<Omit<StructuredExtractionResult, "extractionRunId">> {
-  const chunks = await buildChunks(input.sourceDocumentVersionId, input.extraction.blocks);
+  const chunks = await buildChunks(
+    input.sourceDocumentVersionId,
+    input.extraction.blocks,
+    boundedLimit(input.maxChunks, input.extraction.blocks.length),
+  );
   let chunksCreated = 0;
   for (const chunk of chunks) {
     const result = await db.prepare(`
@@ -158,8 +174,10 @@ async function persistStructuredExtraction(
   let candidatesCreated = 0;
   let claimsCreated = 0;
   let matchCandidatesCreated = 0;
+  const candidateLimit = boundedLimit(input.maxCandidates, Number.MAX_SAFE_INTEGER);
   for (const chunk of chunks) {
     for (const candidate of candidatesForChunk(chunk.text)) {
+      if (candidatesCreated >= candidateLimit) break;
       const candidateId = `extraction-${await sha256(`${input.sourceDocumentVersionId}:${chunk.id}:${candidate.kind}:${candidate.text}`)}`;
       const idempotencyKey = `${STRUCTURED_EXTRACTION_VERSION}:${input.sourceDocumentVersionId}:${chunk.id}:${candidate.kind}:${await sha256(candidate.text)}`;
       const inserted = await db.prepare(`
@@ -211,6 +229,7 @@ async function persistStructuredExtraction(
         matchCandidatesCreated += matchResult.candidatesCreated;
       }
     }
+    if (candidatesCreated >= candidateLimit) break;
   }
 
   const summary = buildDeterministicSummary(input.extraction);
@@ -244,9 +263,10 @@ function classifyExtractionError(error: unknown): string {
   return "structured_extraction_failed";
 }
 
-async function buildChunks(versionId: string, blocks: HtmlExtractionBlock[]): Promise<SourceChunkRow[]> {
+async function buildChunks(versionId: string, blocks: HtmlExtractionBlock[], maxChunks: number): Promise<SourceChunkRow[]> {
   const chunks: SourceChunkRow[] = [];
   for (const [chunkIndex, block] of blocks.entries()) {
+    if (chunks.length >= maxChunks) break;
     if (!block.text.trim()) continue;
     // D1 stores only a short, locator-backed excerpt; the permitted original
     // and full structured extraction remain in private R2.
@@ -261,6 +281,12 @@ async function buildChunks(versionId: string, blocks: HtmlExtractionBlock[]): Pr
     });
   }
   return chunks;
+}
+
+function boundedLimit(value: number | undefined, fallback: number): number {
+  if (value === undefined) return fallback;
+  if (!Number.isInteger(value) || value < 1) throw new Error("Extraction limits must be positive integers.");
+  return Math.min(value, 10_000);
 }
 
 function candidatesForChunk(text: string): Candidate[] {

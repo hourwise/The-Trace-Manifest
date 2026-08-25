@@ -30,6 +30,7 @@ import type { OperatorRole } from "../../src/security/access-auth";
 import { admitAndQueueFeedCapture, admitAndQueueManualCapture, admitAndQueueKnowledgeDocumentCapture } from "./knowledge-capture-queue";
 import { consumeKnowledgeCaptureBatch } from "./knowledge-capture-consumer";
 import { recalculateEvidenceScores, recalculateExpiredEvidence } from "../../src/lib/server/evidence-recalculation";
+import { reconcileKnowledgeIndexOperations } from "./knowledge-reconciliation";
 import { indexKnowledgeEmbeddings } from "./knowledge-embedding-index";
 import {
   approveBackfillPlan,
@@ -196,7 +197,8 @@ export default {
           await runEvidenceUpgradePipeline(env);
           await runClaimExtractionPipeline(env);
           await runConflictDetectionPipeline(env);
-          await recalculateExpiredEvidence(env.DB);
+          await runEvidenceExpiryPipeline(env);
+          await runReconciliationPipeline(env);
           await runModelDataPipeline(env);
           break;
         case "0 18 * * *":
@@ -922,7 +924,40 @@ async function runClassificationPipeline(env: Env) {
 async function runCrossSourceMatchingPipeline(env: Env) {
   console.log("Cross-source matching: starting...");
   const result = await runCrossSourceMatching(env.DB);
-  console.log(`Cross-source matching: done — ${result.matched} candidate matches from ${result.processed} items`);
+  console.log(JSON.stringify({
+    stage: "cross_source_matching",
+    processed: result.processed,
+    matched: result.matched,
+    nextCursor: result.nextCursor,
+    hasMore: result.hasMore,
+  }));
+}
+
+async function runEvidenceExpiryPipeline(env: Env) {
+  const result = await recalculateExpiredEvidence(env.DB, { limit: 25 });
+  console.log(JSON.stringify({
+    stage: "evidence_expiry_recalculation",
+    processed: result.processed,
+    claimSnapshots: result.claimSnapshots,
+    storySnapshots: result.storySnapshots,
+    approvalRequests: result.approvalRequests,
+    nextCursor: result.nextCursor,
+    remaining: result.remaining,
+  }));
+}
+
+async function runReconciliationPipeline(env: Env) {
+  const result = await reconcileKnowledgeIndexOperations({
+    DB: env.DB,
+    RAW_STORE: env.RAW_STORE,
+    KNOWLEDGE_VECTOR_INDEX: env.KNOWLEDGE_VECTOR_INDEX,
+  }, { limit: 20, trigger: "scheduled", staleAfterSeconds: 120 });
+  console.log(JSON.stringify({
+    stage: "knowledge_reconciliation",
+    ...result,
+    limit: 20,
+    staleAfterSeconds: 120,
+  }));
 }
 
 // ============================================================

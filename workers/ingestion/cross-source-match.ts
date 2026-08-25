@@ -9,6 +9,10 @@ import type { FeedItem } from "./types";
 // Algorithm identity
 // ============================================================
 const ALGORITHM_VERSION = "lexical-jaccard-v2";
+export const CROSS_SOURCE_MATCH_CEILINGS = Object.freeze({
+  maxDriversPerRun: 50,
+  maxCandidatesPerDriver: 300,
+});
 
 // ============================================================
 // Text normalization
@@ -110,8 +114,8 @@ export async function findCrossSourceMatches(
      WHERE id != ?
      AND ingestion_status NOT IN ('archived', 'rejected')
      AND fetched_at >= datetime('now', ?)
-     ORDER BY fetched_at DESC
-     LIMIT 300`
+     ORDER BY fetched_at DESC, id DESC
+     LIMIT ${CROSS_SOURCE_MATCH_CEILINGS.maxCandidatesPerDriver}`
   ).bind(item.id, `-${windowDays} days`).all<FeedItem & { source_id: number }>();
 
   if (!results || results.length === 0) {
@@ -183,8 +187,21 @@ export async function findCrossSourceMatches(
 // Marks items as match-checked so they aren't re-processed.
 // ============================================================
 export async function runCrossSourceMatching(
-  db: D1Database
-): Promise<{ processed: number; matched: number }> {
+  db: D1Database,
+  options: {
+    limit?: number;
+    cursor?: { fetchedAt: string; id: number } | null;
+  } = {},
+): Promise<{
+  processed: number;
+  matched: number;
+  nextCursor: { fetchedAt: string; id: number } | null;
+  hasMore: boolean;
+}> {
+  const limit = Number.isInteger(options.limit)
+    ? Math.min(Math.max(options.limit as number, 1), CROSS_SOURCE_MATCH_CEILINGS.maxDriversPerRun)
+    : CROSS_SOURCE_MATCH_CEILINGS.maxDriversPerRun;
+  const cursor = options.cursor ?? null;
   // Get classified items that haven't been match-checked yet
   const { results } = await db.prepare(
     `SELECT * FROM feed_items
@@ -192,11 +209,19 @@ export async function runCrossSourceMatching(
      AND (raw_metadata IS NULL
           OR json_extract(raw_metadata, '$.crossSourceMatch.checkedAt') IS NULL)
      AND fetched_at >= datetime('now', '-2 days')
-     ORDER BY fetched_at ASC`
+     AND (? IS NULL OR fetched_at > ? OR (fetched_at = ? AND id > ?))
+     ORDER BY fetched_at ASC, id ASC
+     LIMIT ?`
+  ).bind(
+    cursor ? cursor.fetchedAt : null,
+    cursor?.fetchedAt ?? null,
+    cursor?.fetchedAt ?? null,
+    cursor?.id ?? null,
+    limit,
   ).all<FeedItem>();
 
   if (!results || results.length === 0) {
-    return { processed: 0, matched: 0 };
+    return { processed: 0, matched: 0, nextCursor: null, hasMore: false };
   }
 
   let matched = 0;
@@ -228,5 +253,11 @@ export async function runCrossSourceMatching(
     if (match.isMatch) matched++;
   }
 
-  return { processed: results.length, matched };
+  const last = results.at(-1);
+  return {
+    processed: results.length,
+    matched,
+    nextCursor: results.length === limit && last ? { fetchedAt: last.fetched_at, id: last.id } : null,
+    hasMore: results.length === limit,
+  };
 }
