@@ -1289,7 +1289,7 @@ Built and deployed:
 
 - Topic classification ✅ — `classify.ts`, 16-topic rule-based taxonomy
 - Source classification ✅ — Tier A/B/C + treatment labels
-- Semantic deduplication ✅ — `semantic-dedup.ts`, Jaccard similarity
+- Cross-source lexical matching ✅ — `cross-source-match.ts`, bounded Jaccard similarity
 - Story clustering ✅ — `cluster.ts`, 3-stage entity+title pipeline
 - Entity extraction ✅ — model/provider extraction in classify.ts
 - Claim extraction ✅ — `extract-claims.ts`, 9 claim classes, 40+ patterns

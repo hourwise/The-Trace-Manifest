@@ -4,6 +4,7 @@ import {
   getPublicKnowledgeEvidence,
   getPublicRelatedStories,
   getPublicStoryEvidence,
+  relationshipLabel,
 } from "../src/lib/server/public-evidence";
 
 async function run(): Promise<void> {
@@ -30,6 +31,18 @@ async function run(): Promise<void> {
          datetime('now'), 'publisher@example.test', datetime('now')),
         (1203, 'same-topic-story', 'Same topic only', 'ai-agents',
          'This story shares a topic but has no reviewed relationship.', 'published', 'provisionally_supported',
+         datetime('now'), 'publisher@example.test', datetime('now')),
+        (1204, 'draft-story', 'Draft story', 'ai-agents',
+         'A draft must not expose evidence.', 'draft', 'provisionally_supported',
+         NULL, NULL, NULL),
+        (1205, 'unreviewed-story', 'Unreviewed story', 'ai-agents',
+         'An unreviewed story must not expose evidence.', 'published', 'provisionally_supported',
+         datetime('now'), NULL, NULL),
+        (1206, 'future-story', 'Future story', 'ai-agents',
+         'A future story must not expose evidence.', 'published', 'provisionally_supported',
+         datetime('now', '+1 day'), 'publisher@example.test', datetime('now')),
+        (1207, 'ineligible-story', 'Ineligible story', 'ai-agents',
+         'An unverified story must not expose evidence.', 'published', 'unverified',
          datetime('now'), 'publisher@example.test', datetime('now'));
 
       INSERT INTO story_cluster_members (cluster_id, feed_item_id, is_primary)
@@ -79,7 +92,11 @@ async function run(): Promise<void> {
       VALUES
         (1201, 'public-evidence-claim', 'primary', 'high', 1),
         (1201, 'public-evidence-unresolved', 'caveat', 'standard', 2),
-        (1201, 'public-evidence-pdf-claim', 'supporting', 'standard', 3);
+        (1201, 'public-evidence-pdf-claim', 'supporting', 'standard', 3),
+        (1204, 'public-evidence-claim', 'primary', 'high', 1),
+        (1205, 'public-evidence-claim', 'primary', 'high', 1),
+        (1206, 'public-evidence-claim', 'primary', 'high', 1),
+        (1207, 'public-evidence-claim', 'primary', 'high', 1);
 
       INSERT INTO claim_assertions
         (id, canonical_claim_id, source_document_version_id, source_chunk_id,
@@ -140,6 +157,50 @@ async function run(): Promise<void> {
     assert.equal((storyEvidence.claims[0]?.assertions[0] as unknown as Record<string, unknown>).chunkText, undefined,
       'public projection does not expose private source chunk text');
 
+    for (const ineligibleStoryId of [1204, 1205, 1206, 1207]) {
+      const ineligible = await getPublicStoryEvidence(database.asD1(), ineligibleStoryId);
+      assert.equal(ineligible.totalClaimCount, 0,
+        `public evidence helper rejects ineligible story ${ineligibleStoryId} at its own boundary`);
+    }
+
+    database.sqlite.exec(`
+      INSERT INTO canonical_claims
+        (id, canonical_text, claim_class, claim_domain, current_state, materiality)
+      VALUES
+        ('public-evidence-many', 'An early claim has many assertions.', 'specification_defined', 'general', 'active', 'standard'),
+        ('public-evidence-later-a', 'A later claim has one assertion.', 'specification_defined', 'general', 'active', 'standard'),
+        ('public-evidence-later-b', 'Another later claim has one assertion.', 'specification_defined', 'general', 'active', 'standard');
+      INSERT INTO story_claims (story_cluster_id, canonical_claim_id, role, materiality, display_order)
+      VALUES
+        (1201, 'public-evidence-many', 'supporting', 'standard', 4),
+        (1201, 'public-evidence-later-a', 'supporting', 'standard', 5),
+        (1201, 'public-evidence-later-b', 'supporting', 'standard', 6);
+    `);
+    const assertionInsert = database.sqlite.prepare(`
+      INSERT INTO claim_assertions
+        (id, canonical_claim_id, source_document_version_id, source_chunk_id,
+         start_locator, end_locator, assertion_text, relationship, source_role,
+         directness, evidence_treatment, admission_state, freshness_state,
+         provenance_group_id, extraction_method, extraction_version, confidence,
+         reviewer_state, reviewed_by, reviewed_at)
+      VALUES (?, ?, 'public-evidence-version', 'public-evidence-chunk', ?, ?, ?,
+              'supports', 'evidence', 'direct', 'factual_support', 'admitted', 'current',
+              'public-evidence-provenance', 'deterministic', 'test-v1', 0.9,
+              'accepted', 'publisher@example.test', datetime('now'))
+    `);
+    for (let index = 1; index <= 5; index++) {
+      assertionInsert.run(`public-evidence-many-${index}`, 'public-evidence-many', `many:${index}`, `many:${index + 1}`, `Early assertion ${index}.`);
+    }
+    assertionInsert.run('public-evidence-later-a-1', 'public-evidence-later-a', 'later-a:1', 'later-a:2', 'Later assertion A.');
+    assertionInsert.run('public-evidence-later-b-1', 'public-evidence-later-b', 'later-b:1', 'later-b:2', 'Later assertion B.');
+    const boundedClaims = await getPublicStoryEvidence(database.asD1(), 1201);
+    assert.equal(boundedClaims.claims.find((claim) => claim.claimId === 'public-evidence-many')?.assertions.length, 4,
+      'the per-claim public assertion cap is four');
+    assert.equal(boundedClaims.claims.find((claim) => claim.claimId === 'public-evidence-later-a')?.assertions.length, 1,
+      'a later claim is not starved by an earlier claim with many assertions');
+    assert.equal(boundedClaims.claims.find((claim) => claim.claimId === 'public-evidence-later-b')?.assertions.length, 1,
+      'every later eligible claim receives its reviewed assertion');
+
     await database.prepare("UPDATE source_document_versions SET retrieved_url = 'https://user:password@source.example/story' WHERE id = 'public-evidence-version'").run();
     await database.prepare("UPDATE source_documents SET canonical_url = 'https://user:password@source.example/story' WHERE id = 'public-evidence-source'").run();
     const credentialedUrlEvidence = await getPublicStoryEvidence(database.asD1(), 1201);
@@ -149,7 +210,12 @@ async function run(): Promise<void> {
     const related = await getPublicRelatedStories(database.asD1(), 1201);
     assert.deepEqual(related.map((item) => item.slug), ['related-evidence-story']);
     assert.equal(related[0]?.relationshipLabel, 'Updates');
-    assert.equal(related[0]?.confidence, 0.9);
+    assert.equal("confidence" in (related[0] ?? {}), false,
+      'internal relationship confidence remains ordering metadata and is not public');
+    assert.equal(relationshipLabel('updates', 'outgoing'), 'Updates');
+    assert.equal(relationshipLabel('updates', 'incoming'), 'Updated by');
+    assert.equal(relationshipLabel('retracts', 'outgoing'), 'Related',
+      'unknown directional relationships use a neutral public label');
 
     const knowledgeEvidence = await getPublicKnowledgeEvidence(database.asD1(), 'public-evidence-knowledge');
     assert.equal(knowledgeEvidence.totalClaimCount, 1);

@@ -8,7 +8,7 @@ import type {
 } from "./provider";
 import {
   independentEvidenceWeightFor, isKnownAdmissionState, isKnownFreshnessState,
-  isKnownSourceKind, isTraceSourceKind, sourceRoleFor,
+  isKnownEvidenceQuality, isKnownSourceKind, isTraceSourceKind, sourceRoleFor,
 } from "./task-policy";
 
 // ============================================================
@@ -66,7 +66,7 @@ export function validateEvidenceExcerpt(v: unknown): v is EvidenceExcerpt {
   return hasOnlyKeys(e, [
     "sourceId", "sourceKind", "sourceRole", "admissionState", "freshnessState", "independentEvidenceWeight",
     "claimId", "text", "sourceClassification", "sourceName", "sourceUrl",
-    "observedAt", "publishedAt", "trustNotes", "relationship", "isDisputed",
+    "observedAt", "publishedAt", "trustNotes", "evidenceQuality", "relationship", "isDisputed",
     "externalEvidenceResolved", "assertionId", "sourceDocumentVersionId", "sourceChunkId",
     "startLocator", "endLocator", "knowledgeDocumentId",
     "canonicalClaimId", "provenanceGroupIds", "directness",
@@ -78,6 +78,7 @@ export function validateEvidenceExcerpt(v: unknown): v is EvidenceExcerpt {
     && isKnownAdmissionState(e.admissionState)
     && isKnownFreshnessState(e.freshnessState)
     && e.independentEvidenceWeight === independentEvidenceWeightFor(e.sourceKind)
+    && (e.evidenceQuality === undefined || isKnownEvidenceQuality(e.evidenceQuality))
     && isOptionalString(e.claimId, 128)
     && isString(e.text, 8_000)
     && isString(e.sourceClassification, 300)

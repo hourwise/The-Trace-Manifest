@@ -30,6 +30,7 @@ function evidenceForClaim(claimId: string, sourceId: string, groupId: string, in
     claimId: `claim:${claimId}:${index}`,
     canonicalClaimId: claimId,
     provenanceGroupIds: [groupId],
+    evidenceQuality: "strong",
     text: `Reviewed evidence for ${claimId} from ${sourceId}.`,
     sourceClassification: "Tier A; primary",
     trustNotes: "Evidence quality: strong",
@@ -40,6 +41,7 @@ function evidenceForClaim(claimId: string, sourceId: string, groupId: string, in
     startLocator: "p1:1",
     endLocator: "p1:2",
     relationship: "supports",
+    directness: "direct",
     externalEvidenceResolved: false,
   };
 }
@@ -157,6 +159,53 @@ async function run(): Promise<void> {
       }));
       const vendorDecision = await buildAskTraceDecisionPacket(db.asD1(), vendorOnly);
       assert.equal(vendorDecision.conclusionMode, "insufficient_evidence", "vendor-only evidence cannot establish a supported factual answer");
+
+      const missingDirectness = await buildAskTraceDecisionPacket(db.asD1(), supportedEvidence().map(item => ({
+        ...item,
+        directness: undefined,
+      })));
+      assert.equal(missingDirectness.conclusionMode, "insufficient_evidence",
+        "missing directness cannot be counted as direct evidence");
+
+      const displayWordingOnly = await buildAskTraceDecisionPacket(db.asD1(), supportedEvidence().map(item => ({
+        ...item,
+        evidenceQuality: "unrated" as const,
+        trustNotes: "Evidence quality: very_strong",
+      })));
+      const differentDisplayWording = await buildAskTraceDecisionPacket(db.asD1(), supportedEvidence().map(item => ({
+        ...item,
+        evidenceQuality: "unrated" as const,
+        trustNotes: "Evidence quality: weak",
+      })));
+      assert.equal(displayWordingOnly.confidenceScore, differentDisplayWording.confidenceScore,
+        "display wording changes cannot alter the governed decision");
+      assert.ok(decision.confidenceScore > displayWordingOnly.confidenceScore,
+        "structured strong evidence quality, not display text, increases the governed score");
+    } finally {
+      db.close();
+    }
+  }
+
+  {
+    const db = new SQLiteD1();
+    try {
+      db.sqlite.exec("DROP TABLE knowledge_claim_relationship_proposals");
+      const evidence = supportedEvidence();
+      const decision = await buildAskTraceDecisionPacket(db.asD1(), evidence);
+      assert.equal(decision.conclusionMode, "insufficient_evidence",
+        "relationship query failure degrades to insufficient evidence");
+      assert.equal(decision.confidence, "insufficient_evidence");
+      assert.equal(decision.confidenceScore, 0);
+      assert.equal(decision.synthesisMode, "none");
+
+      const result = await askTrace(
+        { ...baseEnvironment, TRACE_AI_EDITORIAL_ENABLED: "true", DB: db.asD1(), TRACE_MODEL_PROVIDER: new FakeProvider() },
+        { ...requestContext("relationship-failure", evidence, decision), adminOverride: true },
+      );
+      assert.equal(result.status, "ok");
+      assert.equal(result.payload?.conclusionMode, "insufficient_evidence");
+      assert.equal(result.payload?.confidenceScore, 0,
+        "a relationship failure cannot expose a more confident diagnostic score");
     } finally {
       db.close();
     }

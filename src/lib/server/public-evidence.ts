@@ -8,6 +8,8 @@
  * public-media exception.
  */
 
+import { publicStoryEligibilitySql } from "./d1";
+
 export interface PublicEvidenceAssertion {
   assertionId: string;
   claimId: string;
@@ -66,9 +68,12 @@ export interface PublicRelatedStory {
   relationship: string;
   relationshipLabel: string;
   explanation: string | null;
-  confidence: number;
   direction: "outgoing" | "incoming";
 }
+
+// story_relationships.confidence is retained only as internal review metadata
+// for deterministic ordering. It is intentionally absent from this public DTO
+// until TRACE approves a separate public metric policy.
 
 interface PublicClaimRow {
   claim_id: string;
@@ -191,48 +196,60 @@ async function loadAssertions(
   claimIds: string[],
   documentId?: string,
 ): Promise<PublicAssertionRow[]> {
-  if (claimIds.length === 0) return [];
-  const documentPredicate = documentId ? "AND kda.knowledge_document_id = ?" : "";
-  const documentJoin = documentId
-    ? `
-      JOIN knowledge_document_claim_assertions kda
-        ON kda.claim_assertion_id = ca.id
-       AND kda.canonical_claim_id = ca.canonical_claim_id
-       AND kda.reviewed_by IS NOT NULL
-       AND kda.reviewed_at IS NOT NULL
-    `
-    : "";
-  const params: unknown[] = [...claimIds];
+  const uniqueClaimIds = [...new Set(claimIds)];
+  if (uniqueClaimIds.length === 0) return [];
+  const documentPredicate = documentId ? `AND EXISTS (
+      SELECT 1 FROM knowledge_document_claim_assertions kda
+      WHERE kda.claim_assertion_id = ca.id
+        AND kda.canonical_claim_id = ca.canonical_claim_id
+        AND kda.knowledge_document_id = ?
+        AND kda.reviewed_by IS NOT NULL
+        AND kda.reviewed_at IS NOT NULL
+    )` : "";
+  const params: unknown[] = [...uniqueClaimIds];
   if (documentId) params.push(documentId);
-  params.push(Math.min(claimIds.length * 4, 96));
+  params.push(uniqueClaimIds.length * 4);
   const result = await db.prepare(`
-    SELECT ca.id AS assertion_id, ca.canonical_claim_id, ca.assertion_text,
-           ca.relationship, ca.source_role, ca.directness,
-           ca.source_document_version_id, sd.id AS source_document_id,
-           sd.canonical_url, sv.retrieved_url, s.name AS source_name,
-           s.tier AS source_tier, pg.id AS provenance_group_id,
-           pg.origin_type AS provenance_origin_type, ca.start_locator,
-           ca.end_locator, sv.retrieved_at, sv.published_at
-    FROM claim_assertions ca
-    JOIN canonical_claims cc ON cc.id = ca.canonical_claim_id
-    JOIN source_document_versions sv ON sv.id = ca.source_document_version_id
-    JOIN source_documents sd ON sd.id = sv.source_document_id
-    JOIN source_chunks chunk ON chunk.id = ca.source_chunk_id
-    ${documentJoin}
-    LEFT JOIN sources s ON s.id = sd.source_id
-    LEFT JOIN provenance_groups pg ON pg.id = ca.provenance_group_id
-    WHERE ca.canonical_claim_id IN (${placeholders(claimIds.length)})
-      ${documentPredicate}
-      AND ca.reviewer_state IN ('accepted', 'amended')
-      AND ca.admission_state = 'admitted'
-      AND ca.freshness_state = 'current'
-      AND ca.evidence_treatment <> 'internal_synthesis'
-      AND ca.start_locator IS NOT NULL AND ca.end_locator IS NOT NULL
-      AND sd.admission_state = 'admitted'
-      AND sd.media_kind <> 'pdf'
-      AND sv.extraction_state = 'extracted'
-      AND cc.current_state NOT IN ('corrected', 'superseded', 'retired')
-    ORDER BY ca.canonical_claim_id, ca.id
+    WITH ranked_assertions AS (
+      SELECT ca.id AS assertion_id, ca.canonical_claim_id, ca.assertion_text,
+             ca.relationship, ca.source_role, ca.directness,
+             ca.source_document_version_id, sd.id AS source_document_id,
+             sd.canonical_url, sv.retrieved_url, s.name AS source_name,
+             s.tier AS source_tier, pg.id AS provenance_group_id,
+             pg.origin_type AS provenance_origin_type, ca.start_locator,
+             ca.end_locator, sv.retrieved_at, sv.published_at,
+             ROW_NUMBER() OVER (
+               PARTITION BY ca.canonical_claim_id
+               ORDER BY ca.id
+             ) AS assertion_rank
+      FROM claim_assertions ca
+      JOIN canonical_claims cc ON cc.id = ca.canonical_claim_id
+      JOIN source_document_versions sv ON sv.id = ca.source_document_version_id
+      JOIN source_documents sd ON sd.id = sv.source_document_id
+      JOIN source_chunks chunk ON chunk.id = ca.source_chunk_id
+      LEFT JOIN sources s ON s.id = sd.source_id
+      LEFT JOIN provenance_groups pg ON pg.id = ca.provenance_group_id
+      WHERE ca.canonical_claim_id IN (${placeholders(uniqueClaimIds.length)})
+        ${documentPredicate}
+        AND ca.reviewer_state IN ('accepted', 'amended')
+        AND ca.admission_state = 'admitted'
+        AND ca.freshness_state = 'current'
+        AND ca.evidence_treatment <> 'internal_synthesis'
+        AND ca.start_locator IS NOT NULL AND ca.end_locator IS NOT NULL
+        AND sd.admission_state = 'admitted'
+        AND sd.media_kind <> 'pdf'
+        AND sv.extraction_state = 'extracted'
+        AND cc.current_state NOT IN ('corrected', 'superseded', 'retired')
+    )
+    SELECT assertion_id, canonical_claim_id, assertion_text,
+           relationship, source_role, directness,
+           source_document_version_id, source_document_id,
+           canonical_url, retrieved_url, source_name, source_tier,
+           provenance_group_id, provenance_origin_type, start_locator,
+           end_locator, retrieved_at, published_at
+    FROM ranked_assertions
+    WHERE assertion_rank <= 4
+    ORDER BY canonical_claim_id, assertion_id
     LIMIT ?
   `).bind(...params).all<PublicAssertionRow>();
   return result.results ?? [];
@@ -261,8 +278,10 @@ export async function getPublicStoryEvidence(
     SELECT sc.canonical_claim_id AS claim_id, cc.canonical_text, sc.role,
            sc.materiality, ${scoreStatusSubquery("story_score")} AS evidence_status
     FROM story_claims sc
+    JOIN story_clusters story ON story.id = sc.story_cluster_id
     JOIN canonical_claims cc ON cc.id = sc.canonical_claim_id
     WHERE sc.story_cluster_id = ?
+      AND ${publicStoryEligibilitySql("story")}
     ORDER BY sc.display_order, sc.canonical_claim_id
     LIMIT ?
   `).bind(storyId, claimLimit).all<PublicClaimRow>();
@@ -311,7 +330,7 @@ export async function getPublicKnowledgeEvidence(
   };
 }
 
-function relationshipLabel(relationship: string, direction: "outgoing" | "incoming"): string {
+export function relationshipLabel(relationship: string, direction: "outgoing" | "incoming"): string {
   const labels: Record<string, [string, string]> = {
     same_event: ["Same event", "Same event"],
     follow_up_to: ["Follow-up to", "Followed up by"],
@@ -323,8 +342,8 @@ function relationshipLabel(relationship: string, direction: "outgoing" | "incomi
     same_model_family: ["Same model family", "Same model family"],
     related_context: ["Related context", "Related context"],
   };
-  const pair = labels[relationship] ?? [relationship.replace(/_/g, " "), relationship.replace(/_/g, " ")];
-  return pair[direction === "outgoing" ? 0 : 1];
+  const pair = labels[relationship];
+  return pair ? pair[direction === "outgoing" ? 0 : 1] : "Related";
 }
 
 export async function getPublicRelatedStories(
@@ -339,25 +358,16 @@ export async function getPublicRelatedStories(
            CASE WHEN relation.source_story_id = ? THEN 'outgoing' ELSE 'incoming' END AS direction,
            other.slug, other.title AS headline, other.topic
     FROM story_relationships relation
+    JOIN story_clusters source_story ON source_story.id = ?
     JOIN story_clusters other
       ON other.id = CASE WHEN relation.source_story_id = ? THEN relation.target_story_id ELSE relation.source_story_id END
     WHERE (relation.source_story_id = ? OR relation.target_story_id = ?)
+      AND ${publicStoryEligibilitySql("source_story")}
       AND relation.reviewed_at IS NOT NULL
-      AND other.publication_status = 'published'
-      AND other.slug IS NOT NULL
-      AND other.published_at IS NOT NULL
-      AND datetime(other.published_at) <= datetime('now')
-      AND other.reviewed_by IS NOT NULL AND other.reviewed_at IS NOT NULL
-      AND other.summary IS NOT NULL AND trim(other.summary) <> ''
-      AND other.evidence_status NOT IN ('unverified', 'outdated', 'superseded')
-      AND EXISTS (
-        SELECT 1 FROM story_cluster_members member
-        JOIN feed_items item ON item.id = member.feed_item_id
-        WHERE member.cluster_id = other.id AND item.ingestion_status = 'published'
-      )
+      AND ${publicStoryEligibilitySql("other")}
     ORDER BY relation.confidence DESC, other.published_at DESC, relation.id
     LIMIT ?
-  `).bind(storyId, storyId, storyId, storyId, bounded).all<{
+  `).bind(storyId, storyId, storyId, storyId, storyId, bounded).all<{
     id: string;
     relationship: string;
     explanation: string | null;
@@ -374,7 +384,6 @@ export async function getPublicRelatedStories(
     relationship: row.relationship,
     relationshipLabel: relationshipLabel(row.relationship, row.direction),
     explanation: row.explanation,
-    confidence: Math.max(0, Math.min(1, Number(row.confidence) || 0)),
     direction: row.direction,
   }));
 }

@@ -87,6 +87,25 @@ function mapStory(row: Record<string, unknown>): PublicStory {
 // All explicitly select fields (no SELECT *)
 // ============================================================
 
+/** Canonical public-story gate shared by public projections and story pages. */
+export function publicStoryEligibilitySql(alias = "sc"): string {
+  return `${alias}.publication_status = 'published'
+    AND ${alias}.slug IS NOT NULL
+    AND ${alias}.published_at IS NOT NULL
+    AND datetime(${alias}.published_at) <= datetime('now')
+    AND ${alias}.reviewed_by IS NOT NULL
+    AND ${alias}.reviewed_at IS NOT NULL
+    AND ${alias}.summary IS NOT NULL
+    AND trim(${alias}.summary) <> ''
+    AND ${alias}.evidence_status NOT IN ('unverified','outdated','superseded')
+    AND EXISTS (
+      SELECT 1 FROM story_cluster_members eligible_scm
+      JOIN feed_items eligible_fi ON eligible_fi.id = eligible_scm.feed_item_id
+      WHERE eligible_scm.cluster_id = ${alias}.id
+        AND eligible_fi.ingestion_status = 'published'
+    )`;
+}
+
 export async function getPublishedStories(db: D1Database, options: {
   topic?: string;
   limit?: number;
@@ -113,16 +132,7 @@ export async function getPublishedStories(db: D1Database, options: {
             WHERE scm.cluster_id = sc.id AND fi.ingestion_status = 'published'
             ORDER BY scm.is_primary DESC LIMIT 1) as primary_source_name
     FROM story_clusters sc
-    WHERE sc.publication_status = 'published' AND sc.slug IS NOT NULL AND sc.published_at IS NOT NULL
-      AND datetime(sc.published_at) <= datetime('now')
-      AND sc.reviewed_by IS NOT NULL AND sc.reviewed_at IS NOT NULL
-      AND sc.summary IS NOT NULL AND trim(sc.summary) <> ''
-      AND sc.evidence_status NOT IN ('unverified','outdated','superseded')
-      AND EXISTS (
-        SELECT 1 FROM story_cluster_members eligible_scm
-        JOIN feed_items eligible_fi ON eligible_fi.id = eligible_scm.feed_item_id
-        WHERE eligible_scm.cluster_id = sc.id AND eligible_fi.ingestion_status = 'published'
-      )
+    WHERE ${publicStoryEligibilitySql("sc")}
   `;
 
   const params: unknown[] = [];
@@ -172,16 +182,7 @@ export async function getPublishedStoryBySlug(db: D1Database, slug: string): Pro
             WHERE scm.cluster_id = sc.id AND fi.ingestion_status = 'published'
             ORDER BY scm.is_primary DESC LIMIT 1) as primary_source_name
     FROM story_clusters sc
-    WHERE sc.slug = ? AND sc.publication_status = 'published' AND sc.published_at IS NOT NULL
-      AND datetime(sc.published_at) <= datetime('now')
-      AND sc.reviewed_by IS NOT NULL AND sc.reviewed_at IS NOT NULL
-      AND sc.summary IS NOT NULL AND trim(sc.summary) <> ''
-      AND sc.evidence_status NOT IN ('unverified','outdated','superseded')
-      AND EXISTS (
-        SELECT 1 FROM story_cluster_members eligible_scm
-        JOIN feed_items eligible_fi ON eligible_fi.id = eligible_scm.feed_item_id
-        WHERE eligible_scm.cluster_id = sc.id AND eligible_fi.ingestion_status = 'published'
-      )
+    WHERE sc.slug = ? AND ${publicStoryEligibilitySql("sc")}
   `)
     .bind(slug)
     .first<Record<string, unknown>>();

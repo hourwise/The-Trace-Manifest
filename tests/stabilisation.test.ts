@@ -465,12 +465,12 @@ async function governanceTests(): Promise<void> {
 const evidence: EvidenceExcerpt[] = [
   {
     sourceId: "source-1", sourceKind: "external_primary", sourceRole: "evidence", admissionState: "admitted", freshnessState: "current", independentEvidenceWeight: 0,
-    claimId: "claim-1", text: "Evidence one", sourceClassification: "Tier A; primary", trustNotes: "Evidence quality: strong", observedAt: "2026-07-13T10:00:00Z",
+    claimId: "claim-1", text: "Evidence one", sourceClassification: "Tier A; primary", trustNotes: "Evidence quality: strong", evidenceQuality: "strong", directness: "direct", observedAt: "2026-07-13T10:00:00Z",
     assertionId: "assertion-1", sourceDocumentVersionId: "version-1", sourceChunkId: "chunk-1", startLocator: "p1:1", endLocator: "p1:2",
   },
   {
     sourceId: "source-2", sourceKind: "external_independent", sourceRole: "evidence", admissionState: "admitted", freshnessState: "current", independentEvidenceWeight: 0,
-    claimId: "claim-2", text: "Evidence two", sourceClassification: "Tier B; independent", trustNotes: "Evidence quality: strong", observedAt: "2026-07-14T10:00:00Z",
+    claimId: "claim-2", text: "Evidence two", sourceClassification: "Tier B; independent", trustNotes: "Evidence quality: strong", evidenceQuality: "strong", directness: "direct", observedAt: "2026-07-14T10:00:00Z",
     assertionId: "assertion-2", sourceDocumentVersionId: "version-2", sourceChunkId: "chunk-2", startLocator: "p2:1", endLocator: "p2:2",
   },
 ];
@@ -1054,6 +1054,14 @@ async function kc05gLegacyCutoverTests(): Promise<void> {
       UPDATE claim_assertions SET admission_state = 'admitted', reviewer_state = 'accepted',
         reviewed_by = 'publisher@example.com', reviewed_at = datetime('now')
       WHERE id = '${first.assertionId}';
+    `);
+    const compatibilityEvidence = await retrievePublishedEvidence(database2.asD1(), "canonical model shipped", 4);
+    assert.equal(compatibilityEvidence.length, 0,
+      "metadata-only feed_claim_compatibility assertions are not Ask TRACE evidence");
+    database2.sqlite.exec(`
+      UPDATE source_document_versions
+      SET extraction_status = 'extracted', extraction_state = 'extracted', extraction_method = 'deterministic'
+      WHERE id = '${first.sourceDocumentVersionId}';
     `);
     const evidence = await retrievePublishedEvidence(database2.asD1(), "canonical model shipped", 4);
     assert.equal(evidence.length, 1, "Ask TRACE retrieves the reviewed canonical assertion");
@@ -1664,12 +1672,21 @@ async function kc03dQueueTests(): Promise<void> {
     });
     assert.equal(first.queued, true);
     assert.equal(first.reason, "queued");
+    assert.equal(first.lastSeenRefreshed, false, "the first observation uses the insert timestamp without a redundant refresh update");
     assert.equal(second.reason, "already_queued", "repeated feed delivery does not enqueue duplicate capture jobs");
+    assert.equal(second.lastSeenRefreshed, false, "duplicate delivery inside the refresh window does not rewrite last_seen_at");
     assert.equal(messages.length, 1);
     assert.doesNotMatch(JSON.stringify(messages[0]), /article body|content_excerpt|summary/,
       "capture queue messages contain identifiers and policy metadata, never article bodies");
     assert.equal((await database.prepare("SELECT admission_state FROM source_documents").first<{ admission_state: string }>())?.admission_state, "admitted");
     assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM knowledge_processing_jobs").first<{ count: number }>())?.count, 1);
+
+    database.sqlite.exec("UPDATE source_documents SET last_seen_at = datetime('now', '-7 hours'), updated_at = datetime('now', '-7 hours')");
+    const refreshed = await admitAndQueueFeedCapture(environment, {
+      feedItemId: 42, sourceId: 7, url: "https://example.test/story/?utm_source=feed#fragment",
+    });
+    assert.equal(refreshed.reason, "already_queued");
+    assert.equal(refreshed.lastSeenRefreshed, true, "a duplicate after the six-hour cadence refreshes source recency once");
 
     database.sqlite.exec(`
       INSERT INTO knowledge_documents

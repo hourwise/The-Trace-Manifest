@@ -28,7 +28,7 @@ The query table is not a Cloudflare configuration checklist; it is runtime SQL t
 
 Source-code mapping for observed D1 queries:
 
-- Feed item candidate scan with `title`, `summary` and `content_excerpt`: `workers/ingestion/cross-source-match.ts` and `workers/ingestion/semantic-dedup.ts`.
+- Feed item candidate scan with `title`, `summary` and `content_excerpt`: `workers/ingestion/cross-source-match.ts`.
 - URL hash lookup: `workers/ingestion/dedup.ts`.
 - `ingestion_jobs` insert/update rows: `workers/ingestion/index.ts`.
 - `cron_runs` insert rows and source cadence query: `workers/ingestion/index.ts`.

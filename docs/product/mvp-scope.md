@@ -29,7 +29,7 @@ Prove that The Trace Manifest can collect, classify, explain, and answer questio
 - Source registry
 - Scheduled ingestion
 - URL deduplication
-- Basic semantic deduplication
+- Basic cross-source lexical matching
 - Story clustering
 - Topic classification
 - Source classification

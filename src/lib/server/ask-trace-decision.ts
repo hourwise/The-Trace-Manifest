@@ -5,7 +5,7 @@
 // conclusion. Nothing in this packet is derived from model prose.
 
 import type { EvidenceExcerpt } from "../../ai/provider";
-import { isAnswerEligibleEvidence, type TraceSourceRole } from "../../ai/task-policy";
+import { isAnswerEligibleEvidence, type TraceEvidenceQuality, type TraceSourceRole } from "../../ai/task-policy";
 import {
   groupKnowledgePositions,
   type KnowledgePosition,
@@ -37,6 +37,9 @@ interface RelationRow {
   relationship: KnowledgePositionRelationship;
 }
 
+const RELATIONSHIP_CLAIM_CHUNK_SIZE = 32;
+const MAX_RELATIONSHIP_CLAIM_IDS = 128;
+
 function unique(values: Array<string | undefined>): string[] {
   return [...new Set(values.filter((value): value is string => Boolean(value)))].sort();
 }
@@ -53,15 +56,23 @@ function evidenceIdFor(item: EvidenceExcerpt, index: number): string {
 
 async function relationshipsFor(db: D1Database, claimIds: string[]): Promise<Map<string, RelationRow[]>> {
   const result = new Map<string, RelationRow[]>();
-  if (claimIds.length === 0) return result;
-  const placeholders = claimIds.map(() => "?").join(", ");
-  try {
+  const uniqueClaimIds = unique(claimIds);
+  if (uniqueClaimIds.length === 0) return result;
+  if (uniqueClaimIds.length > MAX_RELATIONSHIP_CLAIM_IDS) {
+    throw new Error(`ask_trace_relationship_claim_limit:${MAX_RELATIONSHIP_CLAIM_IDS}`);
+  }
+
+  const rows: RelationRow[] = [];
+  for (let offset = 0; offset < uniqueClaimIds.length; offset += RELATIONSHIP_CLAIM_CHUNK_SIZE) {
+    const chunk = uniqueClaimIds.slice(offset, offset + RELATIONSHIP_CLAIM_CHUNK_SIZE);
+    const placeholders = chunk.map(() => "?").join(", ");
     const proposals = await db.prepare(`
       SELECT source_canonical_claim_id, target_canonical_claim_id, relationship
       FROM knowledge_claim_relationship_proposals
       WHERE state = 'accepted'
         AND (source_canonical_claim_id IN (${placeholders}) OR target_canonical_claim_id IN (${placeholders}))
-    `).bind(...claimIds, ...claimIds).all<RelationRow>();
+      ORDER BY source_canonical_claim_id, target_canonical_claim_id, relationship
+    `).bind(...chunk, ...chunk).all<RelationRow>();
     const conflicts = await db.prepare(`
       SELECT source_claim_id AS source_canonical_claim_id,
              target_claim_id AS target_canonical_claim_id,
@@ -71,35 +82,43 @@ async function relationshipsFor(db: D1Database, claimIds: string[]): Promise<Map
       FROM knowledge_claim_conflict_cases
       WHERE status IN ('unresolved', 'acknowledged')
         AND (source_claim_id IN (${placeholders}) OR target_claim_id IN (${placeholders}))
-    `).bind(...claimIds, ...claimIds).all<RelationRow>();
-    for (const row of [...(proposals.results ?? []), ...(conflicts.results ?? [])]) {
-      const forward = result.get(row.source_canonical_claim_id) ?? [];
-      forward.push(row);
-      result.set(row.source_canonical_claim_id, forward);
-      const reverse = result.get(row.target_canonical_claim_id) ?? [];
-      reverse.push({
-        source_canonical_claim_id: row.target_canonical_claim_id,
-        target_canonical_claim_id: row.source_canonical_claim_id,
-        relationship: row.relationship,
-      });
-      result.set(row.target_canonical_claim_id, reverse);
-    }
-  } catch {
-    // Older local fixtures may not include the optional relationship tables.
-    // Exact claim identity remains a safe standalone position in that case.
+      ORDER BY source_claim_id, target_claim_id, conflict_kind
+    `).bind(...chunk, ...chunk).all<RelationRow>();
+    rows.push(...(proposals.results ?? []), ...(conflicts.results ?? []));
+  }
+
+  rows.sort((left, right) =>
+    left.source_canonical_claim_id.localeCompare(right.source_canonical_claim_id)
+    || left.target_canonical_claim_id.localeCompare(right.target_canonical_claim_id)
+    || left.relationship.localeCompare(right.relationship));
+  for (const row of rows) {
+    const forward = result.get(row.source_canonical_claim_id) ?? [];
+    forward.push(row);
+    result.set(row.source_canonical_claim_id, forward);
+    const reverse = result.get(row.target_canonical_claim_id) ?? [];
+    reverse.push({
+      source_canonical_claim_id: row.target_canonical_claim_id,
+      target_canonical_claim_id: row.source_canonical_claim_id,
+      relationship: row.relationship,
+    });
+    result.set(row.target_canonical_claim_id, reverse);
   }
   return result;
 }
 
 function evidenceRoleIsDirect(role: TraceSourceRole, directness: EvidenceExcerpt["directness"]): boolean {
-  return role === "evidence" && (directness === "direct" || directness === undefined);
+  return role === "evidence" && directness === "direct";
+}
+
+function isStrongEvidenceQuality(value: TraceEvidenceQuality | undefined): boolean {
+  return value === "strong" || value === "very_strong";
 }
 
 function assessPosition(position: KnowledgePosition, evidenceById: Map<string, EvidenceExcerpt>): KnowledgePositionAssessment {
   const evidence = position.evidenceIds.map(id => evidenceById.get(id)).filter((item): item is EvidenceExcerpt => Boolean(item));
   const current = evidence.filter(item => item.freshnessState === "current");
   const direct = current.filter(item => evidenceRoleIsDirect(item.sourceRole, item.directness));
-  const strong = current.filter(item => /very_strong|strong/i.test(item.trustNotes ?? ""));
+  const strong = current.filter(item => isStrongEvidenceQuality(item.evidenceQuality));
   const stale = evidence.filter(item => item.freshnessState === "stale");
   const disputed = evidence.filter(item => item.isDisputed || item.relationship === "contradicts");
   const provenanceGroups = unique(evidence.flatMap(item => item.provenanceGroupIds ?? []));
@@ -143,14 +162,39 @@ export async function buildAskTraceDecisionPacket(
       id,
       recordType: "canonical_claim",
       recordId: claimId ?? id,
-      score: /very_strong|strong/i.test(item.trustNotes ?? "") ? 1 : 0.5,
+      score: isStrongEvidenceQuality(item.evidenceQuality) ? 1 : 0.5,
       claimId,
       statement: item.text,
       provenanceGroupIds: item.provenanceGroupIds,
       relationships: [],
     });
   }
-  const relationships = await relationshipsFor(db, unique(groupingEvidence.map(item => item.claimId ?? undefined)));
+  let relationships: Map<string, RelationRow[]>;
+  try {
+    relationships = await relationshipsFor(db, unique(groupingEvidence.map(item => item.claimId ?? undefined)));
+  } catch (error) {
+    // Relationship/conflict state is provenance-critical. Any query failure,
+    // missing legacy schema, or bounded-parameter overflow must reduce the
+    // packet to a governed non-answer; it must never erase contradictions.
+    console.error(JSON.stringify({
+      message: "Ask TRACE relationship resolution failed closed",
+      error: error instanceof Error ? error.message : "unknown",
+    }));
+    const safePolicy = selectKnowledgeConclusion({
+      evidenceMode: "insufficient",
+      positions: [],
+      competitions: [],
+    });
+    return {
+      ...safePolicy,
+      positions: [],
+      competitions: [],
+      eligibleEvidenceIds: eligibleEvidence.map((item, index) => evidenceIdFor(item, index)),
+      eligibleClaimIds: unique(eligibleEvidence.map(item => item.claimId)),
+      eligibleAssertionIds: unique(eligibleEvidence.map(item => item.assertionId)),
+      synthesisMode: "none",
+    };
+  }
   for (const item of groupingEvidence) {
     item.relationships = (relationships.get(item.claimId ?? "") ?? []).map(row => ({
       targetClaimId: row.target_canonical_claim_id,

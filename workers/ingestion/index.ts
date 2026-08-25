@@ -10,7 +10,7 @@ import { fetchHuggingFaceModels } from "./fetchers/huggingface-models";
 import { fetchLMSYSArena } from "./fetchers/lmsys-arena";
 import { fetchPageDiff } from "./fetchers/page-diff";
 import { checkSourceHealth } from "./health";
-import { deduplicateURL, hashURL } from "./dedup";
+import { deduplicateURL, hashURL, type ExistingFeedItem } from "./dedup";
 import { runClassification } from "./classify";
 import { runCrossSourceMatching } from "./cross-source-match";
 import { runClustering } from "./cluster";
@@ -333,7 +333,7 @@ async function cronRunStart(env: Env, cron: string): Promise<number> {
 
 async function cronRunComplete(env: Env, runId: number, status: string, error?: string, summary?: IngestSummary) {
   const detail = summary
-    ? `${summary.succeeded} succeeded, ${summary.failed} failed, ${summary.created} items accepted, ${summary.duplicates} duplicates, ${summary.tooOld} too old, ${summary.filtered} filtered, ${summary.malformed} malformed, ${summary.rejected} rejected, ${summary.skipped} unsupported, ${summary.candidatesCreated} candidates created, ${summary.candidatesLinked} linked.`
+    ? `${summary.sourcesAttempted} sources attempted, ${summary.succeeded} succeeded, ${summary.failed} failed, ${summary.inspected} items inspected, ${summary.created} new items, ${summary.duplicates} duplicates, ${summary.tooOld} too old, ${summary.filtered} filtered, ${summary.malformed} malformed, ${summary.rejected} rejected, ${summary.skipped} unsupported, ${summary.candidatesCreated} candidates created, ${summary.candidatesLinked} linked, ${summary.capturesQueued} captures queued, ${summary.sourceDocumentRefreshes} source-document timestamp refreshes.`
     : null;
   await env.DB.prepare(
     `UPDATE cron_runs SET completed_at = datetime('now'), status = ?, error_message = ?,
@@ -356,16 +356,16 @@ async function cronRunComplete(env: Env, runId: number, status: string, error?: 
 const SUPPORTED_CONNECTORS = new Set(["rss", "github_api", "arxiv_api", "hackernews_api", "page_diff"]);
 
 interface IngestSummary {
-  processed: number; created: number; succeeded: number; failed: number; rejected: number; skipped: number;
+  sourcesAttempted: number; processed: number; inspected: number; created: number; succeeded: number; failed: number; rejected: number; skipped: number;
   duplicates: number; tooOld: number; filtered: number; malformed: number;
-  candidatesCreated: number; candidatesLinked: number;
+  candidatesCreated: number; candidatesLinked: number; capturesQueued: number; sourceDocumentRefreshes: number;
 }
 
 interface SourceOutcome {
   resultStatus: string;
-  processed: number; created: number; rejected: number; skipped: number;
+  processed: number; inspected: number; created: number; rejected: number; skipped: number;
   duplicates: number; tooOld: number; filtered: number; malformed: number;
-  candidatesCreated: number; candidatesLinked: number;
+  candidatesCreated: number; candidatesLinked: number; capturesQueued: number; sourceDocumentRefreshes: number;
 }
 
 async function ingestTier(env: Env, _ctx: ExecutionContext, tier: string, jobType: string): Promise<IngestSummary> {
@@ -375,7 +375,7 @@ async function ingestTier(env: Env, _ctx: ExecutionContext, tier: string, jobTyp
 
   if (!sources || sources.length === 0) {
     console.log(`No sources to fetch for tier ${tier}`);
-    return { processed: 0, created: 0, succeeded: 0, failed: 0, rejected: 0, skipped: 0, duplicates: 0, tooOld: 0, filtered: 0, malformed: 0, candidatesCreated: 0, candidatesLinked: 0 };
+    return { sourcesAttempted: 0, processed: 0, inspected: 0, created: 0, succeeded: 0, failed: 0, rejected: 0, skipped: 0, duplicates: 0, tooOld: 0, filtered: 0, malformed: 0, candidatesCreated: 0, candidatesLinked: 0, capturesQueued: 0, sourceDocumentRefreshes: 0 };
   }
 
   // Separate supported and unsupported sources
@@ -401,7 +401,9 @@ async function ingestTier(env: Env, _ctx: ExecutionContext, tier: string, jobTyp
     outcomes.push(...await Promise.all(supported.slice(index, index + 4).map((source) => processSource(env, source, jobType))));
   }
   return {
+    sourcesAttempted: supported.length,
     processed: outcomes.reduce((sum, item) => sum + item.processed, 0),
+    inspected: outcomes.reduce((sum, item) => sum + item.inspected, 0),
     created: outcomes.reduce((sum, item) => sum + item.created, 0),
     succeeded: outcomes.filter((item) => item.resultStatus.startsWith("succeeded")).length,
     failed: outcomes.filter((item) => item.resultStatus === "failed").length,
@@ -413,6 +415,8 @@ async function ingestTier(env: Env, _ctx: ExecutionContext, tier: string, jobTyp
     malformed: outcomes.reduce((sum, item) => sum + item.malformed, 0),
     candidatesCreated: outcomes.reduce((sum, item) => sum + item.candidatesCreated, 0),
     candidatesLinked: outcomes.reduce((sum, item) => sum + item.candidatesLinked, 0),
+    capturesQueued: outcomes.reduce((sum, item) => sum + item.capturesQueued, 0),
+    sourceDocumentRefreshes: outcomes.reduce((sum, item) => sum + item.sourceDocumentRefreshes, 0),
   };
 }
 
@@ -474,9 +478,9 @@ async function processSource(env: Env, source: Source, jobType: string): Promise
   const jobId = await createJob(env, source.id, jobType);
 
   const outcome: SourceOutcome = {
-    resultStatus: "failed", processed: 0, created: 0, rejected: 0, skipped: 0,
+    resultStatus: "failed", processed: 0, inspected: 0, created: 0, rejected: 0, skipped: 0,
     duplicates: 0, tooOld: 0, filtered: 0, malformed: 0,
-    candidatesCreated: 0, candidatesLinked: 0,
+    candidatesCreated: 0, candidatesLinked: 0, capturesQueued: 0, sourceDocumentRefreshes: 0,
   };
 
   try {
@@ -522,6 +526,7 @@ async function processSource(env: Env, source: Source, jobType: string): Promise
 
     // Deduplicate against existing items and apply filtering
     for (const item of items) {
+      outcome.inspected++;
       const rawMetadata = JSON.stringify({ ...item.raw_metadata, fetch_meta: fetchMeta });
       const eligibility = eligibleFeedItem(item, rawMetadata);
       if (!eligibility.ok) {
@@ -542,24 +547,21 @@ async function processSource(env: Env, source: Source, jobType: string): Promise
       }
 
       const urlHash = await hashURL(item.url);
-      const isDup = await deduplicateURL(env.DB, urlHash);
+      const existing = await deduplicateURL(env.DB, urlHash);
 
-      if (isDup) {
+      if (existing) {
         outcome.duplicates++;
-        const existing = await env.DB.prepare(
-          "SELECT id, source_id, url FROM feed_items WHERE url_hash = ? LIMIT 1"
-        ).bind(urlHash).first<{ id: number; source_id: number; url: string }>();
-        if (existing) {
-          try {
-            await admitAndQueueFeedCapture(env, {
-              feedItemId: existing.id, sourceId: existing.source_id, url: existing.url,
-            });
-          } catch (error) {
-            console.warn(JSON.stringify({ stage: "knowledge_capture_admission", feedItemId: existing.id, error: error instanceof Error ? error.message : "unknown" }));
-          }
+        try {
+          const capture = await admitAndQueueFeedCapture(env, {
+            feedItemId: existing.id, sourceId: existing.source_id, url: existing.url,
+          });
+          if (capture.queued) outcome.capturesQueued++;
+          if (capture.lastSeenRefreshed) outcome.sourceDocumentRefreshes++;
+        } catch (error) {
+          console.warn(JSON.stringify({ stage: "knowledge_capture_admission", feedItemId: existing.id, error: error instanceof Error ? error.message : "unknown" }));
         }
         // Try to link to existing candidate
-        const linked = await linkItemToExistingCandidate(env, urlHash);
+        const linked = await linkItemToExistingCandidate(env, existing);
         if (linked) outcome.candidatesLinked++;
         continue;
       }
@@ -578,7 +580,9 @@ async function processSource(env: Env, source: Source, jobType: string): Promise
       const feedItemId = Number(insertedFeedItem.meta.last_row_id ?? 0);
       if (feedItemId > 0) {
         try {
-          await admitAndQueueFeedCapture(env, { feedItemId, sourceId: source.id, url: item.url });
+          const capture = await admitAndQueueFeedCapture(env, { feedItemId, sourceId: source.id, url: item.url });
+          if (capture.queued) outcome.capturesQueued++;
+          if (capture.lastSeenRefreshed) outcome.sourceDocumentRefreshes++;
         } catch (error) {
           console.warn(JSON.stringify({ stage: "knowledge_capture_admission", feedItemId, error: error instanceof Error ? error.message : "unknown" }));
         }
@@ -618,7 +622,21 @@ async function processSource(env: Env, source: Source, jobType: string): Promise
       0, detail,
     );
     outcome.resultStatus = resultStatus;
-    console.log(`Source ${source.name}: ${outcome.created} new, ${outcome.duplicates} dup, ${outcome.malformed} malformed, ${outcome.tooOld} old, ${outcome.filtered} filtered, ${outcome.candidatesCreated} candidates`);
+    console.log(JSON.stringify({
+      message: "source_ingestion_completed",
+      sourceId: source.id,
+      sourceName: source.name,
+      itemsInspected: outcome.inspected,
+      newItems: outcome.created,
+      duplicateItems: outcome.duplicates,
+      capturesQueued: outcome.capturesQueued,
+      sourceDocumentTimestampRefreshes: outcome.sourceDocumentRefreshes,
+      candidatesCreated: outcome.candidatesCreated,
+      candidatesLinked: outcome.candidatesLinked,
+      malformed: outcome.malformed,
+      tooOld: outcome.tooOld,
+      filtered: outcome.filtered,
+    }));
     return outcome;
   } catch (error: any) {
     const errorDetail = captureFetchError(error, source);
@@ -720,6 +738,8 @@ function buildOutcomeDetail(outcome: SourceOutcome, discovered: number): string 
   if (outcome.malformed > 0) parts.push(`${outcome.malformed} malformed`);
   if (outcome.candidatesCreated > 0) parts.push(`${outcome.candidatesCreated} candidates created`);
   if (outcome.candidatesLinked > 0) parts.push(`${outcome.candidatesLinked} linked to existing`);
+  if (outcome.capturesQueued > 0) parts.push(`${outcome.capturesQueued} captures queued`);
+  if (outcome.sourceDocumentRefreshes > 0) parts.push(`${outcome.sourceDocumentRefreshes} source-document timestamp refreshes`);
   if (parts.length === 0) parts.push(`${discovered} discovered, 0 accepted`);
   return parts.join("; ");
 }
@@ -727,13 +747,8 @@ function buildOutcomeDetail(outcome: SourceOutcome, discovered: number): string 
 /**
  * Try to link a duplicate URL to an existing story candidate.
  */
-async function linkItemToExistingCandidate(env: Env, urlHash: string): Promise<boolean> {
+async function linkItemToExistingCandidate(env: Env, existing: Pick<ExistingFeedItem, "id">): Promise<boolean> {
   try {
-    const existing = await env.DB.prepare(
-      "SELECT id, ingestion_status FROM feed_items WHERE url_hash = ? LIMIT 1"
-    ).bind(urlHash).first<{ id: number; ingestion_status: string }>();
-    if (!existing) return false;
-
     // Check if already linked to a candidate
     const linked = await env.DB.prepare(
       "SELECT 1 FROM story_cluster_members WHERE feed_item_id = ? LIMIT 1"
@@ -911,7 +926,7 @@ async function runCrossSourceMatchingPipeline(env: Env) {
 }
 
 // ============================================================
-// Clustering pipeline (runs after semantic dedup)
+// Clustering pipeline (runs after cross-source lexical matching)
 // ============================================================
 async function runClusteringPipeline(env: Env) {
   console.log("Clustering: starting...");

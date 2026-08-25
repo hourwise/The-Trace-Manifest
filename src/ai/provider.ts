@@ -3,7 +3,7 @@
 // All application code calls this interface — never provider-specific logic directly.
 
 import type {
-  TraceAdmissionState, TraceFreshnessState, TraceSourceKind, TraceSourceRole,
+  TraceAdmissionState, TraceEvidenceQuality, TraceFreshnessState, TraceSourceKind, TraceSourceRole,
 } from "./task-policy";
 
 // ============================================================
@@ -88,6 +88,8 @@ export interface EvidenceExcerpt {
   admissionState: TraceAdmissionState;
   freshnessState: TraceFreshnessState;
   independentEvidenceWeight: 0 | 1;
+  /** Structured governed quality; display text must never be parsed for decisions. */
+  evidenceQuality?: TraceEvidenceQuality;
   claimId?: string;
   text: string;
   sourceClassification: string;

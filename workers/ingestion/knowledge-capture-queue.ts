@@ -67,9 +67,15 @@ export interface FeedCaptureQueueEnvironment {
 export interface FeedCaptureQueueResult {
   sourceDocumentId: string;
   queued: boolean;
+  lastSeenRefreshed: boolean;
   reason: "queued" | "already_queued" | "already_processing" | "queue_unbound" | "queue_send_failed";
   jobId: string | null;
 }
+
+// Feed cycles run more often than source recency needs to change. Keep the
+// first observation and meaningful admission changes immediate, but refresh
+// last_seen_at at most once per six hours for repeated duplicate deliveries.
+const SOURCE_LAST_SEEN_REFRESH_INTERVAL = "-6 hours";
 
 /** Records an admitted feed source, then produces one retry-safe capture job. */
 export async function admitAndQueueFeedCapture(
@@ -186,7 +192,7 @@ async function admitAndQueueSourceCapture(
   const storageMode = input.copyrightStorageMode ?? "metadata_only";
   const correlationId = input.correlationId ?? `feed-${input.feedItemId}-${urlHash.slice(0, 16)}`;
 
-  await env.DB.batch([
+  const sourceWriteResults = await env.DB.batch([
     env.DB.prepare(`
       INSERT OR IGNORE INTO source_documents
         (id, canonical_url, canonical_url_hash, source_id, media_kind, admission_state, copyright_storage_mode)
@@ -200,13 +206,28 @@ async function admitAndQueueSourceCapture(
               THEN copyright_storage_mode
             ELSE ?
           END,
-          last_seen_at = datetime('now'), updated_at = datetime('now')
+          updated_at = datetime('now')
       WHERE id = ?
-    `).bind(input.sourceId, storageMode, sourceDocumentId),
+        AND (
+          admission_state <> 'admitted'
+          OR (? IS NOT NULL AND (source_id IS NULL OR source_id <> ?))
+          OR (
+            copyright_storage_mode NOT IN ('private_full_text', 'editor_supplied_document')
+            AND ? IN ('private_full_text', 'editor_supplied_document')
+          )
+        )
+    `).bind(input.sourceId, storageMode, sourceDocumentId, input.sourceId, input.sourceId, storageMode),
+    env.DB.prepare(`
+      UPDATE source_documents
+      SET last_seen_at = datetime('now'), updated_at = datetime('now')
+      WHERE id = ?
+        AND (last_seen_at IS NULL OR last_seen_at < datetime('now', ?))
+    `).bind(sourceDocumentId, SOURCE_LAST_SEEN_REFRESH_INTERVAL),
   ]);
+  const lastSeenRefreshed = Number(sourceWriteResults[2]?.meta.changes ?? 0) > 0;
 
   if (!env.KNOWLEDGE_PROCESSING_QUEUE) {
-    return { sourceDocumentId, queued: false, reason: "queue_unbound", jobId: null };
+    return { sourceDocumentId, queued: false, lastSeenRefreshed, reason: "queue_unbound", jobId: null };
   }
 
   const jobId = `capture-job-${urlHash}`;
@@ -221,10 +242,10 @@ async function admitAndQueueSourceCapture(
   `).bind(jobId).first<{ state: string }>();
 
   if (job?.state === "completed" || job?.state === "running") {
-    return { sourceDocumentId, queued: false, reason: "already_processing", jobId };
+    return { sourceDocumentId, queued: false, lastSeenRefreshed, reason: "already_processing", jobId };
   }
   const shouldSend = Number(inserted.meta.changes ?? 0) === 1 || job?.state === "failed" || job?.state === "dead_lettered";
-  if (!shouldSend) return { sourceDocumentId, queued: false, reason: "already_queued", jobId };
+  if (!shouldSend) return { sourceDocumentId, queued: false, lastSeenRefreshed, reason: "already_queued", jobId };
 
   const message: KnowledgeCaptureMessage = {
     kind: "capture_source_document",
@@ -246,14 +267,14 @@ async function admitAndQueueSourceCapture(
       SET state = 'queued', error_code = NULL, error_detail = NULL, updated_at = datetime('now')
       WHERE id = ?
     `).bind(jobId).run();
-    return { sourceDocumentId, queued: true, reason: "queued", jobId };
+    return { sourceDocumentId, queued: true, lastSeenRefreshed, reason: "queued", jobId };
   } catch {
     await env.DB.prepare(`
       UPDATE knowledge_processing_jobs
       SET state = 'failed', error_code = 'queue_send_failed', error_detail = 'capture_queue_send_failed', updated_at = datetime('now')
       WHERE id = ?
     `).bind(jobId).run();
-    return { sourceDocumentId, queued: false, reason: "queue_send_failed", jobId };
+    return { sourceDocumentId, queued: false, lastSeenRefreshed, reason: "queue_send_failed", jobId };
   }
 }
 

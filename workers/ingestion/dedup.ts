@@ -9,12 +9,18 @@ export async function hashURL(url: string): Promise<string> {
   return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-export async function deduplicateURL(db: D1Database, urlHash: string): Promise<boolean> {
-  const existing = await db.prepare(
-    "SELECT id FROM feed_items WHERE url_hash = ? LIMIT 1"
-  ).bind(urlHash).first();
+export interface ExistingFeedItem {
+  id: number;
+  source_id: number;
+  url: string;
+  ingestion_status: string;
+}
 
-  return !!existing;
+/** Load the canonical duplicate row once so downstream duplicate handling can reuse it. */
+export async function deduplicateURL(db: D1Database, urlHash: string): Promise<ExistingFeedItem | null> {
+  return db.prepare(
+    "SELECT id, source_id, url, ingestion_status FROM feed_items WHERE url_hash = ? LIMIT 1"
+  ).bind(urlHash).first<ExistingFeedItem>();
 }
 
 export async function deduplicateTitle(db: D1Database, title: string, sourceId: number, windowDays: number = 7): Promise<boolean> {

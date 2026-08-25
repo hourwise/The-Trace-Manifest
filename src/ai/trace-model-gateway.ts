@@ -132,6 +132,9 @@ function safeNonAnswer(
 ): AskTracePayload {
   const evidenceMode = policy?.evidenceMode ?? "insufficient";
   const conclusionMode = policy?.conclusionMode ?? "insufficient_evidence";
+  const governedScore = policy && typeof policy.confidenceScore === "number"
+    ? Math.min(confidence.score, policy.confidenceScore)
+    : confidence.score;
   return {
     answer: "TRACE does not have enough eligible published evidence to answer this question reliably.",
     evidenceMode,
@@ -147,7 +150,7 @@ function safeNonAnswer(
     claims: [],
     citations: [],
     confidence: "insufficient_evidence",
-    confidenceScore: exposeNumericScore ? confidence.score : null,
+    confidenceScore: exposeNumericScore ? governedScore : null,
     confidenceReasons: [...confidence.reasons, reason],
     limitations: [reason],
     unresolvedQuestions: [],

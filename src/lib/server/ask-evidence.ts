@@ -1,6 +1,7 @@
 import type { EvidenceExcerpt } from "../../ai/provider";
 import {
-  freshnessStateFor, independentEvidenceWeightFor, isAnswerEligibleEvidence, sourceRoleFor, type TraceSourceKind,
+  freshnessStateFor, independentEvidenceWeightFor, isAnswerEligibleEvidence, isKnownEvidenceQuality,
+  sourceRoleFor, type TraceEvidenceQuality, type TraceSourceKind,
 } from "../../ai/task-policy";
 
 interface EvidenceRow {
@@ -13,7 +14,7 @@ interface EvidenceRow {
   canonical_claim_id?: string;
   source_role?: "evidence" | "reported_claim" | "discovery_context" | "internal_synthesis";
   claim_text: string;
-  evidence_quality: string;
+  evidence_quality: string | null;
   is_disputed: number;
   relationship: string;
   evidence_summary: string;
@@ -73,6 +74,10 @@ function sourceKindFor(row: EvidenceRow): TraceSourceKind {
   return "external_community";
 }
 
+function evidenceQualityFor(value: string | null | undefined): TraceEvidenceQuality {
+  return isKnownEvidenceQuality(value) ? value : "unrated";
+}
+
 export async function retrievePublishedEvidence(
   db: D1Database,
   question: string,
@@ -83,6 +88,9 @@ export async function retrievePublishedEvidence(
   const boundedLimit = Math.max(1, Math.min(Number.isInteger(limit) ? limit : 8, 12));
   const searchable = "LOWER(cc.canonical_text || ' ' || COALESCE(fi.title, '') || ' ' || COALESCE(fi.content_excerpt, '') || ' ' || COALESCE(sd.canonical_url, ''))";
   const predicates = searchTerms.map(() => `${searchable} LIKE ? ESCAPE '\\'`).join(" OR ");
+  // Metadata-only feed_claim_compatibility versions are deliberately not an
+  // Ask TRACE evidence exception; the assertion must reach normal extraction
+  // state before it can be used for governed retrieval.
   const result = await db.prepare(`
     SELECT COALESCE(s.id, legacy_s.id, sd.id) AS source_id,
            COALESCE(s.name, legacy_s.name, 'Captured source') AS source_name,
@@ -91,9 +99,10 @@ export async function retrievePublishedEvidence(
            COALESCE(s.treatment, legacy_s.treatment, 'unclassified') AS source_treatment,
            ca.id AS claim_id, ca.canonical_claim_id AS canonical_claim_id, ca.source_role,
            cc.canonical_text AS claim_text,
-           CASE cc.current_state WHEN 'disputed' THEN 'disputed'
-             WHEN 'corrected' THEN 'disputed' WHEN 'superseded' THEN 'disputed'
-             ELSE 'unrated' END AS evidence_quality,
+           COALESCE(legacy_claim.evidence_quality,
+             CASE cc.current_state WHEN 'disputed' THEN 'disputed'
+               WHEN 'corrected' THEN 'disputed' WHEN 'superseded' THEN 'disputed'
+               ELSE 'unrated' END) AS evidence_quality,
            CASE WHEN cc.current_state = 'disputed' THEN 1 ELSE 0 END AS is_disputed,
            ca.relationship, ca.assertion_text AS evidence_summary,
            COALESCE(fi.title, sv.title, cc.canonical_text) AS item_title,
@@ -111,6 +120,7 @@ export async function retrievePublishedEvidence(
     LEFT JOIN sources s ON s.id = sd.source_id
     LEFT JOIN legacy_claim_evidence_map legacy_map ON legacy_map.assertion_id = ca.id
     LEFT JOIN claim_evidence ce ON ce.id = legacy_map.legacy_evidence_id
+    LEFT JOIN claims legacy_claim ON legacy_claim.id = ca.legacy_claim_id
     LEFT JOIN feed_items fi ON fi.id = ce.feed_item_id
     LEFT JOIN sources legacy_s ON legacy_s.id = fi.source_id
     WHERE sc.publication_status = 'published'
@@ -128,7 +138,7 @@ export async function retrievePublishedEvidence(
       AND ca.evidence_treatment NOT IN ('discovery_only', 'internal_synthesis')
       AND cc.current_state NOT IN ('corrected', 'superseded', 'retired')
       AND (legacy_map.assertion_id IS NOT NULL OR sv.id IS NOT NULL)
-      AND (sv.id IS NULL OR (sd.media_kind <> 'pdf' AND ((sv.extraction_status IN ('captured', 'extracted') AND sv.extraction_state IN ('extracted', 'pending')) OR sv.extraction_method = 'feed_claim_compatibility')))
+      AND (sv.id IS NULL OR (sd.media_kind <> 'pdf' AND sv.extraction_status IN ('captured', 'extracted') AND sv.extraction_state IN ('extracted', 'pending')))
       AND (${predicates})
     ORDER BY is_disputed ASC,
       CASE s.tier WHEN 'A' THEN 0 WHEN 'B' THEN 1 ELSE 2 END,
@@ -157,6 +167,7 @@ export async function retrievePublishedEvidence(
       admissionState: "admitted",
       freshnessState: freshnessStateFor(row.observed_at),
       independentEvidenceWeight: independentEvidenceWeightFor(sourceKind),
+      evidenceQuality: evidenceQualityFor(row.evidence_quality),
       claimId: `claim:${row.claim_id}`,
       canonicalClaimId: row.canonical_claim_id ?? row.claim_id,
       text,
@@ -191,7 +202,7 @@ export function calculateDeterministicConfidence(evidence: EvidenceExcerpt[]): D
   const uniqueSources = new Set(eligibleEvidence.map((item) => item.sourceId));
   const independentSources = new Set(eligibleEvidence.filter((item) => item.independentEvidenceWeight === 1).map((item) => item.sourceId));
   const primary = eligibleEvidence.filter((item) => item.sourceKind === "external_primary").length;
-  const strong = eligibleEvidence.filter((item) => /very_strong|strong/i.test(item.trustNotes ?? "")).length;
+  const strong = eligibleEvidence.filter((item) => item.evidenceQuality === "strong" || item.evidenceQuality === "very_strong").length;
   const disputed = eligibleEvidence.filter((item) => item.isDisputed || item.relationship === "contradicts").length;
   const dates = eligibleEvidence.map((item) => item.observedAt).filter((value): value is string => Boolean(value)).sort();
   const freshestObservedAt = dates.at(-1) ?? null;
@@ -267,6 +278,7 @@ interface KnowledgeAssertionEvidenceRow {
   chunk_end_locator: string | null;
   is_disputed: number;
   provenance_group_id: string | null;
+  evidence_quality: string | null;
   directness: "direct" | "indirect" | "derivative" | "unknown" | null;
 }
 
@@ -336,11 +348,14 @@ export async function retrieveApprovedKnowledge(
        AND kdc.canonical_claim_id = kda.canonical_claim_id
       WHERE kda.knowledge_document_id = ?
     `).bind(row.id).first<{ count: number }>();
+    // The same rule applies to inherited knowledge evidence: compatibility
+    // metadata is not a substitute for a reviewed, extracted source bundle.
     const resolvedAssertions = await db.prepare(`
       SELECT ca.id AS assertion_id, cc.id AS canonical_claim_id, cc.canonical_text,
              ca.assertion_text, ca.relationship, ca.source_role, ca.evidence_treatment,
              ca.source_document_version_id, ca.source_chunk_id, ca.start_locator,
              ca.end_locator, ca.provenance_group_id, ca.directness,
+             legacy_claim.evidence_quality,
              sv.retrieved_at, sv.published_at, sv.retrieved_url,
              sd.canonical_url, sd.id AS source_document_id, s.name AS source_name,
              s.tier AS source_tier, s.treatment AS source_treatment,
@@ -360,6 +375,7 @@ export async function retrieveApprovedKnowledge(
       JOIN source_document_versions sv ON sv.id = ca.source_document_version_id
       JOIN source_documents sd ON sd.id = sv.source_document_id
       JOIN source_chunks chunk ON chunk.id = ca.source_chunk_id
+      LEFT JOIN claims legacy_claim ON legacy_claim.id = ca.legacy_claim_id
       LEFT JOIN sources s ON s.id = sd.source_id
       WHERE kda.knowledge_document_id = ?
         AND ca.reviewer_state = 'accepted'
@@ -369,7 +385,8 @@ export async function retrieveApprovedKnowledge(
         AND cc.current_state NOT IN ('corrected', 'superseded', 'retired')
         AND sd.admission_state = 'admitted'
         AND sd.media_kind <> 'pdf'
-        AND ((sv.extraction_status IN ('captured', 'extracted') AND sv.extraction_state IN ('extracted', 'pending')) OR sv.extraction_method = 'feed_claim_compatibility')
+        AND sv.extraction_status IN ('captured', 'extracted')
+        AND sv.extraction_state IN ('extracted', 'pending')
         AND ca.start_locator IS NOT NULL AND ca.end_locator IS NOT NULL
         AND chunk.start_locator IS NOT NULL AND chunk.end_locator IS NOT NULL
       ORDER BY kda.section_key, ca.id
@@ -438,6 +455,7 @@ export async function retrieveApprovedKnowledge(
         admissionState: "admitted",
         freshnessState: "current",
         independentEvidenceWeight: independentEvidenceWeightFor(sourceKind),
+        evidenceQuality: evidenceQualityFor(assertion.evidence_quality),
         claimId: `claim:${assertion.assertion_id}`,
         canonicalClaimId: assertion.canonical_claim_id,
         text: [

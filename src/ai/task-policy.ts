@@ -77,6 +77,7 @@ export type TraceSourceKind =
 export type TraceSourceRole = "evidence" | "reported_claim" | "discovery_context" | "internal_synthesis";
 export type TraceAdmissionState = "admitted" | "quarantined" | "rejected";
 export type TraceFreshnessState = "current" | "stale" | "unknown";
+export type TraceEvidenceQuality = "unrated" | "weak" | "moderate" | "strong" | "very_strong" | "disputed";
 
 export interface GovernedEvidenceIdentity {
   sourceKind: TraceSourceKind;
@@ -95,6 +96,7 @@ const TRACE_SOURCE_KINDS = new Set<TraceSourceKind>([
 ]);
 const ADMISSION_STATES = new Set<TraceAdmissionState>(["admitted", "quarantined", "rejected"]);
 const FRESHNESS_STATES = new Set<TraceFreshnessState>(["current", "stale", "unknown"]);
+const EVIDENCE_QUALITIES = new Set<TraceEvidenceQuality>(["unrated", "weak", "moderate", "strong", "very_strong", "disputed"]);
 
 export function isKnownSourceKind(value: unknown): value is TraceSourceKind {
   return typeof value === "string" && SOURCE_KINDS.has(value as TraceSourceKind);
@@ -106,6 +108,10 @@ export function isKnownAdmissionState(value: unknown): value is TraceAdmissionSt
 
 export function isKnownFreshnessState(value: unknown): value is TraceFreshnessState {
   return typeof value === "string" && FRESHNESS_STATES.has(value as TraceFreshnessState);
+}
+
+export function isKnownEvidenceQuality(value: unknown): value is TraceEvidenceQuality {
+  return typeof value === "string" && EVIDENCE_QUALITIES.has(value as TraceEvidenceQuality);
 }
 
 export function isTraceSourceKind(sourceKind: TraceSourceKind): boolean {
