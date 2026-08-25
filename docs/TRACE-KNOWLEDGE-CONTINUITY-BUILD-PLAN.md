@@ -749,7 +749,7 @@ Exit: every published story and approved knowledge document has an explicit back
 ### KC-12 — Public presentation and rollout
 
 - [x] **KC-12A:** Show related stories from reviewed graph relationships rather than same-topic recency alone. Public story pages use only reviewed relationships whose other endpoint passes the published-story gate; same-topic recency is no longer presented as a relationship.
-- [x] **KC-12B:** Show source summaries, claim relationships, provenance/independence explanation, score components, and freshness on story pages. The local projection shows reviewed claim assertions, source roles, locator links, provenance origin, bounded qualitative status, and explicit unresolved-claim counts; numeric scores remain disabled.
+- [x] **KC-12B:** Show source summaries, claim relationships, provenance/independence explanation, score components, and freshness on story pages. The local projection shows reviewed claim assertions, source roles, locator links, provenance origin, retrieved freshness dates, bounded qualitative status, and explicit unresolved-claim counts; numeric score components remain admin-only while public numeric scores are disabled.
 - [x] **KC-12C:** Show linked stories, claims, sources, revisions, limitations, and affected-by-new-evidence state on knowledge pages. Approved D1 knowledge pages now show reviewed claim/assertion mappings, source/provenance/locator data, and retain existing revision, limitation, expiry, and open-proposal banners.
 - [ ] **KC-12D:** Add Preview feature flags for capture, AI extraction, scoring, semantic retrieval, knowledge inheritance, and multi-position answers.
 - [ ] **KC-12E:** Run security, migration, retrieval, evidence, cost, accessibility, and performance gates in Preview.

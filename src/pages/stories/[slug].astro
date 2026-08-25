@@ -179,6 +179,7 @@ const hasConflicts = story.evidenceStatus === "disputed";
                         {assertion.sourceTier && <> · Tier {assertion.sourceTier}</>}
                         {assertion.provenanceOriginType && <> · {assertion.provenanceOriginType.replace(/_/g, " ")}</>}
                         {assertion.startLocator && assertion.endLocator && <> · locator {assertion.startLocator}–{assertion.endLocator}</>}
+                        {assertion.retrievedAt && <> · retrieved {assertion.retrievedAt.slice(0, 10)}</>}
                       </p>
                     </li>
                   ))}
