@@ -1,6 +1,13 @@
 export type KnowledgeExtractionMethod = "deterministic" | "governed_ai";
 export type KnowledgeExtractionTask = "extract_source_structure" | "extract_source_claims" | "summarise_source";
 
+/**
+ * A run must be quiet substantially longer than the bounded historical
+ * extraction path before another worker may reclaim it. This also follows the
+ * existing 15-minute running-work reclaim convention used by embeddings.
+ */
+export const EXTRACTION_RUN_STALE_AFTER_SECONDS = 15 * 60;
+
 export interface ExtractionCacheInput {
   sourceDocumentVersionId: string;
   sourceContentHash: string;
@@ -77,6 +84,35 @@ export async function claimKnowledgeExtractionRun(
     return { status: "cached", runId, idempotencyKey, cachedCostMicrousd: existing.actual_cost_microusd ?? 0 };
   }
   if (existing?.state === "running") {
+    const staleInterval = `-${EXTRACTION_RUN_STALE_AFTER_SECONDS} seconds`;
+    const reclaimed = await db.prepare(`
+      UPDATE knowledge_extraction_runs
+      SET state = 'running', validation_state = 'pending', error_code = 'stale_extraction_run_reclaimed',
+          completed_at = NULL, started_at = datetime('now'), updated_at = datetime('now'),
+          audit_json = json_set(
+            CASE WHEN json_valid(audit_json) THEN audit_json ELSE '{}' END,
+            '$.last_recovery_reason', 'stale_extraction_run_reclaimed',
+            '$.last_recovery_at', datetime('now'),
+            '$.stale_recovery_count', COALESCE(CAST(json_extract(
+              CASE WHEN json_valid(audit_json) THEN audit_json ELSE '{}' END,
+              '$.stale_recovery_count'
+            ) AS INTEGER), 0) + 1
+          )
+      WHERE id = ? AND state = 'running' AND updated_at < datetime('now', ?)
+    `).bind(runId, staleInterval).run();
+    if (Number(reclaimed.meta.changes ?? 0) === 1) {
+      return { status: "owned", runId, idempotencyKey, cachedCostMicrousd: 0 };
+    }
+
+    // A competing worker either refreshed this run or completed it between
+    // the read above and the conditional takeover. Re-read before deciding
+    // whether this caller is still blocked or can use the completed cache.
+    const current = await db.prepare(`
+      SELECT state, actual_cost_microusd FROM knowledge_extraction_runs WHERE id = ?
+    `).bind(runId).first<{ state: string; actual_cost_microusd: number | null }>();
+    if (current?.state === "completed") {
+      return { status: "cached", runId, idempotencyKey, cachedCostMicrousd: current.actual_cost_microusd ?? 0 };
+    }
     return { status: "in_progress", runId, idempotencyKey, cachedCostMicrousd: 0 };
   }
   await db.prepare(`

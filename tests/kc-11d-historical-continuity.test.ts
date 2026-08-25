@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
 import { SQLiteD1 } from "./sqlite-d1";
+import { extractHtmlDocument } from "../src/lib/server/source-extraction";
+import { extractStructuredSource, STRUCTURED_EXTRACTION_POLICY_VERSION, STRUCTURED_EXTRACTION_PROMPT_VERSION, STRUCTURED_EXTRACTION_VERSION } from "../src/lib/server/source-structured-extraction";
+import { claimKnowledgeExtractionRun, EXTRACTION_RUN_STALE_AFTER_SECONDS } from "../src/lib/server/knowledge-extraction-cache";
+import { captureAdmittedSource } from "../src/lib/server/source-capture";
 import {
   approveBackfillPlan,
   buildBackfillPlan,
@@ -22,6 +26,118 @@ function previewEnv(database: SQLiteD1) {
     TRACE_ENVIRONMENT: "preview",
     stored,
   } as any;
+}
+
+async function staleExtractionRunRecoveryTests(): Promise<void> {
+  const database = new SQLiteD1();
+  const env = previewEnv(database);
+  const inventory = {
+    schemaVersion: "kc-11a-v1",
+    generatedAt: "2026-08-25T00:00:00Z",
+    categories: {
+      source_url: [{ id: "historical-stale-extraction", label: "Historical stale extraction", url: "https://history.example/stale-extraction" }],
+    },
+  };
+  const originalFetch = globalThis.fetch;
+  const body = `<!doctype html><html><head><title>Historical stale extraction</title></head><body><main>
+    <p>The Orion model was released in 2024 and achieved 91% accuracy on the benchmark.</p>
+    <p>According to the authors, this result still needs independent verification.</p>
+  </main></body></html>`;
+  const extraction = extractHtmlDocument(body);
+  try {
+    const authority = await establishAuthoritativeInventory(env, inventory, "kc-11c-v3", "reviewer@example.com", "kc11d-authority-stale");
+    const plan = await buildBackfillPlan(
+      inventory,
+      { category: "source_url", limit: 1, storageMode: "private_full_text" },
+      authority.snapshotId,
+    );
+    const approval = await approveBackfillPlan(env, plan, plan.planHash, "publisher@example.com", "kc11d-approval-stale");
+    const captured = await captureAdmittedSource(env as any, {
+      canonicalUrl: "https://history.example/stale-extraction",
+      retrievedUrl: "https://history.example/stale-extraction",
+      contentType: "text/html",
+      body,
+      extraction,
+      mediaKind: "html",
+      admissionState: "admitted",
+      copyrightStorageMode: "private_full_text",
+      sourceId: null,
+      httpStatus: 200,
+      maximumBytes: 512 * 1024,
+      correlationId: "kc11d-stale-seed",
+    });
+    const cacheInput = {
+      sourceDocumentVersionId: captured.sourceDocumentVersionId,
+      sourceContentHash: captured.contentHash,
+      taskType: "extract_source_structure" as const,
+      extractionMethod: "deterministic" as const,
+      extractionVersion: STRUCTURED_EXTRACTION_VERSION,
+      modelProvider: null,
+      modelIdentifier: null,
+      promptVersion: STRUCTURED_EXTRACTION_PROMPT_VERSION,
+      policyVersion: STRUCTURED_EXTRACTION_POLICY_VERSION,
+      correlationId: "kc11d-stale-seed",
+    };
+
+    const initial = await claimKnowledgeExtractionRun(database.asD1(), cacheInput);
+    assert.equal(initial.status, "owned", "the interrupted worker owns the initial deterministic run");
+    const freshContender = await claimKnowledgeExtractionRun(database.asD1(), cacheInput);
+    assert.equal(freshContender.status, "in_progress", "a fresh running extraction cannot be stolen");
+
+    database.sqlite.prepare(`
+      UPDATE knowledge_extraction_runs
+      SET started_at = datetime('now', ?), updated_at = datetime('now', ?)
+      WHERE id = ?
+    `).run(
+      `-${EXTRACTION_RUN_STALE_AFTER_SECONDS + 1} seconds`,
+      `-${EXTRACTION_RUN_STALE_AFTER_SECONDS + 1} seconds`,
+      initial.runId,
+    );
+    const staleOwner = await claimKnowledgeExtractionRun(database.asD1(), cacheInput);
+    assert.equal(staleOwner.status, "owned", "a stale deterministic run can be reclaimed");
+    const staleRacer = await claimKnowledgeExtractionRun(database.asD1(), cacheInput);
+    assert.equal(staleRacer.status, "in_progress", "a competing stale takeover cannot also obtain ownership");
+    const firstAudit = JSON.parse((await database.prepare("SELECT audit_json FROM knowledge_extraction_runs WHERE id = ?").bind(initial.runId).first<{ audit_json: string }>())?.audit_json ?? "{}");
+    assert.equal(firstAudit.last_recovery_reason, "stale_extraction_run_reclaimed");
+    assert.equal(firstAudit.stale_recovery_count, 1);
+
+    // Simulate the reclaiming worker dying too. The outer historical retry must
+    // reclaim the same logical run rather than creating a second run identity.
+    database.sqlite.prepare(`
+      UPDATE knowledge_extraction_runs
+      SET started_at = datetime('now', ?), updated_at = datetime('now', ?)
+      WHERE id = ?
+    `).run(
+      `-${EXTRACTION_RUN_STALE_AFTER_SECONDS + 1} seconds`,
+      `-${EXTRACTION_RUN_STALE_AFTER_SECONDS + 1} seconds`,
+      initial.runId,
+    );
+    globalThis.fetch = (async () => new Response(body, { status: 200, headers: { "Content-Type": "text/html" } })) as typeof fetch;
+    const recovered = await executeBackfill(env, approval.batchId, plan.planHash, "publisher@example.com", "kc11d-execute-stale");
+    assert.equal(recovered.state, "completed", "historical retry completes after stale extraction ownership is reclaimed");
+    assert.equal(recovered.failed_terminal, 0, "recoverable stale extraction does not become terminal failure");
+    assert.equal(recovered.extractionRuns, 1, "the retry finishes the same deterministic extraction run");
+
+    const replay = await extractStructuredSource(database.asD1(), {
+      sourceDocumentVersionId: captured.sourceDocumentVersionId,
+      sourceContentHash: captured.contentHash,
+      extraction,
+      correlationId: "kc11d-stale-replay",
+    });
+    assert.equal(replay.chunksCreated, 0, "completed recovery reuses deterministic chunks");
+    assert.equal(replay.candidatesCreated, 0, "completed recovery reuses deterministic extraction rows");
+    assert.equal(replay.claimsCreated, 0, "completed recovery does not create duplicate claim shells or assertions");
+    assert.equal(replay.matchCandidatesCreated, 0, "completed recovery does not duplicate match candidates");
+    assert.equal(replay.summaryCreated, false, "completed recovery reuses the deterministic summary");
+    assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM knowledge_extraction_runs").first<{ count: number }>())?.count, 1,
+      "stale recovery keeps one canonical extraction-run identity");
+    const secondAudit = JSON.parse((await database.prepare("SELECT audit_json FROM knowledge_extraction_runs WHERE id = ?").bind(initial.runId).first<{ audit_json: string }>())?.audit_json ?? "{}");
+    assert.equal(secondAudit.stale_recovery_count, 2, "a second stale interruption remains recoverable and auditable");
+    assert.equal(secondAudit.last_recovery_reason, "stale_extraction_run_reclaimed");
+  } finally {
+    globalThis.fetch = originalFetch;
+    database.close();
+  }
 }
 
 async function boundedHistoricalReplayTests(): Promise<void> {
@@ -166,6 +282,7 @@ async function boundedOperationalBatchTests(): Promise<void> {
 }
 
 await boundedHistoricalReplayTests();
+await staleExtractionRunRecoveryTests();
 await pdfContainmentTests();
 await boundedOperationalBatchTests();
 console.log("KC-11D historical continuity tests passed");
