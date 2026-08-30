@@ -84,6 +84,7 @@ try {
   db.exec(readFileSync("db/migration-0064-kc-03h-pdf-upload-state.sql", "utf8"));
   db.exec(readFileSync("db/migration-0065-public-evidence-graph-indexes.sql", "utf8"));
   db.exec(readFileSync("db/migration-0066-kc-11d-bounded-expiry.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0067-kc-11g-h-remediation.sql", "utf8"));
 
   const requiredTables = [
     "ai_requests", "ai_budget_reservations", "ai_usage_ledger", "ai_quota_usage",
@@ -114,6 +115,9 @@ try {
     "canonical_claim_score_snapshots",
     "evidence_score_snapshot_explanations",
     "evidence_change_approvals",
+    "trace_runtime_resource_identity",
+    "kc11g_story_claim_score_work",
+    "kc11g_deferred_score_work",
     "knowledge_source_link_migration_audit",
     "knowledge_search_records",
     "knowledge_search_fts",

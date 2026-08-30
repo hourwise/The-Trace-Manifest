@@ -1,5 +1,8 @@
 // KC-09D: bounded Preview embedding and Vectorize indexing.
 // D1 remains authoritative; this module only publishes recall candidates.
+// Stable vector IDs make replacement idempotent, but external work is
+// at-least-once: a crash after upsert and before durable confirmation may
+// repeat Workers AI and Vectorize work after the stale-running lease expires.
 
 import { KC09_EMBEDDING_POLICY, type KnowledgeVectorRecordType } from "../../src/lib/server/knowledge-embedding-policy";
 

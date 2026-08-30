@@ -3,11 +3,13 @@ import {
   scoreCanonicalClaim,
   scoreStory,
   type ClaimScoringInput,
+  type ClaimScore,
+  type EvidenceStatus,
   type ScoringAssertion,
   type ScoringConflict,
   type StoryClaimForScoring,
 } from "./evidence-scoring";
-import { requiresHumanStatusApproval } from "./evidence-approval";
+import { HIGH_IMPACT_EVIDENCE_STATUSES, requiresHumanStatusApproval } from "./evidence-approval";
 import { triggerKnowledgeReview } from "./knowledge-change-proposals";
 
 type RecalculationEvent =
@@ -74,6 +76,8 @@ export interface RecalculateEvidenceInput {
   triggeringEvent: RecalculationEvent;
   /** Optional stable identity for a replay-safe bootstrap snapshot. */
   snapshotIdentity?: string;
+  /** KC-11G splits linked stories into separate durable bounded work units. */
+  includeLinkedStories?: boolean;
 }
 
 export interface RecalculateEvidenceResult {
@@ -105,6 +109,19 @@ export function deterministicScoreSnapshotId(
   snapshotIdentity: string,
 ): string {
   return `score-snapshot:${snapshotIdentity}:${kind}:${subjectId}`;
+}
+
+/** Format a stable SHA-256 prefix as an RFC 4122-compatible UUID-shaped ID. */
+export async function deterministicScoreApprovalId(snapshotId: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(`trace:evidence-score-approval:${snapshotId}`),
+  );
+  const bytes = new Uint8Array(digest).slice(0, 16);
+  bytes[6] = (bytes[6] & 0x0f) | 0x50;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 const DEFAULT_EXPIRED_EVIDENCE_LIMIT = 25;
@@ -257,6 +274,112 @@ async function loadClaim(db: D1Database, claimId: string): Promise<ClaimScoringI
   };
 }
 
+/** Load and score one claim. KC-11G uses this as one explicit work unit. */
+export async function calculateCanonicalClaimEvidenceScore(
+  db: D1Database,
+  claimId: string,
+): Promise<ClaimScore | null> {
+  const claim = await loadClaim(db, claimId);
+  return claim ? scoreCanonicalClaim(claim) : null;
+}
+
+export interface PersistCanonicalStoryScoreInput {
+  storyId: number;
+  score: number;
+  evidenceStatus: EvidenceStatus;
+  componentJson: string;
+  triggeringEvent: RecalculationEvent;
+  snapshotIdentity: string;
+}
+
+export interface PersistCanonicalStoryScoreResult {
+  snapshotId: string;
+  storySnapshots: number;
+  statusChanges: number;
+  approvalRequests: number;
+}
+
+/**
+ * Persist one canonical story snapshot and derive all dependent governance
+ * writes from the row that actually won the deterministic snapshot identity.
+ */
+export async function persistCanonicalStoryScore(
+  db: D1Database,
+  input: PersistCanonicalStoryScoreInput,
+): Promise<PersistCanonicalStoryScoreResult> {
+  const snapshotId = deterministicScoreSnapshotId("story", String(input.storyId), input.snapshotIdentity);
+  const approvalId = await deterministicScoreApprovalId(snapshotId);
+  const before = await loadPreviousSnapshot(db, "story", String(input.storyId));
+  const explanation = explainSnapshot(
+    "story", before, input.score, input.evidenceStatus, input.componentJson, input.triggeringEvent,
+  );
+  const payloadJson = JSON.stringify({
+    policyVersion: EVIDENCE_SCORE_POLICY_VERSION,
+    triggeringEvent: input.triggeringEvent,
+  });
+  const highImpactStatuses = [...HIGH_IMPACT_EVIDENCE_STATUSES]
+    .map((status) => `'${status}'`)
+    .join(",");
+  const statements = [
+    db.prepare(`
+      INSERT OR IGNORE INTO evidence_score_snapshots
+        (id, story_cluster_id, score, evidence_status, component_json, policy_version, triggering_event)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      snapshotId, input.storyId, input.score, input.evidenceStatus,
+      input.componentJson, EVIDENCE_SCORE_POLICY_VERSION, input.triggeringEvent,
+    ),
+    db.prepare(`
+      INSERT OR IGNORE INTO evidence_score_snapshot_explanations
+        (id, snapshot_kind, snapshot_id, subject_id, before_score, before_evidence_status,
+         before_component_json, after_score, after_evidence_status, after_component_json,
+         policy_version, triggering_event, explanation)
+      VALUES (?, 'story', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      `score-explanation:${snapshotId}`, snapshotId, String(input.storyId),
+      before?.score ?? null, before?.evidence_status ?? null, before?.component_json ?? null,
+      input.score, input.evidenceStatus, input.componentJson,
+      EVIDENCE_SCORE_POLICY_VERSION, input.triggeringEvent, explanation,
+    ),
+    db.prepare(`
+      INSERT OR IGNORE INTO evidence_change_approvals
+        (id, change_kind, target_type, target_id, previous_status,
+         proposed_status, snapshot_id, state, requested_by, reason,
+         payload_json, idempotency_key)
+      SELECT ?, 'status_change', 'story_cluster', CAST(story.id AS TEXT), story.evidence_status,
+             snapshot.evidence_status, snapshot.id, 'pending', 'system:recalculation',
+             explanation.explanation, ?, ?
+      FROM evidence_score_snapshots snapshot
+      JOIN story_clusters story ON story.id = snapshot.story_cluster_id
+      JOIN evidence_score_snapshot_explanations explanation
+        ON explanation.snapshot_kind = 'story' AND explanation.snapshot_id = snapshot.id
+      WHERE snapshot.id = ?
+        AND story.evidence_status <> snapshot.evidence_status
+        AND (story.evidence_status IN (${highImpactStatuses})
+             OR snapshot.evidence_status IN (${highImpactStatuses}))
+    `).bind(approvalId, payloadJson, `status-change:${snapshotId}`, snapshotId),
+    db.prepare(`
+      UPDATE story_clusters
+      SET evidence_status = (
+            SELECT snapshot.evidence_status FROM evidence_score_snapshots snapshot WHERE snapshot.id = ?
+          ),
+          updated_at = datetime('now')
+      WHERE id = ?
+        AND evidence_status <> (SELECT snapshot.evidence_status FROM evidence_score_snapshots snapshot WHERE snapshot.id = ?)
+        AND evidence_status NOT IN (${highImpactStatuses})
+        AND (SELECT snapshot.evidence_status FROM evidence_score_snapshots snapshot WHERE snapshot.id = ?)
+              NOT IN (${highImpactStatuses})
+    `).bind(snapshotId, input.storyId, snapshotId, snapshotId),
+  ];
+  const results = await db.batch(statements);
+  return {
+    snapshotId,
+    storySnapshots: Number(results[0]?.meta.changes ?? 0) > 0 ? 1 : 0,
+    approvalRequests: Number(results[2]?.meta.changes ?? 0) > 0 ? 1 : 0,
+    statusChanges: Number(results[3]?.meta.changes ?? 0) > 0 ? 1 : 0,
+  };
+}
+
 /** Recompute affected claims/stories from current reviewed D1 state. */
 export async function recalculateEvidenceScores(
   db: D1Database,
@@ -275,7 +398,7 @@ export async function recalculateEvidenceScores(
     for (const row of rows.results ?? []) claimIds.add(row.canonical_claim_id);
   }
 
-  if (claimIds.size > 0) {
+  if (claimIds.size > 0 && input.includeLinkedStories !== false) {
     const ids = [...claimIds];
     const rows = await db.prepare(`
       SELECT DISTINCT story_cluster_id
@@ -350,6 +473,7 @@ export async function recalculateEvidenceScores(
 
   let statusChanges = 0;
   let approvalRequests = 0;
+  let canonicalStorySnapshots = 0;
   for (const [storyId, claims] of storyClaims) {
     const score = scoreStory(claims);
     const snapshotId = input.snapshotIdentity
@@ -360,6 +484,20 @@ export async function recalculateEvidenceScores(
     const explanation = explainSnapshot(
       "story", before, score.score, score.evidenceStatus, componentJson, input.triggeringEvent,
     );
+    if (input.snapshotIdentity) {
+      const persisted = await persistCanonicalStoryScore(db, {
+        storyId,
+        score: score.score,
+        evidenceStatus: score.evidenceStatus,
+        componentJson,
+        triggeringEvent: input.triggeringEvent,
+        snapshotIdentity: input.snapshotIdentity,
+      });
+      canonicalStorySnapshots += persisted.storySnapshots;
+      statusChanges += persisted.statusChanges;
+      approvalRequests += persisted.approvalRequests;
+      continue;
+    }
     storySnapshotStatementIndexes.push(statements.length);
     statements.push(db.prepare(`
       ${snapshotInsert} INTO evidence_score_snapshots
@@ -394,9 +532,7 @@ export async function recalculateEvidenceScores(
         VALUES (?, 'status_change', 'story_cluster', ?, ?, ?, ?, 'pending',
                 'system:recalculation', ?, ?, ?)
       `).bind(
-        input.snapshotIdentity
-          ? `score-approval:${input.snapshotIdentity}:${storyId}:${score.evidenceStatus}`
-          : crypto.randomUUID(),
+        crypto.randomUUID(),
         String(storyId), currentStory.evidence_status,
         score.evidenceStatus, snapshotId, explanation,
         JSON.stringify({ policyVersion: EVIDENCE_SCORE_POLICY_VERSION, triggeringEvent: input.triggeringEvent }),
@@ -418,7 +554,9 @@ export async function recalculateEvidenceScores(
       (count, index) => count + (Number(results[index]?.meta.changes ?? 0) > 0 ? 1 : 0), 0,
     );
     const claimSnapshotCount = input.snapshotIdentity ? inserted(claimSnapshotStatementIndexes) : claimScores.size;
-    const storySnapshotCount = input.snapshotIdentity ? inserted(storySnapshotStatementIndexes) : storyClaims.size;
+    const storySnapshotCount = input.snapshotIdentity
+      ? canonicalStorySnapshots + inserted(storySnapshotStatementIndexes)
+      : storyClaims.size;
     for (const index of statusStatementIndexes) {
       statusChanges += Number(results[index]?.meta.changes ?? 0) > 0 ? 1 : 0;
     }
@@ -441,7 +579,7 @@ export async function recalculateEvidenceScores(
     claimIds: [...claimScores.keys()],
     storyIds: [...storyClaims.keys()],
     claimSnapshots: 0,
-    storySnapshots: 0,
+    storySnapshots: canonicalStorySnapshots,
     statusChanges,
     approvalRequests,
   };

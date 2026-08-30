@@ -1157,27 +1157,21 @@ async function handleKnowledgeEmbeddingIndex(request: Request, env: Env): Promis
 }
 
 async function handleKc11GH(request: Request, env: Env): Promise<Response> {
-  const body = await readAdminObject(request, ["scoreLimit", "scoreCursor", "indexLimit", "dryRun"]);
+  const body = await readAdminObject(request, ["scoreLimit", "indexLimit", "dryRun"]);
   if (!body) return Response.json({ error: "Invalid request body." }, { status: 400 });
   const scoreLimit = body.scoreLimit;
   const indexLimit = body.indexLimit;
-  const scoreCursor = body.scoreCursor;
   if (scoreLimit !== undefined && (!Number.isInteger(scoreLimit) || Number(scoreLimit) < 1 || Number(scoreLimit) > 100)) {
     return Response.json({ error: "scoreLimit must be an integer between 1 and 100." }, { status: 400 });
   }
   if (indexLimit !== undefined && (!Number.isInteger(indexLimit) || Number(indexLimit) < 1 || Number(indexLimit) > 100)) {
     return Response.json({ error: "indexLimit must be an integer between 1 and 100." }, { status: 400 });
   }
-  if (scoreCursor !== undefined && scoreCursor !== null
-    && (typeof scoreCursor !== "string" || scoreCursor.length === 0 || scoreCursor.length > 200)) {
-    return Response.json({ error: "scoreCursor must be a bounded string or null." }, { status: 400 });
-  }
   if (body.dryRun !== undefined && typeof body.dryRun !== "boolean") {
     return Response.json({ error: "dryRun must be a boolean." }, { status: 400 });
   }
   const result = await runKc11GH(env, {
     scoreLimit: typeof scoreLimit === "number" ? scoreLimit : undefined,
-    scoreCursor: typeof scoreCursor === "string" ? scoreCursor : null,
     indexLimit: typeof indexLimit === "number" ? indexLimit : undefined,
     dryRun: body.dryRun === true,
   });

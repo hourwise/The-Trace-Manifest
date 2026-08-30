@@ -88,6 +88,8 @@ function adminProxyPathTests(): void {
   }
   assert.equal(buildWorkerAdminPath("knowledge/index-preview", "#fragment"), null, "fragment-bearing upstream path rejected");
   assert.equal(authorisedRoute("knowledge/index-preview", "POST", "publisher"), true, "publisher can reach the Preview index route");
+  assert.equal(authorisedRoute("knowledge/kc-11g-h", "POST", "publisher"), true, "publisher can reach the guarded KC-11G/H route");
+  assert.equal(authorisedRoute("knowledge/kc-11g-h", "POST", "reader"), false, "readers cannot execute KC-11G/H");
   assert.equal(authorisedRoute("social-signals", "GET", "reader"), true, "reader can read social signals");
   assert.equal(authorisedRoute("social-signals", "DELETE", "publisher"), false, "unsupported methods fail closed");
   assert.equal(authorisedRoute("knowledge/../social-signals", "POST", "publisher"), false, "traversal cannot bypass route authorization");

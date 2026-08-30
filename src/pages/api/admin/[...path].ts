@@ -19,6 +19,7 @@ const PUBLISH_ROUTES = new Set([
   "approve-evidence-status",
   "knowledge/capture-missing",
   "knowledge/index-preview",
+  "knowledge/kc-11g-h",
   "knowledge/backfill/snapshot", "knowledge/backfill/plan", "knowledge/backfill/approve",
   "knowledge/backfill/execute", "knowledge/backfill/retry", "knowledge/backfill/recover",
   "candidates", "social-signals", "related-items",
