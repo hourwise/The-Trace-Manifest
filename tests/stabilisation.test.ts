@@ -654,6 +654,10 @@ async function deskBoundaryTests(): Promise<void> {
       method: "POST", body: JSON.stringify({ batchId: crypto.randomUUID(), planHash: "unsigned" }),
     }), env, context);
     assert.equal(anonymousRecovery.status, 401, "unsigned stale-backfill recovery is rejected");
+    const anonymousFreshness = await worker.fetch(new Request("https://worker.example/admin/knowledge/freshness", {
+      method: "POST", body: JSON.stringify({ operation: "request", claimAssertionId: "unsigned", proposedState: "stale", reason: "unsigned", idempotencyKey: "unsigned" }),
+    }), env, context);
+    assert.equal(anonymousFreshness.status, 401, "unsigned freshness review is rejected");
 
     const freshnessProbe = JSON.stringify({ operation: "request", claimAssertionId: "missing-assertion", proposedState: "stale", reason: "Bounded route admission probe.", idempotencyKey: "route-probe-1" });
     assert.equal((await request("reader", "POST", "/admin/knowledge/freshness", freshnessProbe)).status, 403, "readers cannot submit freshness reviews");
