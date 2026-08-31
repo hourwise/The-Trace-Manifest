@@ -89,6 +89,9 @@ function adminProxyPathTests(): void {
   assert.equal(buildWorkerAdminPath("knowledge/index-preview", "#fragment"), null, "fragment-bearing upstream path rejected");
   assert.equal(authorisedRoute("knowledge/index-preview", "POST", "publisher"), true, "publisher can reach the Preview index route");
   assert.equal(authorisedRoute("knowledge/kc-11g-h", "POST", "publisher"), true, "publisher can reach the guarded KC-11G/H route");
+  assert.equal(authorisedRoute("knowledge/freshness", "POST", "publisher"), true, "publisher can reach freshness only through the Pages proxy allowlist");
+  assert.equal(buildWorkerAdminPath("knowledge/freshness"), "/admin/knowledge/freshness", "freshness maps to the exact Worker route");
+  assert.equal(authorisedRoute("knowledge/freshness", "POST", "reader"), false, "readers cannot submit freshness reviews");
   assert.equal(authorisedRoute("knowledge/kc-11g-h", "POST", "reader"), false, "readers cannot execute KC-11G/H");
   assert.equal(authorisedRoute("social-signals", "GET", "reader"), true, "reader can read social signals");
   assert.equal(authorisedRoute("social-signals", "DELETE", "publisher"), false, "unsupported methods fail closed");
@@ -651,6 +654,16 @@ async function deskBoundaryTests(): Promise<void> {
       method: "POST", body: JSON.stringify({ batchId: crypto.randomUUID(), planHash: "unsigned" }),
     }), env, context);
     assert.equal(anonymousRecovery.status, 401, "unsigned stale-backfill recovery is rejected");
+
+    const freshnessProbe = JSON.stringify({ operation: "request", claimAssertionId: "missing-assertion", proposedState: "stale", reason: "Bounded route admission probe.", idempotencyKey: "route-probe-1" });
+    assert.equal((await request("reader", "POST", "/admin/knowledge/freshness", freshnessProbe)).status, 403, "readers cannot submit freshness reviews");
+    assert.equal((await request("publisher", "POST", "/admin/knowledge/freshness", freshnessProbe)).status, 404, "publisher freshness requests reach the Worker service after route admission");
+    assert.equal((await request("publisher", "POST", "/admin/knowledge/freshness", JSON.stringify({ ...JSON.parse(freshnessProbe), unexpected: true }))).status, 400, "unknown freshness fields are rejected by the Worker");
+    assert.equal((await request("publisher", "POST", "/admin/knowledge/freshness", "not-json")).status, 400, "malformed freshness JSON is rejected by the Worker");
+    assert.equal((await request("publisher", "POST", "/admin/knowledge/freshness", JSON.stringify({ operation: "delete", reviewId: "review" }))).status, 400, "unknown freshness actions are rejected by the Worker");
+    assert.equal((await request("publisher", "POST", "/admin/knowledge/freshness", JSON.stringify({ operation: "approve" }))).status, 400, "approve requires its exact review shape");
+    assert.equal((await request("publisher", "POST", "/admin/knowledge/freshness", JSON.stringify({ operation: "reject", reviewId: "review", unexpected: true }))).status, 400, "reject rejects unsupported fields");
+    assert.equal((await request("publisher", "POST", "/admin/knowledge/freshness", JSON.stringify({ ...JSON.parse(freshnessProbe), reason: "x".repeat(70_000) }))).status, 413, "the bounded Worker body rejects oversized freshness requests");
 
     const manualCaptureBody = JSON.stringify({ url: "https://manual.example/article" });
     assert.equal((await request("reader", "POST", "/admin/knowledge/capture-url", manualCaptureBody)).status, 403,

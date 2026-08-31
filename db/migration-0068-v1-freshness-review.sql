@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS evidence_freshness_reviews (
   reviewed_at TEXT,
   review_note TEXT,
   idempotency_key TEXT NOT NULL UNIQUE,
+  request_fingerprint TEXT NOT NULL,
   CHECK(prior_state <> proposed_state),
   CHECK((state = 'pending' AND reviewed_by IS NULL AND reviewed_at IS NULL)
      OR (state IN ('approved','rejected') AND reviewed_by IS NOT NULL AND reviewed_at IS NOT NULL))
@@ -33,7 +34,8 @@ END;
 
 CREATE TRIGGER IF NOT EXISTS prevent_evidence_freshness_review_core_update
 BEFORE UPDATE OF claim_assertion_id, prior_state, proposed_state,
-  source_document_version_id, reason, requested_by, requested_at, idempotency_key
+  source_document_version_id, reason, requested_by, requested_at,
+  idempotency_key, request_fingerprint
 ON evidence_freshness_reviews
 BEGIN
   SELECT RAISE(ABORT, 'evidence freshness review core fields are immutable');

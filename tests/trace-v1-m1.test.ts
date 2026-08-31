@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
-import { buildKnowledgeLaunchPlan, buildSourceCohortPlan, buildStoryLaunchPlan, inspectSchemaParity, projectAskReadiness, type KnowledgeCandidateSnapshot, type SchemaSnapshot, type SourceCohortSnapshot, type StoryCandidateSnapshot } from "../src/lib/server/trace-v1-m1";
-import { approveFreshnessReview, EvidenceFreshnessReviewError, requestFreshnessReview } from "../src/lib/server/evidence-freshness-review";
+import { buildKnowledgeLaunchPlan, buildSourceCohortPlan, buildStoryLaunchPlan, extractMigrationStructureIdentities, inspectSchemaParity, projectAskReadiness, type KnowledgeCandidateSnapshot, type SchemaSnapshot, type SourceCohortSnapshot, type StoryCandidateSnapshot } from "../src/lib/server/trace-v1-m1";
+import { approveFreshnessReview, EvidenceFreshnessReviewError, rejectFreshnessReview, requestFreshnessReview } from "../src/lib/server/evidence-freshness-review";
+import { readFileSync } from "node:fs";
 import { SQLiteD1 } from "./sqlite-d1";
+import { migrationPlanForGaps } from "../scripts/trace-v1-m1-readiness";
 
 function assertion(overrides: Record<string, unknown> = {}) {
   return {
@@ -84,6 +86,41 @@ async function plannerTests(): Promise<void> {
   assert.deepEqual(ask, { currentEligibleAssertions: 1, launchReadyStories: 1, launchReadyKnowledgePages: 1, resolvableCitations: 1, deterministicInsufficiencyCandidates: 0, projectedAfterApprovedRemediation: { storiesWithEvidencePlan: 0, knowledgePagesWithEvidencePlan: 0 } });
 }
 
+function migrationIdentityTests(): void {
+  const identities = extractMigrationStructureIdentities(`
+    CREATE TABLE first (id TEXT PRIMARY KEY, shared TEXT, first_only INTEGER);
+    CREATE TABLE second (id TEXT PRIMARY KEY, shared TEXT, second_only INTEGER);
+    CREATE INDEX first_shared_idx ON first(shared);
+    CREATE INDEX second_shared_idx ON second(shared);
+    CREATE TRIGGER first_guard BEFORE UPDATE ON first BEGIN SELECT 1; END;
+    CREATE TRIGGER second_guard BEFORE UPDATE ON second BEGIN SELECT 1; END;
+    ALTER TABLE second ADD COLUMN added TEXT;
+  `);
+  assert.ok(identities.some((item) => item.objectType === "column" && item.tableName === "first" && item.objectName === "shared"));
+  assert.ok(identities.some((item) => item.objectType === "column" && item.tableName === "second" && item.objectName === "shared"));
+  assert.ok(identities.some((item) => item.objectType === "index" && item.tableName === "first" && item.objectName === "first_shared_idx"));
+  assert.ok(identities.some((item) => item.objectType === "index" && item.tableName === "second" && item.objectName === "second_shared_idx"));
+  assert.ok(identities.some((item) => item.objectType === "trigger" && item.tableName === "first" && item.objectName === "first_guard"));
+  assert.ok(identities.some((item) => item.objectType === "trigger" && item.tableName === "second" && item.objectName === "second_guard"));
+  assert.ok(identities.some((item) => item.objectType === "column" && item.tableName === "second" && item.objectName === "added"));
+  assert.equal(identities.some((item) => item.objectType === "column" && item.tableName === "first" && item.objectName === "added"), false);
+
+  const freshnessMigration = extractMigrationStructureIdentities(readFileSync("db/migration-0068-v1-freshness-review.sql", "utf8"));
+  assert.ok(freshnessMigration.length >= 8);
+  assert.equal(freshnessMigration.every((item) => item.objectType === "table" ? item.objectName === "evidence_freshness_reviews" : item.tableName === "evidence_freshness_reviews"), true,
+    "migration 0068 identities stay scoped to its freshness-review table");
+
+  const targetGap = { key: "table:evidence_freshness_reviews", objectType: "table" as const, objectName: "evidence_freshness_reviews", classification: "MISSING" as const, requiredForV1: true };
+  const resolution = migrationPlanForGaps({
+    version: "trace-v1-m1-v1", items: [targetGap], summary: { PRESENT_COMPATIBLE: 0, PRESENT_LEGACY_COMPATIBLE: 0, MISSING: 1, INCOMPATIBLE: 0, NOT_REQUIRED_FOR_V1: 0 },
+    missing: [targetGap], incompatible: [],
+  });
+  const assessment = resolution.relevantAssessments.find((item) => item.migrationFile === "db/migration-0068-v1-freshness-review.sql");
+  assert.equal(assessment?.ownershipStatus, "CONFIRMED", "migration planner confirms 0068 ownership by exact identity");
+  assert.equal(assessment?.appliedState, "UNKNOWN", "missing migration ledger is modeled as unknown");
+  assert.equal(assessment?.productionPlanEligible, false, "assessment never becomes an executable production plan");
+}
+
 async function freshnessTests(): Promise<void> {
   const database = new SQLiteD1();
   try {
@@ -104,14 +141,43 @@ async function freshnessTests(): Promise<void> {
     database.sqlite.exec("UPDATE source_document_versions SET extraction_state = 'extracted' WHERE id = 'freshness-version'");
     const pending = await requestFreshnessReview(database.asD1(), { claimAssertionId: "freshness-assertion", proposedState: "current", sourceDocumentVersionId: "freshness-version", reason: "Publisher reviewed the current source version and locator.", actor: "publisher@example.com", idempotencyKey: "freshness-review-1" });
     assert.equal(pending.state, "pending");
-    const replay = await requestFreshnessReview(database.asD1(), { claimAssertionId: "freshness-assertion", proposedState: "current", sourceDocumentVersionId: "freshness-version", reason: "A different text is ignored on replay.", actor: "publisher@example.com", idempotencyKey: "freshness-review-1" });
+    const replay = await requestFreshnessReview(database.asD1(), { claimAssertionId: "freshness-assertion", proposedState: "current", sourceDocumentVersionId: "freshness-version", reason: "Publisher reviewed the current source version and locator.", actor: "publisher@example.com", idempotencyKey: "freshness-review-1" });
     assert.equal(replay.replay, true);
+    await assert.rejects(
+      () => requestFreshnessReview(database.asD1(), { claimAssertionId: "freshness-assertion", proposedState: "current", sourceDocumentVersionId: "freshness-version", reason: "Changed assertion for the same key.", actor: "publisher@example.com", idempotencyKey: "freshness-review-1" }),
+      (error: unknown) => error instanceof EvidenceFreshnessReviewError && error.code === "idempotency_conflict",
+    );
     const approved = await approveFreshnessReview(database.asD1(), pending.reviewId, "publisher@example.com", "Approved after review.");
     assert.equal(approved.state, "approved");
     assert.throws(() => database.sqlite.exec(`DELETE FROM evidence_freshness_reviews WHERE id = '${pending.reviewId}'`), /append-only/);
     assert.equal(database.sqlite.prepare("SELECT freshness_state FROM claim_assertions WHERE id = 'freshness-assertion'").get()?.freshness_state, "current");
     assert.equal((await approveFreshnessReview(database.asD1(), pending.reviewId, "publisher@example.com")).replay, true);
-    await assert.rejects(() => requestFreshnessReview(database.asD1(), { claimAssertionId: "freshness-assertion", proposedState: "current", sourceDocumentVersionId: "freshness-version", reason: "No-op", actor: "publisher@example.com", idempotencyKey: "freshness-review-noop" }), (error: unknown) => error instanceof EvidenceFreshnessReviewError && error.code === "freshness_state_unchanged");
+    const concurrentRequests = await Promise.all(Array.from({ length: 10 }, () => requestFreshnessReview(database.asD1(), {
+      claimAssertionId: "freshness-assertion", proposedState: "stale",
+      reason: "One convergent concurrent proposal.", actor: "publisher@example.com", idempotencyKey: "freshness-review-concurrent",
+    })));
+    assert.equal(concurrentRequests.filter((result) => result.inserted).length, 1, "exactly one concurrent proposal inserts");
+    assert.equal(new Set(concurrentRequests.map((result) => result.reviewId)).size, 1, "concurrent proposals converge on one review");
+    const concurrentReview = concurrentRequests[0];
+    const concurrentApprovals = await Promise.all(Array.from({ length: 10 }, () => approveFreshnessReview(database.asD1(), concurrentReview.reviewId, "publisher@example.com", "Convergent approval.")));
+    assert.equal(concurrentApprovals.filter((result) => result.inserted).length, 1, "exactly one concurrent approval commits");
+    assert.equal(concurrentApprovals.every((result) => result.state === "approved"), true, "concurrent approvals converge on approved");
+    const rejectedRequest = await requestFreshnessReview(database.asD1(), { claimAssertionId: "freshness-assertion", proposedState: "current", sourceDocumentVersionId: "freshness-version", reason: "Publisher rejected this current transition for test coverage.", actor: "publisher@example.com", idempotencyKey: "freshness-review-reject" });
+    const rejected = await rejectFreshnessReview(database.asD1(), rejectedRequest.reviewId, "publisher@example.com", "Rejected by publisher.");
+    assert.equal(rejected.state, "rejected");
+    assert.equal((await rejectFreshnessReview(database.asD1(), rejectedRequest.reviewId, "publisher@example.com")).replay, true);
+    database.sqlite.exec(`
+      UPDATE source_documents SET current_version_id = 'freshness-version' WHERE id = 'freshness-document';
+      INSERT INTO source_document_versions (id, source_document_id, content_hash, retrieved_url, retrieved_at, extraction_status, extraction_state, storage_state)
+        VALUES ('freshness-version-2', 'freshness-document', 'freshness-content-hash-2', 'https://example.com/source', '2026-08-31T00:00:00Z', 'extracted', 'extracted', 'metadata_only');
+    `);
+    const toctou = await requestFreshnessReview(database.asD1(), { claimAssertionId: "freshness-assertion", proposedState: "current", sourceDocumentVersionId: "freshness-version", reason: "Source version must remain current through approval.", actor: "publisher@example.com", idempotencyKey: "freshness-review-toctou" });
+    database.sqlite.exec("UPDATE source_documents SET current_version_id = 'freshness-version-2' WHERE id = 'freshness-document'");
+    await assert.rejects(
+      () => approveFreshnessReview(database.asD1(), toctou.reviewId, "publisher@example.com"),
+      (error: unknown) => error instanceof EvidenceFreshnessReviewError && error.code === "source_version_blocks_current",
+    );
+    await assert.rejects(() => requestFreshnessReview(database.asD1(), { claimAssertionId: "freshness-assertion", proposedState: "stale", reason: "No-op", actor: "publisher@example.com", idempotencyKey: "freshness-review-noop" }), (error: unknown) => error instanceof EvidenceFreshnessReviewError && error.code === "freshness_state_unchanged");
     database.sqlite.exec("UPDATE canonical_claims SET current_state = 'corrected' WHERE id = 'freshness-claim'; UPDATE claim_assertions SET freshness_state = 'unknown' WHERE id = 'freshness-assertion';");
     await assert.rejects(() => requestFreshnessReview(database.asD1(), { claimAssertionId: "freshness-assertion", proposedState: "current", sourceDocumentVersionId: "freshness-version", reason: "Correction must win.", actor: "publisher@example.com", idempotencyKey: "freshness-review-corrected" }), (error: unknown) => error instanceof EvidenceFreshnessReviewError && error.code === "claim_state_blocks_current");
   } finally {
@@ -121,5 +187,6 @@ async function freshnessTests(): Promise<void> {
 
 await schemaTests();
 await plannerTests();
+migrationIdentityTests();
 await freshnessTests();
 console.log("TRACE V1 Mission 1 focused tests passed.");

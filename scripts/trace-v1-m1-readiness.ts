@@ -10,10 +10,12 @@
 import { execSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { SQLiteD1 } from "../tests/sqlite-d1";
 import {
   buildKnowledgeLaunchPlan,
   buildSourceCohortPlan,
+  extractMigrationStructureIdentities,
   buildStoryLaunchPlan,
   inspectSchemaParity,
   projectAskReadiness,
@@ -108,7 +110,7 @@ function runWranglerResultSets(query: string): Row[][] {
   delete childEnv.CLOUDFLARE_API_TOKEN;
   const compactQuery = query.replace(/\s+/g, " ").trim();
   try {
-    const output = execSync(`npx.cmd wrangler d1 execute ${PRODUCTION_DATABASE} --config wrangler.toml --remote --json --command "${compactQuery}"`, { cwd: ROOT, env: childEnv, encoding: "utf8", maxBuffer: 32 * 1024 * 1024 });
+    const output = execSync(`npx.cmd wrangler d1 execute ${PRODUCTION_DATABASE} --config wrangler.toml --env production --remote --json --command "${compactQuery}"`, { cwd: ROOT, env: childEnv, encoding: "utf8", maxBuffer: 32 * 1024 * 1024 });
     return parseJsonResultSets(output);
   } catch (error) {
     const record = error && typeof error === "object" ? error as { stderr?: unknown; stdout?: unknown; status?: unknown } : null;
@@ -312,41 +314,195 @@ function buildCorpusSnapshot(schema: SchemaSnapshot): {
   return { stories: [...storiesById.values()], knowledge: [...knowledgeById.values()], sources: sourceCohort, currentEligibleAssertions: currentEligible, resolvableCitations, liveCounts, schema };
 }
 
-function migrationPlanForGaps(parity: ReturnType<typeof inspectSchemaParity>): Array<Record<string, unknown>> {
-  const gaps = [...parity.missing, ...parity.incompatible];
-  const files = new Map<string, { index: number; entry: (typeof MIGRATION_CATALOG)[number] }>();
-  MIGRATION_CATALOG.forEach((entry, index) => files.set(entry[0], { index, entry }));
-  const selected = new Map<string, { file: string; supplied: string[] }>();
-  for (const gap of gaps) {
-    const escapedObject = gap.objectName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const escapedTable = (gap.tableName ?? gap.objectName).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    for (const file of files.keys()) {
-      const body = readFileSync(resolve("db", file), "utf8");
-      const matcher = gap.objectType === "table"
-        ? new RegExp(`CREATE TABLE(?: IF NOT EXISTS)?\\s+${escapedObject}\\b`, "i")
-        : gap.objectType === "column"
-          ? new RegExp(`(?:ALTER TABLE\\s+${escapedTable}[^;]*?ADD COLUMN\\s+${escapedObject}\\b|CREATE TABLE[^;]*?\\b${escapedObject}\\b)`, "is")
-          : new RegExp(`CREATE (?:UNIQUE )?${gap.objectType.toUpperCase()}\\s+(?:IF NOT EXISTS\\s+)?${escapedObject}\\b`, "i");
-      if (!matcher.test(body)) continue;
-      const current = selected.get(file) ?? { file, supplied: [] };
-      current.supplied.push(gap.key);
-      selected.set(file, current);
-    }
+type MigrationSafetyClassification =
+  | "SAFE_TO_APPLY_AS_IS"
+  | "REQUIRES_PRECONDITION_CHECK"
+  | "ALREADY_SEMANTICALLY_PRESENT"
+  | "REQUIRES_COMPATIBILITY_ADAPTER"
+  | "NOT_REQUIRED_FOR_V1"
+  | "UNSAFE_OR_AMBIGUOUS";
+
+type AppliedMigrationState = "APPLIED_CONFIRMED" | "SEMANTICALLY_PRESENT" | "NOT_APPLIED_CONFIRMED" | "UNKNOWN";
+type SemanticMigrationState = "SEMANTICALLY_PRESENT" | "SEMANTICALLY_PARTIAL" | "SEMANTICALLY_ABSENT" | "UNKNOWN";
+
+const UNSAFE_MIGRATIONS = new Set([
+  "migration-5e-publication.sql",
+  "migration-stabilisation-security.sql",
+  "migration-0015-editorial-desk.sql",
+  "migration-0050-knowledge-retrieval-indexes.sql",
+  "migration-0055-knowledge-embedding-confirmation.sql",
+  "migration-0059-source-version-hash-semantics.sql",
+  "migration-0061-normalized-content-v2.sql",
+  "migration-0062-normalized-content-v3-reference-drift.sql",
+  "migration-0063-kc-03f-upload-source-states.sql",
+  "migration-0064-kc-03h-pdf-upload-state.sql",
+]);
+
+const COMPATIBILITY_ADAPTER_MIGRATIONS = new Set(["migration-0043-legacy-claims-cutover.sql"]);
+
+function migrationSafetyFor(file: string, relevant: boolean): MigrationSafetyClassification {
+  if (!relevant) return "NOT_REQUIRED_FOR_V1";
+  if (UNSAFE_MIGRATIONS.has(file)) return "UNSAFE_OR_AMBIGUOUS";
+  if (COMPATIBILITY_ADAPTER_MIGRATIONS.has(file)) return "REQUIRES_COMPATIBILITY_ADAPTER";
+  return "REQUIRES_PRECONDITION_CHECK";
+}
+
+function migrationStructureLabel(structure: ReturnType<typeof extractMigrationStructureIdentities>[number]): string {
+  return structure.objectType === "table"
+    ? `table:${structure.objectName}`
+    : `${structure.objectType}:${structure.tableName}.${structure.objectName}`;
+}
+
+function gapOwnedByStructure(
+  gap: ReturnType<typeof inspectSchemaParity>["items"][number],
+  structure: ReturnType<typeof extractMigrationStructureIdentities>[number],
+): boolean {
+  if (gap.objectType !== structure.objectType) return false;
+  if (gap.objectType === "table") return gap.objectName === structure.objectName;
+  return gap.objectName === structure.objectName && gap.tableName === structure.tableName;
+}
+
+function parityItemForStructure(
+  parity: ReturnType<typeof inspectSchemaParity>,
+  structure: ReturnType<typeof extractMigrationStructureIdentities>[number],
+): ReturnType<typeof inspectSchemaParity>["items"][number] | undefined {
+  return parity.items.find((item) => gapOwnedByStructure(item, structure));
+}
+
+function semanticStateForMigration(
+  parity: ReturnType<typeof inspectSchemaParity>,
+  structures: ReturnType<typeof extractMigrationStructureIdentities>,
+): SemanticMigrationState {
+  const relevantItems = structures.map((structure) => parityItemForStructure(parity, structure)).filter((item): item is NonNullable<typeof item> => Boolean(item));
+  if (relevantItems.length === 0) return "UNKNOWN";
+  const present = relevantItems.filter((item) => ["PRESENT_COMPATIBLE", "PRESENT_LEGACY_COMPATIBLE"].includes(item.classification)).length;
+  if (present === relevantItems.length) return "SEMANTICALLY_PRESENT";
+  if (present === 0) return "SEMANTICALLY_ABSENT";
+  return "SEMANTICALLY_PARTIAL";
+}
+
+function preconditionsForMigration(
+  entry: (typeof MIGRATION_CATALOG)[number],
+  structures: ReturnType<typeof extractMigrationStructureIdentities>,
+  ownershipStatus: "CONFIRMED" | "AMBIGUOUS",
+  appliedState: AppliedMigrationState,
+): string[] {
+  const preconditions = [
+    `Applied migration history must be established; current state is ${appliedState}.`,
+    entry[2] ? `Declared predecessor requirement: ${entry[2]}.` : "Repository predecessor requirements must be verified from the target schema.",
+  ];
+  if (ownershipStatus === "AMBIGUOUS") preconditions.push("Every mapped gap must have one uniquely reviewed migration owner before any operational plan is produced.");
+  for (const structure of structures) {
+    if (structure.objectType === "table") preconditions.push(`Target table ${structure.objectName} must be absent or definition-equivalent; existing data must satisfy its constraints.`);
+    else if (structure.objectType === "column") preconditions.push(`Target table ${structure.tableName} must exist and column ${structure.tableName}.${structure.objectName} must be absent or definition-equivalent; existing rows must satisfy new constraints.`);
+    else preconditions.push(`Target table ${structure.tableName} must exist and ${structure.objectType} ${structure.objectName} must be absent or definition-equivalent.`);
   }
-  return [...selected.values()].sort((a, b) => (files.get(a.file)?.index ?? 0) - (files.get(b.file)?.index ?? 0)).map(({ file, supplied }) => {
-    const [, purpose, prerequisite, change, rollback] = files.get(file)!.entry;
-    return { migrationFile: `db/${file}`, purpose, prerequisite, structures: [...new Set(supplied)].sort(), additive: true, dataDestructive: false, expectedProductionRisk: change, rollbackStrategy: rollback, applicationDependency: "Required for the current accepted application path when a listed structure is missing or incompatible.", requiredForV1: true };
+  return [...new Set(preconditions)];
+}
+
+export interface MigrationAssessment {
+  migrationFile: string;
+  purpose: string;
+  prerequisite: string;
+  structures: string[];
+  matchingGaps: string[];
+  ownershipStatus: "CONFIRMED" | "AMBIGUOUS" | "NOT_SELECTED";
+  safetyClassification: MigrationSafetyClassification;
+  appliedState: AppliedMigrationState;
+  semanticState: SemanticMigrationState;
+  preconditions: string[];
+  expectedProductionRisk: string;
+  rollbackStrategy: string;
+  productionPlanEligible: false;
+}
+
+export interface MigrationGapResolution {
+  assessments: MigrationAssessment[];
+  relevantAssessments: MigrationAssessment[];
+  unresolvedGaps: Array<{ key: string; objectType: string; objectName: string; tableName?: string; reason: string }>;
+}
+
+export function migrationPlanForGaps(parity: ReturnType<typeof inspectSchemaParity>): MigrationGapResolution {
+  const gaps = [...parity.missing, ...parity.incompatible];
+  const definitions = MIGRATION_CATALOG.map((entry, index) => ({
+    entry,
+    index,
+    structures: extractMigrationStructureIdentities(readFileSync(resolve("db", entry[0]), "utf8")),
+  }));
+  const ownersByGap = new Map<string, string[]>();
+  for (const gap of gaps) {
+    const owners = definitions.filter((definition) => definition.structures.some((structure) => gapOwnedByStructure(gap, structure))).map((definition) => definition.entry[0]);
+    ownersByGap.set(gap.key, owners);
+  }
+  const unresolvedGaps = gaps.filter((gap) => (ownersByGap.get(gap.key) ?? []).length === 0).map((gap) => ({
+    key: gap.key,
+    objectType: gap.objectType,
+    objectName: gap.objectName,
+    tableName: gap.tableName,
+    reason: "No reviewed migration in the catalog owns this full structural identity; operational planning is unresolved.",
+  }));
+
+  const assessments = definitions.sort((left, right) => left.index - right.index).map(({ entry, structures }): MigrationAssessment => {
+    const matchingGaps = gaps.filter((gap) => structures.some((structure) => gapOwnedByStructure(gap, structure))).map((gap) => gap.key).sort();
+    const relevant = matchingGaps.length > 0;
+    const ownershipStatus = !relevant ? "NOT_SELECTED" : matchingGaps.some((key) => (ownersByGap.get(key) ?? []).length !== 1) ? "AMBIGUOUS" : "CONFIRMED";
+    const appliedState: AppliedMigrationState = "UNKNOWN";
+    const safetyClassification = ownershipStatus === "AMBIGUOUS" ? "UNSAFE_OR_AMBIGUOUS" : migrationSafetyFor(entry[0], relevant);
+    return {
+      migrationFile: `db/${entry[0]}`,
+      purpose: entry[1],
+      prerequisite: entry[2],
+      structures: structures.map(migrationStructureLabel),
+      matchingGaps,
+      ownershipStatus,
+      safetyClassification,
+      appliedState,
+      semanticState: semanticStateForMigration(parity, structures),
+      preconditions: preconditionsForMigration(entry, relevant ? structures : [], ownershipStatus === "AMBIGUOUS" ? "AMBIGUOUS" : "CONFIRMED", appliedState),
+      expectedProductionRisk: entry[3],
+      rollbackStrategy: entry[4],
+      productionPlanEligible: false,
+    };
   });
+  return { assessments, relevantAssessments: assessments.filter((assessment) => assessment.ownershipStatus !== "NOT_SELECTED"), unresolvedGaps };
 }
 
 function markdownList(items: string[]): string {
   return items.length ? items.map((item) => `- ${item}`).join("\n") : "- None.";
 }
 
+function compactStoryCandidate(candidate: Awaited<ReturnType<typeof buildStoryLaunchPlan>>["bestCandidates"][number]): Row {
+  return {
+    id: candidate.id,
+    title: candidate.title,
+    topic: candidate.topic,
+    classification: candidate.classification,
+    reasons: candidate.reasons,
+    remediation: candidate.remediation,
+    claimCount: candidate.claimCount,
+    currentEligibleAssertionCount: candidate.currentEligibleAssertionCount,
+    evidenceCompleteness: candidate.evidenceCompleteness,
+    recencyDays: candidate.recencyDays,
+  };
+}
+
+function compactKnowledgeCandidate(candidate: Awaited<ReturnType<typeof buildKnowledgeLaunchPlan>>["bestCandidates"][number]): Row {
+  return {
+    id: candidate.id,
+    canonicalQuestion: candidate.canonicalQuestion,
+    classification: candidate.classification,
+    reasons: candidate.reasons,
+    remediation: candidate.remediation,
+    linkedClaimCount: candidate.linkedClaimCount,
+    currentEligibleAssertionCount: candidate.currentEligibleAssertionCount,
+  };
+}
+
 function reportMarkdown(input: {
   generatedAt: string;
   parity: ReturnType<typeof inspectSchemaParity>;
-  migrationPlan: Array<Record<string, unknown>>;
+  migrationAssessments: MigrationAssessment[];
+  unresolvedMigrationGaps: MigrationGapResolution["unresolvedGaps"];
   stories: Awaited<ReturnType<typeof buildStoryLaunchPlan>>;
   knowledge: Awaited<ReturnType<typeof buildKnowledgeLaunchPlan>>;
   sources: Awaited<ReturnType<typeof buildSourceCohortPlan>>;
@@ -357,7 +513,7 @@ function reportMarkdown(input: {
   const nonPresent = input.parity.items.filter((item) => ["MISSING", "INCOMPATIBLE"].includes(item.classification));
   const storyBest = input.stories.bestCandidates.map((candidate) => `| ${candidate.id} | ${candidate.title.replaceAll("|", "\\|")} | ${candidate.classification} | ${candidate.reasons.map((reason) => `${reason.code}: ${reason.detail}`).join("; ") || "None"} | ${candidate.remediation.map((action) => action.action).join(", ") || "None"} |`).join("\n");
   const knowledgeBest = input.knowledge.bestCandidates.map((candidate) => `| ${candidate.id} | ${candidate.canonicalQuestion.replaceAll("|", "\\|")} | ${candidate.classification} | ${candidate.reasons.map((reason) => `${reason.code}: ${reason.detail}`).join("; ") || "None"} | ${candidate.remediation.map((action) => action.action).join(", ") || "None"} |`).join("\n");
-  const migrationRows = input.migrationPlan.map((migration) => `| ${migration.migrationFile} | ${migration.purpose} | ${migration.prerequisite} | ${migration.structures} | ${migration.expectedProductionRisk} | ${migration.rollbackStrategy} | ${migration.requiredForV1} |`).join("\n");
+  const migrationRows = input.migrationAssessments.map((migration) => `| ${migration.migrationFile} | ${migration.ownershipStatus} | ${migration.safetyClassification} | ${migration.appliedState} | ${migration.semanticState} | ${migration.matchingGaps.join(", ") || "None"} | ${migration.structures.join(", ") || "None"} | ${migration.preconditions.join("<br>")} | ${migration.productionPlanEligible} |`).join("\n");
   const coreSources = input.sources.recommendedCore.map((source) => `${source.id} — ${source.name}`).join(", ") || "None";
   const repairSources = input.sources.repairOrDisableCandidates.map((source) => `${source.id} — ${source.name} (${source.classification})`).join(", ") || "None";
   return `# TRACE V1 Mission 1 — Production Evidence Readiness
@@ -394,15 +550,16 @@ ${markdownList(nonPresent.map((item) => `${item.key} - ${item.classification}${i
 
 The inspector compares accepted local schema tables, columns, primary-key positions, query-path indexes, and lifecycle/immutability triggers. Compatibility-only legacy tables are reported as PRESENT_LEGACY_COMPATIBLE and are never used to promote current evidence. Required table scope: ${input.targetTables.length} tables.
 
-## D. Ordered Production Migration Plan
+## D. Regenerated Migration Assessment
 
-DO NOT APPLY. The plan is generated only for gaps found in the target schema; every selected item is supplied by an existing repository migration unless explicitly marked as the Mission 1 candidate migration 0068.
+This is an assessment, not an executable migration plan. It uses bounded, table-aware DDL identity extraction. A column, index, or trigger is owned only when its full table-scoped identity matches; missing migration history is represented as UNKNOWN and never inferred to mean NOT_APPLIED_CONFIRMED. No migration is eligible for Production execution from this artifact.
 
-| Migration | Purpose | Prerequisite | Structures | Risk | Rollback / stop condition | Required for v1 |
+| Migration | Ownership | Safety | Applied state | Semantic state | Matching gaps | Exact structures | Preconditions | Production plan eligible |
 | --- | --- | --- | --- | --- | --- | --- |
 ${migrationRows || "| None | No missing current-schema migration identified | — | — | — | — | — |"}
 
-No duplicate replacement migration was created for an existing structure. Migration 0068 is the one additive migration introduced by this candidate for the missing publisher-governed freshness review ledger.
+Unresolved schema gaps: ${input.unresolvedMigrationGaps.length ? input.unresolvedMigrationGaps.map((gap) => `${gap.key} (${gap.reason})`).join("; ") : "None"}.
+Migration 0068 is assessed by exact table-scoped identity and is the only additive migration introduced by this candidate for the publisher-governed freshness review ledger. Any future application requires separate authorization, an established migration ledger, explicit precondition checks, and a reviewed rollback/stop procedure.
 
 ## E. Launch Corpus Planner
 
@@ -524,15 +681,72 @@ async function main(): Promise<void> {
   const knowledge = await buildKnowledgeLaunchPlan(corpus.knowledge, { maxCandidates: 6 });
   const sourcePlan = await buildSourceCohortPlan(corpus.sources);
   const ask = projectAskReadiness(stories, knowledge, corpus.currentEligibleAssertions, corpus.resolvableCitations);
-  const migrationPlan = migrationPlanForGaps(parity);
-  const reportData = { generatedAt, production: { database: PRODUCTION_DATABASE, databaseId: PRODUCTION_DATABASE_ID }, preview: { database: PREVIEW_DATABASE, databaseId: PREVIEW_DATABASE_ID }, liveCounts: corpus.liveCounts, schemaParity: parity, migrationPlan, storyPlan: stories, knowledgePlan: knowledge, sourcePlan, askReadiness: ask };
+  const migrationResolution = migrationPlanForGaps(parity);
+  const compactParity = {
+    version: 1,
+    summary: parity.summary,
+    gaps: [...parity.missing, ...parity.incompatible].map((item) => ({
+      key: item.key,
+      objectType: item.objectType,
+      objectName: item.objectName,
+      tableName: item.tableName,
+      classification: item.classification,
+      detail: item.detail,
+    })),
+  };
+  const compactStoryPlan = {
+    version: stories.version,
+    asOf: stories.asOf,
+    recencyDays: stories.recencyDays,
+    targetMaximum: stories.targetMaximum,
+    counts: stories.counts,
+    bestCandidates: stories.bestCandidates.map(compactStoryCandidate),
+    planFingerprint: stories.planFingerprint,
+  };
+  const compactKnowledgePlan = {
+    version: knowledge.version,
+    target: knowledge.target,
+    counts: knowledge.counts,
+    bestCandidates: knowledge.bestCandidates.map(compactKnowledgeCandidate),
+    planFingerprint: knowledge.planFingerprint,
+  };
+  const compactSourcePlan = {
+    version: sourcePlan.version,
+    supportedConnectors: sourcePlan.supportedConnectors,
+    counts: Object.fromEntries(sourcePlan.assessments.reduce((counts, source) => counts.set(source.classification, (counts.get(source.classification) ?? 0) + 1), new Map<string, number>())),
+    assessments: sourcePlan.assessments,
+    recommendedCore: sourcePlan.recommendedCore,
+    repairOrDisableCandidates: sourcePlan.repairOrDisableCandidates,
+    planFingerprint: sourcePlan.planFingerprint,
+  };
+  const reportData = {
+    generatedAt,
+    production: { database: PRODUCTION_DATABASE, databaseId: PRODUCTION_DATABASE_ID },
+    preview: { database: PREVIEW_DATABASE, databaseId: PREVIEW_DATABASE_ID },
+    liveCounts: corpus.liveCounts,
+    schemaParity: compactParity,
+    migrationState: {
+      ledgerAvailable: false,
+      ledgerState: "UNKNOWN" as const,
+      explanation: "No trustworthy configured or standard D1 migration ledger was available; UNKNOWN is fail-closed and is not equivalent to NOT_APPLIED_CONFIRMED.",
+    },
+    migrationAssessments: migrationResolution.assessments,
+    unresolvedMigrationGaps: migrationResolution.unresolvedGaps,
+    storyPlan: compactStoryPlan,
+    knowledgePlan: compactKnowledgePlan,
+    sourcePlan: compactSourcePlan,
+    askReadiness: ask,
+  };
   mkdirSync(resolve("docs/v1"), { recursive: true });
   writeFileSync(JSON_PATH, `${JSON.stringify(reportData, null, 2)}\n`, "utf8");
-  writeFileSync(REPORT_PATH, reportMarkdown({ generatedAt, parity, migrationPlan, stories, knowledge, sources: sourcePlan, ask, liveCounts: corpus.liveCounts, targetTables: [...TRACE_V1_M1_REQUIRED_TABLES] }), "utf8");
+  const reportMigrationAssessments = migrationResolution.assessments.filter((assessment) => assessment.ownershipStatus !== "NOT_SELECTED" || assessment.migrationFile === "db/migration-0068-v1-freshness-review.sql");
+  writeFileSync(REPORT_PATH, reportMarkdown({ generatedAt, parity, migrationAssessments: reportMigrationAssessments, unresolvedMigrationGaps: migrationResolution.unresolvedGaps, stories, knowledge, sources: sourcePlan, ask, liveCounts: corpus.liveCounts, targetTables: [...TRACE_V1_M1_REQUIRED_TABLES] }), "utf8");
   console.log(JSON.stringify({ report: "docs/v1/production-evidence-readiness.md", json: "docs/v1/production-evidence-readiness.json", generatedAt, liveCounts: corpus.liveCounts, schema: parity.summary, stories: stories.counts, knowledge: knowledge.counts, coreSources: sourcePlan.recommendedCore.length, sourceRepairCandidates: sourcePlan.repairOrDisableCandidates.length }, null, 2));
 }
 
-main().catch((error) => {
-  console.error(`TRACE V1 Mission 1 readiness failed: ${error instanceof Error ? error.message : String(error)}`);
-  process.exitCode = 1;
-});
+if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {
+  main().catch((error) => {
+    console.error(`TRACE V1 Mission 1 readiness failed: ${error instanceof Error ? error.message : String(error)}`);
+    process.exitCode = 1;
+  });
+}

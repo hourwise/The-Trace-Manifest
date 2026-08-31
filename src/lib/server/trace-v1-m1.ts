@@ -60,6 +60,163 @@ export interface SchemaParityReport {
   incompatible: SchemaParityItem[];
 }
 
+export interface MigrationStructureIdentity {
+  objectType: "table" | "column" | "index" | "trigger";
+  objectName: string;
+  tableName?: string;
+}
+
+const SQL_IDENTIFIER = String.raw`(?:[A-Za-z_][A-Za-z0-9_$]*|"(?:[^"]|"")*"|` + "`(?:[^`]|``)*`" + String.raw`|\[[^\]]+\])`;
+
+function unquoteSqlIdentifier(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.startsWith("\"") && trimmed.endsWith("\"")) return trimmed.slice(1, -1).replaceAll("\"\"", "\"");
+  if (trimmed.startsWith("`") && trimmed.endsWith("`")) return trimmed.slice(1, -1).replaceAll("``", "`");
+  if (trimmed.startsWith("[") && trimmed.endsWith("]")) return trimmed.slice(1, -1);
+  return trimmed;
+}
+
+function stripSqlComments(sql: string): string {
+  return sql
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/--[^\r\n]*/g, "");
+}
+
+function matchingParenthesis(sql: string, openingIndex: number): number {
+  let depth = 0;
+  let quote: "'" | "\"" | "`" | null = null;
+  for (let index = openingIndex; index < sql.length; index++) {
+    const character = sql[index];
+    if (quote) {
+      if (character === quote && sql[index + 1] === quote) {
+        index++;
+      } else if (character === quote) {
+        quote = null;
+      }
+      continue;
+    }
+    if (character === "'" || character === "\"" || character === "`") {
+      quote = character;
+      continue;
+    }
+    if (character === "(") depth++;
+    if (character === ")") {
+      depth--;
+      if (depth === 0) return index;
+    }
+  }
+  return -1;
+}
+
+function topLevelDefinitions(sql: string): string[] {
+  const definitions: string[] = [];
+  let start = 0;
+  let depth = 0;
+  let quote: "'" | "\"" | "`" | null = null;
+  for (let index = 0; index < sql.length; index++) {
+    const character = sql[index];
+    if (quote) {
+      if (character === quote && sql[index + 1] === quote) index++;
+      else if (character === quote) quote = null;
+      continue;
+    }
+    if (character === "'" || character === "\"" || character === "`") {
+      quote = character;
+      continue;
+    }
+    if (character === "(") depth++;
+    else if (character === ")") depth--;
+    else if (character === "," && depth === 0) {
+      definitions.push(sql.slice(start, index));
+      start = index + 1;
+    }
+  }
+  definitions.push(sql.slice(start));
+  return definitions;
+}
+
+function addMigrationStructure(
+  structures: Map<string, MigrationStructureIdentity>,
+  structure: MigrationStructureIdentity,
+): void {
+  const key = structure.objectType === "table"
+    ? `table:${structure.objectName}`
+    : `${structure.objectType}:${structure.tableName ?? ""}.${structure.objectName}`;
+  structures.set(key, structure);
+}
+
+/**
+ * Extract only bounded DDL identities from one repository migration.
+ *
+ * This is intentionally not a general SQL parser. It recognizes the DDL
+ * forms used by this repository and scopes every column/index/trigger to its
+ * owning table before a gap can be attributed.
+ */
+export function extractMigrationStructureIdentities(sql: string): MigrationStructureIdentity[] {
+  const source = stripSqlComments(sql);
+  const structures = new Map<string, MigrationStructureIdentity>();
+  const tablePattern = new RegExp(`\\bCREATE\\s+(?:VIRTUAL\\s+)?TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?(${SQL_IDENTIFIER})`, "gi");
+  for (const match of source.matchAll(tablePattern)) {
+    const tableName = unquoteSqlIdentifier(match[1]);
+    const matchIndex = match.index ?? 0;
+    addMigrationStructure(structures, { objectType: "table", objectName: tableName });
+    const openingIndex = source.indexOf("(", matchIndex + match[0].length);
+    if (openingIndex < 0) continue;
+    const closingIndex = matchingParenthesis(source, openingIndex);
+    if (closingIndex < 0) continue;
+    for (const definition of topLevelDefinitions(source.slice(openingIndex + 1, closingIndex))) {
+      const columnMatch = definition.match(new RegExp(`^\\s*(${SQL_IDENTIFIER})(?:\\s|$)`, "i"));
+      if (!columnMatch) continue;
+      const columnName = unquoteSqlIdentifier(columnMatch[1]);
+      if (["constraint", "primary", "unique", "check", "foreign"].includes(columnName.toLowerCase())) continue;
+      addMigrationStructure(structures, { objectType: "column", objectName: columnName, tableName });
+    }
+  }
+
+  const alterColumnPattern = new RegExp(`\\bALTER\\s+TABLE\\s+(${SQL_IDENTIFIER})\\s+ADD\\s+COLUMN\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?(${SQL_IDENTIFIER})`, "gi");
+  for (const match of source.matchAll(alterColumnPattern)) {
+    addMigrationStructure(structures, {
+      objectType: "column",
+      tableName: unquoteSqlIdentifier(match[1]),
+      objectName: unquoteSqlIdentifier(match[2]),
+    });
+  }
+
+  const indexPattern = new RegExp(`\\bCREATE\\s+(?:UNIQUE\\s+)?INDEX\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?(${SQL_IDENTIFIER})\\s+ON\\s+(${SQL_IDENTIFIER})`, "gi");
+  for (const match of source.matchAll(indexPattern)) {
+    addMigrationStructure(structures, {
+      objectType: "index",
+      objectName: unquoteSqlIdentifier(match[1]),
+      tableName: unquoteSqlIdentifier(match[2]),
+    });
+  }
+
+  const triggerPattern = new RegExp(`\\bCREATE\\s+TRIGGER\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?(${SQL_IDENTIFIER})`, "gi");
+  for (const match of source.matchAll(triggerPattern)) {
+    const matchIndex = match.index ?? 0;
+    const bodyStart = matchIndex + match[0].length;
+    const beginOffset = source.slice(bodyStart).search(/\bBEGIN\b/i);
+    const beginIndex = beginOffset < 0 ? -1 : bodyStart + beginOffset;
+    const semicolonIndex = source.indexOf(";", matchIndex + match[0].length);
+    const headerEnd = beginIndex >= 0 && (semicolonIndex < 0 || beginIndex < semicolonIndex)
+      ? beginIndex
+      : semicolonIndex >= 0 ? semicolonIndex : source.length;
+    const header = source.slice(matchIndex, headerEnd);
+    const target = header.match(new RegExp(`\\bON\\s+(${SQL_IDENTIFIER})`, "i"));
+    if (!target) continue;
+    addMigrationStructure(structures, {
+      objectType: "trigger",
+      objectName: unquoteSqlIdentifier(match[1]),
+      tableName: unquoteSqlIdentifier(target[1]),
+    });
+  }
+
+  return [...structures.values()].sort((left, right) =>
+    left.objectType.localeCompare(right.objectType)
+    || (left.tableName ?? "").localeCompare(right.tableName ?? "")
+    || left.objectName.localeCompare(right.objectName));
+}
+
 /** Current graph/runtime structures required by the accepted application. */
 export const TRACE_V1_M1_REQUIRED_TABLES = Object.freeze([
   "sources",

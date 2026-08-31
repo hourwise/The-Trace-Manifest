@@ -34,6 +34,13 @@ import { reconcileKnowledgeIndexOperations } from "./knowledge-reconciliation";
 import { indexKnowledgeEmbeddings } from "./knowledge-embedding-index";
 import { runKc11GH } from "./kc-11g-h";
 import {
+  approveFreshnessReview,
+  EvidenceFreshnessReviewError,
+  rejectFreshnessReview,
+  requestFreshnessReview,
+  type ProposedFreshnessState,
+} from "../../src/lib/server/evidence-freshness-review";
+import {
   approveBackfillPlan,
   buildBackfillPlan,
   establishAuthoritativeInventory,
@@ -80,6 +87,7 @@ const WRITE_ADMIN_ROUTES = new Set([
   "/admin/candidates", "/admin/social-signals", "/admin/knowledge/capture-url",
   "/admin/knowledge/capture-missing", "/admin/knowledge/index-preview",
   "/admin/knowledge/kc-11g-h",
+  "/admin/knowledge/freshness",
   "/admin/knowledge/backfill/snapshot", "/admin/knowledge/backfill/plan", "/admin/knowledge/backfill/approve",
   "/admin/knowledge/backfill/execute", "/admin/knowledge/backfill/retry", "/admin/knowledge/backfill/recover",
 ]);
@@ -1089,6 +1097,8 @@ async function handleAdminRoute(
       return handleKnowledgeEmbeddingIndex(request, env);
     case "/admin/knowledge/kc-11g-h":
       return handleKc11GH(request, env);
+    case "/admin/knowledge/freshness":
+      return handleFreshnessReview(request, env, operator);
     case "/admin/knowledge/backfill/snapshot":
       return handleKnowledgeBackfillSnapshot(request, env, operator);
     case "/admin/knowledge/backfill/approve":
@@ -1179,6 +1189,60 @@ async function handleKc11GH(request: Request, env: Env): Promise<Response> {
     : result.state === "evaluation_blocked" ? 409
       : result.state === "failed" ? 502 : 200;
   return Response.json(result, { status });
+}
+
+function exactAdminKeys(body: Record<string, unknown>, required: readonly string[], optional: readonly string[] = []): boolean {
+  const allowed = new Set([ ...required, ...optional ]);
+  return required.every((key) => Object.prototype.hasOwnProperty.call(body, key))
+    && Object.keys(body).every((key) => allowed.has(key));
+}
+
+async function handleFreshnessReview(request: Request, env: Env, operator: InternalOperator): Promise<Response> {
+  if (operator.role !== "publisher") return Response.json({ error: "Forbidden" }, { status: 403 });
+  const body = await readAdminObject(request, [
+    "operation", "claimAssertionId", "proposedState", "sourceDocumentVersionId",
+    "reason", "idempotencyKey", "reviewId", "reviewNote",
+  ]);
+  if (!body || typeof body.operation !== "string") return Response.json({ error: "Invalid request body." }, { status: 400 });
+
+  try {
+    if (body.operation === "request") {
+      if (!exactAdminKeys(body, ["operation", "claimAssertionId", "proposedState", "reason", "idempotencyKey"], ["sourceDocumentVersionId"])
+        || !requiredText(body.claimAssertionId, 1, 200)
+        || (body.proposedState !== "current" && body.proposedState !== "stale")
+        || !requiredText(body.reason, 1, 2_000)
+        || !requiredText(body.idempotencyKey, 1, 256)
+        || (body.sourceDocumentVersionId !== undefined && body.sourceDocumentVersionId !== null && !requiredText(body.sourceDocumentVersionId, 1, 200))) {
+        return Response.json({ error: "Invalid freshness request body." }, { status: 400 });
+      }
+      const result = await requestFreshnessReview(env.DB, {
+        claimAssertionId: body.claimAssertionId,
+        proposedState: body.proposedState as ProposedFreshnessState,
+        sourceDocumentVersionId: body.sourceDocumentVersionId === undefined ? undefined : body.sourceDocumentVersionId as string | null,
+        reason: body.reason,
+        actor: operator.email,
+        idempotencyKey: body.idempotencyKey,
+      });
+      return Response.json({ success: true, operation: "request", ...result }, { status: result.inserted ? 201 : 200 });
+    }
+    if (body.operation === "approve" || body.operation === "reject") {
+      if (!exactAdminKeys(body, ["operation", "reviewId"], ["reviewNote"])
+        || !requiredText(body.reviewId, 1, 200)
+        || !optionalText(body.reviewNote, 2_000)) {
+        return Response.json({ error: "Invalid freshness review body." }, { status: 400 });
+      }
+      const note = typeof body.reviewNote === "string" ? body.reviewNote : "";
+      const result = body.operation === "approve"
+        ? await approveFreshnessReview(env.DB, body.reviewId, operator.email, note)
+        : await rejectFreshnessReview(env.DB, body.reviewId, operator.email, note);
+      return Response.json({ success: true, operation: body.operation, ...result });
+    }
+    return Response.json({ error: "operation must be request, approve, or reject." }, { status: 400 });
+  } catch (error) {
+    if (error instanceof EvidenceFreshnessReviewError) return Response.json({ error: error.message, code: error.code }, { status: error.status });
+    console.error("evidence freshness review failed", error);
+    return Response.json({ error: "Evidence freshness review could not be saved." }, { status: 500 });
+  }
 }
 
 async function handleKnowledgeBackfillPlan(request: Request, env: Env): Promise<Response> {
