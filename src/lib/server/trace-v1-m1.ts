@@ -76,10 +76,78 @@ function unquoteSqlIdentifier(value: string): string {
   return trimmed;
 }
 
-function stripSqlComments(sql: string): string {
-  return sql
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/--[^\r\n]*/g, "");
+function maskSqlCommentsAndStrings(sql: string): string {
+  const masked = sql.split("");
+  const mask = (index: number): void => {
+    if (masked[index] !== "\r" && masked[index] !== "\n") masked[index] = " ";
+  };
+
+  let index = 0;
+  while (index < sql.length) {
+    if (sql[index] === "-" && sql[index + 1] === "-") {
+      mask(index);
+      mask(index + 1);
+      index += 2;
+      while (index < sql.length && sql[index] !== "\r" && sql[index] !== "\n") {
+        mask(index++);
+      }
+      continue;
+    }
+    if (sql[index] === "/" && sql[index + 1] === "*") {
+      mask(index);
+      mask(index + 1);
+      index += 2;
+      while (index < sql.length) {
+        if (sql[index] === "*" && sql[index + 1] === "/") {
+          mask(index);
+          mask(index + 1);
+          index += 2;
+          break;
+        }
+        mask(index++);
+      }
+      continue;
+    }
+    if (sql[index] === "'") {
+      mask(index++);
+      while (index < sql.length) {
+        if (sql[index] === "'" && sql[index + 1] === "'") {
+          mask(index);
+          mask(index + 1);
+          index += 2;
+          continue;
+        }
+        const closingQuote = sql[index] === "'";
+        mask(index++);
+        if (closingQuote) break;
+      }
+      continue;
+    }
+    if (sql[index] === '"' || sql[index] === "`") {
+      const quote = sql[index++];
+      while (index < sql.length) {
+        if (sql[index] === quote && sql[index + 1] === quote) {
+          index += 2;
+          continue;
+        }
+        if (sql[index] === quote) {
+          index++;
+          break;
+        }
+        index++;
+      }
+      continue;
+    }
+    if (sql[index] === "[") {
+      index++;
+      while (index < sql.length) {
+        if (sql[index++] === "]") break;
+      }
+      continue;
+    }
+    index++;
+  }
+  return masked.join("");
 }
 
 function matchingParenthesis(sql: string, openingIndex: number): number {
@@ -153,7 +221,7 @@ function addMigrationStructure(
  * owning table before a gap can be attributed.
  */
 export function extractMigrationStructureIdentities(sql: string): MigrationStructureIdentity[] {
-  const source = stripSqlComments(sql);
+  const source = maskSqlCommentsAndStrings(sql);
   const structures = new Map<string, MigrationStructureIdentity>();
   const tablePattern = new RegExp(`\\bCREATE\\s+(?:VIRTUAL\\s+)?TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?(${SQL_IDENTIFIER})`, "gi");
   for (const match of source.matchAll(tablePattern)) {

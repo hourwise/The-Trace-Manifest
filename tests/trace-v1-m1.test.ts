@@ -105,6 +105,47 @@ function migrationIdentityTests(): void {
   assert.ok(identities.some((item) => item.objectType === "column" && item.tableName === "second" && item.objectName === "added"));
   assert.equal(identities.some((item) => item.objectType === "column" && item.tableName === "first" && item.objectName === "added"), false);
 
+  const hostileStrings = extractMigrationStructureIdentities(`
+    -- CREATE TABLE line_comment_fake (ghost TEXT); with 'quotes'
+    /* CREATE TABLE block_comment_fake (ghost TEXT); with 'quotes' */
+    SELECT '-- CREATE TABLE marker_fake (ghost TEXT)';
+    SELECT '/* CREATE TABLE block_marker_fake (ghost TEXT) */';
+    SELECT 'it''s text with CREATE TABLE escaped_fake (ghost TEXT)';
+    SELECT 'ALTER TABLE real_a ADD COLUMN alter_fake TEXT';
+    SELECT 'CREATE INDEX idx_fake ON fake(ghost)';
+    SELECT 'CREATE TRIGGER trig_fake AFTER INSERT ON fake BEGIN SELECT 1; END';
+    SELECT 'DROP TABLE drop_fake';
+    SELECT 'CREATE TABLE fake (x TEXT); -- still just text';
+    SELECT 'CREATE TABLE ''quoted_fake'' (ghost TEXT)';
+    SELECT 'abc''CREATE TABLE embedded_fake (ghost TEXT)''xyz';
+    CREATE TABLE real_a (id TEXT);
+    SELECT 'CREATE TABLE middle_fake (ghost TEXT)';
+    CREATE TABLE real_b (id TEXT);
+    CREATE TABLE foo (id TEXT);
+    CREATE TABLE foo_archive (id TEXT);
+    CREATE TABLE foo_v2 (id TEXT);
+    CREATE TABLE "quoted_table" ("quoted_column" TEXT);
+    CREATE INDEX "idx_quoted" ON "quoted_table" ("quoted_column");
+    CREATE TRIGGER "trg_quoted" AFTER INSERT ON "quoted_table" BEGIN SELECT 1; END;
+    ALTER TABLE "quoted_table" ADD COLUMN "second_column" TEXT;
+  `);
+  assert.equal(hostileStrings.some((item) => item.objectName === "fake" || item.tableName === "fake"), false,
+    "DDL-looking text inside a single-quoted string creates no fake identity");
+  assert.equal(hostileStrings.some((item) => item.objectName.endsWith("_fake") || item.tableName?.endsWith("_fake")), false,
+    "comment markers, escaped quotes, and multi-statement string content remain inert");
+  for (const tableName of ["real_a", "real_b", "foo", "foo_archive", "foo_v2"]) {
+    assert.equal(hostileStrings.some((item) => item.objectType === "table" && item.objectName === tableName), true,
+      `real table ${tableName} remains visible`);
+    assert.equal(hostileStrings.some((item) => item.objectType === "column" && item.tableName === tableName && item.objectName === "id"), true,
+      `real column ${tableName}.id remains table-scoped`);
+  }
+  assert.deepEqual(hostileStrings.filter((item) => item.tableName === "quoted_table"), [
+    { objectType: "column", objectName: "quoted_column", tableName: "quoted_table" },
+    { objectType: "column", objectName: "second_column", tableName: "quoted_table" },
+    { objectType: "index", objectName: "idx_quoted", tableName: "quoted_table" },
+    { objectType: "trigger", objectName: "trg_quoted", tableName: "quoted_table" },
+  ]);
+
   const freshnessMigration = extractMigrationStructureIdentities(readFileSync("db/migration-0068-v1-freshness-review.sql", "utf8"));
   assert.ok(freshnessMigration.length >= 8);
   assert.equal(freshnessMigration.every((item) => item.objectType === "table" ? item.objectName === "evidence_freshness_reviews" : item.tableName === "evidence_freshness_reviews"), true,

@@ -1,7 +1,7 @@
 # TRACE V1 Mission 1 — Production Evidence Readiness
 
 Mission: TRACE-V1-M1-PRODUCTION-EVIDENCE-READY<br>
-Generated: 2026-08-31T17:20:36.412Z<br>
+Generated: 2026-08-31T21:02:46.990Z<br>
 Accepted main: 74fd79f4a6ba37d977e9a5f4dac515565ab82e78<br>
 Production D1: trace-manifest-db / 1625036a-ffe2-4103-bf9d-086bae150561<br>
 Preview D1 (not mutated): trace-manifest-db-preview / f312f662-2252-4005-8103-1a40d546e16b
@@ -366,7 +366,7 @@ Migration 0068 is assessed by exact table-scoped identity and is the only additi
 
 ## E. Launch Corpus Planner
 
-The planner is deterministic, read-only, LLM-free, and bounded to the best 20 candidates for reporting. It does not publish or modify a story. A story is LAUNCH_READY only when it is recently published, publicly routable and reviewed, has reviewed canonical-claim links, and every linked claim has admitted/accepted/current external factual evidence with an admitted current source version, chunk, locator, valid URL, provenance group, and no correction, supersession, or unresolved dispute. The recency window is 180 days as of 2026-08-31T17:20:36.412Z.
+The planner is deterministic, read-only, LLM-free, and bounded to the best 20 candidates for reporting. It does not publish or modify a story. A story is LAUNCH_READY only when it is recently published, publicly routable and reviewed, has reviewed canonical-claim links, and every linked claim has admitted/accepted/current external factual evidence with an admitted current source version, chunk, locator, valid URL, provenance group, and no correction, supersession, or unresolved dispute. The recency window is 180 days as of 2026-08-31T21:02:46.990Z.
 
 Counts: {"LAUNCH_READY":0,"REMEDIATION_REQUIRED":50,"EXCLUDE_FROM_V1":2386}
 

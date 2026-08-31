@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-31T17:20:36.412Z",
+  "generatedAt": "2026-08-31T21:02:46.990Z",
   "production": {
     "database": "trace-manifest-db",
     "databaseId": "1625036a-ffe2-4103-bf9d-086bae150561"
@@ -5922,7 +5922,7 @@
   ],
   "storyPlan": {
     "version": "trace-v1-m1-v1",
-    "asOf": "2026-08-31T17:20:36.412Z",
+    "asOf": "2026-08-31T21:02:46.990Z",
     "recencyDays": 180,
     "targetMaximum": 20,
     "counts": {
@@ -11000,7 +11000,7 @@
         "recencyDays": 48
       }
     ],
-    "planFingerprint": "9068b2e895d14af47a5dadce5d2ee28a24201e952855a578caea6789990a49bf"
+    "planFingerprint": "8634373ed97afee3df5813c4d11d3fd4954e3ba90d1d8ef737125d6f9d33395f"
   },
   "knowledgePlan": {
     "version": "trace-v1-m1-v1",
