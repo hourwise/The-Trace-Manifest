@@ -17,6 +17,8 @@
     "test:evidence-policy": "tsx scripts/evaluate-evidence-policy.ts",
     "test:knowledge-markdown": "tsx scripts/check-knowledge-markdown.ts",
     "test:trace-v1-m1": "tsx tests/trace-v1-m1.test.ts",
+    "preflight:trace-v1-m2": "tsx scripts/check-trace-v1-m2-contract.ts",
+    "test:trace-v1-m2": "tsx tests/trace-v1-m2.test.ts",
     "report:trace-v1-m1": "tsx scripts/trace-v1-m1-readiness.ts",
     "test:discovery-feeds": "tsx scripts/check-discovery-feeds.ts",
     "inventory:backfill": "node scripts/inventory-backfill.mjs",
