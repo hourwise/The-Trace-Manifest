@@ -779,15 +779,12 @@ async function createCandidateFromItem(
   item: { url: string; urlHash: string; title: string; summary: string | null; publishedAt: string | null; sourceId: number; sourceName: string },
 ): Promise<"created" | "linked" | "none"> {
   try {
-    // Check if this URL is already in a cluster
-    const existingItem = await env.DB.prepare(
-      `SELECT fi.id FROM feed_items fi
-       JOIN story_cluster_members scm ON fi.id = scm.feed_item_id
-       WHERE fi.url_hash = ? LIMIT 1`
-    ).bind(item.urlHash).first<{ id: number }>();
-
-    if (existingItem) return "linked";
-
+    // The caller has already proved that this unique url_hash is absent, then
+    // inserted this feed_item. Under the checked-in control flow the insert
+    // has no membership trigger, and membership rows are written only by the
+    // later clustering stage, so this new item cannot already be clustered.
+    // Keep the duplicate branch above unchanged; only the redundant new-item
+    // post-insert membership join is removed.
     // Check for an existing open candidate with a similar title
     const similarCandidate = await findSimilarOpenCandidate(env, item.title, item.url);
 

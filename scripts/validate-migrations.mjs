@@ -86,6 +86,7 @@ try {
   db.exec(readFileSync("db/migration-0066-kc-11d-bounded-expiry.sql", "utf8"));
   db.exec(readFileSync("db/migration-0067-kc-11g-h-remediation.sql", "utf8"));
   db.exec(readFileSync("db/migration-0068-v1-freshness-review.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0069-trace-d1-reverse-membership-index.sql", "utf8"));
 
   const requiredTables = [
     "ai_requests", "ai_budget_reservations", "ai_usage_ledger", "ai_quota_usage",
