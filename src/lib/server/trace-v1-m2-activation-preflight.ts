@@ -10,6 +10,7 @@ import {
   type SchemaCatalogSnapshot,
   type SchemaTableSnapshot,
 } from "./trace-v1-m2-contract";
+import { extractSqlCheckExpressions, maskSqlCommentsAndStrings, maskSqlNonExecutableTokens, stripSqlComments } from "./trace-v1-m1";
 
 export const TRACE_V1_M2_ACTIVATION_PREFLIGHT_VERSION = "trace-v1-m2-activation-preflight-v2" as const;
 
@@ -84,7 +85,8 @@ interface RequiredActivationTable {
   name: string;
   columns: readonly RequiredActivationColumn[];
   foreignKeys: readonly { from: string; table: string; to: string; onDelete: string; onUpdate: string }[];
-  requiredSqlFragments: readonly string[];
+  requiredChecks?: readonly { column: string; values: readonly string[] }[];
+  requiredUniqueIndexes?: readonly { columns: readonly string[] }[];
 }
 
 const REQUIRED_ACTIVATION_TABLES: readonly RequiredActivationTable[] = [
@@ -110,7 +112,7 @@ const REQUIRED_ACTIVATION_TABLES: readonly RequiredActivationTable[] = [
       { from: "claim_assertion_id", table: "claim_assertions", to: "id", onDelete: "RESTRICT", onUpdate: "NO ACTION" },
       { from: "source_document_version_id", table: "source_document_versions", to: "id", onDelete: "RESTRICT", onUpdate: "NO ACTION" },
     ],
-    requiredSqlFragments: ["idempotency_key text not null unique"],
+    requiredUniqueIndexes: [{ columns: ["idempotency_key"] }],
   },
   {
     name: "trace_v1_activation_receipts",
@@ -139,10 +141,10 @@ const REQUIRED_ACTIVATION_TABLES: readonly RequiredActivationTable[] = [
       { name: "created_at", declaredType: "TEXT", notNull: true, defaultValue: "datetime('now')", primaryKeyPosition: 0 },
     ],
     foreignKeys: [],
-    requiredSqlFragments: [
-      "item_type text not null check(item_type in ('story','knowledge'))",
-      "environment text not null check(environment in ('local_test','preview','production'))",
-      "outcome text not null check(outcome in ('completed','replayed','blocked','failed'))",
+    requiredChecks: [
+      { column: "item_type", values: ["story", "knowledge"] },
+      { column: "environment", values: ["LOCAL_TEST", "PREVIEW", "PRODUCTION"] },
+      { column: "outcome", values: ["completed", "replayed", "blocked", "failed"] },
     ],
   },
 ] as const;
@@ -160,8 +162,58 @@ const REQUIRED_ACTIVATION_INDEXES: readonly RequiredActivationIndex[] = [
   { name: "idx_trace_v1_activation_receipts_manifest", table: "trace_v1_activation_receipts", unique: false, columns: [{ name: "manifest_hash", descending: false }, { name: "item_id", descending: false }] },
 ] as const;
 
-function normalizedSql(value: string | null | undefined): string {
-  return (value ?? "").replace(/--[^\n]*/g, " ").replace(/\s+/g, " ").trim().toLowerCase();
+const SQL_IDENTIFIER = String.raw`(?:[A-Za-z_][A-Za-z0-9_$]*|"(?:[^"]|"")*"|\`(?:[^\`]|\`\`)*\`|\[[^\]]+\])`;
+
+function unquoteIdentifier(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.startsWith('"') && trimmed.endsWith('"')) return trimmed.slice(1, -1).replaceAll('""', '"');
+  if (trimmed.startsWith("`") && trimmed.endsWith("`")) return trimmed.slice(1, -1).replaceAll("``", "`");
+  if (trimmed.startsWith("[") && trimmed.endsWith("]")) return trimmed.slice(1, -1);
+  return trimmed;
+}
+
+function normalizedIdentifier(value: string): string {
+  return unquoteIdentifier(value).trim().toLowerCase();
+}
+
+function splitSqlList(value: string): string[] {
+  const parts: string[] = [];
+  let start = 0;
+  let depth = 0;
+  let quote: "'" | '"' | "`" | null = null;
+  for (let index = 0; index < value.length; index++) {
+    const character = value[index];
+    if (quote) {
+      if (character === quote && value[index + 1] === quote) index++;
+      else if (character === quote) quote = null;
+      continue;
+    }
+    if (character === "'" || character === '"' || character === "`") {
+      quote = character;
+      continue;
+    }
+    if (character === "(") depth++;
+    else if (character === ")") depth--;
+    else if (character === "," && depth === 0) {
+      parts.push(value.slice(start, index).trim());
+      start = index + 1;
+    }
+  }
+  parts.push(value.slice(start).trim());
+  return parts;
+}
+
+function parseInCheckExpression(expression: string): { column: string; values: string[] } | null {
+  const cleaned = stripSqlComments(expression).trim();
+  const match = cleaned.match(new RegExp(`^(${SQL_IDENTIFIER})\\s+IN\\s*\\((.*)\\)$`, "i"));
+  if (!match) return null;
+  const values = splitSqlList(match[2]).map((value) => {
+    const trimmed = value.trim();
+    return trimmed.startsWith("'") && trimmed.endsWith("'")
+      ? trimmed.slice(1, -1).replaceAll("''", "'")
+      : trimmed;
+  });
+  return { column: normalizedIdentifier(match[1]), values };
 }
 
 function normalizedDefault(value: string | null | undefined): string | null {
@@ -173,7 +225,11 @@ function normalizedDefault(value: string | null | undefined): string | null {
   return unquoted.replace(/^\((.*)\)$/, "$1").replace(/\s+/g, " ");
 }
 
-function validateTableDefinition(table: SchemaTableSnapshot | undefined, expected: RequiredActivationTable): string[] {
+function validateTableDefinition(
+  table: SchemaTableSnapshot | undefined,
+  expected: RequiredActivationTable,
+  indexDefinitions: readonly TraceV1M2SchemaIndexDefinition[],
+): string[] {
   if (!table) return [`table:${expected.name}:definition_missing`];
   const issues: string[] = [];
   for (const required of expected.columns) {
@@ -194,9 +250,19 @@ function validateTableDefinition(table: SchemaTableSnapshot | undefined, expecte
       issues.push(`table:${expected.name}:foreign_key:${required.from}`);
     }
   }
-  const sql = normalizedSql(table.createSql);
-  for (const fragment of expected.requiredSqlFragments) {
-    if (!sql.includes(normalizedSql(fragment))) issues.push(`table:${expected.name}:constraint:${fragment}`);
+  const checks = extractSqlCheckExpressions(table.createSql)
+    .map(parseInCheckExpression)
+    .filter((check): check is { column: string; values: string[] } => check !== null);
+  for (const required of expected.requiredChecks ?? []) {
+    const present = checks.some((check) => check.column === required.column.toLowerCase()
+      && JSON.stringify(check.values.map((value) => value.toLowerCase())) === JSON.stringify(required.values.map((value) => value.toLowerCase())));
+    if (!present) issues.push(`table:${expected.name}:check:${required.column}`);
+  }
+  for (const required of expected.requiredUniqueIndexes ?? []) {
+    const present = indexDefinitions.some((definition) => definition.table === expected.name
+      && definition.unique
+      && JSON.stringify(definition.columns.map((column) => column.name.toLowerCase())) === JSON.stringify(required.columns.map((column) => column.toLowerCase())));
+    if (!present) issues.push(`table:${expected.name}:unique:${required.columns.join(",")}`);
   }
   return issues;
 }
@@ -210,17 +276,47 @@ function validateIndexDefinition(definition: TraceV1M2SchemaIndexDefinition | un
     : [];
 }
 
+function parseTriggerSql(sql: string | null): {
+  name: string;
+  timing: string;
+  event: string;
+  updateColumns: string[];
+  table: string;
+  body: string;
+} | null {
+  if (!sql) return null;
+  const masked = maskSqlCommentsAndStrings(sql);
+  const match = masked.match(new RegExp(`^\\s*CREATE\\s+TRIGGER\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?(${SQL_IDENTIFIER})\\s+([\\s\\S]+?)\\s+BEGIN\\b`, "i"));
+  if (!match) return null;
+  const header = match[2].trim();
+  const simple = header.match(new RegExp(`^(BEFORE|AFTER|INSTEAD\\s+OF)\\s+(INSERT|DELETE)\\s+ON\\s+(${SQL_IDENTIFIER})$`, "i"));
+  if (simple) {
+    return { name: normalizedIdentifier(match[1]), timing: simple[1].toLowerCase(), event: simple[2].toLowerCase(), updateColumns: [], table: normalizedIdentifier(simple[3]), body: maskSqlNonExecutableTokens(sql).slice(match[0].length) };
+  }
+  const update = header.match(new RegExp(`^(BEFORE|AFTER|INSTEAD\\s+OF)\\s+UPDATE\\s+OF\\s+([\\s\\S]+?)\\s+ON\\s+(${SQL_IDENTIFIER})$`, "i"));
+  if (!update) return null;
+  return {
+    name: normalizedIdentifier(match[1]),
+    timing: update[1].toLowerCase(),
+    event: "update",
+    updateColumns: splitSqlList(update[2]).map(normalizedIdentifier),
+    table: normalizedIdentifier(update[3]),
+    body: maskSqlNonExecutableTokens(sql).slice(match[0].length),
+  };
+}
+
 function triggerMatches(definition: TraceV1M2SchemaTriggerDefinition | undefined, expectedName: string): boolean {
   if (!definition) return false;
-  const sql = normalizedSql(definition.sql);
+  const parsed = parseTriggerSql(definition.sql);
+  if (!parsed || parsed.name !== expectedName.toLowerCase() || parsed.table !== "evidence_freshness_reviews" || definition.table.toLowerCase() !== parsed.table) return false;
+  const aborts = /\bSELECT\s+RAISE\s*\(\s*ABORT\s*,/i.test(parsed.body);
   if (expectedName === "prevent_evidence_freshness_review_delete") {
-    return definition.table === "evidence_freshness_reviews"
-      && sql.includes("before delete on evidence_freshness_reviews")
-      && sql.includes("raise(abort, 'evidence freshness reviews are append-only')");
+    return parsed.timing === "before" && parsed.event === "delete" && parsed.updateColumns.length === 0 && aborts;
   }
-  return definition.table === "evidence_freshness_reviews"
-    && sql.includes("before update of claim_assertion_id, prior_state, proposed_state, source_document_version_id, reason, requested_by, requested_at, idempotency_key, request_fingerprint on evidence_freshness_reviews")
-    && sql.includes("raise(abort, 'evidence freshness review core fields are immutable')");
+  return parsed.timing === "before"
+    && parsed.event === "update"
+    && JSON.stringify(parsed.updateColumns) === JSON.stringify(["claim_assertion_id", "prior_state", "proposed_state", "source_document_version_id", "reason", "requested_by", "requested_at", "idempotency_key", "request_fingerprint"])
+    && aborts;
 }
 
 export function inspectTraceV1M2ActivationPreflight(
@@ -238,7 +334,7 @@ export function inspectTraceV1M2ActivationPreflight(
   const ambiguousObjects = catalog.objects ? [] : ["schema_objects"];
   const invalidObjects = catalog.objects
     ? [
-        ...REQUIRED_ACTIVATION_TABLES.flatMap((expected) => tables.has(expected.name) ? validateTableDefinition(catalog.tables[expected.name], expected) : []),
+        ...REQUIRED_ACTIVATION_TABLES.flatMap((expected) => tables.has(expected.name) ? validateTableDefinition(catalog.tables[expected.name], expected, catalog.objects.indexDefinitions ?? []) : []),
         ...REQUIRED_ACTIVATION_INDEXES.flatMap((expected) => indexes.has(expected.name) ? validateIndexDefinition((catalog.objects.indexDefinitions ?? []).find((definition) => definition.name === expected.name), expected) : []),
         ...TRACE_V1_M2_REQUIRED_TRIGGERS.filter((name) => triggers.has(name) && !triggerMatches((catalog.objects.triggerDefinitions ?? []).find((definition) => definition.name === name), name)).map((name) => `trigger:${name}:definition`),
       ]

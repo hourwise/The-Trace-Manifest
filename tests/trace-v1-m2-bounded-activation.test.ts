@@ -95,6 +95,7 @@ function completeActivationCatalog(): TraceV1M2ActivationCatalog {
         { name: "idx_evidence_freshness_reviews_queue", table: "evidence_freshness_reviews", unique: false, columns: [{ name: "state", descending: false }, { name: "requested_at", descending: false }] },
         { name: "idx_evidence_freshness_reviews_assertion", table: "evidence_freshness_reviews", unique: false, columns: [{ name: "claim_assertion_id", descending: false }, { name: "requested_at", descending: true }] },
         { name: "idx_trace_v1_activation_receipts_manifest", table: "trace_v1_activation_receipts", unique: false, columns: [{ name: "manifest_hash", descending: false }, { name: "item_id", descending: false }] },
+        { name: "sqlite_autoindex_evidence_freshness_reviews_1", table: "evidence_freshness_reviews", unique: true, columns: [{ name: "idempotency_key", descending: false }] },
       ],
       triggerDefinitions: [
         { name: "prevent_evidence_freshness_review_delete", table: "evidence_freshness_reviews", sql: "CREATE TRIGGER prevent_evidence_freshness_review_delete BEFORE DELETE ON evidence_freshness_reviews BEGIN SELECT RAISE(ABORT, 'evidence freshness reviews are append-only'); END" },
@@ -102,6 +103,11 @@ function completeActivationCatalog(): TraceV1M2ActivationCatalog {
       ],
     },
   };
+}
+
+function activationCatalogWithFreshnessSql(catalog: TraceV1M2ActivationCatalog, createSql: string): TraceV1M2ActivationCatalog {
+  const table = catalog.tables.evidence_freshness_reviews as SchemaTableSnapshot;
+  return { ...catalog, tables: { ...catalog.tables, evidence_freshness_reviews: { ...table, createSql } } };
 }
 
 function preflight(): ReturnType<typeof inspectTraceV1M2ActivationPreflight> {
@@ -210,7 +216,7 @@ async function preflightAndMigrationTests(): Promise<void> {
   };
   const wrongReceiptConstraint = inspectTraceV1M2ActivationPreflight({ ...completeCatalog(), tables: wrongReceiptConstraintTables, objects: completeActivationCatalog().objects });
   assert.equal(wrongReceiptConstraint.activationDisposition, "ACTIVATION_BLOCKED");
-  assert.ok(wrongReceiptConstraint.invalidObjects.some((issue) => issue.includes("constraint:item_type")));
+  assert.ok(wrongReceiptConstraint.invalidObjects.some((issue) => issue.includes("check:item_type")));
 
   const wrongIndex = inspectTraceV1M2ActivationPreflight({
     ...completeCatalog(),
@@ -235,6 +241,53 @@ async function preflightAndMigrationTests(): Promise<void> {
   });
   assert.equal(wrongTrigger.activationDisposition, "ACTIVATION_BLOCKED");
   assert.ok(wrongTrigger.invalidObjects.includes("trigger:prevent_evidence_freshness_review_delete:definition"));
+
+  const hostileTriggerSql = [
+    "CREATE TRIGGER prevent_evidence_freshness_review_delete BEFORE INSERT ON evidence_freshness_reviews BEGIN SELECT 'BEFORE DELETE RAISE(ABORT, fake)'; END",
+    "CREATE TRIGGER prevent_evidence_freshness_review_delete BEFORE INSERT ON evidence_freshness_reviews BEGIN -- BEFORE DELETE RAISE(ABORT, fake)\n SELECT 1; END",
+    "CREATE TRIGGER prevent_evidence_freshness_review_delete BEFORE INSERT ON evidence_freshness_reviews BEGIN /* BEFORE DELETE RAISE(ABORT, fake) */ SELECT 1; END",
+    "CREATE TRIGGER prevent_evidence_freshness_review_delete BEFORE INSERT ON evidence_freshness_reviews BEGIN SELECT 'it''s BEFORE DELETE RAISE(ABORT, fake)'; END",
+    "CREATE TRIGGER prevent_evidence_freshness_review_delete BEFORE INSERT ON evidence_freshness_reviews BEGIN SELECT 'BEFORE DELETE; RAISE(ABORT, (fake))'; END",
+    "CREATE TRIGGER prevent_evidence_freshness_review_delete BEFORE INSERT ON evidence_freshness_reviews BEGIN /* 'BEFORE DELETE RAISE(ABORT, fake)' */ SELECT 1; END",
+    "CREATE TRIGGER prevent_evidence_freshness_review_delete BEFORE INSERT ON evidence_freshness_reviews BEGIN SELECT \"RAISE(ABORT, fake)\"; END",
+    "CREATE TRIGGER prevent_evidence_freshness_review_delete BEFORE DELETE ON evidence_freshness_reviews BEGIN SELECT 'RAISE(ABORT, fake)'; END",
+  ];
+  for (const sql of hostileTriggerSql) {
+    const base = completeActivationCatalog();
+    const hostile = { ...base, objects: { ...base.objects, triggerDefinitions: base.objects.triggerDefinitions.map((definition) => definition.name === "prevent_evidence_freshness_review_delete" ? { ...definition, sql } : definition) } };
+    const result = inspectTraceV1M2ActivationPreflight(hostile);
+    assert.equal(result.activationDisposition, "ACTIVATION_BLOCKED");
+    assert.ok(result.invalidObjects.includes("trigger:prevent_evidence_freshness_review_delete:definition"));
+  }
+  const wrongTriggerTableBase = completeActivationCatalog();
+  const wrongTriggerTable = { ...wrongTriggerTableBase, objects: { ...wrongTriggerTableBase.objects, triggerDefinitions: wrongTriggerTableBase.objects.triggerDefinitions.map((definition) => definition.name === "prevent_evidence_freshness_review_delete"
+    ? { ...definition, table: "other_table", sql: "CREATE TRIGGER prevent_evidence_freshness_review_delete BEFORE DELETE ON other_table BEGIN SELECT RAISE(ABORT, 'append-only'); END -- fake evidence_freshness_reviews" }
+    : definition) } };
+  const wrongTriggerTableResult = inspectTraceV1M2ActivationPreflight(wrongTriggerTable);
+  assert.equal(wrongTriggerTableResult.activationDisposition, "ACTIVATION_BLOCKED");
+
+  const withoutUniqueBase = completeActivationCatalog();
+  const withoutUnique = { ...activationCatalogWithFreshnessSql(withoutUniqueBase, "CREATE TABLE evidence_freshness_reviews (id TEXT PRIMARY KEY, idempotency_key TEXT NOT NULL /* UNIQUE */)"), objects: { ...withoutUniqueBase.objects, indexDefinitions: withoutUniqueBase.objects.indexDefinitions.filter((definition) => definition.name !== "sqlite_autoindex_evidence_freshness_reviews_1") } };
+  const withoutUniqueResult = inspectTraceV1M2ActivationPreflight(withoutUnique);
+  assert.equal(withoutUniqueResult.activationDisposition, "ACTIVATION_BLOCKED");
+  assert.ok(withoutUniqueResult.invalidObjects.includes("table:evidence_freshness_reviews:unique:idempotency_key"));
+
+  const fakeStringUniqueBase = completeActivationCatalog();
+  const fakeStringUnique = { ...activationCatalogWithFreshnessSql(fakeStringUniqueBase, "CREATE TABLE evidence_freshness_reviews (id TEXT PRIMARY KEY, idempotency_key TEXT NOT NULL, note TEXT DEFAULT 'idempotency_key TEXT NOT NULL UNIQUE')"), objects: { ...fakeStringUniqueBase.objects, indexDefinitions: fakeStringUniqueBase.objects.indexDefinitions.filter((definition) => definition.name !== "sqlite_autoindex_evidence_freshness_reviews_1") } };
+  const fakeStringUniqueResult = inspectTraceV1M2ActivationPreflight(fakeStringUnique);
+  assert.equal(fakeStringUniqueResult.activationDisposition, "ACTIVATION_BLOCKED");
+
+  const nonUniqueIndexBase = completeActivationCatalog();
+  const nonUniqueIndex = { ...nonUniqueIndexBase, objects: { ...nonUniqueIndexBase.objects, indexDefinitions: nonUniqueIndexBase.objects.indexDefinitions.map((definition) => definition.name === "sqlite_autoindex_evidence_freshness_reviews_1" ? { ...definition, unique: false } : definition) } };
+  const nonUniqueIndexResult = inspectTraceV1M2ActivationPreflight(nonUniqueIndex);
+  assert.equal(nonUniqueIndexResult.activationDisposition, "ACTIVATION_BLOCKED");
+
+  const wrongUniqueColumnsBase = completeActivationCatalog();
+  const wrongUniqueColumns = { ...wrongUniqueColumnsBase, objects: { ...wrongUniqueColumnsBase.objects, indexDefinitions: wrongUniqueColumnsBase.objects.indexDefinitions.map((definition) => definition.name === "sqlite_autoindex_evidence_freshness_reviews_1"
+    ? { ...definition, columns: [{ name: "request_fingerprint", descending: false }] }
+    : definition) } };
+  const wrongUniqueColumnsResult = inspectTraceV1M2ActivationPreflight(wrongUniqueColumns);
+  assert.equal(wrongUniqueColumnsResult.activationDisposition, "ACTIVATION_BLOCKED");
 
   const database = new DatabaseSync(":memory:");
   try {
@@ -303,6 +356,70 @@ async function executorTests(): Promise<void> {
   assert.deepEqual(partialResume.items.map((item) => item.outcome), ["replayed", "replayed"]);
   assert.equal(partialPrepareCalls, partialCallsBeforeResume);
 
+  let resumableEvidence: TraceV1M2EvidenceFixture = { ...readyFixture(), captureState: "not_attempted", extractionState: "pending", storageState: "not_stored" };
+  let resumablePrepareCalls = 0;
+  const resumableOperations = {
+    resolveCurrentIdentity: async (): Promise<TraceV1M2CurrentIdentity> => ({ identity: (await prepared()).identity, evidence: resumableEvidence }),
+    prepareItem: async (): Promise<TraceV1M2PreparedItem> => { resumablePrepareCalls += 1; return { ...(await prepared()), evidence: resumableEvidence }; },
+  };
+  const resumableStore = new MemoryTraceV1M2ReceiptStore();
+  const resumableFirst = await executeTraceV1M2Activation({ manifest, schemaPreflight: preflight(), environment: "LOCAL_TEST", mode: "execute", itemIds: ["story-377"], operations: resumableOperations, receiptStore: resumableStore, now: () => "2026-09-05T00:00:00.000Z" });
+  assert.equal(resumableFirst.items[0].outcome, "blocked");
+  assert.equal(resumableFirst.items[0].reasonCode, "CAPTURE_STATE_INCOMPLETE");
+  resumableEvidence = readyFixture();
+  const resumableSecond = await executeTraceV1M2Activation({ manifest, schemaPreflight: preflight(), environment: "LOCAL_TEST", mode: "execute", itemIds: ["story-377"], operations: resumableOperations, receiptStore: resumableStore, now: () => "2026-09-05T00:00:01.000Z" });
+  assert.equal(resumableSecond.items[0].outcome, "completed");
+  assert.equal(resumableSecond.items[0].receipt?.stage, "bounded_activation_resume");
+  assert.equal(resumableSecond.items[0].receipt?.operationKey.endsWith(":resume"), true);
+  const callsAfterResume = resumablePrepareCalls;
+  const resumableThird = await executeTraceV1M2Activation({ manifest, schemaPreflight: preflight(), environment: "LOCAL_TEST", mode: "execute", itemIds: ["story-377"], operations: resumableOperations, receiptStore: resumableStore, now: () => "2026-09-05T00:00:02.000Z" });
+  assert.equal(resumableThird.items[0].outcome, "replayed");
+  assert.equal(resumablePrepareCalls, callsAfterResume);
+
+  let publisherEvidence: TraceV1M2EvidenceFixture = { ...readyFixture(), publisherDecision: null };
+  let publisherPrepareCalls = 0;
+  const publisherOperations = {
+    resolveCurrentIdentity: async (): Promise<TraceV1M2CurrentIdentity> => ({ identity: (await prepared()).identity, evidence: publisherEvidence }),
+    prepareItem: async (): Promise<TraceV1M2PreparedItem> => { publisherPrepareCalls += 1; return { ...(await prepared()), evidence: publisherEvidence }; },
+  };
+  const publisherStore = new MemoryTraceV1M2ReceiptStore();
+  const publisherFirst = await executeTraceV1M2Activation({ manifest, schemaPreflight: preflight(), environment: "LOCAL_TEST", mode: "execute", itemIds: ["story-377"], operations: publisherOperations, receiptStore: publisherStore, now: () => "2026-09-05T00:00:00.000Z" });
+  assert.equal(publisherFirst.items[0].reasonCode, "PUBLISHER_DECISION_REQUIRED");
+  const publisherSecond = await executeTraceV1M2Activation({ manifest, schemaPreflight: preflight(), environment: "LOCAL_TEST", mode: "execute", itemIds: ["story-377"], operations: publisherOperations, receiptStore: publisherStore, now: () => "2026-09-05T00:00:01.000Z" });
+  assert.equal(publisherSecond.items[0].reasonCode, "PUBLISHER_DECISION_REQUIRED");
+  assert.equal(publisherSecond.items[0].receipt?.stage, "bounded_activation_resume");
+  assert.equal(publisherPrepareCalls, 2);
+  publisherEvidence = readyFixture();
+  const publisherThird = await executeTraceV1M2Activation({ manifest, schemaPreflight: preflight(), environment: "LOCAL_TEST", mode: "execute", itemIds: ["story-377"], operations: publisherOperations, receiptStore: publisherStore, now: () => "2026-09-05T00:00:02.000Z" });
+  assert.equal(publisherThird.items[0].outcome, "completed");
+
+  let boundedResumeEvidence: TraceV1M2EvidenceFixture = { ...readyFixture(), captureState: "not_attempted", extractionState: "pending", storageState: "not_stored" };
+  const boundedResumeStore = new MemoryTraceV1M2ReceiptStore();
+  const boundedResumeOperations = {
+    resolveCurrentIdentity: async (): Promise<TraceV1M2CurrentIdentity> => ({ identity: (await prepared()).identity, evidence: boundedResumeEvidence }),
+    prepareItem: async (_item: unknown, budget: TraceV1M2OperationBudget): Promise<TraceV1M2PreparedItem | { reasonCode: "BOUNDED_WORK_LIMIT_EXCEEDED"; detail: string; cost: TraceV1M2OperationBudget }> => {
+      if (boundedResumeEvidence.captureState !== "captured") return { ...(await prepared()), evidence: boundedResumeEvidence };
+      return { reasonCode: "BOUNDED_WORK_LIMIT_EXCEEDED", detail: "Resume stopped before the next claim unit exceeded the invocation bound.", cost: { ...budget, claims: budget.claims + 1, selectedItems: 1 } };
+    },
+  };
+  await executeTraceV1M2Activation({ manifest, schemaPreflight: preflight(), environment: "LOCAL_TEST", mode: "execute", itemIds: ["story-377"], operations: boundedResumeOperations, receiptStore: boundedResumeStore, now: () => "2026-09-05T00:00:00.000Z" });
+  boundedResumeEvidence = readyFixture();
+  const boundedResume = await executeTraceV1M2Activation({ manifest, schemaPreflight: preflight(), environment: "LOCAL_TEST", mode: "execute", itemIds: ["story-377"], operations: boundedResumeOperations, receiptStore: boundedResumeStore, now: () => "2026-09-05T00:00:01.000Z" });
+  assert.equal(boundedResume.items[0].reasonCode, "BOUNDED_WORK_LIMIT_EXCEEDED");
+  assert.equal(boundedResume.items[0].receipt?.stage, "bounded_activation_resume");
+  assert.equal(boundedResume.cost.claims, 0);
+
+  let changedResumeEvidence: TraceV1M2EvidenceFixture = { ...readyFixture(), captureState: "not_attempted", extractionState: "pending", storageState: "not_stored" };
+  const changedResumeStore = new MemoryTraceV1M2ReceiptStore();
+  const changedResumeOperations = {
+    resolveCurrentIdentity: async (): Promise<TraceV1M2CurrentIdentity> => ({ identity: (await prepared()).identity, evidence: changedResumeEvidence }),
+    prepareItem: async (): Promise<TraceV1M2PreparedItem> => ({ ...(await prepared()), evidence: changedResumeEvidence }),
+  };
+  await executeTraceV1M2Activation({ manifest, schemaPreflight: preflight(), environment: "LOCAL_TEST", mode: "execute", itemIds: ["story-377"], operations: changedResumeOperations, receiptStore: changedResumeStore, now: () => "2026-09-05T00:00:00.000Z" });
+  changedResumeEvidence = { ...changedResumeEvidence, sourceDocumentVersionId: "source-version-43", currentVersionId: "source-version-43" };
+  const changedResume = await executeTraceV1M2Activation({ manifest, schemaPreflight: preflight(), environment: "LOCAL_TEST", mode: "execute", itemIds: ["story-377"], operations: changedResumeOperations, receiptStore: changedResumeStore, now: () => "2026-09-05T00:00:01.000Z" });
+  assert.equal(changedResume.items[0].reasonCode, "REPLAY_IDENTITY_CHANGED");
+
   const changedVersion = await prepared();
   changedVersion.evidence = { ...changedVersion.evidence, sourceDocumentVersionId: "source-version-43", currentVersionId: "source-version-43" };
   evidence = changedVersion;
@@ -356,6 +473,27 @@ async function executorTests(): Promise<void> {
     assert.equal((await d1.prepare("SELECT COUNT(*) AS count FROM trace_v1_activation_receipts").first<{ count: number }>())?.count, 1);
   } finally {
     d1.close();
+  }
+
+  const d1Resume = new SQLiteD1();
+  try {
+    d1Resume.sqlite.exec(readFileSync("db/migration-0071-trace-v1-bounded-activation.sql", "utf8"));
+    let d1ResumeEvidence: TraceV1M2EvidenceFixture = { ...readyFixture(), captureState: "not_attempted", extractionState: "pending", storageState: "not_stored" };
+    const d1ResumeOperations = {
+      resolveCurrentIdentity: async (): Promise<TraceV1M2CurrentIdentity> => ({ identity: (await prepared()).identity, evidence: d1ResumeEvidence }),
+      prepareItem: async (): Promise<TraceV1M2PreparedItem> => ({ ...(await prepared()), evidence: d1ResumeEvidence }),
+    };
+    const d1ResumeStore = new D1TraceV1M2ReceiptStore(d1Resume.asD1());
+    const d1First = await executeTraceV1M2Activation({ manifest, schemaPreflight: preflight(), environment: "LOCAL_TEST", mode: "execute", itemIds: ["story-377"], operations: d1ResumeOperations, receiptStore: d1ResumeStore, now: () => "2026-09-05T00:00:00.000Z" });
+    assert.equal(d1First.items[0].reasonCode, "CAPTURE_STATE_INCOMPLETE");
+    d1ResumeEvidence = readyFixture();
+    const d1Second = await executeTraceV1M2Activation({ manifest, schemaPreflight: preflight(), environment: "LOCAL_TEST", mode: "execute", itemIds: ["story-377"], operations: d1ResumeOperations, receiptStore: d1ResumeStore, now: () => "2026-09-05T00:00:01.000Z" });
+    assert.equal(d1Second.items[0].outcome, "completed");
+    const receiptRows = (await d1Resume.prepare("SELECT operation_key AS operationKey, outcome, stage FROM trace_v1_activation_receipts ORDER BY operation_key").all<{ operationKey: string; outcome: string; stage: string }>()).results;
+    assert.deepEqual(receiptRows.map((row) => row.outcome), ["blocked", "completed"]);
+    assert.equal(receiptRows.some((row) => row.stage === "bounded_activation_resume"), true);
+  } finally {
+    d1Resume.close();
   }
 
   for (const [environment, mode] of [["PREVIEW", "plan"], ["PREVIEW", "execute"], ["PRODUCTION", "plan"], ["PRODUCTION", "execute"]] as const) {

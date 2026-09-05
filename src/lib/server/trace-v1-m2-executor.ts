@@ -132,24 +132,40 @@ export interface TraceV1M2ReceiptStore {
   put(receipt: TraceV1M2ActivationReceipt): Promise<void>;
 }
 
+function resumeOperationKey(baseOperationKey: string): string {
+  return `${baseOperationKey}:resume`;
+}
+
+function isResumeOperationKey(value: string): boolean {
+  return value.endsWith(":resume");
+}
+
+function isResumableReceipt(receipt: TraceV1M2ActivationReceipt): boolean {
+  return receipt.outcome === "blocked";
+}
+
 export class MemoryTraceV1M2ReceiptStore implements TraceV1M2ReceiptStore {
   private readonly receipts = new Map<string, TraceV1M2ActivationReceipt>();
 
   async get(operationKey: string): Promise<TraceV1M2ActivationReceipt | null> {
-    return this.receipts.get(operationKey) ?? null;
+    if (isResumeOperationKey(operationKey)) return this.receipts.get(operationKey) ?? null;
+    return this.receipts.get(resumeOperationKey(operationKey)) ?? this.receipts.get(operationKey) ?? null;
   }
 
   async put(receipt: TraceV1M2ActivationReceipt): Promise<void> {
     const existing = this.receipts.get(receipt.operationKey);
-    if (existing && existing.receiptFingerprint !== receipt.receiptFingerprint) throw new Error("TRACE_V1_M2_REPLAY_CONFLICT");
-    this.receipts.set(receipt.operationKey, existing ?? receipt);
+    if (existing && existing.receiptFingerprint !== receipt.receiptFingerprint
+      && !(isResumeOperationKey(receipt.operationKey) && isResumableReceipt(existing))) {
+      throw new Error("TRACE_V1_M2_REPLAY_CONFLICT");
+    }
+    this.receipts.set(receipt.operationKey, existing?.receiptFingerprint === receipt.receiptFingerprint ? existing : receipt);
   }
 }
 
 export class D1TraceV1M2ReceiptStore implements TraceV1M2ReceiptStore {
   constructor(private readonly db: D1Database) {}
 
-  async get(operationKey: string): Promise<TraceV1M2ActivationReceipt | null> {
+  private async getExact(operationKey: string): Promise<TraceV1M2ActivationReceipt | null> {
     return this.db.prepare(`
       SELECT operation_key AS operationKey, manifest_id AS manifestId, manifest_hash AS manifestHash,
              item_type AS itemType, item_id AS itemId, stage, environment, source_id AS sourceId,
@@ -163,9 +179,20 @@ export class D1TraceV1M2ReceiptStore implements TraceV1M2ReceiptStore {
     `).bind(operationKey).first<TraceV1M2ActivationReceipt>();
   }
 
+  async get(operationKey: string): Promise<TraceV1M2ActivationReceipt | null> {
+    if (isResumeOperationKey(operationKey)) return this.getExact(operationKey);
+    return await this.getExact(resumeOperationKey(operationKey)) ?? await this.getExact(operationKey);
+  }
+
   async put(receipt: TraceV1M2ActivationReceipt): Promise<void> {
+    const existing = await this.getExact(receipt.operationKey);
+    if (existing && existing.receiptFingerprint !== receipt.receiptFingerprint
+      && !(isResumeOperationKey(receipt.operationKey) && isResumableReceipt(existing))) {
+      throw new Error("TRACE_V1_M2_REPLAY_CONFLICT");
+    }
+    const insertMode = isResumeOperationKey(receipt.operationKey) ? "INSERT OR REPLACE" : "INSERT OR IGNORE";
     await this.db.prepare(`
-      INSERT OR IGNORE INTO trace_v1_activation_receipts
+      ${insertMode} INTO trace_v1_activation_receipts
         (operation_key, manifest_id, manifest_hash, item_type, item_id, stage, environment,
          source_id, canonical_source_url, canonical_source_url_hash, connector, source_document_id,
          source_document_version_id, content_hash, transport_hash, normalized_content_hash,
@@ -179,7 +206,7 @@ export class D1TraceV1M2ReceiptStore implements TraceV1M2ReceiptStore {
       receipt.normalizedContentHash, receipt.hashSemanticsVersion, receipt.outcome,
       receipt.reasonCode, receipt.detail, receipt.receiptFingerprint, receipt.createdAt,
     ).run();
-    const stored = await this.get(receipt.operationKey);
+    const stored = await this.getExact(receipt.operationKey);
     if (!stored || stored.receiptFingerprint !== receipt.receiptFingerprint) throw new Error("TRACE_V1_M2_REPLAY_CONFLICT");
   }
 }
@@ -453,14 +480,16 @@ async function makeReceipt(
   detail: string,
   identity: TraceV1M2ReceiptIdentity | null,
   now: string,
+  receiptOperationKey = operationKey(manifest, item),
+  receiptStage = "bounded_activation",
 ): Promise<TraceV1M2ActivationReceipt> {
   const base = {
-    operationKey: operationKey(manifest, item),
+    operationKey: receiptOperationKey,
     manifestId: manifest.manifestId,
     manifestHash: manifest.manifestHash,
     itemType: item.kind,
     itemId: item.itemId,
-    stage: "bounded_activation",
+    stage: receiptStage,
     environment,
     ...(identity ?? {
       sourceId: null,
@@ -490,9 +519,11 @@ async function blockedResult(
   store: TraceV1M2ReceiptStore | undefined,
   now: string,
   identity: TraceV1M2ReceiptIdentity | null = null,
+  receiptOperationKey = operationKey(request.manifest, item),
+  receiptStage = "bounded_activation",
 ): Promise<TraceV1M2ActivationItemResult> {
   const receipt = request.mode === "execute" && request.environment === "LOCAL_TEST" && store
-    ? await makeReceipt(request.manifest, item, request.environment, "blocked", reasonCode, detail, identity, now)
+    ? await makeReceipt(request.manifest, item, request.environment, "blocked", reasonCode, detail, identity, now, receiptOperationKey, receiptStage)
     : null;
   if (receipt && store) await store.put(receipt);
   return { itemId: item.itemId, operationKey: operationKey(request.manifest, item), outcome: "blocked", reasonCode, detail, plan: null, receipt };
@@ -539,6 +570,10 @@ export async function executeTraceV1M2Activation(request: TraceV1M2ActivationReq
   let operationCost = zeroCost();
   for (const item of items) {
     const key = operationKey(request.manifest, item);
+    let resuming = false;
+    let resumedReceiptIdentity: TraceV1M2ReceiptIdentity | null = null;
+    const receiptOperation = resumeOperationKey(key);
+    const receiptStage = "bounded_activation_resume";
     if (request.mode === "execute" && store) {
       const previous = await store.get(key);
       if (previous) {
@@ -562,6 +597,8 @@ export async function executeTraceV1M2Activation(request: TraceV1M2ActivationReq
           previous.detail,
           receiptIdentityFromReceipt(previous),
           previous.createdAt,
+          previous.operationKey,
+          previous.stage,
         );
         if (expected.receiptFingerprint !== previous.receiptFingerprint) throw new Error("TRACE_V1_M2_REPLAY_CONFLICT");
         if (!sameReceiptIdentity(receiptIdentityFromReceipt(previous), currentIdentity.identity)) {
@@ -569,14 +606,18 @@ export async function executeTraceV1M2Activation(request: TraceV1M2ActivationReq
           results.push(await blockedResult(request, item, "REPLAY_IDENTITY_CHANGED", "The current verified source/version/content identity differs from the stored receipt.", undefined, now()));
           continue;
         }
-        operationCost = { ...operationCost, selectedItems: operationCost.selectedItems + 1 };
-        results.push({ itemId: item.itemId, operationKey: key, outcome: "replayed", reasonCode: previous.reasonCode, detail: previous.detail, plan: null, receipt: { ...previous, outcome: "replayed" } });
-        continue;
+        if (!isResumableReceipt(previous)) {
+          operationCost = { ...operationCost, selectedItems: operationCost.selectedItems + 1 };
+          results.push({ itemId: item.itemId, operationKey: key, outcome: "replayed", reasonCode: previous.reasonCode, detail: previous.detail, plan: null, receipt: { ...previous, outcome: "replayed" } });
+          continue;
+        }
+        resuming = true;
+        resumedReceiptIdentity = currentIdentity.identity;
       }
     }
     if (request.schemaPreflight.disposition !== "ACTIVATION_ALLOWED") {
       operationCost = { ...operationCost, selectedItems: operationCost.selectedItems + 1 };
-      results.push(await blockedResult(request, item, "SCHEMA_PREFLIGHT_BLOCKED", `Schema preflight disposition is ${request.schemaPreflight.disposition}.`, store, now()));
+      results.push(await blockedResult(request, item, "SCHEMA_PREFLIGHT_BLOCKED", `Schema preflight disposition is ${request.schemaPreflight.disposition}.`, store, now(), resumedReceiptIdentity, resuming ? receiptOperation : key, resuming ? receiptStage : "bounded_activation"));
       continue;
     }
     const budget = operationBudget(operationCost);
@@ -584,32 +625,32 @@ export async function executeTraceV1M2Activation(request: TraceV1M2ActivationReq
     if (isBoundedPreparationFailure(prepared)) {
       if (prepared.cost.selectedItems !== 1 || !costWithinBudget(prepared.cost, budget)) {
         operationCost = { ...operationCost, selectedItems: operationCost.selectedItems + 1 };
-        results.push(await blockedResult(request, item, "BOUNDED_WORK_LIMIT_EXCEEDED", "Governed preparation returned an invalid bounded cost summary.", store, now()));
+        results.push(await blockedResult(request, item, "BOUNDED_WORK_LIMIT_EXCEEDED", "Governed preparation returned an invalid bounded cost summary.", store, now(), resumedReceiptIdentity, resuming ? receiptOperation : key, resuming ? receiptStage : "bounded_activation"));
         continue;
       }
       operationCost = addCost(operationCost, prepared.cost);
-      results.push(await blockedResult(request, item, prepared.reasonCode, prepared.detail, store, now()));
+      results.push(await blockedResult(request, item, prepared.reasonCode, prepared.detail, store, now(), resumedReceiptIdentity, resuming ? receiptOperation : key, resuming ? receiptStage : "bounded_activation"));
       continue;
     }
     if (!prepared) {
       operationCost = { ...operationCost, selectedItems: operationCost.selectedItems + 1 };
-      results.push(await blockedResult(request, item, "SOURCE_IDENTITY_UNRESOLVED", "Governed preparation did not produce a source identity proof and evidence fixture.", store, now()));
+      results.push(await blockedResult(request, item, "SOURCE_IDENTITY_UNRESOLVED", "Governed preparation did not produce a source identity proof and evidence fixture.", store, now(), resumedReceiptIdentity, resuming ? receiptOperation : key, resuming ? receiptStage : "bounded_activation"));
       continue;
     }
     if (!validCost(prepared.cost) || prepared.cost.selectedItems !== 1 || !costWithinBudget(prepared.cost, budget)) {
       operationCost = { ...operationCost, selectedItems: operationCost.selectedItems + 1 };
-      results.push(await blockedResult(request, item, "BOUNDED_WORK_LIMIT_EXCEEDED", "Governed preparation exceeded the remaining invocation cost budget.", store, now()));
+      results.push(await blockedResult(request, item, "BOUNDED_WORK_LIMIT_EXCEEDED", "Governed preparation exceeded the remaining invocation cost budget.", store, now(), resumedReceiptIdentity, resuming ? receiptOperation : key, resuming ? receiptStage : "bounded_activation"));
       continue;
     }
     operationCost = addCost(operationCost, prepared.cost);
     if (prepared.evidence.chunks.length > TRACE_V1_M2_EXECUTOR_BOUNDS.maxChunks
       || prepared.evidence.assertions.length > TRACE_V1_M2_EXECUTOR_BOUNDS.maxAssertions) {
-      results.push(await blockedResult(request, item, "ITEM_WORK_BOUND_EXCEEDED", "Prepared item exceeded the fixed chunk or assertion bound.", store, now()));
+      results.push(await blockedResult(request, item, "ITEM_WORK_BOUND_EXCEEDED", "Prepared item exceeded the fixed chunk or assertion bound.", store, now(), resumedReceiptIdentity, resuming ? receiptOperation : key, resuming ? receiptStage : "bounded_activation"));
       continue;
     }
     const identity = await sourceIdentityFor(request.manifest, item, prepared.identity);
     if (!identity.ok) {
-      results.push(await blockedResult(request, item, identity.reasonCode, identity.detail, store, now()));
+      results.push(await blockedResult(request, item, identity.reasonCode, identity.detail, store, now(), resumedReceiptIdentity, resuming ? receiptOperation : key, resuming ? receiptStage : "bounded_activation"));
       continue;
     }
     const receiptIdentity = receiptIdentityFromPrepared(prepared, identity);
@@ -624,7 +665,7 @@ export async function executeTraceV1M2Activation(request: TraceV1M2ActivationReq
     const reasonCode = itemPlan.stopReason ?? "ACTIVATION_READY_PENDING_PUBLISHER_RECORD";
     const detail = itemPlan.stopDetail ?? "All bounded evidence stages are complete; no publication action was performed.";
     const receipt = request.mode === "execute" && store
-      ? await makeReceipt(request.manifest, item, request.environment, outcome, reasonCode, detail, receiptIdentity, now())
+      ? await makeReceipt(request.manifest, item, request.environment, outcome, reasonCode, detail, receiptIdentity, now(), resuming ? receiptOperation : key, resuming ? receiptStage : "bounded_activation")
       : null;
     if (receipt && store) await store.put(receipt);
     results.push({ itemId: item.itemId, operationKey: key, outcome, reasonCode, detail, plan: itemPlan, receipt });

@@ -8,7 +8,7 @@ changes, or any Production/Preview write.
 ## Candidate identity
 
 - Base: `main` at `68baf510de47687759e1602dc517cd23ed3e2eb8`
-- Branch: `codex/trace-v1-m2-r1-remediation`
+- Branch: `codex/trace-v1-m2-r2-remediation`
 - Manifest: `trace-v1-m2-bounded-activation-v1`
 - Manifest ID: `trace-v1-m2-bounded-activation`
 - Manifest hash: `c2c61aea6c96df411e7a30a1a17b84ade1f59c84f2a4b471c2a63d759675a0d7`
@@ -90,6 +90,15 @@ chunks, knowledge mappings, and selected items. The executor enforces all six
 fixed bounds, including aggregate work across selected items, and requires a
 bounded-stop result before an over-limit unit is processed.
 
+Blocked receipts are resumable only after the current authority-relevant
+identity has been validated. A completed receipt may replay without
+preparation; a blocked receipt resumes through a distinct
+`bounded_activation_resume` operation key and stage. The original blocked
+receipt remains preserved for audit, while the continuation slot may advance
+as governed state progresses under the same manifest/item/source/version/
+content identity. A changed identity remains fail-closed. Resumed preparation
+uses the current invocation budget and cannot bypass any executor bound.
+
 The additive candidate table is `trace_v1_activation_receipts` in
 `db/migration-0071-trace-v1-bounded-activation.sql`. The same candidate
 migration makes the freshness review table/index/trigger contract explicit
@@ -108,8 +117,10 @@ compatibility contract with the minimum Mission 2 objects:
 - the append-only freshness triggers.
 
 The preflight validates required table columns, nullability/default/primary-key
-semantics, required foreign keys and constraints, index target/uniqueness/order,
-and trigger table/event/body semantics. Missing additive fields or objects
+semantics, required foreign keys and constraints, structural unique-index
+target/uniqueness/order, and executable trigger table/event/body/abort
+semantics using SQL lexical masking so comments and string literals cannot
+satisfy the contract. Missing additive fields or objects
 produce `MIGRATION_REQUIRED`; incompatible or ambiguous schema identity or
 object definitions produce `FAIL_CLOSED`. The derived top-level disposition is
 explicitly `ACTIVATION_ALLOWED` or `ACTIVATION_BLOCKED`.

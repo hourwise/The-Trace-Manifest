@@ -76,7 +76,8 @@ function unquoteSqlIdentifier(value: string): string {
   return trimmed;
 }
 
-function maskSqlCommentsAndStrings(sql: string): string {
+/** Shared lexical masking for repository SQL/DDL inspection. */
+export function maskSqlCommentsAndStrings(sql: string): string {
   const masked = sql.split("");
   const mask = (index: number): void => {
     if (masked[index] !== "\r" && masked[index] !== "\n") masked[index] = " ";
@@ -150,7 +151,101 @@ function maskSqlCommentsAndStrings(sql: string): string {
   return masked.join("");
 }
 
-function matchingParenthesis(sql: string, openingIndex: number): number {
+/** Mask comments, literals, and quoted identifiers when only executable SQL is authoritative. */
+export function maskSqlNonExecutableTokens(sql: string): string {
+  const masked = maskSqlCommentsAndStrings(sql).split("");
+  const mask = (index: number): void => {
+    if (masked[index] !== "\r" && masked[index] !== "\n") masked[index] = " ";
+  };
+  let index = 0;
+  while (index < sql.length) {
+    if (masked[index] === '"' || masked[index] === "`") {
+      const quote = sql[index++];
+      mask(index - 1);
+      while (index < sql.length) {
+        mask(index);
+        if (sql[index] === quote && sql[index + 1] === quote) {
+          mask(index + 1);
+          index += 2;
+          continue;
+        }
+        if (sql[index++] === quote) break;
+      }
+      continue;
+    }
+    if (masked[index] === "[") {
+      mask(index++);
+      while (index < sql.length) {
+        mask(index);
+        if (sql[index++] === "]") break;
+      }
+      continue;
+    }
+    index++;
+  }
+  return masked.join("");
+}
+
+/** Remove SQL comments while preserving quoted literals and identifiers. */
+export function stripSqlComments(sql: string): string {
+  const stripped = sql.split("");
+  const blank = (index: number): void => {
+    if (stripped[index] !== "\r" && stripped[index] !== "\n") stripped[index] = " ";
+  };
+  let index = 0;
+  while (index < sql.length) {
+    if (sql[index] === "-" && sql[index + 1] === "-") {
+      blank(index++);
+      blank(index++);
+      while (index < sql.length && sql[index] !== "\r" && sql[index] !== "\n") blank(index++);
+      continue;
+    }
+    if (sql[index] === "/" && sql[index + 1] === "*") {
+      blank(index++);
+      blank(index++);
+      while (index < sql.length) {
+        if (sql[index] === "*" && sql[index + 1] === "/") {
+          blank(index++);
+          blank(index++);
+          break;
+        }
+        blank(index++);
+      }
+      continue;
+    }
+    if (sql[index] === "'") {
+      index++;
+      while (index < sql.length) {
+        if (sql[index] === "'" && sql[index + 1] === "'") {
+          index += 2;
+          continue;
+        }
+        if (sql[index++] === "'") break;
+      }
+      continue;
+    }
+    if (sql[index] === '"' || sql[index] === "`") {
+      const quote = sql[index++];
+      while (index < sql.length) {
+        if (sql[index] === quote && sql[index + 1] === quote) {
+          index += 2;
+          continue;
+        }
+        if (sql[index++] === quote) break;
+      }
+      continue;
+    }
+    if (sql[index] === "[") {
+      index++;
+      while (index < sql.length && sql[index++] !== "]");
+      continue;
+    }
+    index++;
+  }
+  return stripped.join("");
+}
+
+export function matchingParenthesis(sql: string, openingIndex: number): number {
   let depth = 0;
   let quote: "'" | "\"" | "`" | null = null;
   for (let index = openingIndex; index < sql.length; index++) {
@@ -174,6 +269,22 @@ function matchingParenthesis(sql: string, openingIndex: number): number {
     }
   }
   return -1;
+}
+
+/** Extract executable CHECK expressions without trusting comments or literals. */
+export function extractSqlCheckExpressions(sql: string | null | undefined): string[] {
+  if (!sql) return [];
+  const masked = maskSqlNonExecutableTokens(sql);
+  const expressions: string[] = [];
+  const checkPattern = /\bCHECK\s*\(/gi;
+  for (const match of masked.matchAll(checkPattern)) {
+    const openingIndex = masked.indexOf("(", match.index ?? 0);
+    if (openingIndex < 0) continue;
+    const closingIndex = matchingParenthesis(masked, openingIndex);
+    if (closingIndex < 0) continue;
+    expressions.push(sql.slice(openingIndex + 1, closingIndex));
+  }
+  return expressions;
 }
 
 function topLevelDefinitions(sql: string): string[] {
