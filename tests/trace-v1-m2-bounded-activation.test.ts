@@ -290,6 +290,19 @@ async function executorTests(): Promise<void> {
   assert.equal(prepareCalls, callsAfterFirst);
   assert.equal(identityCalls, 1);
 
+  const partialStore = new MemoryTraceV1M2ReceiptStore();
+  let partialPrepareCalls = 0;
+  const partialOperations = {
+    resolveCurrentIdentity: async (): Promise<TraceV1M2CurrentIdentity> => currentIdentityFrom(evidence),
+    prepareItem: async (): Promise<TraceV1M2PreparedItem> => { partialPrepareCalls += 1; return evidence; },
+  };
+  await executeTraceV1M2Activation({ manifest, schemaPreflight: preflight(), environment: "LOCAL_TEST", mode: "execute", itemIds: ["story-377"], operations: partialOperations, receiptStore: partialStore, now: () => "2026-09-05T00:00:00.000Z" });
+  await executeTraceV1M2Activation({ manifest, schemaPreflight: preflight(), environment: "LOCAL_TEST", mode: "execute", itemIds: ["story-328"], operations: partialOperations, receiptStore: partialStore, now: () => "2026-09-05T00:00:00.000Z" });
+  const partialCallsBeforeResume = partialPrepareCalls;
+  const partialResume = await executeTraceV1M2Activation({ manifest, schemaPreflight: preflight(), environment: "LOCAL_TEST", mode: "execute", itemIds: ["story-377", "story-328"], operations: partialOperations, receiptStore: partialStore, now: () => "2026-09-05T00:00:00.000Z" });
+  assert.deepEqual(partialResume.items.map((item) => item.outcome), ["replayed", "replayed"]);
+  assert.equal(partialPrepareCalls, partialCallsBeforeResume);
+
   const changedVersion = await prepared();
   changedVersion.evidence = { ...changedVersion.evidence, sourceDocumentVersionId: "source-version-43", currentVersionId: "source-version-43" };
   evidence = changedVersion;
