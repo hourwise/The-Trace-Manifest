@@ -14,6 +14,8 @@ import {
   D1TraceV1M2ReceiptStore,
   MemoryTraceV1M2ReceiptStore,
   TRACE_V1_M2_EXECUTOR_BOUNDS,
+  type TraceV1M2CurrentIdentity,
+  type TraceV1M2OperationBudget,
   type TraceV1M2PreparedItem,
 } from "../src/lib/server/trace-v1-m2-executor";
 import {
@@ -21,6 +23,7 @@ import {
   TRACE_V1_M2_REQUIRED_INDEXES,
   TRACE_V1_M2_REQUIRED_TABLES,
   TRACE_V1_M2_REQUIRED_TRIGGERS,
+  type TraceV1M2ActivationCatalog,
 } from "../src/lib/server/trace-v1-m2-activation-preflight";
 import {
   TRACE_V1_REQUIRED_FIELDS,
@@ -30,6 +33,41 @@ import {
 } from "../src/lib/server/trace-v1-m2-contract";
 import type { TraceV1M2EvidenceFixture } from "../src/lib/server/trace-v1-m2-planner";
 import { SQLiteD1 } from "./sqlite-d1";
+
+function activationTables(): Record<string, SchemaTableSnapshot> {
+  return {
+    evidence_freshness_reviews: {
+      name: "evidence_freshness_reviews",
+      columns: [
+        ["id", "TEXT", false, null, 1], ["claim_assertion_id", "TEXT", true, null, 0], ["prior_state", "TEXT", true, null, 0],
+        ["proposed_state", "TEXT", true, null, 0], ["source_document_version_id", "TEXT", false, null, 0], ["reason", "TEXT", true, null, 0],
+        ["state", "TEXT", true, "'pending'", 0], ["requested_by", "TEXT", true, null, 0], ["requested_at", "TEXT", true, "datetime('now')", 0],
+        ["reviewed_by", "TEXT", false, null, 0], ["reviewed_at", "TEXT", false, null, 0], ["review_note", "TEXT", false, null, 0],
+        ["idempotency_key", "TEXT", true, null, 0], ["request_fingerprint", "TEXT", true, null, 0],
+      ].map(([name, declaredType, notNull, defaultValue, primaryKeyPosition]) => ({ name: name as string, declaredType: declaredType as string, notNull: notNull as boolean, defaultValue: defaultValue as string | null, primaryKeyPosition: primaryKeyPosition as number })),
+      createSql: "CREATE TABLE evidence_freshness_reviews (id TEXT PRIMARY KEY, idempotency_key TEXT NOT NULL UNIQUE)",
+      foreignKeys: [
+        { from: "claim_assertion_id", table: "claim_assertions", to: "id", onDelete: "RESTRICT", onUpdate: "NO ACTION" },
+        { from: "source_document_version_id", table: "source_document_versions", to: "id", onDelete: "RESTRICT", onUpdate: "NO ACTION" },
+      ],
+    },
+    trace_v1_activation_receipts: {
+      name: "trace_v1_activation_receipts",
+      columns: [
+        ["operation_key", "TEXT", false, null, 1], ["manifest_id", "TEXT", true, null, 0], ["manifest_hash", "TEXT", true, null, 0],
+        ["item_type", "TEXT", true, null, 0], ["item_id", "TEXT", true, null, 0], ["stage", "TEXT", true, null, 0],
+        ["environment", "TEXT", true, null, 0], ["source_id", "INTEGER", false, null, 0], ["canonical_source_url", "TEXT", false, null, 0],
+        ["canonical_source_url_hash", "TEXT", false, null, 0], ["connector", "TEXT", false, null, 0], ["source_document_id", "TEXT", false, null, 0],
+        ["source_document_version_id", "TEXT", false, null, 0], ["content_hash", "TEXT", false, null, 0], ["transport_hash", "TEXT", false, null, 0],
+        ["normalized_content_hash", "TEXT", false, null, 0], ["hash_semantics_version", "TEXT", false, null, 0], ["outcome", "TEXT", true, null, 0],
+        ["reason_code", "TEXT", true, null, 0], ["detail", "TEXT", true, null, 0], ["receipt_fingerprint", "TEXT", true, null, 0],
+        ["created_at", "TEXT", true, "datetime('now')", 0],
+      ].map(([name, declaredType, notNull, defaultValue, primaryKeyPosition]) => ({ name: name as string, declaredType: declaredType as string, notNull: notNull as boolean, defaultValue: defaultValue as string | null, primaryKeyPosition: primaryKeyPosition as number })),
+      createSql: "CREATE TABLE trace_v1_activation_receipts (operation_key TEXT PRIMARY KEY, item_type TEXT NOT NULL CHECK(item_type IN ('story','knowledge')), environment TEXT NOT NULL CHECK(environment IN ('LOCAL_TEST','PREVIEW','PRODUCTION')), outcome TEXT NOT NULL CHECK(outcome IN ('completed','replayed','blocked','failed')))",
+      foreignKeys: [],
+    },
+  };
+}
 
 function completeCatalog(): SchemaCatalogSnapshot {
   const tables: Record<string, SchemaTableSnapshot> = {};
@@ -42,19 +80,32 @@ function completeCatalog(): SchemaCatalogSnapshot {
     }));
     tables[tableName] = { name: tableName, columns };
   }
-  return { schemaIdentity: "fixture-m2-v1", tables };
+  return { schemaIdentity: "fixture-m2-v1", tables: { ...tables, ...activationTables() } };
 }
 
-function preflight() {
+function completeActivationCatalog(): TraceV1M2ActivationCatalog {
   const base = completeCatalog();
-  return inspectTraceV1M2ActivationPreflight({
+  return {
     ...base,
     objects: {
       tables: [...TRACE_V1_M2_REQUIRED_TABLES],
       indexes: [...TRACE_V1_M2_REQUIRED_INDEXES],
       triggers: [...TRACE_V1_M2_REQUIRED_TRIGGERS],
+      indexDefinitions: [
+        { name: "idx_evidence_freshness_reviews_queue", table: "evidence_freshness_reviews", unique: false, columns: [{ name: "state", descending: false }, { name: "requested_at", descending: false }] },
+        { name: "idx_evidence_freshness_reviews_assertion", table: "evidence_freshness_reviews", unique: false, columns: [{ name: "claim_assertion_id", descending: false }, { name: "requested_at", descending: true }] },
+        { name: "idx_trace_v1_activation_receipts_manifest", table: "trace_v1_activation_receipts", unique: false, columns: [{ name: "manifest_hash", descending: false }, { name: "item_id", descending: false }] },
+      ],
+      triggerDefinitions: [
+        { name: "prevent_evidence_freshness_review_delete", table: "evidence_freshness_reviews", sql: "CREATE TRIGGER prevent_evidence_freshness_review_delete BEFORE DELETE ON evidence_freshness_reviews BEGIN SELECT RAISE(ABORT, 'evidence freshness reviews are append-only'); END" },
+        { name: "prevent_evidence_freshness_review_core_update", table: "evidence_freshness_reviews", sql: "CREATE TRIGGER prevent_evidence_freshness_review_core_update BEFORE UPDATE OF claim_assertion_id, prior_state, proposed_state, source_document_version_id, reason, requested_by, requested_at, idempotency_key, request_fingerprint ON evidence_freshness_reviews BEGIN SELECT RAISE(ABORT, 'evidence freshness review core fields are immutable'); END" },
+      ],
     },
-  });
+  };
+}
+
+function preflight(): ReturnType<typeof inspectTraceV1M2ActivationPreflight> {
+  return inspectTraceV1M2ActivationPreflight(completeActivationCatalog());
 }
 
 function readyFixture(): TraceV1M2EvidenceFixture {
@@ -101,7 +152,12 @@ async function prepared(): Promise<TraceV1M2PreparedItem> {
       basis: "LOCAL_FIXTURE",
     },
     evidence: readyFixture(),
+    cost: { sourceCaptures: 1, claims: 1, assertions: 1, chunks: 1, knowledgeMappings: 0, selectedItems: 1 },
   };
+}
+
+function currentIdentityFrom(preparedItem: TraceV1M2PreparedItem): TraceV1M2CurrentIdentity {
+  return { identity: preparedItem.identity, evidence: preparedItem.evidence };
 }
 
 async function manifestTests(): Promise<void> {
@@ -127,9 +183,58 @@ async function manifestTests(): Promise<void> {
 async function preflightAndMigrationTests(): Promise<void> {
   const allowed = preflight();
   assert.equal(allowed.activationDisposition, "ACTIVATION_ALLOWED");
-  const missing = inspectTraceV1M2ActivationPreflight({ ...completeCatalog(), objects: { tables: [], indexes: [], triggers: [] } });
-  assert.equal(missing.activationDisposition, "MIGRATION_REQUIRED");
+  const missing = inspectTraceV1M2ActivationPreflight({ ...completeCatalog(), objects: { tables: [], indexes: [], triggers: [], indexDefinitions: [], triggerDefinitions: [] } });
+  assert.equal(missing.activationDisposition, "ACTIVATION_BLOCKED");
+  assert.equal(missing.disposition, "MIGRATION_REQUIRED");
   assert.equal(missing.missingObjects.length, 7);
+
+  const wrongReceiptShape = preflight();
+  const wrongReceiptTables = completeCatalog().tables as Record<string, SchemaTableSnapshot>;
+  wrongReceiptTables.trace_v1_activation_receipts = {
+    ...wrongReceiptTables.trace_v1_activation_receipts,
+    columns: wrongReceiptTables.trace_v1_activation_receipts.columns.filter((column) => column.name !== "receipt_fingerprint"),
+  };
+  const wrongReceipt = inspectTraceV1M2ActivationPreflight({
+    ...completeCatalog(),
+    tables: wrongReceiptTables,
+    objects: completeActivationCatalog().objects,
+  });
+  assert.equal(wrongReceiptShape.activationDisposition, "ACTIVATION_ALLOWED");
+  assert.equal(wrongReceipt.activationDisposition, "ACTIVATION_BLOCKED");
+  assert.ok(wrongReceipt.invalidObjects.some((issue) => issue.includes("receipt_fingerprint")));
+
+  const wrongReceiptConstraintTables = completeCatalog().tables as Record<string, SchemaTableSnapshot>;
+  wrongReceiptConstraintTables.trace_v1_activation_receipts = {
+    ...wrongReceiptConstraintTables.trace_v1_activation_receipts,
+    createSql: "CREATE TABLE trace_v1_activation_receipts (operation_key TEXT PRIMARY KEY)",
+  };
+  const wrongReceiptConstraint = inspectTraceV1M2ActivationPreflight({ ...completeCatalog(), tables: wrongReceiptConstraintTables, objects: completeActivationCatalog().objects });
+  assert.equal(wrongReceiptConstraint.activationDisposition, "ACTIVATION_BLOCKED");
+  assert.ok(wrongReceiptConstraint.invalidObjects.some((issue) => issue.includes("constraint:item_type")));
+
+  const wrongIndex = inspectTraceV1M2ActivationPreflight({
+    ...completeCatalog(),
+    objects: {
+      ...completeActivationCatalog().objects,
+      indexDefinitions: completeActivationCatalog().objects.indexDefinitions.map((definition) => definition.name === "idx_trace_v1_activation_receipts_manifest"
+        ? { ...definition, table: "evidence_freshness_reviews" }
+        : definition),
+    },
+  });
+  assert.equal(wrongIndex.activationDisposition, "ACTIVATION_BLOCKED");
+  assert.ok(wrongIndex.invalidObjects.includes("index:idx_trace_v1_activation_receipts_manifest:definition"));
+
+  const wrongTrigger = inspectTraceV1M2ActivationPreflight({
+    ...completeCatalog(),
+    objects: {
+      ...completeActivationCatalog().objects,
+      triggerDefinitions: completeActivationCatalog().objects.triggerDefinitions.map((definition) => definition.name === "prevent_evidence_freshness_review_delete"
+        ? { ...definition, sql: definition.sql?.replace("BEFORE DELETE", "AFTER DELETE") ?? null }
+        : definition),
+    },
+  });
+  assert.equal(wrongTrigger.activationDisposition, "ACTIVATION_BLOCKED");
+  assert.ok(wrongTrigger.invalidObjects.includes("trigger:prevent_evidence_freshness_review_delete:definition"));
 
   const database = new DatabaseSync(":memory:");
   try {
@@ -161,14 +266,19 @@ async function preflightAndMigrationTests(): Promise<void> {
 
 async function executorTests(): Promise<void> {
   const manifest = await buildTraceV1M2FinalManifest();
-  const evidence = await prepared();
+  let evidence = await prepared();
   let prepareCalls = 0;
-  const operations = { prepareItem: async (): Promise<TraceV1M2PreparedItem> => { prepareCalls += 1; return evidence; } };
+  let identityCalls = 0;
+  const operations = {
+    resolveCurrentIdentity: async (): Promise<TraceV1M2CurrentIdentity> => { identityCalls += 1; return currentIdentityFrom(evidence); },
+    prepareItem: async (): Promise<TraceV1M2PreparedItem> => { prepareCalls += 1; return evidence; },
+  };
   const dryRun = await executeTraceV1M2Activation({ manifest, schemaPreflight: preflight(), environment: "LOCAL_TEST", mode: "dry_run", itemIds: ["story-377"], operations });
   assert.equal(dryRun.sideEffectFree, true);
   assert.equal(dryRun.items[0].outcome, "completed");
   assert.equal(prepareCalls, 1);
   assert.equal(dryRun.items[0].receipt, null);
+  assert.equal(dryRun.cost.selectedItems, 1);
 
   const store = new MemoryTraceV1M2ReceiptStore();
   const first = await executeTraceV1M2Activation({ manifest, schemaPreflight: preflight(), environment: "LOCAL_TEST", mode: "execute", itemIds: ["story-377"], operations, receiptStore: store, now: () => "2026-09-05T00:00:00.000Z" });
@@ -178,6 +288,51 @@ async function executorTests(): Promise<void> {
   const replay = await executeTraceV1M2Activation({ manifest, schemaPreflight: preflight(), environment: "LOCAL_TEST", mode: "execute", itemIds: ["story-377"], operations, receiptStore: store, now: () => "2099-01-01T00:00:00.000Z" });
   assert.equal(replay.items[0].outcome, "replayed");
   assert.equal(prepareCalls, callsAfterFirst);
+  assert.equal(identityCalls, 1);
+
+  const changedVersion = await prepared();
+  changedVersion.evidence = { ...changedVersion.evidence, sourceDocumentVersionId: "source-version-43", currentVersionId: "source-version-43" };
+  evidence = changedVersion;
+  const changedVersionReplay = await executeTraceV1M2Activation({ manifest, schemaPreflight: preflight(), environment: "LOCAL_TEST", mode: "execute", itemIds: ["story-377"], operations, receiptStore: store, now: () => "2099-01-01T00:00:00.000Z" });
+  assert.equal(changedVersionReplay.items[0].reasonCode, "REPLAY_IDENTITY_CHANGED");
+
+  async function assertReplayIdentityChange(mutator: (base: TraceV1M2PreparedItem) => TraceV1M2PreparedItem | Promise<TraceV1M2PreparedItem>): Promise<void> {
+    const baseline = await prepared();
+    const localStore = new MemoryTraceV1M2ReceiptStore();
+    let current = baseline;
+    const localOperations = {
+      resolveCurrentIdentity: async (): Promise<TraceV1M2CurrentIdentity> => currentIdentityFrom(current),
+      prepareItem: async (): Promise<TraceV1M2PreparedItem> => current,
+    };
+    await executeTraceV1M2Activation({ manifest, schemaPreflight: preflight(), environment: "LOCAL_TEST", mode: "execute", itemIds: ["story-377"], operations: localOperations, receiptStore: localStore, now: () => "2026-09-05T00:00:00.000Z" });
+    current = await mutator(baseline);
+    const result = await executeTraceV1M2Activation({ manifest, schemaPreflight: preflight(), environment: "LOCAL_TEST", mode: "execute", itemIds: ["story-377"], operations: localOperations, receiptStore: localStore, now: () => "2026-09-05T00:00:00.000Z" });
+    assert.equal(result.items[0].reasonCode, "REPLAY_IDENTITY_CHANGED");
+  }
+
+  await assertReplayIdentityChange((base) => ({ ...base, evidence: { ...base.evidence, contentHash: "d".repeat(64) } }));
+  await assertReplayIdentityChange((base) => ({ ...base, evidence: { ...base.evidence, normalizedContentHash: "e".repeat(64) } }));
+  await assertReplayIdentityChange(async (base) => ({
+    ...base,
+    identity: { ...base.identity, canonicalUrl: "https://example.test/changed", normalizedUrlHashInput: "https://example.test/changed", urlHash: await hashTransportBody("https://example.test/changed") },
+    evidence: { ...base.evidence, canonicalUrl: "https://example.test/changed" },
+  }));
+  await assertReplayIdentityChange((base) => ({
+    ...base,
+    identity: { ...base.identity, connector: "github_api" },
+    evidence: { ...base.evidence, connector: "github_api" },
+  }));
+
+  const corruptedStore = new MemoryTraceV1M2ReceiptStore();
+  evidence = await prepared();
+  await executeTraceV1M2Activation({ manifest, schemaPreflight: preflight(), environment: "LOCAL_TEST", mode: "execute", itemIds: ["story-377"], operations, receiptStore: corruptedStore, now: () => "2026-09-05T00:00:00.000Z" });
+  const corruptedReceipt = await corruptedStore.get(`${manifest.manifestHash}:story-377:bounded-activation-v1`);
+  assert.ok(corruptedReceipt);
+  corruptedReceipt!.receiptFingerprint = "0".repeat(64);
+  await assert.rejects(() => executeTraceV1M2Activation({ manifest, schemaPreflight: preflight(), environment: "LOCAL_TEST", mode: "execute", itemIds: ["story-377"], operations, receiptStore: corruptedStore }), /REPLAY_CONFLICT/);
+
+  const alteredManifest = { ...manifest, manifestHash: "0".repeat(64), manifestIdentity: `${manifest.manifestVersion}:${"0".repeat(64)}` };
+  await assert.rejects(() => executeTraceV1M2Activation({ manifest: alteredManifest, schemaPreflight: preflight(), environment: "LOCAL_TEST", mode: "execute", itemIds: ["story-377"], operations }), /MANIFEST_HASH_MISMATCH/);
 
   const d1 = new SQLiteD1();
   try {
@@ -190,15 +345,74 @@ async function executorTests(): Promise<void> {
     d1.close();
   }
 
-  const production = await executeTraceV1M2Activation({ manifest, schemaPreflight: preflight(), environment: "PRODUCTION", mode: "execute", itemIds: ["story-377"], operations, receiptStore: store });
-  assert.equal(production.items[0].reasonCode, "EXECUTION_UNAUTHORIZED");
-  assert.equal(prepareCalls, callsAfterFirst + 1, "Preview/Production refusal does not invoke operations");
+  for (const [environment, mode] of [["PREVIEW", "plan"], ["PREVIEW", "execute"], ["PRODUCTION", "plan"], ["PRODUCTION", "execute"]] as const) {
+    const before: number = prepareCalls + identityCalls;
+    const result = await executeTraceV1M2Activation({ manifest, schemaPreflight: preflight(), environment, mode, itemIds: ["story-377"], operations });
+    assert.equal(result.items[0].reasonCode, "EXECUTION_UNAUTHORIZED");
+    assert.equal(prepareCalls + identityCalls, before);
+  }
+  await assert.rejects(() => executeTraceV1M2Activation({ manifest, schemaPreflight: preflight(), environment: "production" as "PRODUCTION", mode: "plan", itemIds: ["story-377"], operations }), /ENVIRONMENT_INVALID/);
+  await assert.rejects(() => executeTraceV1M2Activation({ manifest, schemaPreflight: preflight(), environment: "LOCAL_TEST", mode: "EXECUTE" as "execute", itemIds: ["story-377"], operations }), /MODE_INVALID/);
+  await assert.rejects(() => executeTraceV1M2Activation({ manifest, schemaPreflight: preflight(), environment: "PRODUCTION", mode: "EXECUTE" as "execute", itemIds: ["story-377"], operations }), /MODE_INVALID/);
   await assert.rejects(() => executeTraceV1M2Activation({ manifest, schemaPreflight: preflight(), environment: "LOCAL_TEST", mode: "execute", itemIds: ["story-339"], operations, receiptStore: store }), /RESERVE_REQUIRES_REVIEWED_MANIFEST_REVISION/);
 
   const blocked = await executeTraceV1M2Activation({ manifest, schemaPreflight: { ...preflight(), disposition: "MIGRATION_REQUIRED" }, environment: "LOCAL_TEST", mode: "execute", itemIds: ["story-377"], operations, receiptStore: new MemoryTraceV1M2ReceiptStore() });
   assert.equal(blocked.items[0].reasonCode, "SCHEMA_PREFLIGHT_BLOCKED");
   assert.equal(TRACE_V1_M2_EXECUTOR_BOUNDS.maxItemsPerInvocation, 3);
   await assert.rejects(() => executeTraceV1M2Activation({ manifest, schemaPreflight: preflight(), environment: "LOCAL_TEST", mode: "plan", itemIds: ["story-377", "story-328", "story-376", "story-347"], operations }), /ITEM_SELECTION_INVALID/);
+
+  const boundMetricTests: Array<[keyof TraceV1M2OperationBudget, number]> = [
+    ["sourceCaptures", TRACE_V1_M2_EXECUTOR_BOUNDS.maxSourceCaptures],
+    ["claims", TRACE_V1_M2_EXECUTOR_BOUNDS.maxClaims],
+    ["assertions", TRACE_V1_M2_EXECUTOR_BOUNDS.maxAssertions],
+    ["chunks", TRACE_V1_M2_EXECUTOR_BOUNDS.maxChunks],
+    ["knowledgeMappings", TRACE_V1_M2_EXECUTOR_BOUNDS.maxKnowledgeMappings],
+  ];
+  for (const [metric, limit] of boundMetricTests) {
+    const allowedCost: TraceV1M2OperationBudget = { sourceCaptures: 0, claims: 0, assertions: 0, chunks: 0, knowledgeMappings: 0, selectedItems: 1 };
+    allowedCost[metric] = limit;
+    const allowedOperations = {
+      resolveCurrentIdentity: async (): Promise<TraceV1M2CurrentIdentity> => currentIdentityFrom(await prepared()),
+      prepareItem: async (): Promise<TraceV1M2PreparedItem> => ({ ...(await prepared()), cost: allowedCost }),
+    };
+    const allowed = await executeTraceV1M2Activation({ manifest, schemaPreflight: preflight(), environment: "LOCAL_TEST", mode: "plan", itemIds: ["story-377"], operations: allowedOperations });
+    assert.equal(allowed.items[0].outcome, "completed", `${metric} at bound is allowed`);
+    assert.equal(allowed.cost[metric], limit);
+
+    const overCost = { ...allowedCost, [metric]: limit + 1 };
+    const counters = { actual: 0 };
+    const overOperations = {
+      resolveCurrentIdentity: async (): Promise<TraceV1M2CurrentIdentity> => currentIdentityFrom(await prepared()),
+      prepareItem: async (_item: unknown, budget: TraceV1M2OperationBudget) => {
+        const permitted = Math.min(overCost[metric], budget[metric]);
+        counters.actual = permitted;
+        if (overCost[metric] > budget[metric]) {
+          return { reasonCode: "BOUNDED_WORK_LIMIT_EXCEEDED" as const, detail: `Stopped before ${metric} unit ${limit + 1}.`, cost: { sourceCaptures: metric === "sourceCaptures" ? permitted : 0, claims: metric === "claims" ? permitted : 0, assertions: metric === "assertions" ? permitted : 0, chunks: metric === "chunks" ? permitted : 0, knowledgeMappings: metric === "knowledgeMappings" ? permitted : 0, selectedItems: 1 } };
+        }
+        return { ...(await prepared()), cost: overCost };
+      },
+    };
+    const over = await executeTraceV1M2Activation({ manifest, schemaPreflight: preflight(), environment: "LOCAL_TEST", mode: "plan", itemIds: ["story-377"], operations: overOperations });
+    assert.equal(over.items[0].reasonCode, "BOUNDED_WORK_LIMIT_EXCEEDED");
+    assert.equal(counters.actual, limit, `${metric} stopped before exceeding the limit`);
+    assert.equal(over.cost[metric], limit);
+  }
+
+  const aggregateCalls: number[] = [];
+  const aggregateOperations = {
+    resolveCurrentIdentity: async (): Promise<TraceV1M2CurrentIdentity> => currentIdentityFrom(await prepared()),
+    prepareItem: async (_item: unknown, budget: TraceV1M2OperationBudget): Promise<TraceV1M2PreparedItem | { reasonCode: "BOUNDED_WORK_LIMIT_EXCEEDED"; detail: string; cost: TraceV1M2OperationBudget }> => {
+      const claims = Math.min(5, budget.claims);
+      aggregateCalls.push(claims);
+      const base = await prepared();
+      if (claims < 5) return { reasonCode: "BOUNDED_WORK_LIMIT_EXCEEDED", detail: "Stopped before aggregate claim bound was exceeded.", cost: { ...base.cost, claims, selectedItems: 1 } };
+      return { ...base, cost: { ...base.cost, claims, selectedItems: 1 } };
+    },
+  };
+  const aggregate = await executeTraceV1M2Activation({ manifest, schemaPreflight: preflight(), environment: "LOCAL_TEST", mode: "plan", itemIds: ["story-377", "story-328", "story-376"], operations: aggregateOperations });
+  assert.deepEqual(aggregateCalls, [5, 5, 2]);
+  assert.equal(aggregate.cost.claims, TRACE_V1_M2_EXECUTOR_BOUNDS.maxClaims);
+  assert.equal(aggregate.items[2].reasonCode, "BOUNDED_WORK_LIMIT_EXCEEDED");
 }
 
 await manifestTests();

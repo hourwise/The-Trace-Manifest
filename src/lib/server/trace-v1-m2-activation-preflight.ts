@@ -5,32 +5,56 @@
 
 import {
   inspectTraceV1M2Compatibility,
+  type CompatibilityDisposition,
   type CompatibilityPreflightResult,
   type SchemaCatalogSnapshot,
+  type SchemaTableSnapshot,
 } from "./trace-v1-m2-contract";
 
-export const TRACE_V1_M2_ACTIVATION_PREFLIGHT_VERSION = "trace-v1-m2-activation-preflight-v1" as const;
+export const TRACE_V1_M2_ACTIVATION_PREFLIGHT_VERSION = "trace-v1-m2-activation-preflight-v2" as const;
+
+export interface TraceV1M2SchemaIndexColumn {
+  name: string;
+  descending: boolean;
+}
+
+export interface TraceV1M2SchemaIndexDefinition {
+  name: string;
+  table: string;
+  unique: boolean;
+  columns: readonly TraceV1M2SchemaIndexColumn[];
+}
+
+export interface TraceV1M2SchemaTriggerDefinition {
+  name: string;
+  table: string;
+  sql: string | null;
+}
 
 export interface TraceV1M2SchemaObjectCatalog {
   tables: readonly string[];
   indexes: readonly string[];
   triggers: readonly string[];
+  indexDefinitions: readonly TraceV1M2SchemaIndexDefinition[];
+  triggerDefinitions: readonly TraceV1M2SchemaTriggerDefinition[];
 }
 
 export interface TraceV1M2ActivationCatalog extends SchemaCatalogSnapshot {
   objects: TraceV1M2SchemaObjectCatalog;
 }
 
-export type TraceV1M2ActivationDisposition = "ACTIVATION_ALLOWED" | "MIGRATION_REQUIRED" | "FAIL_CLOSED";
+export type TraceV1M2ActivationDisposition = "ACTIVATION_ALLOWED" | "ACTIVATION_BLOCKED";
 
 export interface TraceV1M2ActivationPreflightResult extends CompatibilityPreflightResult {
   activationPreflightVersion: typeof TRACE_V1_M2_ACTIVATION_PREFLIGHT_VERSION;
   activationDisposition: TraceV1M2ActivationDisposition;
+  compatibilityDisposition: CompatibilityDisposition;
   requiredTables: readonly string[];
   requiredIndexes: readonly string[];
   requiredTriggers: readonly string[];
   missingObjects: readonly string[];
   ambiguousObjects: readonly string[];
+  invalidObjects: readonly string[];
   activationBlocked: boolean;
 }
 
@@ -48,6 +72,157 @@ export const TRACE_V1_M2_REQUIRED_TRIGGERS = Object.freeze([
   "prevent_evidence_freshness_review_core_update",
 ] as const);
 
+interface RequiredActivationColumn {
+  name: string;
+  declaredType: string;
+  notNull: boolean;
+  defaultValue: string | null;
+  primaryKeyPosition: number;
+}
+
+interface RequiredActivationTable {
+  name: string;
+  columns: readonly RequiredActivationColumn[];
+  foreignKeys: readonly { from: string; table: string; to: string; onDelete: string; onUpdate: string }[];
+  requiredSqlFragments: readonly string[];
+}
+
+const REQUIRED_ACTIVATION_TABLES: readonly RequiredActivationTable[] = [
+  {
+    name: "evidence_freshness_reviews",
+    columns: [
+      { name: "id", declaredType: "TEXT", notNull: false, defaultValue: null, primaryKeyPosition: 1 },
+      { name: "claim_assertion_id", declaredType: "TEXT", notNull: true, defaultValue: null, primaryKeyPosition: 0 },
+      { name: "prior_state", declaredType: "TEXT", notNull: true, defaultValue: null, primaryKeyPosition: 0 },
+      { name: "proposed_state", declaredType: "TEXT", notNull: true, defaultValue: null, primaryKeyPosition: 0 },
+      { name: "source_document_version_id", declaredType: "TEXT", notNull: false, defaultValue: null, primaryKeyPosition: 0 },
+      { name: "reason", declaredType: "TEXT", notNull: true, defaultValue: null, primaryKeyPosition: 0 },
+      { name: "state", declaredType: "TEXT", notNull: true, defaultValue: "pending", primaryKeyPosition: 0 },
+      { name: "requested_by", declaredType: "TEXT", notNull: true, defaultValue: null, primaryKeyPosition: 0 },
+      { name: "requested_at", declaredType: "TEXT", notNull: true, defaultValue: "datetime('now')", primaryKeyPosition: 0 },
+      { name: "reviewed_by", declaredType: "TEXT", notNull: false, defaultValue: null, primaryKeyPosition: 0 },
+      { name: "reviewed_at", declaredType: "TEXT", notNull: false, defaultValue: null, primaryKeyPosition: 0 },
+      { name: "review_note", declaredType: "TEXT", notNull: false, defaultValue: null, primaryKeyPosition: 0 },
+      { name: "idempotency_key", declaredType: "TEXT", notNull: true, defaultValue: null, primaryKeyPosition: 0 },
+      { name: "request_fingerprint", declaredType: "TEXT", notNull: true, defaultValue: null, primaryKeyPosition: 0 },
+    ],
+    foreignKeys: [
+      { from: "claim_assertion_id", table: "claim_assertions", to: "id", onDelete: "RESTRICT", onUpdate: "NO ACTION" },
+      { from: "source_document_version_id", table: "source_document_versions", to: "id", onDelete: "RESTRICT", onUpdate: "NO ACTION" },
+    ],
+    requiredSqlFragments: ["idempotency_key text not null unique"],
+  },
+  {
+    name: "trace_v1_activation_receipts",
+    columns: [
+      { name: "operation_key", declaredType: "TEXT", notNull: false, defaultValue: null, primaryKeyPosition: 1 },
+      { name: "manifest_id", declaredType: "TEXT", notNull: true, defaultValue: null, primaryKeyPosition: 0 },
+      { name: "manifest_hash", declaredType: "TEXT", notNull: true, defaultValue: null, primaryKeyPosition: 0 },
+      { name: "item_type", declaredType: "TEXT", notNull: true, defaultValue: null, primaryKeyPosition: 0 },
+      { name: "item_id", declaredType: "TEXT", notNull: true, defaultValue: null, primaryKeyPosition: 0 },
+      { name: "stage", declaredType: "TEXT", notNull: true, defaultValue: null, primaryKeyPosition: 0 },
+      { name: "environment", declaredType: "TEXT", notNull: true, defaultValue: null, primaryKeyPosition: 0 },
+      { name: "source_id", declaredType: "INTEGER", notNull: false, defaultValue: null, primaryKeyPosition: 0 },
+      { name: "canonical_source_url", declaredType: "TEXT", notNull: false, defaultValue: null, primaryKeyPosition: 0 },
+      { name: "canonical_source_url_hash", declaredType: "TEXT", notNull: false, defaultValue: null, primaryKeyPosition: 0 },
+      { name: "connector", declaredType: "TEXT", notNull: false, defaultValue: null, primaryKeyPosition: 0 },
+      { name: "source_document_id", declaredType: "TEXT", notNull: false, defaultValue: null, primaryKeyPosition: 0 },
+      { name: "source_document_version_id", declaredType: "TEXT", notNull: false, defaultValue: null, primaryKeyPosition: 0 },
+      { name: "content_hash", declaredType: "TEXT", notNull: false, defaultValue: null, primaryKeyPosition: 0 },
+      { name: "transport_hash", declaredType: "TEXT", notNull: false, defaultValue: null, primaryKeyPosition: 0 },
+      { name: "normalized_content_hash", declaredType: "TEXT", notNull: false, defaultValue: null, primaryKeyPosition: 0 },
+      { name: "hash_semantics_version", declaredType: "TEXT", notNull: false, defaultValue: null, primaryKeyPosition: 0 },
+      { name: "outcome", declaredType: "TEXT", notNull: true, defaultValue: null, primaryKeyPosition: 0 },
+      { name: "reason_code", declaredType: "TEXT", notNull: true, defaultValue: null, primaryKeyPosition: 0 },
+      { name: "detail", declaredType: "TEXT", notNull: true, defaultValue: null, primaryKeyPosition: 0 },
+      { name: "receipt_fingerprint", declaredType: "TEXT", notNull: true, defaultValue: null, primaryKeyPosition: 0 },
+      { name: "created_at", declaredType: "TEXT", notNull: true, defaultValue: "datetime('now')", primaryKeyPosition: 0 },
+    ],
+    foreignKeys: [],
+    requiredSqlFragments: [
+      "item_type text not null check(item_type in ('story','knowledge'))",
+      "environment text not null check(environment in ('local_test','preview','production'))",
+      "outcome text not null check(outcome in ('completed','replayed','blocked','failed'))",
+    ],
+  },
+] as const;
+
+interface RequiredActivationIndex {
+  name: string;
+  table: string;
+  unique: boolean;
+  columns: readonly TraceV1M2SchemaIndexColumn[];
+}
+
+const REQUIRED_ACTIVATION_INDEXES: readonly RequiredActivationIndex[] = [
+  { name: "idx_evidence_freshness_reviews_queue", table: "evidence_freshness_reviews", unique: false, columns: [{ name: "state", descending: false }, { name: "requested_at", descending: false }] },
+  { name: "idx_evidence_freshness_reviews_assertion", table: "evidence_freshness_reviews", unique: false, columns: [{ name: "claim_assertion_id", descending: false }, { name: "requested_at", descending: true }] },
+  { name: "idx_trace_v1_activation_receipts_manifest", table: "trace_v1_activation_receipts", unique: false, columns: [{ name: "manifest_hash", descending: false }, { name: "item_id", descending: false }] },
+] as const;
+
+function normalizedSql(value: string | null | undefined): string {
+  return (value ?? "").replace(/--[^\n]*/g, " ").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function normalizedDefault(value: string | null | undefined): string | null {
+  const normalized = (value ?? "").trim().toLowerCase();
+  if (!normalized) return null;
+  const unquoted = normalized.startsWith("'") && normalized.endsWith("'")
+    ? normalized.slice(1, -1).replaceAll("''", "'")
+    : normalized;
+  return unquoted.replace(/^\((.*)\)$/, "$1").replace(/\s+/g, " ");
+}
+
+function validateTableDefinition(table: SchemaTableSnapshot | undefined, expected: RequiredActivationTable): string[] {
+  if (!table) return [`table:${expected.name}:definition_missing`];
+  const issues: string[] = [];
+  for (const required of expected.columns) {
+    const actual = table.columns.find((column) => column.name === required.name);
+    if (!actual) {
+      issues.push(`table:${expected.name}:column:${required.name}:missing`);
+      continue;
+    }
+    if ((actual.declaredType ?? "").trim().toUpperCase() !== required.declaredType) issues.push(`table:${expected.name}:column:${required.name}:type`);
+    if (actual.notNull !== required.notNull) issues.push(`table:${expected.name}:column:${required.name}:nullability`);
+    if (normalizedDefault(actual.defaultValue) !== normalizedDefault(required.defaultValue)) issues.push(`table:${expected.name}:column:${required.name}:default`);
+    if ((actual.primaryKeyPosition ?? 0) !== required.primaryKeyPosition) issues.push(`table:${expected.name}:column:${required.name}:primary_key`);
+  }
+  const foreignKeys = table.foreignKeys ?? [];
+  for (const required of expected.foreignKeys) {
+    const actual = foreignKeys.find((foreignKey) => foreignKey.from === required.from);
+    if (!actual || actual.table !== required.table || actual.to !== required.to || actual.onDelete.toUpperCase() !== required.onDelete || actual.onUpdate.toUpperCase() !== required.onUpdate) {
+      issues.push(`table:${expected.name}:foreign_key:${required.from}`);
+    }
+  }
+  const sql = normalizedSql(table.createSql);
+  for (const fragment of expected.requiredSqlFragments) {
+    if (!sql.includes(normalizedSql(fragment))) issues.push(`table:${expected.name}:constraint:${fragment}`);
+  }
+  return issues;
+}
+
+function validateIndexDefinition(definition: TraceV1M2SchemaIndexDefinition | undefined, expected: RequiredActivationIndex): string[] {
+  if (!definition) return [`index:${expected.name}:definition_missing`];
+  const actualColumns = definition.columns.map((column) => `${column.name}:${column.descending ? "desc" : "asc"}`);
+  const expectedColumns = expected.columns.map((column) => `${column.name}:${column.descending ? "desc" : "asc"}`);
+  return definition.table !== expected.table || definition.unique !== expected.unique || JSON.stringify(actualColumns) !== JSON.stringify(expectedColumns)
+    ? [`index:${expected.name}:definition`]
+    : [];
+}
+
+function triggerMatches(definition: TraceV1M2SchemaTriggerDefinition | undefined, expectedName: string): boolean {
+  if (!definition) return false;
+  const sql = normalizedSql(definition.sql);
+  if (expectedName === "prevent_evidence_freshness_review_delete") {
+    return definition.table === "evidence_freshness_reviews"
+      && sql.includes("before delete on evidence_freshness_reviews")
+      && sql.includes("raise(abort, 'evidence freshness reviews are append-only')");
+  }
+  return definition.table === "evidence_freshness_reviews"
+    && sql.includes("before update of claim_assertion_id, prior_state, proposed_state, source_document_version_id, reason, requested_by, requested_at, idempotency_key, request_fingerprint on evidence_freshness_reviews")
+    && sql.includes("raise(abort, 'evidence freshness review core fields are immutable')");
+}
+
 export function inspectTraceV1M2ActivationPreflight(
   catalog: TraceV1M2ActivationCatalog,
 ): TraceV1M2ActivationPreflightResult {
@@ -61,22 +236,34 @@ export function inspectTraceV1M2ActivationPreflight(
     ...TRACE_V1_M2_REQUIRED_TRIGGERS.filter((name) => !triggers.has(name)).map((name) => `trigger:${name}`),
   ];
   const ambiguousObjects = catalog.objects ? [] : ["schema_objects"];
-  const failClosed = compatibility.disposition === "FAIL_CLOSED" || ambiguousObjects.length > 0;
+  const invalidObjects = catalog.objects
+    ? [
+        ...REQUIRED_ACTIVATION_TABLES.flatMap((expected) => tables.has(expected.name) ? validateTableDefinition(catalog.tables[expected.name], expected) : []),
+        ...REQUIRED_ACTIVATION_INDEXES.flatMap((expected) => indexes.has(expected.name) ? validateIndexDefinition((catalog.objects.indexDefinitions ?? []).find((definition) => definition.name === expected.name), expected) : []),
+        ...TRACE_V1_M2_REQUIRED_TRIGGERS.filter((name) => triggers.has(name) && !triggerMatches((catalog.objects.triggerDefinitions ?? []).find((definition) => definition.name === name), name)).map((name) => `trigger:${name}:definition`),
+      ]
+    : ["schema_objects:definitions_missing"];
+  const failClosed = compatibility.disposition === "FAIL_CLOSED" || ambiguousObjects.length > 0 || invalidObjects.length > 0;
   const needsMigration = !failClosed && (compatibility.disposition === "MIGRATION_REQUIRED" || missingObjects.length > 0);
-  const activationDisposition: TraceV1M2ActivationDisposition = failClosed
+  const compatibilityDisposition: CompatibilityDisposition = failClosed
     ? "FAIL_CLOSED"
     : needsMigration ? "MIGRATION_REQUIRED" : "ACTIVATION_ALLOWED";
+  const activationDisposition: TraceV1M2ActivationDisposition = compatibilityDisposition === "ACTIVATION_ALLOWED" && missingObjects.length === 0
+    ? "ACTIVATION_ALLOWED"
+    : "ACTIVATION_BLOCKED";
   return {
     ...compatibility,
     activationPreflightVersion: TRACE_V1_M2_ACTIVATION_PREFLIGHT_VERSION,
     activationDisposition,
+    compatibilityDisposition,
+    disposition: compatibilityDisposition,
     requiredTables: TRACE_V1_M2_REQUIRED_TABLES,
     requiredIndexes: TRACE_V1_M2_REQUIRED_INDEXES,
     requiredTriggers: TRACE_V1_M2_REQUIRED_TRIGGERS,
     missingObjects,
     ambiguousObjects,
+    invalidObjects,
     activationBlocked: activationDisposition !== "ACTIVATION_ALLOWED",
-    disposition: activationDisposition,
     canApplyAdditiveMigration: compatibility.canApplyAdditiveMigration && !failClosed,
     ...(failClosed && !compatibility.stopReason ? { stopReason: "SCHEMA_INCOMPATIBLE" as const } : {}),
   };

@@ -47,6 +47,15 @@ export interface SchemaTableSnapshot {
   columns: readonly SchemaColumnSnapshot[];
   createSql?: string | null;
   distinctValues?: Readonly<Record<string, readonly (string | number | null)[]>>;
+  foreignKeys?: readonly SchemaForeignKeySnapshot[];
+}
+
+export interface SchemaForeignKeySnapshot {
+  from: string;
+  table: string;
+  to: string | null;
+  onDelete: string;
+  onUpdate: string;
 }
 
 export interface SchemaCatalogSnapshot {

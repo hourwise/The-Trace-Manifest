@@ -4,7 +4,7 @@ import {
   inspectTraceV1M2ActivationPreflight,
   type TraceV1M2ActivationCatalog,
 } from "../src/lib/server/trace-v1-m2-activation-preflight";
-import type { SchemaTableSnapshot } from "../src/lib/server/trace-v1-m2-contract";
+import type { SchemaForeignKeySnapshot, SchemaTableSnapshot } from "../src/lib/server/trace-v1-m2-contract";
 
 const database = new DatabaseSync(":memory:");
 database.exec(readFileSync("db/schema.sql", "utf8"));
@@ -73,9 +73,26 @@ function readCatalog(): TraceV1M2ActivationCatalog {
       columns: columns.map((column) => ({ name: column.name, declaredType: column.type, notNull: column.notnull === 1, defaultValue: column.dflt_value, primaryKeyPosition: column.pk })),
       createSql: (database.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?").get(name) as { sql: string | null } | undefined)?.sql,
       distinctValues: rows,
+      foreignKeys: (database.prepare(`PRAGMA foreign_key_list(${JSON.stringify(name)})`).all() as Array<{ from: string; table: string; to: string; on_delete: string; on_update: string }>).map((foreignKey): SchemaForeignKeySnapshot => ({
+        from: foreignKey.from,
+        table: foreignKey.table,
+        to: foreignKey.to,
+        onDelete: foreignKey.on_delete,
+        onUpdate: foreignKey.on_update,
+      })),
     };
   }
-  const objects = database.prepare("SELECT type, name FROM sqlite_master WHERE type IN ('table', 'index', 'trigger') ORDER BY type, name").all() as Array<{ type: "table" | "index" | "trigger"; name: string }>;
+  const objects = database.prepare("SELECT type, name, tbl_name, sql FROM sqlite_master WHERE type IN ('table', 'index', 'trigger') ORDER BY type, name").all() as Array<{ type: "table" | "index" | "trigger"; name: string; tbl_name: string; sql: string | null }>;
+  const indexDefinitions = objects.filter((object) => object.type === "index").map((object) => {
+    const indexList = database.prepare(`PRAGMA index_list(${JSON.stringify(object.tbl_name)})`).all() as Array<{ name: string; unique: number }>;
+    const index = indexList.find((candidate) => candidate.name === object.name);
+    const columns = (database.prepare(`PRAGMA index_xinfo(${JSON.stringify(object.name)})`).all() as Array<{ seqno: number; key: number; name: string | null; desc: number }>)
+      .filter((column) => column.key === 1 && column.name !== null)
+      .sort((left, right) => left.seqno - right.seqno)
+      .map((column) => ({ name: column.name as string, descending: column.desc === 1 }));
+    return { name: object.name, table: object.tbl_name, unique: index?.unique === 1, columns };
+  });
+  const triggerDefinitions = objects.filter((object) => object.type === "trigger").map((object) => ({ name: object.name, table: object.tbl_name, sql: object.sql }));
   return {
     schemaIdentity: "db/schema.sql+0068+0071",
     tables,
@@ -83,10 +100,12 @@ function readCatalog(): TraceV1M2ActivationCatalog {
       tables: objects.filter((object) => object.type === "table").map((object) => object.name),
       indexes: objects.filter((object) => object.type === "index").map((object) => object.name),
       triggers: objects.filter((object) => object.type === "trigger").map((object) => object.name),
+      indexDefinitions,
+      triggerDefinitions,
     },
   };
 }
 
 const result = inspectTraceV1M2ActivationPreflight(readCatalog());
 console.log(JSON.stringify(result, null, 2));
-if (result.activationDisposition === "FAIL_CLOSED") process.exitCode = 1;
+if (result.compatibilityDisposition === "FAIL_CLOSED") process.exitCode = 1;

@@ -8,7 +8,7 @@ changes, or any Production/Preview write.
 ## Candidate identity
 
 - Base: `main` at `68baf510de47687759e1602dc517cd23ed3e2eb8`
-- Branch: `codex/trace-v1-m2-bounded-activation`
+- Branch: `codex/trace-v1-m2-r1-remediation`
 - Manifest: `trace-v1-m2-bounded-activation-v1`
 - Manifest ID: `trace-v1-m2-bounded-activation`
 - Manifest hash: `c2c61aea6c96df411e7a30a1a17b84ade1f59c84f2a4b471c2a63d759675a0d7`
@@ -43,9 +43,11 @@ connector mismatch, or a hash mismatch fails closed.
 
 `src/lib/server/trace-v1-m2-executor.ts` is a pure coordinator around the
 existing governed source/claim/provenance/freshness paths. It accepts only a
-narrow `prepareItem` operations port and the immutable manifest. It does not
-accept SQL, table names, arbitrary source URLs, provider calls, or scheduler
-callbacks.
+narrow current-identity/prepare operations port and the immutable manifest. It
+does not accept SQL, table names, arbitrary source URLs, provider calls, or
+scheduler callbacks. Runtime environment and mode values are validated as
+untrusted input before any port method is called; only `LOCAL_TEST` may invoke
+the governed operations port.
 
 The existing `trace-v1-m2-planner.ts` remains the authoritative stage gate.
 The executor supplies a verified source identity and a prepared evidence
@@ -58,8 +60,8 @@ treatment → provenance review → source admission → freshness review →
 conflict/correction/supersession checks → publisher decision`
 
 The executor is not imported by a Worker, Pages route, or cron path in this
-candidate. `execute` is refused for `PREVIEW` and `PRODUCTION`; only
-`LOCAL_TEST` can create local candidate receipts.
+candidate. Every `PREVIEW` and `PRODUCTION` mode is refused before operation
+invocation; only `LOCAL_TEST` can create local candidate receipts.
 
 ## Bounds and replay
 
@@ -75,10 +77,18 @@ The fixed per-invocation bounds are:
 The receipt key is
 `manifestHash:itemId:bounded-activation-v1`. Receipts are append-oriented,
 one per operation key, and contain the manifest identity, item identity,
-stage, environment, source/version identifiers, outcome, reason, and a
-receipt fingerprint. A matching key replays without re-running preparation; a
-conflicting receipt fingerprint fails closed. D1 access is fixed-key lookup
-and insert only. There is no arbitrary SQL port or unbounded graph traversal.
+stage, environment, source/version/content identity, outcome, reason, and a
+receipt fingerprint. Before replay, the current verified identity is resolved
+and compared field-for-field with the receipt. A matching key replays without
+re-running preparation; changed or incomplete current identity and conflicting
+receipt fingerprints fail closed. D1 access is fixed-key lookup and insert
+only. There is no arbitrary SQL port or unbounded graph traversal.
+
+The governed preparation port receives the remaining invocation budget and
+returns an actual typed cost summary for source captures, claims, assertions,
+chunks, knowledge mappings, and selected items. The executor enforces all six
+fixed bounds, including aggregate work across selected items, and requires a
+bounded-stop result before an over-limit unit is processed.
 
 The additive candidate table is `trace_v1_activation_receipts` in
 `db/migration-0071-trace-v1-bounded-activation.sql`. The same candidate
@@ -97,9 +107,12 @@ compatibility contract with the minimum Mission 2 objects:
 - both freshness indexes and the receipt manifest index; and
 - the append-only freshness triggers.
 
-Missing additive fields or objects produce `MIGRATION_REQUIRED`; incompatible
-or ambiguous schema identity produces `FAIL_CLOSED`. Only a complete local
-catalog produces `ACTIVATION_ALLOWED`.
+The preflight validates required table columns, nullability/default/primary-key
+semantics, required foreign keys and constraints, index target/uniqueness/order,
+and trigger table/event/body semantics. Missing additive fields or objects
+produce `MIGRATION_REQUIRED`; incompatible or ambiguous schema identity or
+object definitions produce `FAIL_CLOSED`. The derived top-level disposition is
+explicitly `ACTIVATION_ALLOWED` or `ACTIVATION_BLOCKED`.
 
 ## Deterministic Ask TRACE mode
 
