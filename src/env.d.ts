@@ -7,6 +7,7 @@ interface CloudflarePagesEnv {
   DB: D1Database;
   DEEPSEEK_API_KEY?: string;
   TRACE_ENVIRONMENT?: string;
+  TRACE_ASK_MODE?: string;
   TRACE_ALLOWED_ORIGINS?: string;
   TRACE_VISITOR_HASH_SECRET?: string;
   TRACE_INTERNAL_SERVICE_SECRET?: string;

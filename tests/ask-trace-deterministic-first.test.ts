@@ -343,6 +343,51 @@ async function run(): Promise<void> {
       db.close();
     }
   }
+
+  {
+    const db = new SQLiteD1();
+    const provider = new FakeProvider();
+    try {
+      // Explicit deterministic mode must work without a provider secret and
+      // must not reach the provider even when the decision requires synthesis.
+      const evidence = supportedEvidence().map((item) => ({
+        ...item,
+        canonicalClaimId: undefined,
+        provenanceGroupIds: undefined,
+      }));
+      const decision = await buildAskTraceDecisionPacket(db.asD1(), evidence);
+      const result = await askTrace({
+        ...baseEnvironment,
+        DEEPSEEK_API_KEY: "",
+        TRACE_ASK_MODE: "deterministic",
+        DB: db.asD1(),
+        TRACE_MODEL_PROVIDER: provider,
+      }, {
+        ...requestContext("deterministic-no-provider", evidence, decision),
+        idempotencyKeyHash: "deterministic-no-provider-stable",
+      });
+      assert.equal(result.status, "ok");
+      assert.equal(result.payload?.nonAnswer, false);
+      assert.match(result.payload?.answer ?? "", /reviewed evidence/);
+      assert.equal(provider.calls, 0, "explicit deterministic Ask TRACE never calls a provider");
+      const usage = await db.prepare("SELECT COUNT(*) AS count FROM ai_usage_ledger").first<{ count: number }>();
+      assert.equal(usage?.count, 0, "deterministic Ask TRACE records zero provider usage");
+      const duplicate = await askTrace({
+        ...baseEnvironment,
+        DEEPSEEK_API_KEY: "",
+        TRACE_ASK_MODE: "deterministic",
+        DB: db.asD1(),
+        TRACE_MODEL_PROVIDER: provider,
+      }, {
+        ...requestContext("deterministic-no-provider-replay", evidence, decision),
+        idempotencyKeyHash: "deterministic-no-provider-stable",
+      });
+      assert.equal(duplicate.status, "ok");
+      assert.equal(provider.calls, 0, "deterministic replay remains provider-free");
+    } finally {
+      db.close();
+    }
+  }
 }
 
 await run();

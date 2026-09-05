@@ -3,6 +3,7 @@ import type { TraceAIConfig, TraceModelId } from "./provider";
 export type TraceAIEnvironment = Partial<Record<
   | "DEEPSEEK_API_KEY"
   | "TRACE_ENVIRONMENT"
+  | "TRACE_ASK_MODE"
   | "TRACE_AI_PUBLIC_ENABLED"
   | "TRACE_AI_EDITORIAL_ENABLED"
   | "TRACE_AI_SCHEDULED_ENABLED"
@@ -27,6 +28,8 @@ export type TraceAIEnvironment = Partial<Record<
   | "TRACE_AI_PRO_OUTPUT_USD_PER_MILLION",
   string
 >>;
+
+export type TraceAskMode = "provider" | "deterministic";
 
 function getEnv(runtimeEnv: TraceAIEnvironment, key: keyof TraceAIEnvironment): string {
   const runtimeValue = runtimeEnv[key];
@@ -70,21 +73,25 @@ export function buildConfig(runtimeEnv: TraceAIEnvironment = {}): TraceAIConfig 
   const publicAskTraceEnabled = env("TRACE_AI_PUBLIC_ENABLED") === "true";
   const editorialAIEnabled = env("TRACE_AI_EDITORIAL_ENABLED") === "true";
   const scheduledJobsEnabled = env("TRACE_AI_SCHEDULED_ENABLED") === "true";
-  const anyAIEnabled = publicAskTraceEnabled || editorialAIEnabled || scheduledJobsEnabled;
+  const askModeValue = env("TRACE_ASK_MODE") || "provider";
+  if (askModeValue !== "provider" && askModeValue !== "deterministic") throw new Error("TRACE_ASK_MODE is not allowlisted.");
+  const askMode = askModeValue as TraceAskMode;
+  const providerAIEnabled = editorialAIEnabled || scheduledJobsEnabled || (publicAskTraceEnabled && askMode === "provider");
   const production = env("TRACE_ENVIRONMENT") === "production";
   const apiKey = env("DEEPSEEK_API_KEY");
 
-  if (anyAIEnabled && !apiKey) throw new Error("TRACE AI is enabled but its provider secret is missing.");
+  if (providerAIEnabled && !apiKey) throw new Error("TRACE AI is enabled but its provider secret is missing.");
   const pricingKeys: (keyof TraceAIEnvironment)[] = [
     "TRACE_AI_FLASH_INPUT_USD_PER_MILLION", "TRACE_AI_FLASH_OUTPUT_USD_PER_MILLION",
     "TRACE_AI_PRO_INPUT_USD_PER_MILLION", "TRACE_AI_PRO_OUTPUT_USD_PER_MILLION",
   ];
-  if (production && anyAIEnabled && pricingKeys.some((key) => !env(key))) {
+  if (production && providerAIEnabled && pricingKeys.some((key) => !env(key))) {
     throw new Error("TRACE AI is enabled but reviewed provider pricing configuration is incomplete.");
   }
 
   return {
     publicAskTraceEnabled,
+    askMode,
     editorialAIEnabled,
     scheduledJobsEnabled,
     globalKillSwitch: env("TRACE_AI_GLOBAL_KILL_SWITCH") === "true",

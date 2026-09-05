@@ -335,6 +335,116 @@ function answerPayload(
   };
 }
 
+/**
+ * Application-owned Ask TRACE response.  It deliberately uses evidence text,
+ * identifiers, and the already-governed decision packet only; it never calls
+ * a model and never presents a generated claim as evidence.
+ */
+async function deterministicAnswerPayload(
+  env: TraceAIRuntimeEnvironment,
+  requestId: string,
+  evidence: EvidenceExcerpt[],
+  confidence: DeterministicConfidence,
+  knowledgeWarning: string | null,
+  decision: AskTraceDecisionPacket,
+  policy: AnswerPolicyExpectation,
+): Promise<AskTracePayload> {
+  if (decision.conclusionMode === "multiple_positions") {
+    return safeNonAnswer(requestId, confidence, "The deterministic evidence policy found materially competing positions.", false, policy);
+  }
+  const structured = evidence.some((item) => item.canonicalClaimId !== undefined || item.provenanceGroupIds !== undefined);
+  const citationReady = evidence.filter((item) => item.assertionId && item.sourceDocumentVersionId && item.sourceChunkId
+    && item.startLocator && item.endLocator && item.sourceUrl && /^https?:\/\//.test(item.sourceUrl));
+  if (structured && citationReady.length !== evidence.length) {
+    return safeNonAnswer(requestId, confidence, "Deterministic mode requires a locator-backed citation for every structured evidence record.", false, policy);
+  }
+  if (structured) {
+    const citationInputs = citationReady.map((item) => ({
+      assertionId: item.assertionId!,
+      sourceDocumentVersionId: item.sourceDocumentVersionId!,
+      sourceChunkId: item.sourceChunkId!,
+      startLocator: item.startLocator!,
+      endLocator: item.endLocator!,
+    }));
+    const citationResolution = await resolveAndValidateCitationReferences(env.DB!, citationInputs, citationInputs.map((item) => item.assertionId));
+    if (!citationResolution.passed) {
+      return safeNonAnswer(requestId, confidence, "A deterministic citation did not resolve to the admitted assertion, version, chunk, and locator relationship.", false, policy);
+    }
+  }
+  const answerEvidence = structured ? citationReady : evidence;
+  const grouped = new Map<string, EvidenceExcerpt[]>();
+  for (const item of answerEvidence) {
+    const key = item.sourceId;
+    const group = grouped.get(key) ?? [];
+    group.push(item);
+    grouped.set(key, group);
+  }
+  const sourceSummaries: TraceAnswerSourceSummary[] = [...grouped.entries()].slice(0, 8).map(([sourceId, items]) => ({
+    sourceId,
+    sourceName: items[0].sourceName ?? sourceId,
+    sourceRole: items[0].sourceRole,
+    summary: `${items.length} reviewed evidence record${items.length === 1 ? "" : "s"} retained by deterministic policy.`,
+    materialClaims: items.slice(0, 4).map((item) => item.text),
+    caveats: items[0].trustNotes ? [items[0].trustNotes] : [],
+    publishedAt: items[0].publishedAt ?? null,
+    retrievedAt: items[0].observedAt ?? null,
+  }));
+  const claims: TraceAnswerClaim[] = [];
+  const claimsById = new Map<string, EvidenceExcerpt[]>();
+  for (const item of answerEvidence) {
+    const claimId = item.canonicalClaimId ?? item.claimId ?? `evidence:${item.sourceId}`;
+    const group = claimsById.get(claimId) ?? [];
+    group.push(item);
+    claimsById.set(claimId, group);
+  }
+  for (const [claimId, items] of [...claimsById.entries()].slice(0, 12)) {
+    claims.push({
+      text: items[0].text,
+      evidenceSourceIds: [...new Set(items.map((item) => item.sourceId))],
+      evidenceClaimIds: [...new Set(items.map((item) => item.claimId).filter((id): id is string => Boolean(id)))],
+      claimId,
+      statement: items[0].text,
+      relationship: items[0].relationship ?? "supports",
+      citationAssertionIds: items.map((item) => item.assertionId).filter((id): id is string => Boolean(id)),
+    });
+  }
+  const citations = answerEvidence.filter((item) => item.assertionId && item.sourceDocumentVersionId && item.sourceChunkId && item.startLocator && item.endLocator).map((item) => ({
+    assertionId: item.assertionId!,
+    sourceDocumentVersionId: item.sourceDocumentVersionId!,
+    sourceChunkId: item.sourceChunkId!,
+    startLocator: item.startLocator!,
+    endLocator: item.endLocator!,
+  }));
+  const draft: TraceAnswerDraft = {
+    answer: "TRACE's reviewed evidence supports a bounded answer to this question.",
+    evidenceMode: decision.evidenceMode,
+    conclusionMode: decision.conclusionMode,
+    directAnswer: "TRACE's reviewed evidence supports a bounded answer to this question.",
+    lean: decision.leanPositionId,
+    whyLean: "The lean is selected by the deterministic evidence policy; no model synthesis was performed.",
+    positions: providerPositions(decision, answerEvidence),
+    sourceSummaries,
+    confidence: decision.confidence,
+    confidenceScore: decision.confidenceScore,
+    confidenceReasons: decision.confidenceReasons,
+    limitations: ["Deterministic mode returns application-owned evidence summaries and does not use a provider."],
+    unresolvedQuestions: [],
+    freshestEvidenceAt: confidence.freshestObservedAt,
+    keyPoints: answerEvidence.slice(0, 6).map((item) => item.text),
+    claims,
+    citations,
+    citedSourceIds: [...new Set(answerEvidence.map((item) => item.sourceId))],
+    citedClaimIds: [...new Set(answerEvidence.map((item) => item.claimId).filter((id): id is string => Boolean(id)))],
+    confirmedFacts: [],
+    reportedClaims: [],
+    disagreements: [],
+    caveats: knowledgeWarning ? [knowledgeWarning] : [],
+    whatCouldChange: decision.whatCouldChange.join(" "),
+    proposedConfidence: decision.confidence,
+  };
+  return answerPayload(requestId, draft, answerEvidence, confidence, knowledgeWarning, false, policy, decision);
+}
+
 function usageSettlement(
   config: TraceAIConfig,
   model: TraceModelId,
@@ -410,7 +520,7 @@ export async function askTrace(env: TraceAIRuntimeEnvironment, context: AskTrace
   if (!askEnabled || config.globalKillSwitch) {
     return { status: "temporarily_unavailable", requestId: context.requestId, message: "Ask TRACE is not currently enabled." };
   }
-  if (!env.DB || !config.deepseekApiKey) {
+  if (!env.DB || config.askMode === "provider" && !config.deepseekApiKey || context.adminOverride && !config.deepseekApiKey) {
     return { status: "temporarily_unavailable", requestId: context.requestId, message: "Ask TRACE is not configured." };
   }
 
@@ -482,6 +592,20 @@ export async function askTrace(env: TraceAIRuntimeEnvironment, context: AskTrace
       confidence,
       [knowledgeWarning, exclusionReason, ...decision.confidenceReasons].filter(Boolean).join(" "),
       Boolean(context.adminOverride),
+      answerPolicy,
+    );
+    await governance.completeWithoutModel(context.requestId, payload);
+    return { status: "ok", requestId: context.requestId, payload };
+  }
+
+  if (config.askMode === "deterministic" && !context.adminOverride) {
+    const payload = await deterministicAnswerPayload(
+      env,
+      context.requestId,
+      eligibleEvidence,
+      confidence,
+      knowledgeWarning,
+      decision,
       answerPolicy,
     );
     await governance.completeWithoutModel(context.requestId, payload);

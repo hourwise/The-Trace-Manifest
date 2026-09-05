@@ -258,6 +258,8 @@ export interface ProviderHealth {
 export interface TraceAIConfig {
   // Feature switches
   publicAskTraceEnabled: boolean;
+  /** Explicit opt-in for application-owned no-provider Ask TRACE responses. */
+  askMode: "provider" | "deterministic";
   editorialAIEnabled: boolean;
   scheduledJobsEnabled: boolean;
   globalKillSwitch: boolean;

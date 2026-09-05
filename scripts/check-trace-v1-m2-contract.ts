@@ -1,10 +1,10 @@
 import { readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import {
-  inspectTraceV1M2Compatibility,
-  type SchemaCatalogSnapshot,
-  type SchemaTableSnapshot,
-} from "../src/lib/server/trace-v1-m2-contract";
+  inspectTraceV1M2ActivationPreflight,
+  type TraceV1M2ActivationCatalog,
+} from "../src/lib/server/trace-v1-m2-activation-preflight";
+import type { SchemaTableSnapshot } from "../src/lib/server/trace-v1-m2-contract";
 
 const database = new DatabaseSync(":memory:");
 database.exec(readFileSync("db/schema.sql", "utf8"));
@@ -51,9 +51,10 @@ for (const file of [
   "db/migration-0066-kc-11d-bounded-expiry.sql",
   "db/migration-0067-kc-11g-h-remediation.sql",
   "db/migration-0068-v1-freshness-review.sql",
+  "db/migration-0071-trace-v1-bounded-activation.sql",
 ]) database.exec(readFileSync(file, "utf8"));
 
-function readCatalog(): SchemaCatalogSnapshot {
+function readCatalog(): TraceV1M2ActivationCatalog {
   const tableNames = database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all() as Array<{ name: string }>;
   const tables: Record<string, SchemaTableSnapshot> = {};
   for (const { name } of tableNames) {
@@ -74,9 +75,18 @@ function readCatalog(): SchemaCatalogSnapshot {
       distinctValues: rows,
     };
   }
-  return { schemaIdentity: "db/schema.sql", tables };
+  const objects = database.prepare("SELECT type, name FROM sqlite_master WHERE type IN ('table', 'index', 'trigger') ORDER BY type, name").all() as Array<{ type: "table" | "index" | "trigger"; name: string }>;
+  return {
+    schemaIdentity: "db/schema.sql+0068+0071",
+    tables,
+    objects: {
+      tables: objects.filter((object) => object.type === "table").map((object) => object.name),
+      indexes: objects.filter((object) => object.type === "index").map((object) => object.name),
+      triggers: objects.filter((object) => object.type === "trigger").map((object) => object.name),
+    },
+  };
 }
 
-const result = inspectTraceV1M2Compatibility(readCatalog());
+const result = inspectTraceV1M2ActivationPreflight(readCatalog());
 console.log(JSON.stringify(result, null, 2));
-if (result.disposition === "FAIL_CLOSED") process.exitCode = 1;
+if (result.activationDisposition === "FAIL_CLOSED") process.exitCode = 1;

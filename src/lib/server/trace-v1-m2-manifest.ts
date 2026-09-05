@@ -42,7 +42,8 @@ export interface TraceV1M2ManifestItem {
 }
 
 export interface TraceV1M2ManifestBody {
-  manifestVersion: typeof TRACE_V1_M2_MANIFEST_VERSION;
+  /** Versioned string so later immutable manifest revisions can reuse the pure planner. */
+  manifestVersion: string;
   corpus: "trace-v1-initial-evidence-corpus";
   immutable: true;
   sourceIdentityPolicy: "LOCAL_EVIDENCE_ONLY";

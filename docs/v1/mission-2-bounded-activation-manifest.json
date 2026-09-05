@@ -1,0 +1,696 @@
+{
+  "manifestVersion": "trace-v1-m2-bounded-activation-v1",
+  "manifestId": "trace-v1-m2-bounded-activation",
+  "createdFromMainSha": "68baf510de47687759e1602dc517cd23ed3e2eb8",
+  "corpus": "trace-v1-initial-evidence-corpus",
+  "immutable": true,
+  "sourceIdentityPolicy": "LOCAL_EVIDENCE_ONLY",
+  "sourceIdentityExpectations": [
+    {
+      "identityKey": "source-1-openai-news",
+      "sourceId": 1,
+      "name": "OpenAI News",
+      "canonicalUrl": "https://openai.com/news/rss.xml",
+      "connector": "rss",
+      "status": "EXPECTED_UNVERIFIED",
+      "verificationBasis": "ASSESSMENT_STARTING_POINT"
+    },
+    {
+      "identityKey": "source-116-openai-agents-sdk-docs",
+      "sourceId": 116,
+      "name": "OpenAI Agents SDK Docs",
+      "canonicalUrl": "https://github.com/openai/openai-agents-python",
+      "connector": "github_api",
+      "status": "EXPECTED_UNVERIFIED",
+      "verificationBasis": "ASSESSMENT_STARTING_POINT"
+    },
+    {
+      "identityKey": "source-17-hugging-face-blog",
+      "sourceId": 17,
+      "name": "Hugging Face Blog",
+      "canonicalUrl": "https://huggingface.co/blog/feed.xml",
+      "connector": "rss",
+      "status": "EXPECTED_UNVERIFIED",
+      "verificationBasis": "ASSESSMENT_STARTING_POINT"
+    },
+    {
+      "identityKey": "source-115-model-context-protocol-docs",
+      "sourceId": 115,
+      "name": "Model Context Protocol Docs",
+      "canonicalUrl": "https://github.com/modelcontextprotocol/docs",
+      "connector": "github_api",
+      "status": "EXPECTED_UNVERIFIED",
+      "verificationBasis": "ASSESSMENT_STARTING_POINT"
+    }
+  ],
+  "executorBounds": {
+    "maxItemsPerInvocation": 3,
+    "maxSourceCaptures": 3,
+    "maxClaims": 12,
+    "maxAssertions": 24,
+    "maxChunks": 24,
+    "maxKnowledgeMappings": 3
+  },
+  "items": [
+    {
+      "itemId": "story-377",
+      "kind": "story",
+      "storyId": 377,
+      "title": "DiffusionGemma claims 4x faster text generation",
+      "cohort": "primary",
+      "expectedEvidenceRole": "story_primary_source",
+      "canonicalUrl": null,
+      "canonicalSourceId": null,
+      "expectedConnector": null,
+      "normalizedUrlHashInput": null,
+      "sourceIdentityStatus": "SOURCE_IDENTITY_UNRESOLVED",
+      "unresolvedFields": [
+        "canonicalUrl",
+        "canonicalSourceId",
+        "expectedConnector",
+        "normalizedUrlHashInput"
+      ],
+      "sourceIdentityExpectationKey": null,
+      "remediationRequirements": [
+        "prove source identity before capture",
+        "preserve story claim and source provenance"
+      ],
+      "localIdentityEvidenceFile": "docs/v1/mission-2-bounded-activation.md"
+    },
+    {
+      "itemId": "story-328",
+      "kind": "story",
+      "storyId": 328,
+      "title": "Anthropic's new model Fable faces user restrictions, may impact Codex market share",
+      "cohort": "primary",
+      "expectedEvidenceRole": "story_primary_source",
+      "canonicalUrl": null,
+      "canonicalSourceId": null,
+      "expectedConnector": null,
+      "normalizedUrlHashInput": null,
+      "sourceIdentityStatus": "SOURCE_IDENTITY_UNRESOLVED",
+      "unresolvedFields": [
+        "canonicalUrl",
+        "canonicalSourceId",
+        "expectedConnector",
+        "normalizedUrlHashInput"
+      ],
+      "sourceIdentityExpectationKey": null,
+      "remediationRequirements": [
+        "prove source identity before capture",
+        "preserve story claim and source provenance"
+      ],
+      "localIdentityEvidenceFile": "docs/v1/mission-2-bounded-activation.md"
+    },
+    {
+      "itemId": "story-376",
+      "kind": "story",
+      "storyId": 376,
+      "title": "AI Agent Security Guidance Published",
+      "cohort": "primary",
+      "expectedEvidenceRole": "story_primary_source",
+      "canonicalUrl": null,
+      "canonicalSourceId": null,
+      "expectedConnector": null,
+      "normalizedUrlHashInput": null,
+      "sourceIdentityStatus": "SOURCE_IDENTITY_UNRESOLVED",
+      "unresolvedFields": [
+        "canonicalUrl",
+        "canonicalSourceId",
+        "expectedConnector",
+        "normalizedUrlHashInput"
+      ],
+      "sourceIdentityExpectationKey": null,
+      "remediationRequirements": [
+        "prove source identity before capture",
+        "preserve story claim and source provenance"
+      ],
+      "localIdentityEvidenceFile": "docs/v1/mission-2-bounded-activation.md"
+    },
+    {
+      "itemId": "story-347",
+      "kind": "story",
+      "storyId": 347,
+      "title": "Ex-Meta L8 Engineer Shares Agentic Engineering Workflow",
+      "cohort": "primary",
+      "expectedEvidenceRole": "story_primary_source",
+      "canonicalUrl": null,
+      "canonicalSourceId": null,
+      "expectedConnector": null,
+      "normalizedUrlHashInput": null,
+      "sourceIdentityStatus": "SOURCE_IDENTITY_UNRESOLVED",
+      "unresolvedFields": [
+        "canonicalUrl",
+        "canonicalSourceId",
+        "expectedConnector",
+        "normalizedUrlHashInput"
+      ],
+      "sourceIdentityExpectationKey": null,
+      "remediationRequirements": [
+        "prove source identity before capture",
+        "preserve story claim and source provenance"
+      ],
+      "localIdentityEvidenceFile": "docs/v1/mission-2-bounded-activation.md"
+    },
+    {
+      "itemId": "story-346",
+      "kind": "story",
+      "storyId": 346,
+      "title": "Comparison of RAG, Graph RAG, and Agentic RAG Approaches",
+      "cohort": "primary",
+      "expectedEvidenceRole": "story_primary_source",
+      "canonicalUrl": null,
+      "canonicalSourceId": null,
+      "expectedConnector": null,
+      "normalizedUrlHashInput": null,
+      "sourceIdentityStatus": "SOURCE_IDENTITY_UNRESOLVED",
+      "unresolvedFields": [
+        "canonicalUrl",
+        "canonicalSourceId",
+        "expectedConnector",
+        "normalizedUrlHashInput"
+      ],
+      "sourceIdentityExpectationKey": null,
+      "remediationRequirements": [
+        "prove source identity before capture",
+        "preserve story claim and source provenance"
+      ],
+      "localIdentityEvidenceFile": "docs/v1/mission-2-bounded-activation.md"
+    },
+    {
+      "itemId": "story-345",
+      "kind": "story",
+      "storyId": 345,
+      "title": "Google Announces New Capabilities for Managed Agents in Gemini API",
+      "cohort": "primary",
+      "expectedEvidenceRole": "story_primary_source",
+      "canonicalUrl": null,
+      "canonicalSourceId": null,
+      "expectedConnector": null,
+      "normalizedUrlHashInput": null,
+      "sourceIdentityStatus": "SOURCE_IDENTITY_UNRESOLVED",
+      "unresolvedFields": [
+        "canonicalUrl",
+        "canonicalSourceId",
+        "expectedConnector",
+        "normalizedUrlHashInput"
+      ],
+      "sourceIdentityExpectationKey": null,
+      "remediationRequirements": [
+        "prove source identity before capture",
+        "preserve story claim and source provenance"
+      ],
+      "localIdentityEvidenceFile": "docs/v1/mission-2-bounded-activation.md"
+    },
+    {
+      "itemId": "story-341",
+      "kind": "story",
+      "storyId": 341,
+      "title": "Microsoft VP Discusses Enterprise AI Agent Deployment",
+      "cohort": "primary",
+      "expectedEvidenceRole": "story_primary_source",
+      "canonicalUrl": null,
+      "canonicalSourceId": null,
+      "expectedConnector": null,
+      "normalizedUrlHashInput": null,
+      "sourceIdentityStatus": "SOURCE_IDENTITY_UNRESOLVED",
+      "unresolvedFields": [
+        "canonicalUrl",
+        "canonicalSourceId",
+        "expectedConnector",
+        "normalizedUrlHashInput"
+      ],
+      "sourceIdentityExpectationKey": null,
+      "remediationRequirements": [
+        "prove source identity before capture",
+        "preserve story claim and source provenance"
+      ],
+      "localIdentityEvidenceFile": "docs/v1/mission-2-bounded-activation.md"
+    },
+    {
+      "itemId": "story-291",
+      "kind": "story",
+      "storyId": 291,
+      "title": "Google's AMIE AI matches primary care physicians in disease management study",
+      "cohort": "primary",
+      "expectedEvidenceRole": "story_primary_source",
+      "canonicalUrl": null,
+      "canonicalSourceId": null,
+      "expectedConnector": null,
+      "normalizedUrlHashInput": null,
+      "sourceIdentityStatus": "SOURCE_IDENTITY_UNRESOLVED",
+      "unresolvedFields": [
+        "canonicalUrl",
+        "canonicalSourceId",
+        "expectedConnector",
+        "normalizedUrlHashInput"
+      ],
+      "sourceIdentityExpectationKey": null,
+      "remediationRequirements": [
+        "prove source identity before capture",
+        "preserve story claim and source provenance"
+      ],
+      "localIdentityEvidenceFile": "docs/v1/mission-2-bounded-activation.md"
+    },
+    {
+      "itemId": "story-233",
+      "kind": "story",
+      "storyId": 233,
+      "title": "Multiple llama.cpp patches improve SYCL, SME2, Vulkan, and fix bugs",
+      "cohort": "primary",
+      "expectedEvidenceRole": "story_primary_source",
+      "canonicalUrl": null,
+      "canonicalSourceId": null,
+      "expectedConnector": null,
+      "normalizedUrlHashInput": null,
+      "sourceIdentityStatus": "SOURCE_IDENTITY_UNRESOLVED",
+      "unresolvedFields": [
+        "canonicalUrl",
+        "canonicalSourceId",
+        "expectedConnector",
+        "normalizedUrlHashInput"
+      ],
+      "sourceIdentityExpectationKey": null,
+      "remediationRequirements": [
+        "prove source identity before capture",
+        "prevent duplicate llama.cpp claim admission"
+      ],
+      "localIdentityEvidenceFile": "docs/v1/mission-2-bounded-activation.md"
+    },
+    {
+      "itemId": "story-318",
+      "kind": "story",
+      "storyId": 318,
+      "title": "Bun's Rust rewrite completed in 11 days with AI assistance",
+      "cohort": "primary",
+      "expectedEvidenceRole": "story_primary_source",
+      "canonicalUrl": null,
+      "canonicalSourceId": null,
+      "expectedConnector": null,
+      "normalizedUrlHashInput": null,
+      "sourceIdentityStatus": "SOURCE_IDENTITY_UNRESOLVED",
+      "unresolvedFields": [
+        "canonicalUrl",
+        "canonicalSourceId",
+        "expectedConnector",
+        "normalizedUrlHashInput"
+      ],
+      "sourceIdentityExpectationKey": null,
+      "remediationRequirements": [
+        "prove source identity before capture",
+        "preserve story claim and source provenance"
+      ],
+      "localIdentityEvidenceFile": "docs/v1/mission-2-bounded-activation.md"
+    },
+    {
+      "itemId": "story-348",
+      "kind": "story",
+      "storyId": 348,
+      "title": "Kent Beck discusses Agile, TDD, and trust in AI-era software engineering",
+      "cohort": "primary",
+      "expectedEvidenceRole": "story_primary_source",
+      "canonicalUrl": null,
+      "canonicalSourceId": null,
+      "expectedConnector": null,
+      "normalizedUrlHashInput": null,
+      "sourceIdentityStatus": "SOURCE_IDENTITY_UNRESOLVED",
+      "unresolvedFields": [
+        "canonicalUrl",
+        "canonicalSourceId",
+        "expectedConnector",
+        "normalizedUrlHashInput"
+      ],
+      "sourceIdentityExpectationKey": null,
+      "remediationRequirements": [
+        "prove source identity before capture",
+        "preserve story claim and source provenance"
+      ],
+      "localIdentityEvidenceFile": "docs/v1/mission-2-bounded-activation.md"
+    },
+    {
+      "itemId": "story-305",
+      "kind": "story",
+      "storyId": 305,
+      "title": "Article Explains Progression from AI Answering Questions to Autonomous Agents",
+      "cohort": "primary",
+      "expectedEvidenceRole": "story_primary_source",
+      "canonicalUrl": null,
+      "canonicalSourceId": null,
+      "expectedConnector": null,
+      "normalizedUrlHashInput": null,
+      "sourceIdentityStatus": "SOURCE_IDENTITY_UNRESOLVED",
+      "unresolvedFields": [
+        "canonicalUrl",
+        "canonicalSourceId",
+        "expectedConnector",
+        "normalizedUrlHashInput"
+      ],
+      "sourceIdentityExpectationKey": null,
+      "remediationRequirements": [
+        "prove source identity before capture",
+        "preserve story claim and source provenance"
+      ],
+      "localIdentityEvidenceFile": "docs/v1/mission-2-bounded-activation.md"
+    },
+    {
+      "itemId": "story-351",
+      "kind": "story",
+      "storyId": 351,
+      "title": "Engineering departments show trend of reducing AI spending",
+      "cohort": "primary",
+      "expectedEvidenceRole": "story_primary_source",
+      "canonicalUrl": null,
+      "canonicalSourceId": null,
+      "expectedConnector": null,
+      "normalizedUrlHashInput": null,
+      "sourceIdentityStatus": "SOURCE_IDENTITY_UNRESOLVED",
+      "unresolvedFields": [
+        "canonicalUrl",
+        "canonicalSourceId",
+        "expectedConnector",
+        "normalizedUrlHashInput"
+      ],
+      "sourceIdentityExpectationKey": null,
+      "remediationRequirements": [
+        "prove source identity before capture",
+        "preserve story claim and source provenance"
+      ],
+      "localIdentityEvidenceFile": "docs/v1/mission-2-bounded-activation.md"
+    },
+    {
+      "itemId": "story-325",
+      "kind": "story",
+      "storyId": 325,
+      "title": "Figma CEO Dylan Field Discusses AI as a Tailwind for Design",
+      "cohort": "primary",
+      "expectedEvidenceRole": "story_primary_source",
+      "canonicalUrl": null,
+      "canonicalSourceId": null,
+      "expectedConnector": null,
+      "normalizedUrlHashInput": null,
+      "sourceIdentityStatus": "SOURCE_IDENTITY_UNRESOLVED",
+      "unresolvedFields": [
+        "canonicalUrl",
+        "canonicalSourceId",
+        "expectedConnector",
+        "normalizedUrlHashInput"
+      ],
+      "sourceIdentityExpectationKey": null,
+      "remediationRequirements": [
+        "prove source identity before capture",
+        "preserve story claim and source provenance"
+      ],
+      "localIdentityEvidenceFile": "docs/v1/mission-2-bounded-activation.md"
+    },
+    {
+      "itemId": "story-320",
+      "kind": "story",
+      "storyId": 320,
+      "title": "Pragmatic Engineer AMA covers AI, engineering, hiring, and careers",
+      "cohort": "primary",
+      "expectedEvidenceRole": "story_primary_source",
+      "canonicalUrl": null,
+      "canonicalSourceId": null,
+      "expectedConnector": null,
+      "normalizedUrlHashInput": null,
+      "sourceIdentityStatus": "SOURCE_IDENTITY_UNRESOLVED",
+      "unresolvedFields": [
+        "canonicalUrl",
+        "canonicalSourceId",
+        "expectedConnector",
+        "normalizedUrlHashInput"
+      ],
+      "sourceIdentityExpectationKey": null,
+      "remediationRequirements": [
+        "prove source identity before capture",
+        "preserve story claim and source provenance"
+      ],
+      "localIdentityEvidenceFile": "docs/v1/mission-2-bounded-activation.md"
+    },
+    {
+      "itemId": "story-339",
+      "kind": "story",
+      "storyId": 339,
+      "title": "Google announces $1.5 billion data center expansion in Alabama",
+      "cohort": "reserve",
+      "expectedEvidenceRole": "story_reserve_source",
+      "canonicalUrl": null,
+      "canonicalSourceId": null,
+      "expectedConnector": null,
+      "normalizedUrlHashInput": null,
+      "sourceIdentityStatus": "SOURCE_IDENTITY_UNRESOLVED",
+      "unresolvedFields": [
+        "canonicalUrl",
+        "canonicalSourceId",
+        "expectedConnector",
+        "normalizedUrlHashInput"
+      ],
+      "sourceIdentityExpectationKey": null,
+      "remediationRequirements": [
+        "prove source identity before capture",
+        "preserve story claim and source provenance"
+      ],
+      "localIdentityEvidenceFile": "docs/v1/mission-2-bounded-activation.md"
+    },
+    {
+      "itemId": "story-293",
+      "kind": "story",
+      "storyId": 293,
+      "title": "University of Waterloo students develop AI prototypes including sign language tutors",
+      "cohort": "reserve",
+      "expectedEvidenceRole": "story_reserve_source",
+      "canonicalUrl": null,
+      "canonicalSourceId": null,
+      "expectedConnector": null,
+      "normalizedUrlHashInput": null,
+      "sourceIdentityStatus": "SOURCE_IDENTITY_UNRESOLVED",
+      "unresolvedFields": [
+        "canonicalUrl",
+        "canonicalSourceId",
+        "expectedConnector",
+        "normalizedUrlHashInput"
+      ],
+      "sourceIdentityExpectationKey": null,
+      "remediationRequirements": [
+        "prove source identity before capture",
+        "preserve story claim and source provenance"
+      ],
+      "localIdentityEvidenceFile": "docs/v1/mission-2-bounded-activation.md"
+    },
+    {
+      "itemId": "story-378",
+      "kind": "story",
+      "storyId": 378,
+      "title": "EU initiative aims to advance robotics sector",
+      "cohort": "reserve",
+      "expectedEvidenceRole": "story_reserve_source",
+      "canonicalUrl": null,
+      "canonicalSourceId": null,
+      "expectedConnector": null,
+      "normalizedUrlHashInput": null,
+      "sourceIdentityStatus": "SOURCE_IDENTITY_UNRESOLVED",
+      "unresolvedFields": [
+        "canonicalUrl",
+        "canonicalSourceId",
+        "expectedConnector",
+        "normalizedUrlHashInput"
+      ],
+      "sourceIdentityExpectationKey": null,
+      "remediationRequirements": [
+        "prove source identity before capture",
+        "preserve story claim and source provenance"
+      ],
+      "localIdentityEvidenceFile": "docs/v1/mission-2-bounded-activation.md"
+    },
+    {
+      "itemId": "story-324",
+      "kind": "story",
+      "storyId": 324,
+      "title": "Stratechery Weekly Roundup: Vibe Coding, Apple in Europe, and Midsummer Mailbag",
+      "cohort": "reserve",
+      "expectedEvidenceRole": "story_reserve_source",
+      "canonicalUrl": null,
+      "canonicalSourceId": null,
+      "expectedConnector": null,
+      "normalizedUrlHashInput": null,
+      "sourceIdentityStatus": "SOURCE_IDENTITY_UNRESOLVED",
+      "unresolvedFields": [
+        "canonicalUrl",
+        "canonicalSourceId",
+        "expectedConnector",
+        "normalizedUrlHashInput"
+      ],
+      "sourceIdentityExpectationKey": null,
+      "remediationRequirements": [
+        "prove source identity before capture",
+        "preserve story claim and source provenance"
+      ],
+      "localIdentityEvidenceFile": "docs/v1/mission-2-bounded-activation.md"
+    },
+    {
+      "itemId": "story-317",
+      "kind": "story",
+      "storyId": 317,
+      "title": "Loop Engineering: A New Trend or Passing Fad?",
+      "cohort": "reserve",
+      "expectedEvidenceRole": "story_reserve_source",
+      "canonicalUrl": null,
+      "canonicalSourceId": null,
+      "expectedConnector": null,
+      "normalizedUrlHashInput": null,
+      "sourceIdentityStatus": "SOURCE_IDENTITY_UNRESOLVED",
+      "unresolvedFields": [
+        "canonicalUrl",
+        "canonicalSourceId",
+        "expectedConnector",
+        "normalizedUrlHashInput"
+      ],
+      "sourceIdentityExpectationKey": null,
+      "remediationRequirements": [
+        "prove source identity before capture",
+        "preserve story claim and source provenance"
+      ],
+      "localIdentityEvidenceFile": "docs/v1/mission-2-bounded-activation.md"
+    },
+    {
+      "itemId": "knowledge-what-is-an-ai-agent-and-when-should-one-be-used-5b742525",
+      "kind": "knowledge",
+      "knowledgeId": "knowledge-what-is-an-ai-agent-and-when-should-one-be-used-5b742525",
+      "expectedEvidenceRole": "knowledge_document_source",
+      "canonicalUrl": null,
+      "canonicalSourceId": null,
+      "expectedConnector": null,
+      "normalizedUrlHashInput": null,
+      "sourceIdentityStatus": "SOURCE_IDENTITY_UNRESOLVED",
+      "unresolvedFields": [
+        "canonicalUrl",
+        "canonicalSourceId",
+        "expectedConnector",
+        "normalizedUrlHashInput"
+      ],
+      "sourceIdentityExpectationKey": "source-1-openai-news",
+      "remediationRequirements": [
+        "prove source identity before capture",
+        "preserve source/version/chunk provenance"
+      ],
+      "localIdentityEvidenceFile": "docs/v1/mission-2-bounded-activation.md"
+    },
+    {
+      "itemId": "knowledge-how-should-an-ai-coding-agent-be-secured-d3c9c019",
+      "kind": "knowledge",
+      "knowledgeId": "knowledge-how-should-an-ai-coding-agent-be-secured-d3c9c019",
+      "expectedEvidenceRole": "knowledge_document_source",
+      "canonicalUrl": null,
+      "canonicalSourceId": null,
+      "expectedConnector": null,
+      "normalizedUrlHashInput": null,
+      "sourceIdentityStatus": "SOURCE_IDENTITY_UNRESOLVED",
+      "unresolvedFields": [
+        "canonicalUrl",
+        "canonicalSourceId",
+        "expectedConnector",
+        "normalizedUrlHashInput"
+      ],
+      "sourceIdentityExpectationKey": "source-1-openai-news",
+      "remediationRequirements": [
+        "prove source identity before capture",
+        "retain security-specific claim relationships"
+      ],
+      "localIdentityEvidenceFile": "docs/v1/mission-2-bounded-activation.md"
+    },
+    {
+      "itemId": "knowledge-what-are-ai-guardrails-and-what-can-they-actually-protect-against-2b010204",
+      "kind": "knowledge",
+      "knowledgeId": "knowledge-what-are-ai-guardrails-and-what-can-they-actually-protect-against-2b010204",
+      "expectedEvidenceRole": "knowledge_document_source",
+      "canonicalUrl": null,
+      "canonicalSourceId": null,
+      "expectedConnector": null,
+      "normalizedUrlHashInput": null,
+      "sourceIdentityStatus": "SOURCE_IDENTITY_UNRESOLVED",
+      "unresolvedFields": [
+        "canonicalUrl",
+        "canonicalSourceId",
+        "expectedConnector",
+        "normalizedUrlHashInput"
+      ],
+      "sourceIdentityExpectationKey": "source-116-openai-agents-sdk-docs",
+      "remediationRequirements": [
+        "prove source identity before capture",
+        "retain guardrail scope and limitation claims"
+      ],
+      "localIdentityEvidenceFile": "docs/v1/mission-2-bounded-activation.md"
+    },
+    {
+      "itemId": "knowledge-how-should-multiple-ai-agents-coordinate-and-delegate-work-8d45a76a",
+      "kind": "knowledge",
+      "knowledgeId": "knowledge-how-should-multiple-ai-agents-coordinate-and-delegate-work-8d45a76a",
+      "expectedEvidenceRole": "knowledge_document_source",
+      "canonicalUrl": null,
+      "canonicalSourceId": null,
+      "expectedConnector": null,
+      "normalizedUrlHashInput": null,
+      "sourceIdentityStatus": "SOURCE_IDENTITY_UNRESOLVED",
+      "unresolvedFields": [
+        "canonicalUrl",
+        "canonicalSourceId",
+        "expectedConnector",
+        "normalizedUrlHashInput"
+      ],
+      "sourceIdentityExpectationKey": "source-116-openai-agents-sdk-docs",
+      "remediationRequirements": [
+        "prove source identity before capture",
+        "retain multi-agent relationship and delegation claims"
+      ],
+      "localIdentityEvidenceFile": "docs/v1/mission-2-bounded-activation.md"
+    },
+    {
+      "itemId": "knowledge-what-is-ai-model-quantization-and-does-it-reduce-quality-62978647",
+      "kind": "knowledge",
+      "knowledgeId": "knowledge-what-is-ai-model-quantization-and-does-it-reduce-quality-62978647",
+      "expectedEvidenceRole": "knowledge_document_source",
+      "canonicalUrl": null,
+      "canonicalSourceId": null,
+      "expectedConnector": null,
+      "normalizedUrlHashInput": null,
+      "sourceIdentityStatus": "SOURCE_IDENTITY_UNRESOLVED",
+      "unresolvedFields": [
+        "canonicalUrl",
+        "canonicalSourceId",
+        "expectedConnector",
+        "normalizedUrlHashInput"
+      ],
+      "sourceIdentityExpectationKey": "source-17-hugging-face-blog",
+      "remediationRequirements": [
+        "prove source identity before capture",
+        "retain model quality and limitation claims"
+      ],
+      "localIdentityEvidenceFile": "docs/v1/mission-2-bounded-activation.md"
+    },
+    {
+      "itemId": "knowledge-what-is-the-model-context-protocol-and-when-should-it-be-used-c93ef1b9",
+      "kind": "knowledge",
+      "knowledgeId": "knowledge-what-is-the-model-context-protocol-and-when-should-it-be-used-c93ef1b9",
+      "expectedEvidenceRole": "knowledge_document_source",
+      "canonicalUrl": null,
+      "canonicalSourceId": null,
+      "expectedConnector": null,
+      "normalizedUrlHashInput": null,
+      "sourceIdentityStatus": "SOURCE_IDENTITY_UNRESOLVED",
+      "unresolvedFields": [
+        "canonicalUrl",
+        "canonicalSourceId",
+        "expectedConnector",
+        "normalizedUrlHashInput"
+      ],
+      "sourceIdentityExpectationKey": "source-115-model-context-protocol-docs",
+      "remediationRequirements": [
+        "prove source identity before capture",
+        "retain protocol scope and adoption claims"
+      ],
+      "localIdentityEvidenceFile": "docs/v1/mission-2-bounded-activation.md"
+    }
+  ],
+  "manifestHash": "c2c61aea6c96df411e7a30a1a17b84ade1f59c84f2a4b471c2a63d759675a0d7",
+  "manifestIdentity": "trace-v1-m2-bounded-activation-v1:c2c61aea6c96df411e7a30a1a17b84ade1f59c84f2a4b471c2a63d759675a0d7"
+}
