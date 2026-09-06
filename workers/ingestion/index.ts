@@ -29,6 +29,7 @@ import { verifyInternalRequestSignature } from "../../src/security/internal-sign
 import type { OperatorRole } from "../../src/security/access-auth";
 import { isReviewQueueScope, REVIEW_QUEUE_DEFAULT_LIMITS, REVIEW_QUEUE_MAX_LIMIT, type ReviewQueueScope } from "../../src/lib/review-queue-contract";
 import { listReviewQueueClusters } from "../../src/lib/server/review-queue";
+import { getEditorialClusterEvidence } from "../../src/lib/server/editorial-evidence";
 import { admitAndQueueFeedCapture, admitAndQueueManualCapture, admitAndQueueKnowledgeDocumentCapture } from "./knowledge-capture-queue";
 import { consumeKnowledgeCaptureBatch } from "./knowledge-capture-consumer";
 import { recalculateEvidenceScores, recalculateExpiredEvidence } from "../../src/lib/server/evidence-recalculation";
@@ -76,7 +77,7 @@ const RELATED_ACTION_RELATIONSHIPS: Partial<Record<RelatedItemAction, string>> =
 
 const READ_ADMIN_ROUTES = new Set([
   "/admin/sources", "/admin/sources/health", "/admin/jobs", "/admin/cron-runs",
-  "/admin/corrections", "/admin/published-stories", "/admin/clusters", "/admin/cluster-sources",
+  "/admin/corrections", "/admin/published-stories", "/admin/clusters", "/admin/cluster-sources", "/admin/cluster-evidence",
   "/admin/candidates", "/admin/social-signals", "/admin/related-items",
 ]);
 const WRITE_ADMIN_ROUTES = new Set([
@@ -1123,6 +1124,8 @@ async function handleAdminRoute(
       return handleClustersList(request, env);
     case "/admin/cluster-sources":
       return handleClusterSources(request, env);
+    case "/admin/cluster-evidence":
+      return handleClusterEvidence(request, env);
     case "/admin/archive-cluster":
       return handleArchiveCluster(request, env);
     case "/admin/related-items":
@@ -1928,6 +1931,19 @@ async function handleClusterSources(request: Request, env: Env): Promise<Respons
 
   const sources = await getClusterSources(env, clusterId);
   return Response.json(sources);
+}
+
+async function handleClusterEvidence(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const clusterId = Number(url.searchParams.get("clusterId") || "0");
+
+  if (!Number.isInteger(clusterId) || clusterId < 1) {
+    return Response.json({ error: "clusterId query param is required" }, { status: 400 });
+  }
+
+  const evidence = await getEditorialClusterEvidence(env.DB, clusterId);
+  if (!evidence) return Response.json({ error: "Cluster not found." }, { status: 404 });
+  return Response.json(evidence);
 }
 
 async function handleArchiveCluster(request: Request, env: Env): Promise<Response> {

@@ -109,6 +109,15 @@ try {
         <div id="source-list" style="display:flex;flex-direction:column;gap:0.75rem;max-height:400px;overflow-y:auto;"></div>
       </div>
 
+      <!-- Canonical claims and evidence — appears only after a cluster is selected -->
+      <section id="claims-evidence-panel" class="card" style="margin-bottom:1.5rem;background:var(--surface-2);display:none;">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;gap:0.75rem;flex-wrap:wrap;">
+          <h3 style="font-size:0.95rem;margin:0;">Claims &amp; Evidence</h3>
+          <span id="claims-evidence-summary" class="meta" style="font-size:0.75rem;"></span>
+        </div>
+        <div id="claims-evidence-body" style="margin-top:0.75rem;"></div>
+      </section>
+
       <!-- Editorial fields -->
       <div class="card" style="margin-bottom:1.5rem;background:var(--surface-2);">
         <div style="display:flex;flex-direction:column;gap:1rem;">
@@ -207,6 +216,12 @@ try {
 
     <script>
       import type { ReviewQueuePublishableCluster } from "../../lib/review-queue-contract";
+      import type {
+        EditorialAssertion,
+        EditorialClaim,
+        EditorialClusterEvidence,
+        EditorialEvidenceAttachment,
+      } from "../../lib/editorial-evidence-contract";
 
       function authHeaders(method: string = "GET"): Record<string, string> {
         // Only set Content-Type for requests with a body; adding it to GET
@@ -404,11 +419,153 @@ try {
 
       // Load source material when cluster is selected
       let currentSources: Array<{ title: string; excerpt: string | null }> = [];
+      let evidenceRequestToken = 0;
+
+      function displayState(value: string | null | undefined): string {
+        return (value ?? "not recorded").replaceAll("_", " ");
+      }
+
+      function plural(count: number, singular: string, pluralForm = `${singular}s`): string {
+        return `${count} ${count === 1 ? singular : pluralForm}`;
+      }
+
+      function assertionPosture(relationship: string): { label: string; style: string } {
+        if (["supports", "partially_supports", "reproduces"].includes(relationship)) {
+          return { label: "Supporting", style: "color:var(--ev-confirmed);" };
+        }
+        if (["contradicts", "fails_to_reproduce"].includes(relationship)) {
+          return { label: "Disputing", style: "color:var(--ev-disputed);" };
+        }
+        return { label: "Context / qualification", style: "color:var(--muted);" };
+      }
+
+      function sourceMarkup(source: EditorialAssertion["source"] | EditorialEvidenceAttachment["source"]): string {
+        if (!source) return '<span class="meta">Source unavailable in canonical record.</span>';
+        const sourceLabel = `${escapeHTML(source.name)}${source.tier ? ` · Tier ${escapeHTML(source.tier)}` : ""}`;
+        const link = source.url
+          ? `<a href="${escapeHTML(safeExternalUrl(source.url))}" target="_blank" rel="noopener">Open authoritative source</a>`
+          : '<span class="meta">No safe source URL recorded.</span>';
+        const dates = [
+          source.publishedAt ? `published ${escapeHTML(source.publishedAt)}` : "",
+          source.retrievedAt ? `retrieved ${escapeHTML(source.retrievedAt)}` : "",
+        ].filter(Boolean).join(" · ");
+        return `<span>${sourceLabel}</span> · ${link}${dates ? ` · <span class="meta">${dates}</span>` : ""}`;
+      }
+
+      function assertionMarkup(assertion: EditorialAssertion): string {
+        const posture = assertionPosture(assertion.relationship);
+        const provenance = assertion.provenance
+          ? `<div class="meta" style="margin-top:0.35rem;"><strong>Provenance:</strong> ${escapeHTML(displayState(assertion.provenance.originType))} · ${escapeHTML(assertion.provenance.explanation)} <span>(group ${escapeHTML(assertion.provenance.groupId)})</span></div>`
+          : '<div class="meta" style="margin-top:0.35rem;"><strong>Provenance:</strong> not recorded</div>';
+        const document = assertion.sourceDocument
+          ? `<div class="meta" style="margin-top:0.35rem;"><strong>Source record:</strong> ${escapeHTML(assertion.sourceDocument.versionId)} · admission ${escapeHTML(displayState(assertion.sourceDocument.admissionState))}${assertion.sourceDocument.startLocator || assertion.sourceDocument.endLocator ? ` · locator ${escapeHTML([assertion.sourceDocument.startLocator, assertion.sourceDocument.endLocator].filter(Boolean).join("–"))}` : ""}</div>`
+          : '<div class="meta" style="margin-top:0.35rem;"><strong>Source record:</strong> unavailable</div>';
+        return `
+          <details style="padding:0.45rem 0;border-bottom:1px solid var(--border-light);">
+            <summary style="cursor:pointer;display:flex;gap:0.45rem;align-items:baseline;flex-wrap:wrap;">
+              <span class="badge" style="font-size:0.63rem;${posture.style}">${posture.label}</span>
+              <strong>${escapeHTML(displayState(assertion.relationship))}</strong>
+              <span class="meta">${escapeHTML(displayState(assertion.admissionState))} · ${escapeHTML(displayState(assertion.freshnessState))} · ${escapeHTML(displayState(assertion.reviewerState))}</span>
+            </summary>
+            <p style="margin:0.5rem 0 0;font-size:0.82rem;line-height:1.45;">${escapeHTML(assertion.text)}</p>
+            <div class="meta" style="margin-top:0.35rem;"><strong>Source:</strong> ${sourceMarkup(assertion.source)}</div>
+            <div class="meta" style="margin-top:0.35rem;"><strong>Evidence treatment:</strong> ${escapeHTML(displayState(assertion.evidenceTreatment))} · <strong>directness:</strong> ${escapeHTML(displayState(assertion.directness))} · <strong>confidence:</strong> ${escapeHTML(String(assertion.confidence))}</div>
+            ${document}
+            ${provenance}
+          </details>
+        `;
+      }
+
+      function attachmentMarkup(attachment: EditorialEvidenceAttachment): string {
+        return `
+          <div style="padding:0.45rem 0;border-bottom:1px solid var(--border-light);font-size:0.82rem;">
+            <div style="display:flex;gap:0.45rem;align-items:baseline;flex-wrap:wrap;">
+              <span class="badge" style="font-size:0.63rem;">${escapeHTML(displayState(attachment.eligibilityState))}</span>
+              <strong>${escapeHTML(displayState(attachment.relationship))}</strong>
+              <span class="meta">reviewed ${escapeHTML(attachment.reviewedAt)} by ${escapeHTML(attachment.reviewedBy)}</span>
+            </div>
+            <div class="meta" style="margin-top:0.3rem;"><strong>Source:</strong> ${sourceMarkup(attachment.source)}</div>
+            <div class="meta" style="margin-top:0.3rem;"><strong>Eligibility reason:</strong> ${escapeHTML(attachment.eligibilityReason)}</div>
+            ${attachment.explanation ? `<div class="meta" style="margin-top:0.3rem;"><strong>Review note:</strong> ${escapeHTML(attachment.explanation)}</div>` : ""}
+          </div>
+        `;
+      }
+
+      function claimMarkup(claim: EditorialClaim, index: number): string {
+        const noAdmitted = claim.assertionCount > 0 && claim.admittedAssertionCount === 0;
+        const assertionSection = claim.assertionCount === 0
+          ? '<p class="meta" style="margin:0.4rem 0 0;">No assertions are currently mapped to this claim.</p>'
+          : `<div style="margin-top:0.5rem;">${claim.assertions.map(assertionMarkup).join("")}</div>${claim.assertionsTruncated ? `<p class="meta" style="margin:0.45rem 0 0;">Showing ${claim.assertions.length} of ${claim.assertionCount} assertions.</p>` : ""}`;
+        const attachmentSection = claim.attachmentCount === 0
+          ? '<p class="meta" style="margin:0.4rem 0 0;">No story evidence attachments are recorded for this claim.</p>'
+          : `<div style="margin-top:0.5rem;">${claim.attachments.map(attachmentMarkup).join("")}</div>${claim.attachmentsTruncated ? `<p class="meta" style="margin:0.45rem 0 0;">Showing ${claim.attachments.length} of ${claim.attachmentCount} evidence attachments.</p>` : ""}`;
+        return `
+          <details open style="padding:0.65rem 0;border-top:1px solid var(--border-light);">
+            <summary style="cursor:pointer;display:flex;gap:0.45rem;align-items:baseline;flex-wrap:wrap;">
+              <strong>Claim ${index + 1}</strong>
+              <span class="meta">${escapeHTML(displayState(claim.claimState))} · ${escapeHTML(displayState(claim.materiality))} · ${escapeHTML(displayState(claim.role))}</span>
+              <span class="badge" style="font-size:0.63rem;">${escapeHTML(displayState(claim.evidenceStatus))}</span>
+            </summary>
+            <p style="margin:0.55rem 0 0;font-size:0.9rem;line-height:1.45;">${escapeHTML(claim.text)}</p>
+            <p class="meta" style="margin:0.45rem 0 0;">Canonical claim <code>${escapeHTML(claim.canonicalClaimId)}</code> · ${plural(claim.assertionCount, "assertion")} · ${plural(claim.admittedAssertionCount, "admitted assertion")} · ${plural(claim.eligibleAttachmentCount, "eligible attachment")}${claim.score === null ? " · no score snapshot" : ` · score ${escapeHTML(String(claim.score))}`}</p>
+            ${noAdmitted ? '<p class="meta" style="margin:0.4rem 0 0;color:var(--ev-disputed);">Claims exist but no admitted assertions are present.</p>' : ""}
+            <h4 style="font-size:0.8rem;margin:0.7rem 0 0.1rem;">Assertions</h4>
+            ${assertionSection}
+            <h4 style="font-size:0.8rem;margin:0.8rem 0 0.1rem;">Evidence attachments</h4>
+            ${attachmentSection}
+          </details>
+        `;
+      }
+
+      function renderEditorialEvidence(data: EditorialClusterEvidence): void {
+        const summary = $<HTMLElement>("claims-evidence-summary");
+        const body = $<HTMLElement>("claims-evidence-body");
+        if (!summary || !body) return;
+        summary.textContent = `${plural(data.claimCount, "canonical claim")} · ${plural(data.admittedAssertionCount, "admitted assertion")} · ${plural(data.eligibleAttachmentCount, "eligible attachment")}`;
+        if (data.claimCount === 0) {
+          body.innerHTML = '<p class="meta">No canonical claims are currently mapped to this story. No extraction or mapping was started.</p>';
+          return;
+        }
+        body.innerHTML = `${data.claimsTruncated ? `<p class="meta" style="margin:0 0 0.6rem;">Showing ${data.claims.length} of ${data.claimCount} canonical claims.</p>` : ""}${data.claims.map(claimMarkup).join("")}`;
+      }
+
+      function resetEditorialEvidenceState(hide = true): void {
+        evidenceRequestToken += 1;
+        const panel = document.getElementById("claims-evidence-panel");
+        const summary = $<HTMLElement>("claims-evidence-summary");
+        const body = $<HTMLElement>("claims-evidence-body");
+        if (panel && hide) panel.style.display = "none";
+        if (summary) summary.textContent = "";
+        if (body) body.replaceChildren();
+      }
+
+      async function loadEditorialEvidence(clusterId: number): Promise<void> {
+        const panel = document.getElementById("claims-evidence-panel");
+        const summary = $<HTMLElement>("claims-evidence-summary");
+        const body = $<HTMLElement>("claims-evidence-body");
+        if (!panel || !summary || !body) return;
+        const requestToken = ++evidenceRequestToken;
+        panel.style.display = "block";
+        summary.textContent = "Loading…";
+        body.innerHTML = '<p class="meta">Loading canonical claims and evidence…</p>';
+        try {
+          const res = await adminFetch(`/api/admin/cluster-evidence?clusterId=${clusterId}`);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const data = await res.json() as EditorialClusterEvidence;
+          if (requestToken !== evidenceRequestToken) return;
+          renderEditorialEvidence(data);
+        } catch (error: unknown) {
+          if (requestToken !== evidenceRequestToken) return;
+          summary.textContent = "Unavailable";
+          body.innerHTML = `<p class="meta" style="color:var(--ev-disputed);">Canonical claims and evidence could not be loaded. ${escapeHTML(errorMessage(error, "Unknown error"))}</p>`;
+        }
+      }
 
       function resetSelectedClusterState(): void {
         const select = $<HTMLSelectElement>("cluster-select");
         if (select) select.value = "";
         currentSources = [];
+        resetEditorialEvidenceState();
 
         const sourcePanel = document.getElementById("source-material");
         const sourceList = document.getElementById("source-list");
@@ -441,7 +598,7 @@ try {
         const aiResult = document.getElementById("ai-result");
         if (!panel || !list || !count) return;
 
-        if (!clusterId) { panel.style.display = "none"; currentSources = []; return; }
+        if (!clusterId) { panel.style.display = "none"; currentSources = []; resetEditorialEvidenceState(); return; }
         panel.style.display = "block";
         list.innerHTML = '<p class="meta">Loading source material…</p>';
         count.textContent = "";
@@ -462,6 +619,9 @@ try {
           if (whyEl && detail.why && !whyEl.value.trim()) whyEl.value = detail.why;
           checkPublishReady();
         }
+
+        // Source material and canonical evidence have independent read-only lifecycles.
+        void loadEditorialEvidence(clusterId);
 
         try {
           const res = await adminFetch(`/api/admin/cluster-sources?clusterId=${clusterId}`);
