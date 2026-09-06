@@ -21,12 +21,14 @@ import {
   publishStory, updateStoryStatus, publishBriefing,
   getPublishedStories, getPublishedStoryBySlug, getPublishedTopics,
   getLatestPublishedBriefing, getPublishedSourcesForStory, getRelatedStories,
-  getAllClusters, getClusterSources, archiveCluster,
+  getClusterSources, archiveCluster,
   upgradeClusterEvidence,
 } from "./publish";
 import type { Source, FetchedFeedItem } from "./types";
 import { verifyInternalRequestSignature } from "../../src/security/internal-signature";
 import type { OperatorRole } from "../../src/security/access-auth";
+import { isReviewQueueScope, REVIEW_QUEUE_DEFAULT_LIMITS, REVIEW_QUEUE_MAX_LIMIT, type ReviewQueueScope } from "../../src/lib/review-queue-contract";
+import { listReviewQueueClusters } from "../../src/lib/server/review-queue";
 import { admitAndQueueFeedCapture, admitAndQueueManualCapture, admitAndQueueKnowledgeDocumentCapture } from "./knowledge-capture-queue";
 import { consumeKnowledgeCaptureBatch } from "./knowledge-capture-consumer";
 import { recalculateEvidenceScores, recalculateExpiredEvidence } from "../../src/lib/server/evidence-recalculation";
@@ -1900,14 +1902,19 @@ async function handlePublishedStoriesList(request: Request, env: Env): Promise<R
 
 async function handleClustersList(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
-  const status = url.searchParams.get("status") || undefined;
-  const limit = Number(url.searchParams.get("limit") || "50");
-  if ((status && !["draft", "review", "published", "withdrawn", "superseded"].includes(status))
-    || !Number.isInteger(limit) || limit < 1 || limit > 200) {
-    return Response.json({ error: "Invalid cluster query." }, { status: 400 });
+  const requestedScope = url.searchParams.get("scope");
+  const scope: ReviewQueueScope = requestedScope === null ? "publishable" : requestedScope as ReviewQueueScope;
+  if (!isReviewQueueScope(scope)) {
+    return Response.json({ error: "Invalid review queue scope." }, { status: 400 });
   }
 
-  const clusters = await getAllClusters(env, { limit, status });
+  const rawLimit = url.searchParams.get("limit");
+  const limit = rawLimit === null ? REVIEW_QUEUE_DEFAULT_LIMITS[scope] : Number(rawLimit);
+  if (!Number.isInteger(limit) || limit < 1 || limit > REVIEW_QUEUE_MAX_LIMIT) {
+    return Response.json({ error: "Invalid review queue limit." }, { status: 400 });
+  }
+
+  const clusters = await listReviewQueueClusters(env.DB, { scope, limit });
   return Response.json(clusters);
 }
 

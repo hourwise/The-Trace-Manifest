@@ -1,6 +1,8 @@
 ﻿---
 import AdminLayout from "../../layouts/AdminLayout.astro";
 import EvidenceBadge from "../../components/EvidenceBadge.astro";
+import { listRecentlyReviewedClusters, listReviewQueueClusters } from "../../lib/server/review-queue";
+import type { ReviewQueueCluster } from "../../lib/review-queue-contract";
 
 export const prerender = false;
 const editorialAIEnabled = Astro.locals.runtime.env.TRACE_AI_EDITORIAL_ENABLED === "true";
@@ -19,29 +21,14 @@ const evidenceStates = [
   { status: "outdated", label: "Outdated", desc: "The information may no longer be current. Seek more recent sources.", triggersReview: true },
 ];
 
-interface ReviewRow { id: number; title: string; topic: string | null; evidence_status: string; publication_status: string; source_count: number; reviewed_by: string | null; reviewed_at: string | null }
-let pendingReviews: ReviewRow[] = [];
-let recentReviews: ReviewRow[] = [];
+let pendingReviews: ReviewQueueCluster[] = [];
+let recentReviews: ReviewQueueCluster[] = [];
 let reviewLoadError: string | null = null;
 try {
   const db = Astro.locals.runtime.env.DB;
   [pendingReviews, recentReviews] = await Promise.all([
-    db.prepare(`
-      SELECT sc.id, sc.title, sc.topic, sc.evidence_status, sc.publication_status,
-             (SELECT COUNT(*) FROM story_cluster_members WHERE cluster_id = sc.id) AS source_count,
-             sc.reviewed_by, sc.reviewed_at
-      FROM story_clusters sc
-      WHERE sc.needs_human_review = 1 AND sc.publication_status IN ('draft','review')
-      ORDER BY sc.updated_at DESC LIMIT 50
-    `).all<ReviewRow>().then((result) => result.results),
-    db.prepare(`
-      SELECT sc.id, sc.title, sc.topic, sc.evidence_status, sc.publication_status,
-             (SELECT COUNT(*) FROM story_cluster_members WHERE cluster_id = sc.id) AS source_count,
-             sc.reviewed_by, sc.reviewed_at
-      FROM story_clusters sc
-      WHERE sc.reviewed_at IS NOT NULL
-      ORDER BY sc.reviewed_at DESC LIMIT 20
-    `).all<ReviewRow>().then((result) => result.results),
+    listReviewQueueClusters(db, { scope: "pending-review", limit: 50 }),
+    listRecentlyReviewedClusters(db, 20),
   ]);
 } catch {
   reviewLoadError = "Review data is unavailable. Verify the D1 binding and publication migration.";
@@ -219,6 +206,8 @@ try {
     </section>
 
     <script>
+      import type { ReviewQueueCluster } from "../../lib/review-queue-contract";
+
       function authHeaders(method: string = "GET"): Record<string, string> {
         // Only set Content-Type for requests with a body; adding it to GET
         // requests triggers a CORS preflight that fails when Cloudflare Access
@@ -261,8 +250,12 @@ try {
         }
       }
 
+      function errorMessage(error: unknown, fallback: string): string {
+        return error instanceof Error && error.message ? error.message : fallback;
+      }
+
       // Load clusters with filtering
-      let allClusters: Array<{ id: number; title: string; topic: string | null; publication_status: string; source_count: number; summary: string | null; why_it_matters: string | null; created_at: string }> = [];
+      let allClusters: ReviewQueueCluster[] = [];
       let clusterDetail: Record<number, { summary?: string | null; why?: string | null }> = {};
       let clusterMeta: Record<number, string> = {};
 
@@ -313,7 +306,7 @@ try {
         // Render
         const currentValue = select.value;
         select.innerHTML = '<option value="">— Select a cluster —</option>';
-        filtered.forEach((c: any) => {
+        filtered.forEach((c) => {
           const opt = document.createElement("option");
           opt.value = String(c.id);
           const meta = clusterMeta[c.id] ? ` — ${clusterMeta[c.id]}` : "";
@@ -339,21 +332,21 @@ try {
         status("Loading clusters…", false);
 
         try {
-          const res = await adminFetch(`/api/admin/clusters?limit=200`);
+          const res = await adminFetch(`/api/admin/clusters?scope=publishable&limit=200`);
           if (!res.ok) { throw new Error(`HTTP ${res.status}`); }
-          allClusters = await res.json();
+          allClusters = await res.json() as ReviewQueueCluster[];
 
           if (allClusters.length > 0) {
             clusterDetail = {};
             clusterMeta = {};
             // Fetch source names for the first 20 clusters (for display in dropdown)
-            await Promise.all(allClusters.slice(0, 20).map(async (c: any) => {
+            await Promise.all(allClusters.slice(0, 20).map(async (c) => {
               clusterDetail[c.id] = { summary: c.summary, why: c.why_it_matters };
               try {
                 const srcRes = await adminFetch(`/api/admin/cluster-sources?clusterId=${c.id}`);
                 if (srcRes.ok) {
                   const srcs: Array<{ sourceName: string }> = await srcRes.json();
-                  const names = new Set(srcs.map((s: any) => s.sourceName));
+                  const names = new Set(srcs.map((s) => s.sourceName));
                   clusterMeta[c.id] = [...names].slice(0, 3).join(", ");
                 }
               } catch { clusterMeta[c.id] = ""; }
@@ -422,6 +415,33 @@ try {
 
       // Load source material when cluster is selected
       let currentSources: Array<{ title: string; excerpt: string | null }> = [];
+
+      function resetSelectedClusterState(): void {
+        const select = $<HTMLSelectElement>("cluster-select");
+        if (select) select.value = "";
+        currentSources = [];
+
+        const sourcePanel = document.getElementById("source-material");
+        const sourceList = document.getElementById("source-list");
+        const sourceCount = document.getElementById("source-count");
+        const aiButton = $<HTMLButtonElement>("ai-analyze-btn");
+        const relatedButton = $<HTMLButtonElement>("find-related-btn");
+        const aiResult = document.getElementById("ai-result");
+        const relatedItems = document.getElementById("related-items");
+        if (sourcePanel) sourcePanel.style.display = "none";
+        if (sourceList) sourceList.replaceChildren();
+        if (sourceCount) sourceCount.textContent = "";
+        if (aiButton) aiButton.disabled = true;
+        if (relatedButton) relatedButton.disabled = true;
+        if (aiResult) { aiResult.style.display = "none"; aiResult.replaceChildren(); }
+        if (relatedItems) { relatedItems.style.display = "none"; relatedItems.replaceChildren(); }
+
+        for (const id of ["pub-headline", "pub-summary", "pub-analysis", "pub-why", "pub-image"]) {
+          const field = document.getElementById(id) as HTMLInputElement | HTMLTextAreaElement | null;
+          if (field) field.value = "";
+        }
+        checkPublishReady();
+      }
 
       $<HTMLSelectElement>("cluster-select")?.addEventListener("change", async function() {
         const clusterId = parseInt(this.value || "");
@@ -565,12 +585,12 @@ try {
           }
 
           status(analysis.isNewsworthy ? "AI: This looks like news. Review and publish." : "AI: This appears to be a routine update.", false);
-        } catch (e: any) {
+        } catch (e: unknown) {
           if (resultDiv) {
             const errorText = document.createElement("p");
             errorText.className = "meta";
             errorText.style.color = "var(--ev-disputed)";
-            errorText.textContent = `AI analysis failed: ${e.message}`;
+            errorText.textContent = `AI analysis failed: ${errorMessage(e, "Unknown error")}`;
             resultDiv.replaceChildren(errorText);
           }
           status("AI analysis failed.", true);
@@ -672,16 +692,16 @@ try {
                   const reviewRow = reviewButton.parentElement;
                   if (reviewRow) reviewRow.innerHTML = `<span class="badge" style="font-size:0.6rem;color:${reviewData.status === "accepted" ? "var(--ev-confirmed)" : "var(--ev-disputed)"};">${escapeHTML(reviewData.status ?? "reviewed")}: ${escapeHTML(action)}</span>`;
                   status(action === "attach_evidence" ? "Evidence review recorded; evidence score unchanged." : "Related story review recorded.", false);
-                } catch (error: any) {
+                } catch (error: unknown) {
                   reviewButton.disabled = false;
-                  status(error.message || "Related review failed.", true);
+                  status(errorMessage(error, "Related review failed."), true);
                 }
               });
             });
           }
           status(`Found ${data.items.length} related item(s).`, false);
-        } catch (e: any) {
-          relatedDiv.innerHTML = `<p class="meta" style="color:var(--ev-disputed);">Search failed: ${e.message}</p>`;
+        } catch (e: unknown) {
+          relatedDiv.innerHTML = `<p class="meta" style="color:var(--ev-disputed);">Search failed: ${errorMessage(e, "Unknown error")}</p>`;
           status("Related search failed.", true);
         } finally {
           btn.disabled = false;
@@ -705,13 +725,17 @@ try {
             body: JSON.stringify({ clusterId }),
           });
           if (!res.ok) { const d = await res.json() as { error?: string }; throw new Error(d.error || `HTTP ${res.status}`); }
-          status("Archived. Click Load Clusters to refresh.", false);
-          // Remove from dropdown
-          if (select) { const opt = select.querySelector(`option[value="${clusterId}"]`); if (opt) opt.remove(); }
-        } catch (e: any) {
-          status(e.message || "Archive failed", true);
+          allClusters = allClusters.filter((cluster) => cluster.id !== clusterId);
+          delete clusterDetail[clusterId];
+          delete clusterMeta[clusterId];
+          resetSelectedClusterState();
+          applyClusterFilters();
+          status("Archived.", false);
+        } catch (e: unknown) {
+          status(errorMessage(e, "Archive failed"), true);
         } finally {
           if (btn) { btn.disabled = false; btn.textContent = "Archive (not news)"; }
+          checkPublishReady();
         }
       });
 
@@ -746,10 +770,15 @@ try {
 
           if (!res.ok) {
             status(data.error || `HTTP ${res.status}`, true);
-          } else if (data.story) {
-            status(`Published! Slug: ${data.story.slug}`, false);
+          } else {
+            allClusters = allClusters.filter((cluster) => cluster.id !== clusterId);
+            delete clusterDetail[clusterId];
+            delete clusterMeta[clusterId];
+            resetSelectedClusterState();
+            applyClusterFilters();
+            status(data.story ? `Published! Slug: ${data.story.slug}` : "Published.", false);
             const recent = document.getElementById("recent-publishes");
-            if (recent) {
+            if (recent && data.story) {
               const line = document.createElement("div");
               const link = document.createElement("a");
               link.href = `/stories/${encodeURIComponent(data.story.slug)}`;
@@ -769,6 +798,7 @@ try {
           console.error(e);
         } finally {
           if (btn) { btn.disabled = false; btn.textContent = "Publish Story"; }
+          checkPublishReady();
         }
       });
 
