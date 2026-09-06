@@ -2,7 +2,7 @@
 // KC-08H: publisher-only queue of knowledge pages whose linked evidence
 // requires a reviewed revision. This page is inspection-only; KC-10 owns
 // substantive revision decisions.
-import BaseLayout from "../../../layouts/BaseLayout.astro";
+import AdminLayout from "../../../layouts/AdminLayout.astro";
 import { authenticateAccessRequest, type AccessEnvironment } from "../../../security/access-auth";
 
 export const prerender = false;
@@ -40,7 +40,7 @@ function label(value: string): string {
 }
 ---
 
-<BaseLayout title="Knowledge change review — TRACE Desk" description="Publisher review queue for knowledge evidence changes.">
+<AdminLayout title="Knowledge change review — TRACE Desk" description="Publisher review queue for knowledge evidence changes.">
   <div class="wrap">
     <h1>Knowledge change review</h1>
     <p class="meta">These proposals are deterministic review signals. They never rewrite approved knowledge automatically.</p>
@@ -77,4 +77,4 @@ function label(value: string): string {
       </div>
     )}
   </div>
-</BaseLayout>
+</AdminLayout>

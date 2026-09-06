@@ -1,0 +1,62 @@
+---
+import BaseLayout from "./BaseLayout.astro";
+import { ADMIN_NAV_GROUPS, ADMIN_OVERVIEW, resolveAdminSection } from "../lib/admin-navigation";
+
+export interface Props {
+  title: string;
+  description: string;
+  ogImage?: string;
+}
+
+const { title, description, ogImage } = Astro.props;
+const currentSection = resolveAdminSection(Astro.url.pathname);
+---
+
+<BaseLayout title={title} description={description} ogImage={ogImage}>
+  <div class="admin-shell">
+    <header class="admin-shell__header">
+      <div>
+        <p class="admin-shell__eyebrow">TRACE / ADMIN</p>
+        <p class="admin-shell__context">Authenticated workspace</p>
+      </div>
+      <a class="admin-shell__public-link" href="/">View public site <span aria-hidden="true">↗</span></a>
+    </header>
+
+    <div class="admin-shell__frame">
+      <nav class="admin-shell__nav" aria-label="TRACE Admin workspace">
+        <a
+          class="admin-shell__nav-home"
+          href={ADMIN_OVERVIEW.href}
+          aria-current={currentSection === ADMIN_OVERVIEW.id ? "page" : undefined}
+        >
+          <span>{ADMIN_OVERVIEW.label}</span>
+          <span class="admin-shell__nav-note">{ADMIN_OVERVIEW.description}</span>
+        </a>
+
+        {ADMIN_NAV_GROUPS.map((group) => (
+          <div class="admin-shell__nav-group">
+            <h2 class="admin-shell__nav-group-title">{group.label}</h2>
+            <ul class="admin-shell__nav-list">
+              {group.items.map((item) => (
+                <li>
+                  <a
+                    class="admin-shell__nav-link"
+                    href={item.href}
+                    aria-current={currentSection === item.id ? "page" : undefined}
+                  >
+                    <span>{item.label}</span>
+                    <span class="admin-shell__nav-note">{item.description}</span>
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </nav>
+
+      <div class="admin-shell__content">
+        <slot />
+      </div>
+    </div>
+  </div>
+</BaseLayout>

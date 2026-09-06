@@ -1,6 +1,6 @@
 ---
 // KC-04E: publisher-only review queue for structured source extractions.
-import BaseLayout from "../../../layouts/BaseLayout.astro";
+import AdminLayout from "../../../layouts/AdminLayout.astro";
 import { authenticateAccessRequest, type AccessEnvironment } from "../../../security/access-auth";
 
 export const prerender = false;
@@ -79,7 +79,7 @@ function payloadText(value: string): string {
 }
 ---
 
-<BaseLayout title="Extraction Review — TRACE Knowledge Builder" description="Publisher review queue for structured source extraction candidates.">
+<AdminLayout title="Extraction Review — TRACE Knowledge Builder" description="Publisher review queue for structured source extraction candidates.">
   <div class="wrap">
     <h1>Structured extraction review</h1>
     <p class="meta">Publisher-only review of source candidates and summaries. Nothing here becomes public evidence automatically.</p>
@@ -134,7 +134,7 @@ function payloadText(value: string): string {
       </div>
     )}
   </div>
-</BaseLayout>
+</AdminLayout>
 
 <script>
   document.querySelectorAll(".review-form").forEach((form) => {

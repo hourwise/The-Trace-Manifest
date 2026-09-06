@@ -1,5 +1,5 @@
 ---
-import BaseLayout from "../../layouts/BaseLayout.astro";
+import AdminLayout from "../../layouts/AdminLayout.astro";
 
 export const prerender = false;
 const editorialAIEnabled = Astro.locals.runtime.env.TRACE_AI_EDITORIAL_ENABLED === "true";
@@ -103,7 +103,7 @@ try {
 }
 ---
 
-<BaseLayout
+<AdminLayout
   title="Admin — Social Signals"
   description="Governed social-media signal intake per ADR 0009."
 >
@@ -323,4 +323,4 @@ try {
       });
     });
   </script>
-</BaseLayout>
+</AdminLayout>

@@ -2,7 +2,7 @@
 // ADR 0016: Admin operations — manual claim extraction trigger.
 // Server-rendered page with direct D1 access. Imports the regex-based
 // extraction engine from the Worker module.
-import BaseLayout from "../../layouts/BaseLayout.astro";
+import AdminLayout from "../../layouts/AdminLayout.astro";
 import { runClaimExtraction, extractClaimsFromItem } from "../../../workers/ingestion/extract-claims";
 
 export const prerender = false;
@@ -55,7 +55,7 @@ if (Astro.request.method === "POST") {
 }
 ---
 
-<BaseLayout title="Admin — Extract Claims" description="Manually trigger claim extraction for feed items.">
+<AdminLayout title="Admin — Extract Claims" description="Manually trigger claim extraction for feed items.">
   <div class="wrap" style="max-width:700px;">
     <h1>Extract Claims</h1>
     <p class="meta" style="margin-bottom:2rem;">
@@ -63,7 +63,7 @@ if (Astro.request.method === "POST") {
     </p>
 
     <section class="card" style="margin-bottom:2rem;">
-      <p>This processes up to 500 feed items (ingested within the last 7 days) that have been clustered or classified but not yet had claims extracted. Extraction is regex-based — no AI cost.</p>
+      <p>This processes up to 50 feed items (ingested within the last 7 days) that have been clustered or classified but not yet had claims extracted. Extraction is regex-based — no AI cost.</p>
       <div style="display:flex;gap:0.75rem;flex-wrap:wrap;margin-top:1rem;">
         <form method="POST">
           <button type="submit" class="btn btn-primary">Run Claim Extraction</button>
@@ -115,4 +115,4 @@ if (Astro.request.method === "POST") {
       </section>
     )}
   </div>
-</BaseLayout>
+</AdminLayout>

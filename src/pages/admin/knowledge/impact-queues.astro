@@ -1,6 +1,6 @@
 ---
 // KC-10C: publisher-only inspection of bounded continuity queues.
-import BaseLayout from "../../../layouts/BaseLayout.astro";
+import AdminLayout from "../../../layouts/AdminLayout.astro";
 import { authenticateAccessRequest, type AccessEnvironment } from "../../../security/access-auth";
 import { loadKnowledgeImpactQueues, type KnowledgeImpactQueueItem } from "../../../lib/server/knowledge-impact-queues";
 
@@ -17,7 +17,7 @@ const lanes: Array<[string, KnowledgeImpactQueueItem[]]> = [
 ];
 ---
 
-<BaseLayout title="Knowledge impact queues — TRACE Desk" description="Publisher-only continuity queues.">
+<AdminLayout title="Knowledge impact queues — TRACE Desk" description="Publisher-only continuity queues.">
   <div class="wrap">
     <h1>Knowledge impact queues</h1>
     <p class="meta">Deterministic, read-only queue signals. Nothing here approves, rewrites, or publishes content.</p>
@@ -36,7 +36,7 @@ const lanes: Array<[string, KnowledgeImpactQueueItem[]]> = [
     </div>
     <p class="meta">Queue algorithm {queues.algorithmVersion}; generated {queues.generatedAt}.</p>
   </div>
-</BaseLayout>
+</AdminLayout>
 
 <style>
   .queue-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(20rem,1fr)); gap:1rem; margin-top:1.5rem; }

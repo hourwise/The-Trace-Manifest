@@ -1,6 +1,6 @@
 ---
 // KC-05F: publisher-only unresolved claim conflict queue.
-import BaseLayout from "../../../layouts/BaseLayout.astro";
+import AdminLayout from "../../../layouts/AdminLayout.astro";
 import { authenticateAccessRequest, type AccessEnvironment } from "../../../security/access-auth";
 
 export const prerender = false;
@@ -34,7 +34,7 @@ const conflicts = rows.results ?? [];
 const label = (value: string) => value.replace(/_/g, " ");
 ---
 
-<BaseLayout title="Claim Conflicts — TRACE Knowledge Builder" description="Publisher review queue for unresolved claim conflicts.">
+<AdminLayout title="Claim Conflicts — TRACE Knowledge Builder" description="Publisher review queue for unresolved claim conflicts.">
   <div class="wrap">
     <h1>Unresolved claim conflicts</h1>
     <p class="meta">Conflicting claims remain visible together. Review can acknowledge, resolve, dismiss, or reopen a case; no side is selected automatically and no evidence score is changed.</p>
@@ -53,7 +53,7 @@ const label = (value: string) => value.replace(/_/g, " ");
       </div>
     )}
   </div>
-</BaseLayout>
+</AdminLayout>
 
 <script>
   document.querySelectorAll(".conflict-form").forEach((form) => {

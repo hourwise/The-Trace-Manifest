@@ -1,5 +1,5 @@
 ---
-import BaseLayout from "../../layouts/BaseLayout.astro";
+import AdminLayout from "../../layouts/AdminLayout.astro";
 
 // The admin home is Access-authenticated by middleware and must execute at
 // request time. Without this marker Astro omits the route from the Pages
@@ -7,7 +7,7 @@ import BaseLayout from "../../layouts/BaseLayout.astro";
 export const prerender = false;
 ---
 
-<BaseLayout title="Admin" description="The Trace Manifest administration dashboard.">
+<AdminLayout title="Admin" description="The Trace Manifest administration dashboard.">
   <div class="wrap">
     <h1>Admin</h1>
     <p class="meta" style="margin-bottom:2rem;">
@@ -71,4 +71,4 @@ export const prerender = false;
       </p>
     </section>
   </div>
-</BaseLayout>
+</AdminLayout>

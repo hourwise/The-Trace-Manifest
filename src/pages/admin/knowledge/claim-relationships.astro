@@ -1,6 +1,6 @@
 ---
 // KC-05E: publisher-only review queue for claim relationship proposals.
-import BaseLayout from "../../../layouts/BaseLayout.astro";
+import AdminLayout from "../../../layouts/AdminLayout.astro";
 import { authenticateAccessRequest, type AccessEnvironment } from "../../../security/access-auth";
 
 export const prerender = false;
@@ -35,7 +35,7 @@ const proposals = rows.results ?? [];
 const label = (value: string) => value.replace(/_/g, " ");
 ---
 
-<BaseLayout title="Claim Relationship Review — TRACE Knowledge Builder" description="Publisher review queue for claim relationship proposals.">
+<AdminLayout title="Claim Relationship Review — TRACE Knowledge Builder" description="Publisher review queue for claim relationship proposals.">
   <div class="wrap">
     <h1>Claim relationship review</h1>
     <p class="meta">Review proposed support, qualification, contradiction, reproduction, correction, temporal-change, and supersession relationships. Acceptance records a reviewed relation assertion without changing claim state or evidence scores.</p>
@@ -55,7 +55,7 @@ const label = (value: string) => value.replace(/_/g, " ");
       </div>
     )}
   </div>
-</BaseLayout>
+</AdminLayout>
 
 <script>
   document.querySelectorAll(".relation-form").forEach((form) => {

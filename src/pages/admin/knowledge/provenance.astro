@@ -1,6 +1,6 @@
 ---
 // KC-05C: publisher-only review queue for claim-relative provenance proposals.
-import BaseLayout from "../../../layouts/BaseLayout.astro";
+import AdminLayout from "../../../layouts/AdminLayout.astro";
 import { authenticateAccessRequest, type AccessEnvironment } from "../../../security/access-auth";
 
 export const prerender = false;
@@ -41,7 +41,7 @@ const proposals = rows.results ?? [];
 const label = (value: string) => value.replace(/_/g, " ");
 ---
 
-<BaseLayout title="Provenance Review — TRACE Knowledge Builder" description="Publisher review queue for claim provenance proposals.">
+<AdminLayout title="Provenance Review — TRACE Knowledge Builder" description="Publisher review queue for claim provenance proposals.">
   <div class="wrap">
     <h1>Provenance proposal review</h1>
     <p class="meta">These proposals describe source lineage and claim-relative evidence treatment. They remain non-public until reviewed. Accepting updates the assertion metadata only; it does not create a provenance group or membership.</p>
@@ -79,7 +79,7 @@ const label = (value: string) => value.replace(/_/g, " ");
       </div>
     )}
   </div>
-</BaseLayout>
+</AdminLayout>
 
 <script>
   document.querySelectorAll(".provenance-form").forEach((form) => {

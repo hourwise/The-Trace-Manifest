@@ -1,5 +1,5 @@
 ﻿---
-import BaseLayout from "../../layouts/BaseLayout.astro";
+import AdminLayout from "../../layouts/AdminLayout.astro";
 import EvidenceBadge from "../../components/EvidenceBadge.astro";
 
 export const prerender = false;
@@ -48,7 +48,7 @@ try {
 }
 ---
 
-<BaseLayout
+<AdminLayout
   title="Admin — Review Queue"
   description="Manual review queue for high-impact claims, disputed stories, and corrections."
 >
@@ -817,4 +817,4 @@ Content-Type: application/json
       </div>
     </section>
   </div>
-</BaseLayout>
+</AdminLayout>
