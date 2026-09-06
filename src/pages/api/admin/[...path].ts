@@ -21,6 +21,7 @@ const PUBLISH_ROUTES = new Set([
   "knowledge/index-preview",
   "knowledge/kc-11g-h",
   "knowledge/freshness",
+  "assertion-review",
   "knowledge/backfill/snapshot", "knowledge/backfill/plan", "knowledge/backfill/approve",
   "knowledge/backfill/execute", "knowledge/backfill/retry", "knowledge/backfill/recover",
   "candidates", "social-signals", "related-items",

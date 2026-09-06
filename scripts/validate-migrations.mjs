@@ -88,6 +88,7 @@ try {
   db.exec(readFileSync("db/migration-0068-v1-freshness-review.sql", "utf8"));
   db.exec(readFileSync("db/migration-0069-trace-d1-reverse-membership-index.sql", "utf8"));
   db.exec(readFileSync("db/migration-0071-trace-v1-bounded-activation.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0073-assertion-governance.sql", "utf8"));
 
   const requiredTables = [
     "ai_requests", "ai_budget_reservations", "ai_usage_ledger", "ai_quota_usage",
@@ -131,6 +132,7 @@ try {
     "knowledge_impact_proposals",
     "knowledge_revision_decisions",
     "knowledge_revision_evidence_snapshots",
+    "assertion_governance_events", "assertion_governance_recalculation_jobs",
   ];
   const tables = new Set(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((row) => row.name));
   for (const table of requiredTables) if (!tables.has(table)) throw new Error(`Missing table ${table}`);
@@ -171,7 +173,13 @@ try {
     if (!backfillItemColumns.has(column)) throw new Error(`Missing backfill item hash column ${column}`);
   }
   const assertionColumns = new Set(db.prepare("PRAGMA table_info(claim_assertions)").all().map((row) => row.name));
-  if (!assertionColumns.has("expiry_recalculated_at")) throw new Error("Missing bounded expiry recalculation column");
+  for (const column of ["expiry_recalculated_at", "assertion_governance_revision"]) {
+    if (!assertionColumns.has(column)) throw new Error(`Missing assertion column ${column}`);
+  }
+  const assertionGovernanceEventSql = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'assertion_governance_events'").get()?.sql ?? "";
+  if (!assertionGovernanceEventSql.includes("'admit'") || !assertionGovernanceEventSql.includes("'reject'") || !assertionGovernanceEventSql.includes("idempotency_key")) {
+    throw new Error("Assertion governance event constraints are missing");
+  }
 
   const jobColumns = new Set(db.prepare("PRAGMA table_info(ingestion_jobs)").all().map((row) => row.name));
   for (const column of ["result_status", "items_rejected", "items_skipped", "outcome_detail"]) {

@@ -23,6 +23,8 @@ type RecalculationEvent =
   | "story_withdrawn"
   | "story_superseded"
   | "story_archived"
+  | "assertion_admitted"
+  | "assertion_rejected"
   | "historical_backfill_initial";
 
 interface ClaimRow {

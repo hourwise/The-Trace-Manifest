@@ -44,6 +44,15 @@ import {
   type ProposedFreshnessState,
 } from "../../src/lib/server/evidence-freshness-review";
 import {
+  ASSERTION_ADMISSION_STATES,
+  ASSERTION_FRESHNESS_STATES,
+  ASSERTION_GOVERNANCE_ACTIONS,
+  ASSERTION_REVIEWER_STATES,
+  AssertionGovernanceError,
+  governAssertionAdmission,
+  type AssertionGovernanceExpectedState,
+} from "../../src/lib/server/assertion-governance";
+import {
   approveBackfillPlan,
   buildBackfillPlan,
   establishAuthoritativeInventory,
@@ -91,6 +100,7 @@ const WRITE_ADMIN_ROUTES = new Set([
   "/admin/knowledge/capture-missing", "/admin/knowledge/index-preview",
   "/admin/knowledge/kc-11g-h",
   "/admin/knowledge/freshness",
+  "/admin/assertion-review",
   "/admin/knowledge/backfill/snapshot", "/admin/knowledge/backfill/plan", "/admin/knowledge/backfill/approve",
   "/admin/knowledge/backfill/execute", "/admin/knowledge/backfill/retry", "/admin/knowledge/backfill/recover",
 ]);
@@ -293,13 +303,13 @@ export default {
 };
 
 function adminTargetId(url: URL, body: string): string | null {
-  const queryTarget = url.searchParams.get("clusterId") ?? url.searchParams.get("sourceId") ?? url.searchParams.get("claimId") ?? url.searchParams.get("candidateId");
-  if (queryTarget && /^\d+$/.test(queryTarget)) return queryTarget;
+  const queryTarget = url.searchParams.get("clusterId") ?? url.searchParams.get("sourceId") ?? url.searchParams.get("claimId") ?? url.searchParams.get("candidateId") ?? url.searchParams.get("assertionId");
+  if (queryTarget && /^(?:\d+|[A-Za-z0-9:_-]{1,200})$/.test(queryTarget)) return queryTarget;
   if (!body) return null;
   try {
     const parsed = JSON.parse(body) as Record<string, unknown>;
-    const value = parsed.candidateId ?? parsed.clusterId ?? parsed.sourceId ?? parsed.claimId;
-    return typeof value === "string" && /^[0-9a-f-]{36}$/i.test(value)
+    const value = parsed.candidateId ?? parsed.clusterId ?? parsed.sourceId ?? parsed.claimId ?? parsed.assertionId;
+    return typeof value === "string" && /^(?:[0-9a-f-]{36}|[A-Za-z0-9:_-]{1,200})$/i.test(value)
       ? value
       : typeof value === "number" && Number.isInteger(value) && value > 0 ? String(value) : null;
   } catch {
@@ -1099,6 +1109,8 @@ async function handleAdminRoute(
       return handleKc11GH(request, env);
     case "/admin/knowledge/freshness":
       return handleFreshnessReview(request, env, operator);
+    case "/admin/assertion-review":
+      return handleAssertionReview(request, env, operator);
     case "/admin/knowledge/backfill/snapshot":
       return handleKnowledgeBackfillSnapshot(request, env, operator);
     case "/admin/knowledge/backfill/approve":
@@ -1245,6 +1257,63 @@ async function handleFreshnessReview(request: Request, env: Env, operator: Inter
     console.error("evidence freshness review failed", error);
     return Response.json({ error: "Evidence freshness review could not be saved." }, { status: 500 });
   }
+}
+
+async function handleAssertionReview(request: Request, env: Env, operator: InternalOperator): Promise<Response> {
+  if (operator.role !== "publisher") return Response.json({ error: "Forbidden" }, { status: 403 });
+  const body = await readAdminObject(request, [
+    "clusterId", "assertionId", "action", "expected", "reason", "idempotencyKey",
+  ]);
+  if (!body || !exactAdminKeys(body, [
+    "clusterId", "assertionId", "action", "expected", "reason", "idempotencyKey",
+  ]) || !positiveInteger(body.clusterId)
+    || !requiredText(body.assertionId, 1, 200)
+    || !isAssertionGovernanceAction(body.action)
+    || !isAssertionGovernanceExpectedState(body.expected)
+    || !requiredText(body.reason, 1, 2_000)
+    || !requiredText(body.idempotencyKey, 1, 256)) {
+    return Response.json({ error: "Invalid assertion review body." }, { status: 400 });
+  }
+
+  try {
+    const result = await governAssertionAdmission(env.DB, {
+      clusterId: body.clusterId as number,
+      assertionId: body.assertionId as string,
+      action: body.action,
+      expected: body.expected,
+      reason: body.reason as string,
+      idempotencyKey: body.idempotencyKey as string,
+      actor: operator.email,
+      requestId: operator.requestId,
+    });
+    return Response.json(result, { status: result.replay ? 200 : 201 });
+  } catch (error) {
+    if (error instanceof AssertionGovernanceError) {
+      return Response.json({
+        error: error.message,
+        code: error.code,
+        ...(error.eventId ? { eventId: error.eventId } : {}),
+      }, { status: error.status });
+    }
+    return Response.json({ error: "Assertion review failed." }, { status: 500 });
+  }
+}
+
+function isAssertionGovernanceAction(value: unknown): value is typeof ASSERTION_GOVERNANCE_ACTIONS[number] {
+  return typeof value === "string" && ASSERTION_GOVERNANCE_ACTIONS.includes(value as typeof ASSERTION_GOVERNANCE_ACTIONS[number]);
+}
+
+function isAssertionGovernanceExpectedState(value: unknown): value is AssertionGovernanceExpectedState {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const state = value as Record<string, unknown>;
+  return Object.keys(state).length === 3
+    && Object.keys(state).every((key) => ["admissionState", "reviewerState", "freshnessState"].includes(key))
+    && typeof state.admissionState === "string"
+    && ASSERTION_ADMISSION_STATES.includes(state.admissionState as typeof ASSERTION_ADMISSION_STATES[number])
+    && typeof state.reviewerState === "string"
+    && ASSERTION_REVIEWER_STATES.includes(state.reviewerState as typeof ASSERTION_REVIEWER_STATES[number])
+    && typeof state.freshnessState === "string"
+    && ASSERTION_FRESHNESS_STATES.includes(state.freshnessState as typeof ASSERTION_FRESHNESS_STATES[number]);
 }
 
 async function handleKnowledgeBackfillPlan(request: Request, env: Env): Promise<Response> {

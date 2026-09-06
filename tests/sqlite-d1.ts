@@ -100,6 +100,7 @@ export class SQLiteD1 {
     this.sqlite.exec(readFileSync("db/migration-0066-kc-11d-bounded-expiry.sql", "utf8"));
     this.sqlite.exec(readFileSync("db/migration-0067-kc-11g-h-remediation.sql", "utf8"));
     this.sqlite.exec(readFileSync("db/migration-0068-v1-freshness-review.sql", "utf8"));
+    this.sqlite.exec(readFileSync("db/migration-0073-assertion-governance.sql", "utf8"));
   }
 
   prepare(query: string): SQLiteD1Statement {
