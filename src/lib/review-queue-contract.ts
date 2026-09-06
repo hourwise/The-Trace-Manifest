@@ -22,6 +22,12 @@ export interface ReviewQueueCluster {
   reviewed_at: string | null;
 }
 
+/** Fields needed by the publish selector and its immediate editor prefill. */
+export type ReviewQueuePublishableCluster = Pick<
+  ReviewQueueCluster,
+  "id" | "title" | "topic" | "publication_status" | "source_count" | "source_names" | "summary" | "why_it_matters" | "created_at"
+>;
+
 export const REVIEW_QUEUE_SCOPE_VALUES = ["pending-review", "publishable"] as const satisfies readonly ReviewQueueScope[];
 export const REVIEW_QUEUE_MAX_LIMIT = 200;
 export const REVIEW_QUEUE_DEFAULT_LIMITS: Record<ReviewQueueScope, number> = {

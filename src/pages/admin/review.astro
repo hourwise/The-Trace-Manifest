@@ -206,7 +206,7 @@ try {
     </section>
 
     <script>
-      import type { ReviewQueueCluster } from "../../lib/review-queue-contract";
+      import type { ReviewQueuePublishableCluster } from "../../lib/review-queue-contract";
 
       function authHeaders(method: string = "GET"): Record<string, string> {
         // Only set Content-Type for requests with a body; adding it to GET
@@ -255,7 +255,7 @@ try {
       }
 
       // Load clusters with filtering
-      let allClusters: ReviewQueueCluster[] = [];
+      let allClusters: ReviewQueuePublishableCluster[] = [];
       let clusterDetail: Record<number, { summary?: string | null; why?: string | null }> = {};
 
       function applyClusterFilters(): void {
@@ -333,7 +333,7 @@ try {
         try {
           const res = await adminFetch(`/api/admin/clusters?scope=publishable&limit=200`);
           if (!res.ok) { throw new Error(`HTTP ${res.status}`); }
-          allClusters = await res.json() as ReviewQueueCluster[];
+          allClusters = await res.json() as ReviewQueuePublishableCluster[];
 
           clusterDetail = {};
           allClusters.forEach((c) => {

@@ -108,6 +108,10 @@ async function reviewQueueContractTests(): Promise<void> {
     const countedPublishable = countedD1(database);
     const publishable = await listReviewQueueClusters(countedPublishable.db, { scope: "publishable", limit: 200 });
     assert.equal(countedPublishable.prepares(), 2, "publishable metadata uses one queue query plus one set-based batch query");
+    assert.deepEqual(Object.keys(publishable[0] ?? {}).sort(), [
+      "created_at", "id", "publication_status", "source_count", "source_names", "summary", "title", "topic", "why_it_matters",
+    ], "publishable list uses the browser projection rather than the full review-queue row");
+    assert.equal(pending.every((cluster) => "evidence_status" in cluster && "needs_human_review" in cluster && "updated_at" in cluster && "reviewed_by" in cluster && "reviewed_at" in cluster), true, "pending-review keeps the full SSR contract");
     assert.deepEqual(publishable.map((cluster) => cluster.id), [9, 8, 2], "publishable does not require the human-review flag");
     assert.equal(publishable.some((cluster) => [1, 6, 7].includes(cluster.id)), false, "blocked evidence is excluded from publishable");
     assert.equal(publishable.some((cluster) => [3, 4, 5].includes(cluster.id)), false, "publication states outside draft/review are excluded");
@@ -135,7 +139,8 @@ async function reviewQueueContractTests(): Promise<void> {
 
     const apiPublishableResponse = await signedAdminRequest(database, "/admin/clusters?scope=publishable&limit=200");
     assert.equal(apiPublishableResponse.status, 200);
-    const apiPublishable = await apiPublishableResponse.json() as Array<{ id: number; source_names: string[] }>;
+    const apiPublishable = await apiPublishableResponse.json() as Array<Record<string, unknown> & { id: number; source_names: string[] }>;
+    assert.equal(apiPublishable.every((cluster) => !["evidence_status", "needs_human_review", "updated_at", "reviewed_by", "reviewed_at"].some((field) => field in cluster)), true, "publishable API rows do not serialize full-contract fields unused by the browser");
     assert.deepEqual(apiPublishable.map((cluster) => [cluster.id, cluster.source_names]), [
       [9, []], [8, ["Delta – News", "Beta / Δ", "Gamma: Prime"]], [2, ["Alpha & Ω", "Beta / Δ"]],
     ], "Worker API exposes the same bounded metadata contract");

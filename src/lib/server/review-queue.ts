@@ -2,6 +2,7 @@ import {
   REVIEW_QUEUE_MAX_LIMIT,
   reviewQueueLimit,
   type ReviewQueueCluster,
+  type ReviewQueuePublishableCluster,
   type ReviewQueueScope,
 } from "../review-queue-contract";
 
@@ -9,16 +10,25 @@ type ReviewQueueDatabaseRow = Omit<ReviewQueueCluster, "needs_human_review" | "s
   needs_human_review: number | boolean;
 };
 
+type ReviewQueuePublishableDatabaseRow = Omit<ReviewQueuePublishableCluster, "source_names">;
+
 interface ReviewQueueSourceNameRow {
   cluster_id: number;
   source_name: string;
   source_rank: number;
 }
 
-const REVIEW_QUEUE_SELECT = `
+const REVIEW_QUEUE_FULL_SELECT = `
   SELECT sc.id, sc.title, sc.topic, sc.evidence_status, sc.publication_status,
          sc.needs_human_review, sc.created_at, sc.updated_at, sc.summary, sc.why_it_matters,
          sc.reviewed_by, sc.reviewed_at,
+         (SELECT COUNT(*) FROM story_cluster_members WHERE cluster_id = sc.id) AS source_count
+  FROM story_clusters sc
+`;
+
+const REVIEW_QUEUE_PUBLISHABLE_SELECT = `
+  SELECT sc.id, sc.title, sc.topic, sc.publication_status,
+         sc.created_at, sc.summary, sc.why_it_matters,
          (SELECT COUNT(*) FROM story_cluster_members WHERE cluster_id = sc.id) AS source_count
   FROM story_clusters sc
 `;
@@ -29,6 +39,10 @@ function mapReviewQueueRow(row: ReviewQueueDatabaseRow): ReviewQueueCluster {
     needs_human_review: Boolean(row.needs_human_review),
     source_names: [],
   };
+}
+
+function mapPublishableRow(row: ReviewQueuePublishableDatabaseRow): ReviewQueuePublishableCluster {
+  return { ...row, source_names: [] };
 }
 
 async function sourceNamesForClusters(db: D1Database, clusterIds: number[]): Promise<Map<number, string[]>> {
@@ -69,24 +83,39 @@ async function sourceNamesForClusters(db: D1Database, clusterIds: number[]): Pro
  * publishable is the editorial publish selector and excludes blocked evidence.
  * updated_at/id makes both scopes deterministic without adding an index.
  */
+export function listReviewQueueClusters(
+  db: D1Database,
+  options: { scope: "publishable"; limit?: number; includeSourceNames?: boolean },
+): Promise<ReviewQueuePublishableCluster[]>;
+export function listReviewQueueClusters(
+  db: D1Database,
+  options: { scope: "pending-review"; limit?: number; includeSourceNames?: boolean },
+): Promise<ReviewQueueCluster[]>;
+export function listReviewQueueClusters(
+  db: D1Database,
+  options: { scope: ReviewQueueScope; limit?: number; includeSourceNames?: boolean },
+): Promise<ReviewQueueCluster[] | ReviewQueuePublishableCluster[]>;
 export async function listReviewQueueClusters(
   db: D1Database,
   options: { scope: ReviewQueueScope; limit?: number; includeSourceNames?: boolean },
-): Promise<ReviewQueueCluster[]> {
+): Promise<ReviewQueueCluster[] | ReviewQueuePublishableCluster[]> {
   const { scope } = options;
   const limit = reviewQueueLimit(scope, options.limit);
   const predicate = scope === "pending-review"
     ? "sc.needs_human_review = 1 AND sc.publication_status IN ('draft','review')"
     : "sc.publication_status IN ('draft','review') AND sc.evidence_status NOT IN ('unverified','outdated','superseded')";
 
+  const select = scope === "publishable" ? REVIEW_QUEUE_PUBLISHABLE_SELECT : REVIEW_QUEUE_FULL_SELECT;
   const result = await db.prepare(`
-    ${REVIEW_QUEUE_SELECT}
+    ${select}
     WHERE ${predicate}
     ORDER BY sc.updated_at DESC, sc.id DESC
     LIMIT ?
-  `).bind(limit).all<ReviewQueueDatabaseRow>();
+  `).bind(limit).all<ReviewQueueDatabaseRow | ReviewQueuePublishableDatabaseRow>();
 
-  const clusters = result.results.map(mapReviewQueueRow);
+  const clusters = scope === "publishable"
+    ? result.results.map((row) => mapPublishableRow(row as ReviewQueuePublishableDatabaseRow))
+    : result.results.map((row) => mapReviewQueueRow(row as ReviewQueueDatabaseRow));
   const includeSourceNames = options.includeSourceNames ?? scope === "publishable";
   if (!includeSourceNames) return clusters;
 
@@ -100,7 +129,7 @@ export async function listRecentlyReviewedClusters(
 ): Promise<ReviewQueueCluster[]> {
   const boundedLimit = Math.max(1, Math.min(Number.isInteger(limit) ? limit : 20, REVIEW_QUEUE_MAX_LIMIT));
   const result = await db.prepare(`
-    ${REVIEW_QUEUE_SELECT}
+    ${REVIEW_QUEUE_FULL_SELECT}
     WHERE sc.reviewed_at IS NOT NULL
     ORDER BY sc.reviewed_at DESC, sc.id DESC
     LIMIT ?
