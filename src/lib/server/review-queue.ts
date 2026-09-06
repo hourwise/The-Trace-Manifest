@@ -5,9 +5,15 @@ import {
   type ReviewQueueScope,
 } from "../review-queue-contract";
 
-type ReviewQueueDatabaseRow = Omit<ReviewQueueCluster, "needs_human_review"> & {
+type ReviewQueueDatabaseRow = Omit<ReviewQueueCluster, "needs_human_review" | "source_names"> & {
   needs_human_review: number | boolean;
 };
+
+interface ReviewQueueSourceNameRow {
+  cluster_id: number;
+  source_name: string;
+  source_rank: number;
+}
 
 const REVIEW_QUEUE_SELECT = `
   SELECT sc.id, sc.title, sc.topic, sc.evidence_status, sc.publication_status,
@@ -21,7 +27,40 @@ function mapReviewQueueRow(row: ReviewQueueDatabaseRow): ReviewQueueCluster {
   return {
     ...row,
     needs_human_review: Boolean(row.needs_human_review),
+    source_names: [],
   };
+}
+
+async function sourceNamesForClusters(db: D1Database, clusterIds: number[]): Promise<Map<number, string[]>> {
+  if (clusterIds.length === 0) return new Map();
+
+  const placeholders = clusterIds.map(() => "?").join(",");
+  const result = await db.prepare(`
+    WITH ranked_source_names AS (
+      SELECT scm.cluster_id, s.name AS source_name,
+             ROW_NUMBER() OVER (
+               PARTITION BY scm.cluster_id
+               ORDER BY MAX(scm.is_primary) DESC, s.tier ASC, s.id ASC
+             ) AS source_rank
+      FROM story_cluster_members scm
+      JOIN feed_items fi ON scm.feed_item_id = fi.id
+      JOIN sources s ON fi.source_id = s.id
+      WHERE scm.cluster_id IN (${placeholders})
+      GROUP BY scm.cluster_id, s.id, s.name, s.tier
+    )
+    SELECT cluster_id, source_name, source_rank
+    FROM ranked_source_names
+    WHERE source_rank <= 3
+    ORDER BY cluster_id ASC, source_rank ASC
+  `).bind(...clusterIds).all<ReviewQueueSourceNameRow>();
+
+  const namesByCluster = new Map<number, string[]>();
+  for (const row of result.results) {
+    const names = namesByCluster.get(row.cluster_id) ?? [];
+    names.push(row.source_name);
+    namesByCluster.set(row.cluster_id, names);
+  }
+  return namesByCluster;
 }
 
 /**
@@ -32,7 +71,7 @@ function mapReviewQueueRow(row: ReviewQueueDatabaseRow): ReviewQueueCluster {
  */
 export async function listReviewQueueClusters(
   db: D1Database,
-  options: { scope: ReviewQueueScope; limit?: number },
+  options: { scope: ReviewQueueScope; limit?: number; includeSourceNames?: boolean },
 ): Promise<ReviewQueueCluster[]> {
   const { scope } = options;
   const limit = reviewQueueLimit(scope, options.limit);
@@ -47,7 +86,12 @@ export async function listReviewQueueClusters(
     LIMIT ?
   `).bind(limit).all<ReviewQueueDatabaseRow>();
 
-  return result.results.map(mapReviewQueueRow);
+  const clusters = result.results.map(mapReviewQueueRow);
+  const includeSourceNames = options.includeSourceNames ?? scope === "publishable";
+  if (!includeSourceNames) return clusters;
+
+  const namesByCluster = await sourceNamesForClusters(db, clusters.map((cluster) => cluster.id));
+  return clusters.map((cluster) => ({ ...cluster, source_names: namesByCluster.get(cluster.id) ?? [] }));
 }
 
 export async function listRecentlyReviewedClusters(

@@ -12,6 +12,8 @@ export interface ReviewQueueCluster {
   publication_status: ReviewQueuePublicationStatus;
   needs_human_review: boolean;
   source_count: number;
+  /** At most three deterministic source names for publish-selector decoration. */
+  source_names: string[];
   summary: string | null;
   why_it_matters: string | null;
   created_at: string;

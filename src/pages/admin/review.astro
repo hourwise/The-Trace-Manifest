@@ -257,7 +257,6 @@ try {
       // Load clusters with filtering
       let allClusters: ReviewQueueCluster[] = [];
       let clusterDetail: Record<number, { summary?: string | null; why?: string | null }> = {};
-      let clusterMeta: Record<number, string> = {};
 
       function applyClusterFilters(): void {
         const select = $<HTMLSelectElement>("cluster-select");
@@ -309,7 +308,7 @@ try {
         filtered.forEach((c) => {
           const opt = document.createElement("option");
           opt.value = String(c.id);
-          const meta = clusterMeta[c.id] ? ` — ${clusterMeta[c.id]}` : "";
+          const meta = c.source_names.length > 0 ? ` — ${c.source_names.slice(0, 3).join(", ")}` : "";
           const dateStr = c.created_at ? ` ${new Date(c.created_at).toLocaleDateString("en-GB")}` : "";
           opt.textContent = `#${c.id}: ${c.title.slice(0, 70)} [${c.publication_status}] (${c.source_count || 0}s${meta})${dateStr}`;
           select.appendChild(opt);
@@ -336,22 +335,12 @@ try {
           if (!res.ok) { throw new Error(`HTTP ${res.status}`); }
           allClusters = await res.json() as ReviewQueueCluster[];
 
-          if (allClusters.length > 0) {
-            clusterDetail = {};
-            clusterMeta = {};
-            // Fetch source names for the first 20 clusters (for display in dropdown)
-            await Promise.all(allClusters.slice(0, 20).map(async (c) => {
-              clusterDetail[c.id] = { summary: c.summary, why: c.why_it_matters };
-              try {
-                const srcRes = await adminFetch(`/api/admin/cluster-sources?clusterId=${c.id}`);
-                if (srcRes.ok) {
-                  const srcs: Array<{ sourceName: string }> = await srcRes.json();
-                  const names = new Set(srcs.map((s) => s.sourceName));
-                  clusterMeta[c.id] = [...names].slice(0, 3).join(", ");
-                }
-              } catch { clusterMeta[c.id] = ""; }
-            }));
+          clusterDetail = {};
+          allClusters.forEach((c) => {
+            clusterDetail[c.id] = { summary: c.summary, why: c.why_it_matters };
+          });
 
+          if (allClusters.length > 0) {
             // Populate topic filter
             const topicSelect = $<HTMLSelectElement>("filter-topic");
             if (topicSelect) {
@@ -727,7 +716,6 @@ try {
           if (!res.ok) { const d = await res.json() as { error?: string }; throw new Error(d.error || `HTTP ${res.status}`); }
           allClusters = allClusters.filter((cluster) => cluster.id !== clusterId);
           delete clusterDetail[clusterId];
-          delete clusterMeta[clusterId];
           resetSelectedClusterState();
           applyClusterFilters();
           status("Archived.", false);
@@ -773,7 +761,6 @@ try {
           } else {
             allClusters = allClusters.filter((cluster) => cluster.id !== clusterId);
             delete clusterDetail[clusterId];
-            delete clusterMeta[clusterId];
             resetSelectedClusterState();
             applyClusterFilters();
             status(data.story ? `Published! Slug: ${data.story.slug}` : "Published.", false);
