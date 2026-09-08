@@ -235,6 +235,19 @@ try {
         type AssertionGovernanceErrorBody,
         type AssertionGovernanceResponse,
       } from "../../lib/admin/assertion-governance-ui";
+      import {
+        ASSERTION_REVIEWER_GOVERNANCE_REASON_MAX_LENGTH,
+        buildAssertionReviewerGovernancePayload,
+        createAssertionReviewerGovernanceIdempotencyKey,
+        reviewerGovernanceDecisionMessage,
+        reviewerGovernanceFailureMessage,
+        shouldRefreshReviewerEvidenceAfterFailure,
+        shouldRefreshReviewerPublishableClusters,
+        shouldRenderAssertionReviewerGovernanceControls,
+        type AssertionReviewerGovernanceAction,
+        type AssertionReviewerGovernanceErrorBody,
+        type AssertionReviewerGovernanceResponse,
+      } from "../../lib/admin/assertion-reviewer-governance-ui";
 
       function authHeaders(method: string = "GET"): Record<string, string> {
         // Only set Content-Type for requests with a body; adding it to GET
@@ -471,7 +484,16 @@ try {
         hasAttemptedSubmission: boolean;
       }
 
+      interface AssertionReviewerGovernanceDraft {
+        action: AssertionReviewerGovernanceAction;
+        reason: string;
+        idempotencyKey: string;
+        submitting: boolean;
+        hasAttemptedSubmission: boolean;
+      }
+
       const assertionGovernanceDrafts = new Map<string, AssertionGovernanceDraft>();
+      const assertionReviewerGovernanceDrafts = new Map<string, AssertionReviewerGovernanceDraft>();
 
       function governanceDomSuffix(assertionId: string): string {
         return assertionId.replace(/[^a-zA-Z0-9_-]/g, "-") || "assertion";
@@ -487,6 +509,7 @@ try {
 
       function disposeAssertionGovernanceDrafts(): void {
         assertionGovernanceDrafts.clear();
+        assertionReviewerGovernanceDrafts.clear();
       }
 
       function setGovernanceFormMessage(assertionId: string, message: string, isError = false): void {
@@ -513,6 +536,40 @@ try {
           const draft = assertionGovernanceDrafts.get(assertionId);
           if (draft) submit.textContent = `Confirm ${draft.action}`;
         }
+        const reviewerRoot = [...document.querySelectorAll<HTMLElement>("[data-assertion-reviewer-governance]")]
+          .find((candidate) => candidate.dataset.assertionId === assertionId);
+        reviewerRoot?.querySelectorAll<HTMLButtonElement | HTMLTextAreaElement>("button, textarea")
+          .forEach((control) => { control.disabled = busy; });
+      }
+
+      function setReviewerFormMessage(assertionId: string, message: string, isError = false): void {
+        const root = [...document.querySelectorAll<HTMLElement>("[data-assertion-reviewer-governance]")]
+          .find((candidate) => candidate.dataset.assertionId === assertionId);
+        const messageEl = root?.querySelector<HTMLElement>("[data-reviewer-status]");
+        if (messageEl) {
+          messageEl.textContent = message;
+          messageEl.style.color = isError ? "var(--ev-disputed)" : "var(--ev-confirmed)";
+          messageEl.setAttribute("role", isError ? "alert" : "status");
+        }
+      }
+
+      function setReviewerFormBusy(assertionId: string, busy: boolean): void {
+        const root = [...document.querySelectorAll<HTMLElement>("[data-assertion-reviewer-governance]")]
+          .find((candidate) => candidate.dataset.assertionId === assertionId);
+        if (!root) return;
+        root.querySelectorAll<HTMLButtonElement>("button").forEach((button) => { button.disabled = busy; });
+        const textarea = root.querySelector<HTMLTextAreaElement>("textarea");
+        if (textarea) textarea.disabled = busy;
+        const submit = root.querySelector<HTMLButtonElement>("[data-reviewer-submit]");
+        if (submit && busy) submit.textContent = "Saving…";
+        if (submit && !busy) {
+          const draft = assertionReviewerGovernanceDrafts.get(assertionId);
+          if (draft) submit.textContent = draft.action === "accept_review" ? "Accept assertion" : "Reject review";
+        }
+        const admissionRoot = [...document.querySelectorAll<HTMLElement>("[data-assertion-governance]")]
+          .find((candidate) => candidate.dataset.assertionId === assertionId);
+        admissionRoot?.querySelectorAll<HTMLButtonElement | HTMLTextAreaElement>("button, textarea")
+          .forEach((control) => { control.disabled = busy; });
       }
 
       function governanceControlsMarkup(assertion: EditorialAssertion): string {
@@ -525,13 +582,13 @@ try {
             <div data-assertion-governance data-assertion-id="${assertionId}" style="margin-top:0.7rem;padding:0.65rem;background:var(--surface-2);border-left:3px solid var(--accent);">
               <p class="meta" style="margin:0 0 0.45rem;font-size:0.75rem;">Publisher admission control. A reason is required; this only governs admission, not reviewer state or freshness.</p>
               <div role="group" aria-label="Publisher admission controls for assertion ${assertionId}" style="display:flex;gap:0.5rem;flex-wrap:wrap;">
-                <button type="button" class="btn btn-primary" data-governance-action="admit" data-assertion-id="${assertionId}" style="font-size:0.78rem;">Admit assertion</button>
-                <button type="button" class="btn btn-secondary" data-governance-action="reject" data-assertion-id="${assertionId}" style="font-size:0.78rem;">Reject assertion</button>
+                <button type="button" class="btn btn-primary" data-governance-action="admit" data-assertion-id="${assertionId}" style="font-size:0.78rem;">Admit evidence</button>
+                <button type="button" class="btn btn-secondary" data-governance-action="reject" data-assertion-id="${assertionId}" style="font-size:0.78rem;">Reject admission</button>
               </div>
             </div>
           `;
         }
-        const actionLabel = draft.action === "admit" ? "Admit assertion" : "Reject assertion";
+        const actionLabel = draft.action === "admit" ? "Admit evidence" : "Reject admission";
         const explanation = draft.action === "admit"
           ? "Admission does not automatically mark the assertion editorially accepted or current."
           : "Rejection is an admission-layer decision; it does not delete or rewrite assertion history.";
@@ -550,6 +607,47 @@ try {
                 <button type="button" class="btn btn-secondary" data-governance-cancel style="font-size:0.78rem;">Cancel</button>
               </div>
               <p id="${statusId}" data-governance-status class="meta" role="status" aria-live="polite" style="margin:0.45rem 0 0;font-size:0.75rem;"></p>
+            </form>
+          </div>
+        `;
+      }
+
+      function reviewerGovernanceControlsMarkup(assertion: EditorialAssertion): string {
+        if (!shouldRenderAssertionReviewerGovernanceControls(assertionGovernanceRole, assertion.reviewerState)) return "";
+        const assertionId = escapeHTML(assertion.assertionId);
+        const suffix = governanceDomSuffix(assertion.assertionId);
+        const draft = assertionReviewerGovernanceDrafts.get(assertion.assertionId);
+        if (!draft) {
+          return `
+            <div data-assertion-reviewer-governance data-assertion-id="${assertionId}" style="margin-top:0.7rem;padding:0.65rem;background:var(--surface-2);border-left:3px solid var(--ev-confirmed);">
+              <p class="meta" style="margin:0 0 0.45rem;font-size:0.75rem;">Editorial review control. This changes reviewer state only; it does not admit the assertion or mark it current.</p>
+              <div role="group" aria-label="Publisher editorial review controls for assertion ${assertionId}" style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+                <button type="button" class="btn btn-primary" data-reviewer-action="accept_review" data-assertion-id="${assertionId}" style="font-size:0.78rem;">Accept assertion</button>
+                <button type="button" class="btn btn-secondary" data-reviewer-action="reject_review" data-assertion-id="${assertionId}" style="font-size:0.78rem;">Reject review</button>
+              </div>
+            </div>
+          `;
+        }
+        const accepting = draft.action === "accept_review";
+        const actionLabel = accepting ? "Accept assertion" : "Reject review";
+        const explanation = accepting
+          ? "This records an editorial reviewer decision that the assertion is accepted on the review axis. It does not admit the assertion or mark it current."
+          : "This records a reviewer rejection. It does not delete the assertion or change its admission state.";
+        const reasonId = `assertion-reviewer-reason-${suffix}`;
+        const hintId = `assertion-reviewer-hint-${suffix}`;
+        const statusId = `assertion-reviewer-status-${suffix}`;
+        return `
+          <div data-assertion-reviewer-governance data-assertion-id="${assertionId}" style="margin-top:0.7rem;padding:0.7rem;background:var(--surface-2);border-left:3px solid var(--ev-confirmed);">
+            <form data-reviewer-form data-assertion-id="${assertionId}" aria-label="${actionLabel} with a human reviewer reason">
+              <p style="margin:0 0 0.45rem;font-size:0.78rem;"><strong>${actionLabel}</strong> — ${explanation}</p>
+              <label for="${reasonId}" style="display:block;font-size:0.78rem;font-weight:600;margin-bottom:0.25rem;">Human reviewer reason <span class="meta" style="font-weight:400;">(required)</span></label>
+              <textarea id="${reasonId}" rows="3" maxlength="${ASSERTION_REVIEWER_GOVERNANCE_REASON_MAX_LENGTH}" aria-required="true" aria-describedby="${hintId}" data-reviewer-reason style="width:100%;resize:vertical;">${escapeHTML(draft.reason)}</textarea>
+              <p id="${hintId}" class="meta" style="margin:0.25rem 0 0;font-size:0.72rem;">${draft.reason.length}/${ASSERTION_REVIEWER_GOVERNANCE_REASON_MAX_LENGTH} characters. The reviewer reason is trimmed before it is sent.</p>
+              <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;margin-top:0.55rem;">
+                <button type="submit" class="btn btn-primary" data-reviewer-submit style="font-size:0.78rem;">${actionLabel}</button>
+                <button type="button" class="btn btn-secondary" data-reviewer-cancel style="font-size:0.78rem;">Cancel</button>
+              </div>
+              <p id="${statusId}" data-reviewer-status class="meta" role="status" aria-live="polite" style="margin:0.45rem 0 0;font-size:0.75rem;"></p>
             </form>
           </div>
         `;
@@ -599,7 +697,7 @@ try {
             <summary style="cursor:pointer;display:flex;gap:0.45rem;align-items:baseline;flex-wrap:wrap;">
               <span class="badge" style="font-size:0.63rem;${posture.style}">${posture.label}</span>
               <strong>${escapeHTML(displayState(assertion.relationship))}</strong>
-              <span class="meta">${escapeHTML(displayState(assertion.admissionState))} · ${escapeHTML(displayState(assertion.freshnessState))} · ${escapeHTML(displayState(assertion.reviewerState))}</span>
+              <span class="meta" aria-label="Authoritative assertion governance states"><strong>Admission:</strong> ${escapeHTML(displayState(assertion.admissionState))} · <strong>Review:</strong> ${escapeHTML(displayState(assertion.reviewerState))} · <strong>Freshness:</strong> ${escapeHTML(displayState(assertion.freshnessState))}</span>
             </summary>
             <p style="margin:0.5rem 0 0;font-size:0.82rem;line-height:1.45;">${escapeHTML(assertion.text)}</p>
             <div class="meta" style="margin-top:0.35rem;"><strong>Source:</strong> ${sourceMarkup(assertion.source)}</div>
@@ -607,6 +705,7 @@ try {
             ${document}
             ${provenance}
             ${governanceControlsMarkup(assertion)}
+            ${reviewerGovernanceControlsMarkup(assertion)}
           </details>
         `;
       }
@@ -670,6 +769,27 @@ try {
           }, 0);
         } catch (error: unknown) {
           status(errorMessage(error, "Could not create a safe action key."), true);
+        }
+      }
+
+      function beginAssertionReviewerGovernance(assertionId: string, action: AssertionReviewerGovernanceAction): void {
+        if (!canGovernAssertions || assertionReviewerGovernanceDrafts.has(assertionId)) return;
+        try {
+          assertionReviewerGovernanceDrafts.set(assertionId, {
+            action,
+            reason: "",
+            idempotencyKey: createAssertionReviewerGovernanceIdempotencyKey(),
+            submitting: false,
+            hasAttemptedSubmission: false,
+          });
+          if (currentEditorialEvidence) renderEditorialEvidence(currentEditorialEvidence);
+          window.setTimeout(() => {
+            const root = [...document.querySelectorAll<HTMLElement>("[data-assertion-reviewer-governance]")]
+              .find((candidate) => candidate.dataset.assertionId === assertionId);
+            root?.querySelector<HTMLTextAreaElement>("textarea")?.focus();
+          }, 0);
+        } catch (error: unknown) {
+          status(errorMessage(error, "Could not create a safe reviewer action key."), true);
         }
       }
 
@@ -758,9 +878,103 @@ try {
         }
       }
 
+      async function submitAssertionReviewerGovernance(assertionId: string): Promise<void> {
+        const draft = assertionReviewerGovernanceDrafts.get(assertionId);
+        const clusterId = currentEditorialEvidence?.clusterId;
+        const assertion = assertionFromCurrentEvidence(assertionId);
+        if (!draft || draft.submitting || !clusterId || !assertion) return;
+
+        let payload: ReturnType<typeof buildAssertionReviewerGovernancePayload>;
+        try {
+          payload = buildAssertionReviewerGovernancePayload(clusterId, assertion, draft.action, draft.reason, draft.idempotencyKey);
+        } catch (error: unknown) {
+          const message = errorMessage(error, "Enter a valid human reviewer reason before submitting.");
+          setReviewerFormMessage(assertionId, message, true);
+          status(message, true);
+          return;
+        }
+
+        draft.submitting = true;
+        draft.hasAttemptedSubmission = true;
+        setReviewerFormBusy(assertionId, true);
+        setReviewerFormMessage(assertionId, "Saving this editorial review decision…", false);
+        status(`${draft.action === "accept_review" ? "Accepting assertion" : "Rejecting review"}…`, false);
+
+        try {
+          const res = await adminFetch("/api/admin/assertion-reviewer-decision", {
+            method: "POST",
+            body: JSON.stringify(payload),
+          });
+          const raw = await res.json().catch(() => ({})) as AssertionReviewerGovernanceResponse | AssertionReviewerGovernanceErrorBody;
+
+          if (!res.ok) {
+            const errorBody = raw as AssertionReviewerGovernanceErrorBody;
+            const reference = errorBody.eventId || errorBody.requestId ? ` Reference ${errorBody.eventId || errorBody.requestId}.` : "";
+            const message = `${reviewerGovernanceFailureMessage(res.status, errorBody.code, errorBody.error || `HTTP ${res.status}`)}${reference}`;
+            if (res.status === 503) {
+              draft.submitting = false;
+              setReviewerFormBusy(assertionId, false);
+              setReviewerFormMessage(assertionId, `${message} Retry, if needed, with this same form and request key.`, true);
+              status(message, true);
+              return;
+            }
+
+            assertionReviewerGovernanceDrafts.delete(assertionId);
+            if (shouldRefreshReviewerEvidenceAfterFailure(errorBody.code)) {
+              await loadEditorialEvidence(clusterId);
+            } else if (currentEditorialEvidence) {
+              renderEditorialEvidence(currentEditorialEvidence);
+            }
+            status(message, true);
+            return;
+          }
+
+          if ((raw as { success?: boolean }).success !== true) {
+            throw new Error("The reviewer decision response was not recognised.");
+          }
+          const response = raw as AssertionReviewerGovernanceResponse;
+          assertionReviewerGovernanceDrafts.delete(assertionId);
+          const evidenceRefreshed = await loadEditorialEvidence(clusterId);
+          const listRefreshed = !shouldRefreshReviewerPublishableClusters(response)
+            || await loadPublishableClusters(true, false);
+          let message = reviewerGovernanceDecisionMessage(response);
+          if (!evidenceRefreshed) message += " The decision was recorded, but the selected evidence could not be refreshed.";
+          if (!listRefreshed) message += " The publishable cluster list could not be refreshed; reload it before publishing.";
+          focusEditorialEvidenceSummary();
+          status(message, !evidenceRefreshed || !listRefreshed);
+        } catch (error: unknown) {
+          const sessionExpired = error instanceof Error && error.message.includes("Access session expired");
+          if (sessionExpired) {
+            draft.submitting = false;
+            setReviewerFormBusy(assertionId, false);
+            setReviewerFormMessage(assertionId, "Session expired. Reload the page to re-authenticate before trying again.", true);
+            status("Session expired. Reload the page to re-authenticate.", true);
+            return;
+          }
+          const message = reviewerGovernanceFailureMessage(503, undefined, errorMessage(error, "The reviewer decision could not be confirmed."));
+          draft.submitting = false;
+          setReviewerFormBusy(assertionId, false);
+          setReviewerFormMessage(assertionId, `${message} The same request key remains available for a cautious retry.`, true);
+          status(message, true);
+          console.error(error);
+        } finally {
+          const activeDraft = assertionReviewerGovernanceDrafts.get(assertionId);
+          if (activeDraft === draft && !activeDraft.submitting) setReviewerFormBusy(assertionId, false);
+        }
+      }
+
       function bindAssertionGovernanceControls(): void {
         const body = $<HTMLElement>("claims-evidence-body");
         if (!body) return;
+        body.querySelectorAll<HTMLButtonElement>("[data-reviewer-action]").forEach((button) => {
+          button.addEventListener("click", () => {
+            const assertionId = button.dataset.assertionId;
+            const action = button.dataset.reviewerAction as AssertionReviewerGovernanceAction | undefined;
+            if (assertionId && (action === "accept_review" || action === "reject_review")) {
+              beginAssertionReviewerGovernance(assertionId, action);
+            }
+          });
+        });
         body.querySelectorAll<HTMLButtonElement>("[data-governance-action]").forEach((button) => {
           button.addEventListener("click", () => {
             const assertionId = button.dataset.assertionId;
@@ -777,6 +991,17 @@ try {
             assertionGovernanceDrafts.delete(assertionId);
             if (currentEditorialEvidence) renderEditorialEvidence(currentEditorialEvidence);
             if (draft) focusGovernanceAction(assertionId, draft.action);
+          });
+        });
+        body.querySelectorAll<HTMLButtonElement>("[data-reviewer-cancel]").forEach((button) => {
+          button.addEventListener("click", () => {
+            const form = button.closest<HTMLElement>("[data-assertion-reviewer-governance]");
+            const assertionId = form?.dataset.assertionId;
+            if (!assertionId) return;
+            const draft = assertionReviewerGovernanceDrafts.get(assertionId);
+            assertionReviewerGovernanceDrafts.delete(assertionId);
+            if (currentEditorialEvidence) renderEditorialEvidence(currentEditorialEvidence);
+            if (draft) focusReviewerGovernanceAction(assertionId, draft.action);
           });
         });
         body.querySelectorAll<HTMLTextAreaElement>("[data-governance-reason]").forEach((textarea) => {
@@ -801,11 +1026,35 @@ try {
             if (hint) hint.textContent = `${textarea.value.length}/${ASSERTION_GOVERNANCE_REASON_MAX_LENGTH} characters. The reason is trimmed before it is sent.`;
           });
         });
+        body.querySelectorAll<HTMLTextAreaElement>("[data-reviewer-reason]").forEach((textarea) => {
+          textarea.addEventListener("input", () => {
+            const root = textarea.closest<HTMLElement>("[data-assertion-reviewer-governance]");
+            const assertionId = root?.dataset.assertionId;
+            const draft = assertionId ? assertionReviewerGovernanceDrafts.get(assertionId) : undefined;
+            if (!draft || !assertionId) return;
+            if (draft.hasAttemptedSubmission) {
+              draft.idempotencyKey = createAssertionReviewerGovernanceIdempotencyKey();
+              draft.hasAttemptedSubmission = false;
+              setReviewerFormMessage(assertionId, "Reviewer reason changed; a fresh request key will be used for this new decision.", false);
+            }
+            draft.reason = textarea.value;
+            const suffix = governanceDomSuffix(assertionId);
+            const hint = $<HTMLElement>(`assertion-reviewer-hint-${suffix}`);
+            if (hint) hint.textContent = `${textarea.value.length}/${ASSERTION_REVIEWER_GOVERNANCE_REASON_MAX_LENGTH} characters. The reviewer reason is trimmed before it is sent.`;
+          });
+        });
         body.querySelectorAll<HTMLFormElement>("[data-governance-form]").forEach((form) => {
           form.addEventListener("submit", (event) => {
             event.preventDefault();
             const assertionId = form.dataset.assertionId;
             if (assertionId) void submitAssertionGovernance(assertionId);
+          });
+        });
+        body.querySelectorAll<HTMLFormElement>("[data-reviewer-form]").forEach((form) => {
+          form.addEventListener("submit", (event) => {
+            event.preventDefault();
+            const assertionId = form.dataset.assertionId;
+            if (assertionId) void submitAssertionReviewerGovernance(assertionId);
           });
         });
       }
@@ -814,6 +1063,14 @@ try {
         window.setTimeout(() => {
           const button = [...document.querySelectorAll<HTMLButtonElement>("[data-governance-action]")]
             .find((candidate) => candidate.dataset.assertionId === assertionId && candidate.dataset.governanceAction === action);
+          button?.focus();
+        }, 0);
+      }
+
+      function focusReviewerGovernanceAction(assertionId: string, action: AssertionReviewerGovernanceAction): void {
+        window.setTimeout(() => {
+          const button = [...document.querySelectorAll<HTMLButtonElement>("[data-reviewer-action]")]
+            .find((candidate) => candidate.dataset.assertionId === assertionId && candidate.dataset.reviewerAction === action);
           button?.focus();
         }, 0);
       }
