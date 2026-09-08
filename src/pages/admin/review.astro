@@ -110,7 +110,7 @@ try {
       </div>
 
       <!-- Canonical claims and evidence — appears only after a cluster is selected -->
-      <section id="claims-evidence-panel" class="card" style="margin-bottom:1.5rem;background:var(--surface-2);display:none;">
+      <section id="claims-evidence-panel" class="card" data-assertion-governance-role={Astro.locals.operator?.role === "publisher" ? "publisher" : "reader"} style="margin-bottom:1.5rem;background:var(--surface-2);display:none;">
         <div style="display:flex;justify-content:space-between;align-items:baseline;gap:0.75rem;flex-wrap:wrap;">
           <h3 style="font-size:0.95rem;margin:0;">Claims &amp; Evidence</h3>
           <span id="claims-evidence-summary" class="meta" style="font-size:0.75rem;"></span>
@@ -222,6 +222,19 @@ try {
         EditorialClusterEvidence,
         EditorialEvidenceAttachment,
       } from "../../lib/editorial-evidence-contract";
+      import {
+        ASSERTION_GOVERNANCE_REASON_MAX_LENGTH,
+        buildAssertionGovernancePayload,
+        createAssertionGovernanceIdempotencyKey,
+        governanceDecisionMessage,
+        governanceFailureMessage,
+        shouldRefreshEvidenceAfterFailure,
+        shouldRefreshPublishableClusters,
+        shouldRenderAssertionGovernanceControls,
+        type AssertionGovernanceAction,
+        type AssertionGovernanceErrorBody,
+        type AssertionGovernanceResponse,
+      } from "../../lib/admin/assertion-governance-ui";
 
       function authHeaders(method: string = "GET"): Record<string, string> {
         // Only set Content-Type for requests with a body; adding it to GET
@@ -273,7 +286,12 @@ try {
       let allClusters: ReviewQueuePublishableCluster[] = [];
       let clusterDetail: Record<number, { summary?: string | null; why?: string | null }> = {};
 
-      function applyClusterFilters(): void {
+      interface PreservedClusterSelection {
+        value: string;
+        label: string;
+      }
+
+      function applyClusterFilters(preservedSelection?: PreservedClusterSelection): void {
         const select = $<HTMLSelectElement>("cluster-select");
         const count = document.getElementById("cluster-count");
         if (!select || !count) return;
@@ -318,7 +336,8 @@ try {
         }
 
         // Render
-        const currentValue = select.value;
+        const currentValue = preservedSelection?.value ?? select.value;
+        const currentLabel = preservedSelection?.label ?? select.options[select.selectedIndex]?.textContent ?? "Selected cluster";
         select.innerHTML = '<option value="">— Select a cluster —</option>';
         filtered.forEach((c) => {
           const opt = document.createElement("option");
@@ -328,7 +347,16 @@ try {
           opt.textContent = `#${c.id}: ${c.title.slice(0, 70)} [${c.publication_status}] (${c.source_count || 0}s${meta})${dateStr}`;
           select.appendChild(opt);
         });
-        if (currentValue && filtered.some(c => String(c.id) === currentValue)) {
+        const selectedClusterStillListed = filtered.some(c => String(c.id) === currentValue);
+        const selectedClusterStillPublishable = allClusters.some(c => String(c.id) === currentValue);
+        if (currentValue && selectedClusterStillListed) {
+          select.value = currentValue;
+        } else if (currentValue && !selectedClusterStillPublishable) {
+          const preserved = document.createElement("option");
+          preserved.value = currentValue;
+          preserved.textContent = `${currentLabel} (no longer publishable — evidence retained)`;
+          preserved.dataset.preservedSelection = "true";
+          select.appendChild(preserved);
           select.value = currentValue;
         }
         const drafts = filtered.filter(c => c.publication_status === 'draft').length;
@@ -336,14 +364,18 @@ try {
         checkPublishReady();
       }
 
-      $<HTMLButtonElement>("load-clusters-btn")?.addEventListener("click", async () => {
+      async function loadPublishableClusters(preserveSelection = false, announce = true): Promise<boolean> {
         const select = $<HTMLSelectElement>("cluster-select");
         const count = document.getElementById("cluster-count");
-        if (!select || !count) return;
+        if (!select || !count) return false;
+
+        const preservedSelection = preserveSelection && select.value
+          ? { value: select.value, label: select.options[select.selectedIndex]?.textContent ?? "Selected cluster" }
+          : undefined;
 
         select.disabled = true;
-        select.innerHTML = '<option value="">Loading…</option>';
-        status("Loading clusters…", false);
+        if (!preserveSelection) select.innerHTML = '<option value="">Loading…</option>';
+        if (announce) status("Loading clusters…", false);
 
         try {
           const res = await adminFetch(`/api/admin/clusters?scope=publishable&limit=200`);
@@ -377,21 +409,27 @@ try {
           $<HTMLInputElement>("filter-auto-only")!.disabled = false;
           select.disabled = false;
 
-          applyClusterFilters();
-          status(`Loaded ${allClusters.length} clusters.`, false);
+          applyClusterFilters(preservedSelection);
+          if (announce) status(`Loaded ${allClusters.length} clusters.`, false);
+          return true;
         } catch (e) {
-          select.innerHTML = '<option value="">— Error loading —</option>';
+          if (!preserveSelection) select.innerHTML = '<option value="">— Error loading —</option>';
           select.disabled = false;
           if (count) count.textContent = "";
-          status("Failed to load. Check your Access role and network.", true);
+          if (announce) status("Failed to load. Check your Access role and network.", true);
           console.error(e);
+          return false;
         }
+      }
+
+      $<HTMLButtonElement>("load-clusters-btn")?.addEventListener("click", () => {
+        void loadPublishableClusters();
       });
 
       // Re-filter on any filter change
-      $<HTMLSelectElement>("filter-topic")?.addEventListener("change", applyClusterFilters);
-      $<HTMLSelectElement>("filter-sort")?.addEventListener("change", applyClusterFilters);
-      $<HTMLInputElement>("filter-hide-dupes")?.addEventListener("change", applyClusterFilters);
+      $<HTMLSelectElement>("filter-topic")?.addEventListener("change", () => applyClusterFilters());
+      $<HTMLSelectElement>("filter-sort")?.addEventListener("change", () => applyClusterFilters());
+      $<HTMLInputElement>("filter-hide-dupes")?.addEventListener("change", () => applyClusterFilters());
       $<HTMLInputElement>("filter-manual-only")?.addEventListener("change", function() {
         if (this.checked) { const cb = $<HTMLInputElement>("filter-auto-only"); if (cb) cb.checked = false; }
         applyClusterFilters();
@@ -408,7 +446,8 @@ try {
         const select = $<HTMLSelectElement>("cluster-select");
         const summary = $<HTMLTextAreaElement>("pub-summary");
         if (btn && select && summary) {
-          btn.disabled = !select.value || !summary.value || summary.value.trim().length < 20;
+          const selectedClusterIsPublishable = allClusters.some((cluster) => String(cluster.id) === select.value);
+          btn.disabled = !selectedClusterIsPublishable || !summary.value || summary.value.trim().length < 20;
         }
         if (archBtn && select) {
           archBtn.disabled = !select.value;
@@ -420,6 +459,101 @@ try {
       // Load source material when cluster is selected
       let currentSources: Array<{ title: string; excerpt: string | null }> = [];
       let evidenceRequestToken = 0;
+      const canGovernAssertions = document.getElementById("claims-evidence-panel")?.dataset.assertionGovernanceRole === "publisher";
+      const assertionGovernanceRole = canGovernAssertions ? "publisher" as const : "reader" as const;
+      let currentEditorialEvidence: EditorialClusterEvidence | null = null;
+
+      interface AssertionGovernanceDraft {
+        action: AssertionGovernanceAction;
+        reason: string;
+        idempotencyKey: string;
+        submitting: boolean;
+        hasAttemptedSubmission: boolean;
+      }
+
+      const assertionGovernanceDrafts = new Map<string, AssertionGovernanceDraft>();
+
+      function governanceDomSuffix(assertionId: string): string {
+        return assertionId.replace(/[^a-zA-Z0-9_-]/g, "-") || "assertion";
+      }
+
+      function assertionFromCurrentEvidence(assertionId: string): EditorialAssertion | null {
+        for (const claim of currentEditorialEvidence?.claims ?? []) {
+          const assertion = claim.assertions.find((candidate) => candidate.assertionId === assertionId);
+          if (assertion) return assertion;
+        }
+        return null;
+      }
+
+      function disposeAssertionGovernanceDrafts(): void {
+        assertionGovernanceDrafts.clear();
+      }
+
+      function setGovernanceFormMessage(assertionId: string, message: string, isError = false): void {
+        const root = [...document.querySelectorAll<HTMLElement>("[data-assertion-governance]")]
+          .find((candidate) => candidate.dataset.assertionId === assertionId);
+        const messageEl = root?.querySelector<HTMLElement>("[data-governance-status]");
+        if (messageEl) {
+          messageEl.textContent = message;
+          messageEl.style.color = isError ? "var(--ev-disputed)" : "var(--ev-confirmed)";
+          messageEl.setAttribute("role", isError ? "alert" : "status");
+        }
+      }
+
+      function setGovernanceFormBusy(assertionId: string, busy: boolean): void {
+        const root = [...document.querySelectorAll<HTMLElement>("[data-assertion-governance]")]
+          .find((candidate) => candidate.dataset.assertionId === assertionId);
+        if (!root) return;
+        root.querySelectorAll<HTMLButtonElement>("button").forEach((button) => { button.disabled = busy; });
+        const textarea = root.querySelector<HTMLTextAreaElement>("textarea");
+        if (textarea) textarea.disabled = busy;
+        const submit = root.querySelector<HTMLButtonElement>("[data-governance-submit]");
+        if (submit && busy) submit.textContent = "Saving…";
+        if (submit && !busy) {
+          const draft = assertionGovernanceDrafts.get(assertionId);
+          if (draft) submit.textContent = `Confirm ${draft.action}`;
+        }
+      }
+
+      function governanceControlsMarkup(assertion: EditorialAssertion): string {
+        if (!shouldRenderAssertionGovernanceControls(assertionGovernanceRole, assertion.admissionState)) return "";
+        const assertionId = escapeHTML(assertion.assertionId);
+        const suffix = governanceDomSuffix(assertion.assertionId);
+        const draft = assertionGovernanceDrafts.get(assertion.assertionId);
+        if (!draft) {
+          return `
+            <div data-assertion-governance data-assertion-id="${assertionId}" style="margin-top:0.7rem;padding:0.65rem;background:var(--surface-2);border-left:3px solid var(--accent);">
+              <p class="meta" style="margin:0 0 0.45rem;font-size:0.75rem;">Publisher admission control. A reason is required; this only governs admission, not reviewer state or freshness.</p>
+              <div role="group" aria-label="Publisher admission controls for assertion ${assertionId}" style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+                <button type="button" class="btn btn-primary" data-governance-action="admit" data-assertion-id="${assertionId}" style="font-size:0.78rem;">Admit assertion</button>
+                <button type="button" class="btn btn-secondary" data-governance-action="reject" data-assertion-id="${assertionId}" style="font-size:0.78rem;">Reject assertion</button>
+              </div>
+            </div>
+          `;
+        }
+        const actionLabel = draft.action === "admit" ? "Admit assertion" : "Reject assertion";
+        const explanation = draft.action === "admit"
+          ? "Admission does not automatically mark the assertion editorially accepted or current."
+          : "Rejection is an admission-layer decision; it does not delete or rewrite assertion history.";
+        const reasonId = `assertion-governance-reason-${suffix}`;
+        const hintId = `assertion-governance-hint-${suffix}`;
+        const statusId = `assertion-governance-status-${suffix}`;
+        return `
+          <div data-assertion-governance data-assertion-id="${assertionId}" style="margin-top:0.7rem;padding:0.7rem;background:var(--surface-2);border-left:3px solid var(--accent);">
+            <form data-governance-form data-assertion-id="${assertionId}" aria-label="${actionLabel} with a human reason">
+              <p style="margin:0 0 0.45rem;font-size:0.78rem;"><strong>${actionLabel}</strong> — ${explanation}</p>
+              <label for="${reasonId}" style="display:block;font-size:0.78rem;font-weight:600;margin-bottom:0.25rem;">Human reason <span class="meta" style="font-weight:400;">(required)</span></label>
+              <textarea id="${reasonId}" rows="3" maxlength="${ASSERTION_GOVERNANCE_REASON_MAX_LENGTH}" aria-required="true" aria-describedby="${hintId}" data-governance-reason style="width:100%;resize:vertical;">${escapeHTML(draft.reason)}</textarea>
+              <p id="${hintId}" class="meta" style="margin:0.25rem 0 0;font-size:0.72rem;">${draft.reason.length}/${ASSERTION_GOVERNANCE_REASON_MAX_LENGTH} characters. The reason is trimmed before it is sent.</p>
+              <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;margin-top:0.55rem;">
+                <button type="submit" class="btn btn-primary" data-governance-submit style="font-size:0.78rem;">Confirm ${draft.action}</button>
+                <button type="button" class="btn btn-secondary" data-governance-cancel style="font-size:0.78rem;">Cancel</button>
+              </div>
+              <p id="${statusId}" data-governance-status class="meta" role="status" aria-live="polite" style="margin:0.45rem 0 0;font-size:0.75rem;"></p>
+            </form>
+          </div>
+        `;
+      }
 
       function displayState(value: string | null | undefined): string {
         return (value ?? "not recorded").replaceAll("_", " ");
@@ -472,6 +606,7 @@ try {
             <div class="meta" style="margin-top:0.35rem;"><strong>Evidence treatment:</strong> ${escapeHTML(displayState(assertion.evidenceTreatment))} · <strong>directness:</strong> ${escapeHTML(displayState(assertion.directness))} · <strong>confidence:</strong> ${escapeHTML(String(assertion.confidence))}</div>
             ${document}
             ${provenance}
+            ${governanceControlsMarkup(assertion)}
           </details>
         `;
       }
@@ -517,7 +652,181 @@ try {
         `;
       }
 
+      function beginAssertionGovernance(assertionId: string, action: AssertionGovernanceAction): void {
+        if (!canGovernAssertions || assertionGovernanceDrafts.has(assertionId)) return;
+        try {
+          assertionGovernanceDrafts.set(assertionId, {
+            action,
+            reason: "",
+            idempotencyKey: createAssertionGovernanceIdempotencyKey(),
+            submitting: false,
+            hasAttemptedSubmission: false,
+          });
+          if (currentEditorialEvidence) renderEditorialEvidence(currentEditorialEvidence);
+          window.setTimeout(() => {
+            const root = [...document.querySelectorAll<HTMLElement>("[data-assertion-governance]")]
+              .find((candidate) => candidate.dataset.assertionId === assertionId);
+            root?.querySelector<HTMLTextAreaElement>("textarea")?.focus();
+          }, 0);
+        } catch (error: unknown) {
+          status(errorMessage(error, "Could not create a safe action key."), true);
+        }
+      }
+
+      async function submitAssertionGovernance(assertionId: string): Promise<void> {
+        const draft = assertionGovernanceDrafts.get(assertionId);
+        const clusterId = currentEditorialEvidence?.clusterId;
+        const assertion = assertionFromCurrentEvidence(assertionId);
+        if (!draft || draft.submitting || !clusterId || !assertion) return;
+
+        let payload: ReturnType<typeof buildAssertionGovernancePayload>;
+        try {
+          payload = buildAssertionGovernancePayload(clusterId, assertion, draft.action, draft.reason, draft.idempotencyKey);
+        } catch (error: unknown) {
+          const message = errorMessage(error, "Enter a valid human reason before submitting.");
+          setGovernanceFormMessage(assertionId, message, true);
+          status(message, true);
+          return;
+        }
+
+        draft.submitting = true;
+        draft.hasAttemptedSubmission = true;
+        setGovernanceFormBusy(assertionId, true);
+        setGovernanceFormMessage(assertionId, "Saving this admission decision…", false);
+        status(`${draft.action === "admit" ? "Admitting" : "Rejecting"} assertion…`, false);
+
+        try {
+          const res = await adminFetch("/api/admin/assertion-review", {
+            method: "POST",
+            body: JSON.stringify(payload),
+          });
+          const raw = await res.json().catch(() => ({})) as AssertionGovernanceResponse | AssertionGovernanceErrorBody;
+
+          if (!res.ok) {
+            const errorBody = raw as AssertionGovernanceErrorBody;
+            const reference = errorBody.eventId || errorBody.requestId ? ` Reference ${errorBody.eventId || errorBody.requestId}.` : "";
+            const message = `${governanceFailureMessage(res.status, errorBody.code, errorBody.error || `HTTP ${res.status}`)}${reference}`;
+            if (res.status === 503) {
+              draft.submitting = false;
+              setGovernanceFormBusy(assertionId, false);
+              setGovernanceFormMessage(assertionId, `${message} Retry, if needed, with this same form and request key.`, true);
+              status(message, true);
+              return;
+            }
+
+            assertionGovernanceDrafts.delete(assertionId);
+            if (shouldRefreshEvidenceAfterFailure(errorBody.code)) {
+              await loadEditorialEvidence(clusterId);
+            } else if (currentEditorialEvidence) {
+              renderEditorialEvidence(currentEditorialEvidence);
+            }
+            status(message, true);
+            return;
+          }
+
+          if ((raw as { success?: boolean }).success !== true) {
+            throw new Error("The admission response was not recognised.");
+          }
+          const response = raw as AssertionGovernanceResponse;
+          assertionGovernanceDrafts.delete(assertionId);
+          const evidenceRefreshed = await loadEditorialEvidence(clusterId);
+          const listRefreshed = !shouldRefreshPublishableClusters(response)
+            || await loadPublishableClusters(true, false);
+          let message = governanceDecisionMessage(response);
+          if (!evidenceRefreshed) message += " The decision was recorded, but the selected evidence could not be refreshed.";
+          if (!listRefreshed) message += " The publishable cluster list could not be refreshed; reload it before publishing.";
+          focusEditorialEvidenceSummary();
+          status(message, !evidenceRefreshed || !listRefreshed);
+        } catch (error: unknown) {
+          const sessionExpired = error instanceof Error && error.message.includes("Access session expired");
+          if (sessionExpired) {
+            draft.submitting = false;
+            setGovernanceFormBusy(assertionId, false);
+            setGovernanceFormMessage(assertionId, "Session expired. Reload the page to re-authenticate before trying again.", true);
+            status("Session expired. Reload the page to re-authenticate.", true);
+            return;
+          }
+          const message = governanceFailureMessage(503, undefined, errorMessage(error, "The request could not be confirmed."));
+          draft.submitting = false;
+          setGovernanceFormBusy(assertionId, false);
+          setGovernanceFormMessage(assertionId, `${message} The same request key remains available for a cautious retry.`, true);
+          status(message, true);
+          console.error(error);
+        } finally {
+          const activeDraft = assertionGovernanceDrafts.get(assertionId);
+          if (activeDraft === draft && !activeDraft.submitting) setGovernanceFormBusy(assertionId, false);
+        }
+      }
+
+      function bindAssertionGovernanceControls(): void {
+        const body = $<HTMLElement>("claims-evidence-body");
+        if (!body) return;
+        body.querySelectorAll<HTMLButtonElement>("[data-governance-action]").forEach((button) => {
+          button.addEventListener("click", () => {
+            const assertionId = button.dataset.assertionId;
+            const action = button.dataset.governanceAction as AssertionGovernanceAction | undefined;
+            if (assertionId && (action === "admit" || action === "reject")) beginAssertionGovernance(assertionId, action);
+          });
+        });
+        body.querySelectorAll<HTMLButtonElement>("[data-governance-cancel]").forEach((button) => {
+          button.addEventListener("click", () => {
+            const form = button.closest<HTMLElement>("[data-assertion-governance]");
+            const assertionId = form?.dataset.assertionId;
+            if (!assertionId) return;
+            const draft = assertionGovernanceDrafts.get(assertionId);
+            assertionGovernanceDrafts.delete(assertionId);
+            if (currentEditorialEvidence) renderEditorialEvidence(currentEditorialEvidence);
+            if (draft) focusGovernanceAction(assertionId, draft.action);
+          });
+        });
+        body.querySelectorAll<HTMLTextAreaElement>("[data-governance-reason]").forEach((textarea) => {
+          textarea.addEventListener("input", () => {
+            const root = textarea.closest<HTMLElement>("[data-assertion-governance]");
+            const assertionId = root?.dataset.assertionId;
+            const draft = assertionId ? assertionGovernanceDrafts.get(assertionId) : undefined;
+            if (!draft || !assertionId) return;
+            if (draft.hasAttemptedSubmission) {
+              try {
+                draft.idempotencyKey = createAssertionGovernanceIdempotencyKey();
+                draft.hasAttemptedSubmission = false;
+                setGovernanceFormMessage(assertionId, "Reason changed; a fresh request key will be used for this new decision.", false);
+              } catch (error: unknown) {
+                setGovernanceFormMessage(assertionId, errorMessage(error, "Could not create a fresh action key."), true);
+                return;
+              }
+            }
+            draft.reason = textarea.value;
+            const suffix = governanceDomSuffix(assertionId);
+            const hint = $<HTMLElement>(`assertion-governance-hint-${suffix}`);
+            if (hint) hint.textContent = `${textarea.value.length}/${ASSERTION_GOVERNANCE_REASON_MAX_LENGTH} characters. The reason is trimmed before it is sent.`;
+          });
+        });
+        body.querySelectorAll<HTMLFormElement>("[data-governance-form]").forEach((form) => {
+          form.addEventListener("submit", (event) => {
+            event.preventDefault();
+            const assertionId = form.dataset.assertionId;
+            if (assertionId) void submitAssertionGovernance(assertionId);
+          });
+        });
+      }
+
+      function focusGovernanceAction(assertionId: string, action: AssertionGovernanceAction): void {
+        window.setTimeout(() => {
+          const button = [...document.querySelectorAll<HTMLButtonElement>("[data-governance-action]")]
+            .find((candidate) => candidate.dataset.assertionId === assertionId && candidate.dataset.governanceAction === action);
+          button?.focus();
+        }, 0);
+      }
+
+      function focusEditorialEvidenceSummary(): void {
+        const summary = $<HTMLElement>("claims-evidence-summary");
+        if (!summary) return;
+        summary.tabIndex = -1;
+        summary.focus();
+      }
+
       function renderEditorialEvidence(data: EditorialClusterEvidence): void {
+        currentEditorialEvidence = data;
         const summary = $<HTMLElement>("claims-evidence-summary");
         const body = $<HTMLElement>("claims-evidence-body");
         if (!summary || !body) return;
@@ -527,10 +836,13 @@ try {
           return;
         }
         body.innerHTML = `${data.claimsTruncated ? `<p class="meta" style="margin:0 0 0.6rem;">Showing ${data.claims.length} of ${data.claimCount} canonical claims.</p>` : ""}${data.claims.map(claimMarkup).join("")}`;
+        bindAssertionGovernanceControls();
       }
 
       function resetEditorialEvidenceState(hide = true): void {
         evidenceRequestToken += 1;
+        currentEditorialEvidence = null;
+        disposeAssertionGovernanceDrafts();
         const panel = document.getElementById("claims-evidence-panel");
         const summary = $<HTMLElement>("claims-evidence-summary");
         const body = $<HTMLElement>("claims-evidence-body");
@@ -539,11 +851,13 @@ try {
         if (body) body.replaceChildren();
       }
 
-      async function loadEditorialEvidence(clusterId: number): Promise<void> {
+      async function loadEditorialEvidence(clusterId: number): Promise<boolean> {
         const panel = document.getElementById("claims-evidence-panel");
         const summary = $<HTMLElement>("claims-evidence-summary");
         const body = $<HTMLElement>("claims-evidence-body");
-        if (!panel || !summary || !body) return;
+        if (!panel || !summary || !body) return false;
+        disposeAssertionGovernanceDrafts();
+        currentEditorialEvidence = null;
         const requestToken = ++evidenceRequestToken;
         panel.style.display = "block";
         summary.textContent = "Loading…";
@@ -552,12 +866,14 @@ try {
           const res = await adminFetch(`/api/admin/cluster-evidence?clusterId=${clusterId}`);
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           const data = await res.json() as EditorialClusterEvidence;
-          if (requestToken !== evidenceRequestToken) return;
+          if (requestToken !== evidenceRequestToken) return false;
           renderEditorialEvidence(data);
+          return true;
         } catch (error: unknown) {
-          if (requestToken !== evidenceRequestToken) return;
+          if (requestToken !== evidenceRequestToken) return false;
           summary.textContent = "Unavailable";
           body.innerHTML = `<p class="meta" style="color:var(--ev-disputed);">Canonical claims and evidence could not be loaded. ${escapeHTML(errorMessage(error, "Unknown error"))}</p>`;
+          return false;
         }
       }
 
