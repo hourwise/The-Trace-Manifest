@@ -50,6 +50,7 @@ export class SQLiteD1 {
     applyLegacyClaimsCutover = true,
     applySourceIdentityDiagnostics = true,
     applySourceIdentityV2 = applySourceIdentityDiagnostics,
+    applyReviewerGovernance = true,
   ) {
     this.sqlite.exec(readFileSync("db/schema.sql", "utf8"));
     this.sqlite.exec(readFileSync("db/migration-5e-publication.sql", "utf8"));
@@ -101,6 +102,9 @@ export class SQLiteD1 {
     this.sqlite.exec(readFileSync("db/migration-0067-kc-11g-h-remediation.sql", "utf8"));
     this.sqlite.exec(readFileSync("db/migration-0068-v1-freshness-review.sql", "utf8"));
     this.sqlite.exec(readFileSync("db/migration-0073-assertion-governance.sql", "utf8"));
+    if (applyReviewerGovernance) {
+      this.sqlite.exec(readFileSync("db/migration-0074-assertion-reviewer-governance.sql", "utf8"));
+    }
   }
 
   prepare(query: string): SQLiteD1Statement {

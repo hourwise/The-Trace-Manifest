@@ -89,6 +89,7 @@ try {
   db.exec(readFileSync("db/migration-0069-trace-d1-reverse-membership-index.sql", "utf8"));
   db.exec(readFileSync("db/migration-0071-trace-v1-bounded-activation.sql", "utf8"));
   db.exec(readFileSync("db/migration-0073-assertion-governance.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0074-assertion-reviewer-governance.sql", "utf8"));
 
   const requiredTables = [
     "ai_requests", "ai_budget_reservations", "ai_usage_ledger", "ai_quota_usage",
@@ -177,9 +178,15 @@ try {
     if (!assertionColumns.has(column)) throw new Error(`Missing assertion column ${column}`);
   }
   const assertionGovernanceEventSql = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'assertion_governance_events'").get()?.sql ?? "";
-  if (!assertionGovernanceEventSql.includes("'admit'") || !assertionGovernanceEventSql.includes("'reject'") || !assertionGovernanceEventSql.includes("idempotency_key")) {
+  if (!assertionGovernanceEventSql.includes("'admit'") || !assertionGovernanceEventSql.includes("'reject'")
+    || !assertionGovernanceEventSql.includes("'accept_review'")
+    || !assertionGovernanceEventSql.includes("'reject_review'")
+    || !assertionGovernanceEventSql.includes("previous_governance_revision")
+    || !assertionGovernanceEventSql.includes("idempotency_key")) {
     throw new Error("Assertion governance event constraints are missing");
   }
+  const preservedLegacyEventTable = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('assertion_governance_events_0073', 'assertion_governance_recalculation_jobs_0073')").all();
+  if (preservedLegacyEventTable.length !== 0) throw new Error("0073 compatibility tables were not fully cut over");
 
   const jobColumns = new Set(db.prepare("PRAGMA table_info(ingestion_jobs)").all().map((row) => row.name));
   for (const column of ["result_status", "items_rejected", "items_skipped", "outcome_detail"]) {

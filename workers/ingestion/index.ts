@@ -47,9 +47,11 @@ import {
   ASSERTION_ADMISSION_STATES,
   ASSERTION_FRESHNESS_STATES,
   ASSERTION_GOVERNANCE_ACTIONS,
+  ASSERTION_REVIEWER_GOVERNANCE_ACTIONS,
   ASSERTION_REVIEWER_STATES,
   AssertionGovernanceError,
   governAssertionAdmission,
+  governAssertionReviewerDecision,
   type AssertionGovernanceExpectedState,
 } from "../../src/lib/server/assertion-governance";
 import {
@@ -101,6 +103,7 @@ const WRITE_ADMIN_ROUTES = new Set([
   "/admin/knowledge/kc-11g-h",
   "/admin/knowledge/freshness",
   "/admin/assertion-review",
+  "/admin/assertion-reviewer-decision",
   "/admin/knowledge/backfill/snapshot", "/admin/knowledge/backfill/plan", "/admin/knowledge/backfill/approve",
   "/admin/knowledge/backfill/execute", "/admin/knowledge/backfill/retry", "/admin/knowledge/backfill/recover",
 ]);
@@ -1111,6 +1114,8 @@ async function handleAdminRoute(
       return handleFreshnessReview(request, env, operator);
     case "/admin/assertion-review":
       return handleAssertionReview(request, env, operator);
+    case "/admin/assertion-reviewer-decision":
+      return handleAssertionReviewerDecision(request, env, operator);
     case "/admin/knowledge/backfill/snapshot":
       return handleKnowledgeBackfillSnapshot(request, env, operator);
     case "/admin/knowledge/backfill/approve":
@@ -1299,8 +1304,52 @@ async function handleAssertionReview(request: Request, env: Env, operator: Inter
   }
 }
 
+async function handleAssertionReviewerDecision(request: Request, env: Env, operator: InternalOperator): Promise<Response> {
+  if (operator.role !== "publisher") return Response.json({ error: "Forbidden" }, { status: 403 });
+  const body = await readAdminObject(request, [
+    "clusterId", "assertionId", "action", "expected", "reason", "idempotencyKey",
+  ]);
+  if (!body || !exactAdminKeys(body, [
+    "clusterId", "assertionId", "action", "expected", "reason", "idempotencyKey",
+  ]) || !positiveInteger(body.clusterId)
+    || !requiredText(body.assertionId, 1, 200)
+    || !isAssertionReviewerGovernanceAction(body.action)
+    || !isAssertionGovernanceExpectedState(body.expected)
+    || !requiredText(body.reason, 1, 2_000)
+    || !requiredText(body.idempotencyKey, 1, 256)) {
+    return Response.json({ error: "Invalid assertion reviewer decision body." }, { status: 400 });
+  }
+
+  try {
+    const result = await governAssertionReviewerDecision(env.DB, {
+      clusterId: body.clusterId as number,
+      assertionId: body.assertionId as string,
+      action: body.action,
+      expected: body.expected,
+      reason: body.reason as string,
+      idempotencyKey: body.idempotencyKey as string,
+      actor: operator.email,
+      requestId: operator.requestId,
+    });
+    return Response.json(result, { status: result.replay ? 200 : 201 });
+  } catch (error) {
+    if (error instanceof AssertionGovernanceError) {
+      return Response.json({
+        error: error.message,
+        code: error.code,
+        ...(error.eventId ? { eventId: error.eventId } : {}),
+      }, { status: error.status });
+    }
+    return Response.json({ error: "Assertion reviewer decision failed." }, { status: 500 });
+  }
+}
+
 function isAssertionGovernanceAction(value: unknown): value is typeof ASSERTION_GOVERNANCE_ACTIONS[number] {
   return typeof value === "string" && ASSERTION_GOVERNANCE_ACTIONS.includes(value as typeof ASSERTION_GOVERNANCE_ACTIONS[number]);
+}
+
+function isAssertionReviewerGovernanceAction(value: unknown): value is typeof ASSERTION_REVIEWER_GOVERNANCE_ACTIONS[number] {
+  return typeof value === "string" && ASSERTION_REVIEWER_GOVERNANCE_ACTIONS.includes(value as typeof ASSERTION_REVIEWER_GOVERNANCE_ACTIONS[number]);
 }
 
 function isAssertionGovernanceExpectedState(value: unknown): value is AssertionGovernanceExpectedState {

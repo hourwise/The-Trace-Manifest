@@ -25,6 +25,8 @@ type RecalculationEvent =
   | "story_archived"
   | "assertion_admitted"
   | "assertion_rejected"
+  | "assertion_review_accepted"
+  | "assertion_review_rejected"
   | "historical_backfill_initial";
 
 interface ClaimRow {

@@ -3,6 +3,10 @@ import { recalculateEvidenceScores, type RecalculateEvidenceResult } from "./evi
 export const ASSERTION_GOVERNANCE_ACTIONS = ["admit", "reject"] as const;
 export type AssertionGovernanceAction = typeof ASSERTION_GOVERNANCE_ACTIONS[number];
 
+export const ASSERTION_REVIEWER_GOVERNANCE_ACTIONS = ["accept_review", "reject_review"] as const;
+export type AssertionReviewerGovernanceAction = typeof ASSERTION_REVIEWER_GOVERNANCE_ACTIONS[number];
+export type AssertionGovernanceEventAction = AssertionGovernanceAction | AssertionReviewerGovernanceAction;
+
 export const ASSERTION_ADMISSION_STATES = ["pending", "admitted", "quarantined", "rejected"] as const;
 export type AssertionAdmissionState = typeof ASSERTION_ADMISSION_STATES[number];
 
@@ -22,6 +26,17 @@ export interface AssertionGovernanceInput {
   clusterId: number;
   assertionId: string;
   action: AssertionGovernanceAction;
+  expected: AssertionGovernanceExpectedState;
+  reason: string;
+  idempotencyKey: string;
+  actor: string;
+  requestId: string;
+}
+
+export interface AssertionReviewerGovernanceInput {
+  clusterId: number;
+  assertionId: string;
+  action: AssertionReviewerGovernanceAction;
   expected: AssertionGovernanceExpectedState;
   reason: string;
   idempotencyKey: string;
@@ -61,6 +76,14 @@ export interface AssertionGovernanceResult {
   replay: boolean;
 }
 
+export interface AssertionReviewerGovernanceResult extends Omit<AssertionGovernanceResult, "action"> {
+  action: AssertionReviewerGovernanceAction;
+}
+
+interface AssertionGovernanceResultBase extends Omit<AssertionGovernanceResult, "action"> {
+  action: AssertionGovernanceEventAction;
+}
+
 export class AssertionGovernanceError extends Error {
   constructor(
     readonly code: string,
@@ -87,7 +110,7 @@ interface EventRow {
   assertion_id: string;
   canonical_claim_id: string;
   cluster_id: number;
-  action: AssertionGovernanceAction;
+  action: AssertionGovernanceEventAction;
   previous_admission_state: AssertionAdmissionState;
   new_admission_state: AssertionAdmissionState;
   previous_reviewer_state: AssertionReviewerState;
@@ -101,6 +124,8 @@ interface EventRow {
   idempotency_key: string;
   request_fingerprint: string;
   recalculation_job_id: string;
+  previous_governance_revision: number;
+  new_governance_revision: number;
   created_at: string;
 }
 
@@ -181,6 +206,31 @@ function validateInput(input: AssertionGovernanceInput): AssertionGovernanceExpe
   return validateExpectedState(input.expected);
 }
 
+function validateReviewerInput(input: AssertionReviewerGovernanceInput): AssertionGovernanceExpectedState {
+  if (!Number.isInteger(input.clusterId) || input.clusterId < 1) {
+    throw new AssertionGovernanceError("invalid_cluster_id", "A positive clusterId is required.");
+  }
+  if (!nonEmptyBoundedText(input.assertionId, MAX_ASSERTION_ID_LENGTH)) {
+    throw new AssertionGovernanceError("invalid_assertion_id", "A bounded assertionId is required.");
+  }
+  if (!isOneOf(ASSERTION_REVIEWER_GOVERNANCE_ACTIONS, input.action)) {
+    throw new AssertionGovernanceError("invalid_action", "action must be accept_review or reject_review.");
+  }
+  if (!nonEmptyBoundedText(input.reason, MAX_REASON_LENGTH)) {
+    throw new AssertionGovernanceError("invalid_reason", "A bounded human reason is required.");
+  }
+  if (!nonEmptyBoundedText(input.idempotencyKey, MAX_IDEMPOTENCY_KEY_LENGTH)) {
+    throw new AssertionGovernanceError("invalid_idempotency_key", "A bounded idempotency key is required.");
+  }
+  if (!nonEmptyBoundedText(input.actor, MAX_ACTOR_LENGTH)) {
+    throw new AssertionGovernanceError("invalid_actor", "A bounded publisher identity is required.");
+  }
+  if (!nonEmptyBoundedText(input.requestId, MAX_REQUEST_ID_LENGTH)) {
+    throw new AssertionGovernanceError("invalid_request_id", "A bounded request ID is required.");
+  }
+  return validateExpectedState(input.expected);
+}
+
 async function sha256(value: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -199,6 +249,20 @@ async function requestFingerprint(input: AssertionGovernanceInput, expected: Ass
   return sha256(canonical);
 }
 
+async function reviewerRequestFingerprint(input: AssertionReviewerGovernanceInput, expected: AssertionGovernanceExpectedState): Promise<string> {
+  const canonical = JSON.stringify({
+    version: "assertion-reviewer-governance-v1",
+    boundary: "reviewer_state",
+    assertionId: input.assertionId.trim(),
+    clusterId: input.clusterId,
+    action: input.action,
+    expected,
+    reason: input.reason.trim(),
+    actor: input.actor.trim().toLowerCase(),
+  });
+  return sha256(canonical);
+}
+
 async function loadEventByKey(db: D1Database, idempotencyKey: string): Promise<EventRow | null> {
   return db.prepare(`
     SELECT id, assertion_id, canonical_claim_id, cluster_id, action,
@@ -206,7 +270,8 @@ async function loadEventByKey(db: D1Database, idempotencyKey: string): Promise<E
            previous_reviewer_state, new_reviewer_state,
            previous_freshness_state, new_freshness_state,
            actor_email, actor_role, reason, request_id, idempotency_key,
-           request_fingerprint, recalculation_job_id, created_at
+           request_fingerprint, recalculation_job_id, created_at,
+           previous_governance_revision, new_governance_revision
     FROM assertion_governance_events
     WHERE idempotency_key = ?
   `).bind(idempotencyKey).first<EventRow>();
@@ -270,6 +335,17 @@ function nextAdmissionState(action: AssertionGovernanceAction, current: Assertio
   return action === "admit" ? "admitted" : "rejected";
 }
 
+function nextReviewerState(action: AssertionReviewerGovernanceAction, current: AssertionReviewerState): AssertionReviewerState {
+  if (!(["proposed", "needs_research"] as AssertionReviewerState[]).includes(current)) {
+    throw new AssertionGovernanceError(
+      "invalid_transition",
+      "Reviewer decisions can only accept or reject proposed or needs-research assertions; accepted, rejected, amended, duplicate, and unsupported states are deferred.",
+      409,
+    );
+  }
+  return action === "accept_review" ? "accepted" : "rejected";
+}
+
 function scoreEligible(row: AssertionRow, admissionState: AssertionAdmissionState): boolean {
   return admissionState === "admitted"
     && ["accepted", "amended"].includes(row.reviewerState)
@@ -278,10 +354,20 @@ function scoreEligible(row: AssertionRow, admissionState: AssertionAdmissionStat
     && ["supports", "partially_supports", "qualifies", "reproduces"].includes(row.relationship);
 }
 
-function publicationImpact(row: AssertionRow, previousAdmissionState: AssertionAdmissionState, currentAdmissionState: AssertionAdmissionState): "unchanged" | "may_change" {
+function publicationImpactForAdmission(row: AssertionRow, previousAdmissionState: AssertionAdmissionState, currentAdmissionState: AssertionAdmissionState): "unchanged" | "may_change" {
   return scoreEligible(row, previousAdmissionState) === scoreEligible(row, currentAdmissionState)
     ? "unchanged"
     : "may_change";
+}
+
+function reviewerPublicationImpact(
+  row: AssertionRow,
+  previousReviewerState: AssertionReviewerState,
+  currentReviewerState: AssertionReviewerState,
+): "unchanged" | "may_change" {
+  const previous = scoreEligible({ ...row, reviewerState: previousReviewerState }, row.admissionState);
+  const current = scoreEligible({ ...row, reviewerState: currentReviewerState }, row.admissionState);
+  return previous === current ? "unchanged" : "may_change";
 }
 
 function stateFromEvent(event: EventRow): { previous: AssertionGovernanceState; current: AssertionGovernanceState } {
@@ -297,6 +383,15 @@ function stateFromEvent(event: EventRow): { previous: AssertionGovernanceState; 
       freshnessState: event.new_freshness_state,
     },
   };
+}
+
+function recalculationTrigger(action: AssertionGovernanceEventAction): "assertion_admitted" | "assertion_rejected" | "assertion_review_accepted" | "assertion_review_rejected" {
+  switch (action) {
+    case "admit": return "assertion_admitted";
+    case "reject": return "assertion_rejected";
+    case "accept_review": return "assertion_review_accepted";
+    case "reject_review": return "assertion_review_rejected";
+  }
 }
 
 function parseStoryScope(job: RecalculationJobRow): number[] {
@@ -347,7 +442,10 @@ function resultForEvent(
   current: AssertionRow,
   recalculation: AssertionGovernanceRecalculation,
   replay: boolean,
-): AssertionGovernanceResult {
+): AssertionGovernanceResultBase {
+  const publicationImpact = event.action === "accept_review" || event.action === "reject_review"
+    ? reviewerPublicationImpact(current, event.previous_reviewer_state, event.new_reviewer_state)
+    : publicationImpactForAdmission(current, event.previous_admission_state, event.new_admission_state);
   return {
     success: true,
     requestId: event.request_id,
@@ -363,7 +461,7 @@ function resultForEvent(
       freshnessState: current.freshnessState,
     },
     recalculation,
-    publicationImpact: publicationImpact(current, event.previous_admission_state, event.new_admission_state),
+    publicationImpact,
     replay,
   };
 }
@@ -372,7 +470,7 @@ async function settleEvent(
   db: D1Database,
   event: EventRow,
   replay: boolean,
-): Promise<AssertionGovernanceResult> {
+): Promise<AssertionGovernanceResultBase> {
   const job = await loadJob(db, event.id);
   if (!job) throw new AssertionGovernanceError("recalculation_obligation_missing", "The assertion transition has no durable recalculation obligation.", 503, event.id);
   const current = await loadAssertion(db, event.assertion_id);
@@ -402,7 +500,7 @@ async function settleEvent(
       storyIds,
       includeLinkedStories: false,
       snapshotIdentity: event.id,
-      triggeringEvent: event.action === "admit" ? "assertion_admitted" : "assertion_rejected",
+      triggeringEvent: recalculationTrigger(event.action),
     });
     const resultJson = JSON.stringify(result);
     const completed = await db.prepare(`
@@ -463,7 +561,7 @@ export async function governAssertionAdmission(
     if (existing.request_fingerprint !== fingerprint) {
       throw new AssertionGovernanceError("idempotency_conflict", "The idempotency key was already used for a different assertion action.", 409);
     }
-    return settleEvent(db, existing, true);
+    return settleEvent(db, existing, true) as Promise<AssertionGovernanceResult>;
   }
 
   const cluster = await db.prepare("SELECT id FROM story_clusters WHERE id = ?")
@@ -510,13 +608,15 @@ export async function governAssertionAdmission(
            previous_reviewer_state, new_reviewer_state,
            previous_freshness_state, new_freshness_state,
            previous_admission_revision, new_admission_revision,
+           previous_governance_revision, new_governance_revision,
            actor_email, actor_role, reason, request_id, idempotency_key,
            request_fingerprint, recalculation_job_id)
-        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'publisher', ?, ?, ?, ?, ?
+        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'publisher', ?, ?, ?, ?, ?
         WHERE EXISTS (
           SELECT 1 FROM claim_assertions
           WHERE id = ? AND canonical_claim_id = ?
-            AND admission_state = ? AND assertion_governance_revision = ?
+            AND admission_state = ? AND reviewer_state = ? AND freshness_state = ?
+            AND assertion_governance_revision = ?
         )
       `).bind(
         eventId, row.id, row.canonical_claim_id, normalizedInput.clusterId, normalizedInput.action,
@@ -524,9 +624,11 @@ export async function governAssertionAdmission(
         row.reviewerState, row.reviewerState,
         row.freshnessState, row.freshnessState,
         row.assertion_governance_revision, newRevision,
+        row.assertion_governance_revision, newRevision,
         normalizedInput.actor, normalizedInput.reason, normalizedInput.requestId,
         normalizedInput.idempotencyKey, fingerprint, jobId,
-        row.id, row.canonical_claim_id, newAdmissionState, newRevision,
+        row.id, row.canonical_claim_id, newAdmissionState,
+        expected.reviewerState, expected.freshnessState, newRevision,
       ),
       db.prepare(`
         INSERT INTO assertion_governance_recalculation_jobs
@@ -553,7 +655,7 @@ export async function governAssertionAdmission(
       if (raced.request_fingerprint !== fingerprint) {
         throw new AssertionGovernanceError("idempotency_conflict", "The idempotency key was already used for a different assertion action.", 409);
       }
-      return settleEvent(db, raced, true);
+      return settleEvent(db, raced, true) as Promise<AssertionGovernanceResult>;
     }
     const current = await loadAssertion(db, normalizedInput.assertionId);
     if (current && !sameExpectedState(current, expected)) {
@@ -564,5 +666,132 @@ export async function governAssertionAdmission(
 
   const event = await loadEventByKey(db, normalizedInput.idempotencyKey);
   if (!event) throw new AssertionGovernanceError("governance_event_missing", "The assertion governance event could not be reloaded.", 503, eventId);
-  return settleEvent(db, event, false);
+  return settleEvent(db, event, false) as Promise<AssertionGovernanceResult>;
+}
+
+export async function governAssertionReviewerDecision(
+  db: D1Database,
+  input: AssertionReviewerGovernanceInput,
+): Promise<AssertionReviewerGovernanceResult> {
+  const expected = validateReviewerInput(input);
+  const normalizedInput = {
+    ...input,
+    assertionId: input.assertionId.trim(),
+    reason: input.reason.trim(),
+    idempotencyKey: input.idempotencyKey.trim(),
+    actor: input.actor.trim().toLowerCase(),
+    requestId: input.requestId.trim(),
+  };
+  const fingerprint = await reviewerRequestFingerprint(normalizedInput, expected);
+  const existing = await loadEventByKey(db, normalizedInput.idempotencyKey);
+  if (existing) {
+    if (existing.request_fingerprint !== fingerprint) {
+      throw new AssertionGovernanceError("idempotency_conflict", "The idempotency key was already used for a different assertion action.", 409);
+    }
+    return settleEvent(db, existing, true) as Promise<AssertionReviewerGovernanceResult>;
+  }
+
+  const cluster = await db.prepare("SELECT id FROM story_clusters WHERE id = ?")
+    .bind(normalizedInput.clusterId).first<{ id: number }>();
+  if (!cluster) throw new AssertionGovernanceError("cluster_not_found", "Cluster not found.", 404);
+
+  const row = await loadAssertion(db, normalizedInput.assertionId);
+  if (!row) throw new AssertionGovernanceError("assertion_not_found", "Assertion not found.", 404);
+  const associated = await db.prepare(`
+    SELECT 1 AS present
+    FROM story_claims
+    WHERE story_cluster_id = ? AND canonical_claim_id = ?
+    LIMIT 1
+  `).bind(normalizedInput.clusterId, row.canonical_claim_id).first<{ present: number }>();
+  if (!associated) throw new AssertionGovernanceError("assertion_not_associated", "The assertion is not associated with the selected cluster.", 409);
+  if (!sameExpectedState(row, expected)) {
+    throw new AssertionGovernanceError("state_conflict", "The assertion changed since it was loaded.", 409);
+  }
+
+  const newReviewerState = nextReviewerState(normalizedInput.action, row.reviewerState);
+  const storyScope = await loadDirectStoryScope(db, row.canonical_claim_id);
+  const eventId = crypto.randomUUID();
+  const jobId = crypto.randomUUID();
+  const newRevision = row.assertion_governance_revision + 1;
+  const storyScopeJson = JSON.stringify(storyScope);
+
+  try {
+    const writes = await db.batch([
+      db.prepare(`
+        UPDATE claim_assertions
+        SET reviewer_state = ?, reviewed_by = ?, reviewed_at = datetime('now'),
+            assertion_governance_revision = ?
+        WHERE id = ? AND canonical_claim_id = ?
+          AND admission_state = ? AND reviewer_state = ? AND freshness_state = ?
+          AND assertion_governance_revision = ?
+      `).bind(
+        newReviewerState, normalizedInput.actor, newRevision,
+        row.id, row.canonical_claim_id,
+        expected.admissionState, expected.reviewerState, expected.freshnessState,
+        row.assertion_governance_revision,
+      ),
+      db.prepare(`
+        INSERT INTO assertion_governance_events
+          (id, assertion_id, canonical_claim_id, cluster_id, action,
+           previous_admission_state, new_admission_state,
+           previous_reviewer_state, new_reviewer_state,
+           previous_freshness_state, new_freshness_state,
+           previous_admission_revision, new_admission_revision,
+           previous_governance_revision, new_governance_revision,
+           actor_email, actor_role, reason, request_id, idempotency_key,
+           request_fingerprint, recalculation_job_id)
+        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'publisher', ?, ?, ?, ?, ?
+        WHERE EXISTS (
+          SELECT 1 FROM claim_assertions
+          WHERE id = ? AND canonical_claim_id = ?
+            AND admission_state = ? AND reviewer_state = ? AND freshness_state = ?
+            AND assertion_governance_revision = ?
+        )
+      `).bind(
+        eventId, row.id, row.canonical_claim_id, normalizedInput.clusterId, normalizedInput.action,
+        row.admissionState, row.admissionState,
+        row.reviewerState, newReviewerState,
+        row.freshnessState, row.freshnessState,
+        row.assertion_governance_revision, row.assertion_governance_revision,
+        row.assertion_governance_revision, newRevision,
+        normalizedInput.actor, normalizedInput.reason, normalizedInput.requestId,
+        normalizedInput.idempotencyKey, fingerprint, jobId,
+        row.id, row.canonical_claim_id, expected.admissionState,
+        newReviewerState, expected.freshnessState, newRevision,
+      ),
+      db.prepare(`
+        INSERT INTO assertion_governance_recalculation_jobs
+          (id, event_id, assertion_id, canonical_claim_id, cluster_id, story_scope_json)
+        SELECT ?, ?, ?, ?, ?, ?
+        WHERE EXISTS (SELECT 1 FROM assertion_governance_events WHERE id = ?)
+      `).bind(jobId, eventId, row.id, row.canonical_claim_id, normalizedInput.clusterId, storyScopeJson, eventId),
+    ]);
+    if (Number(writes[0]?.meta.changes ?? 0) !== 1) {
+      const current = await loadAssertion(db, normalizedInput.assertionId);
+      if (current && !sameExpectedState(current, expected)) {
+        throw new AssertionGovernanceError("state_conflict", "The assertion changed before this reviewer decision committed.", 409);
+      }
+      throw new AssertionGovernanceError("governance_write_failed", "The assertion reviewer decision could not be saved.", 503);
+    }
+    if (Number(writes[1]?.meta.changes ?? 0) !== 1 || Number(writes[2]?.meta.changes ?? 0) !== 1) {
+      throw new AssertionGovernanceError("governance_write_failed", "The assertion reviewer event and recalculation obligation could not be saved.", 503);
+    }
+  } catch (error) {
+    const raced = await loadEventByKey(db, normalizedInput.idempotencyKey);
+    if (raced) {
+      if (raced.request_fingerprint !== fingerprint) {
+        throw new AssertionGovernanceError("idempotency_conflict", "The idempotency key was already used for a different assertion action.", 409);
+      }
+      return settleEvent(db, raced, true) as Promise<AssertionReviewerGovernanceResult>;
+    }
+    const current = await loadAssertion(db, normalizedInput.assertionId);
+    if (current && !sameExpectedState(current, expected)) {
+      throw new AssertionGovernanceError("state_conflict", "The assertion changed before this reviewer decision committed.", 409);
+    }
+    throw new AssertionGovernanceError("governance_write_failed", "The assertion reviewer decision could not be saved.", 503);
+  }
+
+  const event = await loadEventByKey(db, normalizedInput.idempotencyKey);
+  if (!event) throw new AssertionGovernanceError("governance_event_missing", "The assertion reviewer event could not be reloaded.", 503, eventId);
+  return settleEvent(db, event, false) as Promise<AssertionReviewerGovernanceResult>;
 }
