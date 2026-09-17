@@ -100,6 +100,14 @@ if (Astro.request.method === "POST" && Astro.url.searchParams.has("debug")) {
 
     <section id="extraction-result" class="card" aria-live="polite" style="display:none;margin-bottom:2rem;border-left:3px solid var(--ev-confirmed);"></section>
 
+    <section id="extraction-audit" class="card" style="margin-bottom:2rem;">
+      <details id="recent-extraction-runs">
+        <summary style="cursor:pointer;font-weight:600;">Recent extraction runs</summary>
+        <p id="extraction-runs-status" class="meta" style="margin-top:0.75rem;">Open to load the bounded read-only run audit.</p>
+        <div id="extraction-runs-list"></div>
+      </details>
+    </section>
+
     {debugError && (
       <section class="card" style="margin-bottom:2rem;border-left:3px solid var(--ev-disputed);">
         <h2 style="font-size:1.1rem;margin-bottom:0.5rem;">Diagnostic Failed</h2>
@@ -140,16 +148,263 @@ if (Astro.request.method === "POST" && Astro.url.searchParams.has("debug")) {
       </section>
     )}
 
-    <p class="meta" style="font-size:0.75rem;">The durable workflow reports only the extraction engine's bounded counters: items processed, claims extracted, and evidence records created.</p>
+    <p class="meta" style="font-size:0.75rem;">Durable run audit records selected items, terminal outcomes, deterministic claim candidates, newly inserted assertions, and successful canonical-writer calls. The legacy <code>evidenceCreated</code> response field is retained for compatibility and is not an evidence-row count.</p>
   </div>
+
+  <script>
+    interface ExtractionRunSummary {
+      runId: string;
+      trigger: "manual_admin" | "scheduler";
+      algorithmVersion: string;
+      requestId: string | null;
+      operatorEmail: string | null;
+      operatorRole: "reader" | "publisher" | null;
+      startedAt: string;
+      completedAt: string | null;
+      status: "running" | "completed" | "completed_with_failures" | "failed" | "interrupted";
+      selectedCount: number;
+      processedCount: number;
+      noClaimCount: number;
+      failedCount: number;
+      extractedClaimCount: number;
+      newAssertionCount: number;
+      canonicalWriteSuccessCount: number;
+      failureCode: string | null;
+      failureMessage: string | null;
+      createdAt: string;
+    }
+
+    interface ExtractionRunEffect {
+      effectId: number;
+      effectOrdinal: number;
+      claimText: string;
+      claimClass: string;
+      claimDomain: string;
+      attemptOutcome: "inserted" | "reused" | "failed";
+      canonicalClaimId: string | null;
+      assertionId: string | null;
+      canonicalClaimInserted: boolean | null;
+      assertionInserted: boolean | null;
+      storyClaimInserted: boolean | null;
+      failureCode: string | null;
+      failureMessage: string | null;
+    }
+
+    interface ExtractionRunItem {
+      runItemId: number;
+      feedItemId: number;
+      ordinal: number;
+      selectedAt: string;
+      outcome: "pending" | "extracted" | "no_claims" | "failed";
+      pipelineStageId: number | null;
+      feedItemTitle: string;
+      feedItemUrl: string;
+      sourceName: string | null;
+      extractedClaimCount: number;
+      newAssertionCount: number;
+      canonicalWriteSuccessCount: number;
+      failureCode: string | null;
+      failureMessage: string | null;
+      completedAt: string | null;
+      effects: ExtractionRunEffect[];
+    }
+
+    interface ExtractionRunDetail {
+      run: ExtractionRunSummary;
+      items: ExtractionRunItem[];
+      reconciliation: {
+        selectedCount: number;
+        processedCount: number;
+        noClaimCount: number;
+        failedCount: number;
+        extractedClaimCount: number;
+        newAssertionCount: number;
+        canonicalWriteSuccessCount: number;
+        matchesStoredCounters: boolean;
+      };
+      itemLimit: number;
+      effectLimit: number;
+      itemsTruncated: boolean;
+      effectsTruncated: boolean;
+    }
+
+    interface ExtractionRunsResponse {
+      runs: ExtractionRunSummary[];
+      limit: number;
+      truncated: boolean;
+    }
+
+    const recentRunsDisclosure = document.getElementById("recent-extraction-runs") as HTMLDetailsElement | null;
+    const runsStatus = document.getElementById("extraction-runs-status");
+    const runsList = document.getElementById("extraction-runs-list");
+    const loadedRunDetails = new Set<string>();
+    let runsLoaded = false;
+
+    function auditText(value: unknown, fallback = "—"): string {
+      return value === null || value === undefined || value === "" ? fallback : String(value);
+    }
+
+    function addAuditLine(parent: HTMLElement, label: string, value: unknown): void {
+      const line = document.createElement("p");
+      line.style.margin = "0.3rem 0";
+      const strong = document.createElement("strong");
+      strong.textContent = `${label}: `;
+      line.appendChild(strong);
+      line.appendChild(document.createTextNode(auditText(value)));
+      parent.appendChild(line);
+    }
+
+    function statusLabel(status: ExtractionRunSummary["status"]): string {
+      return status === "completed_with_failures" ? "completed with failures"
+        : status === "running" ? "in progress"
+          : status === "interrupted" ? "did not record normal completion" : status;
+    }
+
+    function renderRunDetail(container: HTMLElement, detail: ExtractionRunDetail): void {
+      container.replaceChildren();
+      const run = detail.run;
+      const metadata = document.createElement("div");
+      metadata.style.margin = "0.75rem 0";
+      addAuditLine(metadata, "Trigger", run.trigger === "scheduler" ? "Scheduler" : "Manual admin");
+      addAuditLine(metadata, "Status", statusLabel(run.status));
+      addAuditLine(metadata, "Started", run.startedAt);
+      addAuditLine(metadata, "Completed", run.completedAt ?? "Run did not record normal completion");
+      addAuditLine(metadata, "Algorithm", run.algorithmVersion);
+      if (run.operatorEmail) addAuditLine(metadata, "Operator", `${run.operatorEmail} (${run.operatorRole ?? "admin"})`);
+      if (run.failureMessage) addAuditLine(metadata, "Run failure", `${run.failureCode ?? "failure"}: ${run.failureMessage}`);
+      container.appendChild(metadata);
+
+      const counters = document.createElement("div");
+      counters.style.padding = "0.65rem";
+      counters.style.background = "var(--surface-2)";
+      addAuditLine(counters, "Selected items", run.selectedCount);
+      addAuditLine(counters, "Processed items", run.processedCount);
+      addAuditLine(counters, "No-claim items", run.noClaimCount);
+      addAuditLine(counters, "Failed items", run.failedCount);
+      addAuditLine(counters, "Extracted claim candidates", run.extractedClaimCount);
+      addAuditLine(counters, "New assertions", run.newAssertionCount);
+      addAuditLine(counters, "Successful canonical-writer calls", run.canonicalWriteSuccessCount);
+      container.appendChild(counters);
+
+      const reconciliation = document.createElement("p");
+      reconciliation.className = "meta";
+      reconciliation.textContent = detail.reconciliation.matchesStoredCounters
+        ? "Durable counters reconcile exactly from the persisted run-item and effect rows."
+        : "The bounded detail response does not reconcile exactly with stored counters.";
+      container.appendChild(reconciliation);
+      if (detail.itemsTruncated || detail.effectsTruncated) {
+        const truncation = document.createElement("p");
+        truncation.className = "meta";
+        truncation.textContent = `Audit detail is bounded to ${detail.itemLimit} items and ${detail.effectLimit} effects; the response is truncated.`;
+        container.appendChild(truncation);
+      }
+
+      const itemsHeading = document.createElement("h4");
+      itemsHeading.textContent = "Selected item outcomes";
+      itemsHeading.style.margin = "1rem 0 0.5rem";
+      container.appendChild(itemsHeading);
+      for (const item of detail.items) {
+        const itemDetails = document.createElement("details");
+        itemDetails.style.margin = "0.35rem 0";
+        const itemSummary = document.createElement("summary");
+        itemSummary.style.cursor = "pointer";
+        itemSummary.textContent = `#${item.ordinal + 1} · feed item ${item.feedItemId} · ${item.outcome}`;
+        itemDetails.appendChild(itemSummary);
+        const itemBody = document.createElement("div");
+        itemBody.style.padding = "0.4rem 0.75rem";
+        addAuditLine(itemBody, "Title", item.feedItemTitle);
+        addAuditLine(itemBody, "Source", item.sourceName ?? "Unknown source");
+        addAuditLine(itemBody, "Claim candidates", item.extractedClaimCount);
+        addAuditLine(itemBody, "New assertions", item.newAssertionCount);
+        addAuditLine(itemBody, "Canonical-writer calls", item.canonicalWriteSuccessCount);
+        if (item.failureMessage) addAuditLine(itemBody, "Failure", `${item.failureCode ?? "failure"}: ${item.failureMessage}`);
+        for (const effect of item.effects) {
+          const effectLine = document.createElement("p");
+          effectLine.style.margin = "0.3rem 0";
+          effectLine.textContent = `Claim ${effect.effectOrdinal + 1}: ${effect.attemptOutcome} · “${effect.claimText}” · ${effect.claimDomain}/${effect.claimClass}`
+            + (effect.assertionId ? ` · assertion ${effect.assertionId}` : "")
+            + (effect.failureMessage ? ` · ${effect.failureMessage}` : "");
+          itemBody.appendChild(effectLine);
+        }
+        itemDetails.appendChild(itemBody);
+        container.appendChild(itemDetails);
+      }
+    }
+
+    function renderRunList(data: ExtractionRunsResponse): void {
+      if (!runsList || !runsStatus) return;
+      runsList.replaceChildren();
+      runsStatus.textContent = data.runs.length === 0
+        ? "No durable extraction runs have been recorded yet."
+        : `${data.runs.length} recent run${data.runs.length === 1 ? "" : "s"} shown.`;
+      if (data.truncated) {
+        const note = document.createElement("span");
+        note.textContent = ` The list is bounded to ${data.limit}; older runs are not shown.`;
+        runsStatus.appendChild(note);
+      }
+      for (const run of data.runs) {
+        const runDetails = document.createElement("details");
+        runDetails.style.margin = "0.65rem 0";
+        const summary = document.createElement("summary");
+        summary.style.cursor = "pointer";
+        summary.textContent = `${run.trigger === "scheduler" ? "Scheduler" : "Manual admin"} · ${statusLabel(run.status)} · ${run.startedAt} · ${run.selectedCount} selected`;
+        runDetails.appendChild(summary);
+        const body = document.createElement("div");
+        body.style.padding = "0.5rem 0.75rem";
+        body.textContent = "Open to load durable run detail…";
+        runDetails.appendChild(body);
+        runDetails.addEventListener("toggle", async () => {
+          if (!runDetails.open || loadedRunDetails.has(run.runId)) return;
+          loadedRunDetails.add(run.runId);
+          body.textContent = "Loading durable run detail…";
+          try {
+            const response = await fetch(`/api/admin/extraction-run?runId=${encodeURIComponent(run.runId)}`, { credentials: "include" });
+            const detail = await response.json().catch(() => null) as ExtractionRunDetail | { error?: string } | null;
+            if (!response.ok || !detail || !("run" in detail)) throw new Error((detail && "error" in detail && detail.error) || `Audit detail failed (HTTP ${response.status}).`);
+            renderRunDetail(body, detail);
+          } catch (error: unknown) {
+            body.textContent = error instanceof Error ? error.message : "The durable run detail could not be loaded.";
+          }
+        });
+        runsList.appendChild(runDetails);
+      }
+    }
+
+    async function loadRecentRuns(): Promise<void> {
+      if (runsLoaded || !runsStatus) return;
+      runsLoaded = true;
+      runsStatus.textContent = "Loading recent durable extraction runs…";
+      try {
+        const response = await fetch("/api/admin/extraction-runs", { credentials: "include" });
+        const data = await response.json().catch(() => null) as ExtractionRunsResponse | { error?: string } | null;
+        if (!response.ok || !data || !("runs" in data)) throw new Error((data && "error" in data && data.error) || `Run audit failed (HTTP ${response.status}).`);
+        renderRunList(data);
+      } catch (error: unknown) {
+        runsStatus.textContent = error instanceof Error ? error.message : "The durable run audit could not be loaded.";
+      }
+    }
+
+    recentRunsDisclosure?.addEventListener("toggle", () => {
+      if (recentRunsDisclosure.open) void loadRecentRuns();
+    });
+  </script>
 
   {canExecuteExtraction && (
     <script>
       interface ExtractionResponse {
         status?: string;
+        runId?: string;
+        runStatus?: string;
         processed?: number;
         claimsExtracted?: number;
         evidenceCreated?: number;
+        selectedCount?: number;
+        processedCount?: number;
+        noClaimCount?: number;
+        failedCount?: number;
+        extractedClaimCount?: number;
+        newAssertionCount?: number;
+        canonicalWriteSuccessCount?: number;
         error?: string;
       }
 
@@ -175,12 +430,18 @@ if (Astro.request.method === "POST" && Astro.url.searchParams.has("debug")) {
         const heading = document.createElement("h2");
         heading.style.fontSize = "1.1rem";
         heading.style.marginBottom = "0.5rem";
-        heading.textContent = "Extraction complete";
+        const failed = data.runStatus === "completed_with_failures" || (data.failedCount ?? 0) > 0;
+        if (failed) result.style.borderLeftColor = "var(--ev-disputed)";
+        heading.textContent = failed ? "Extraction completed with failures" : "Last request result";
         result.appendChild(heading);
         for (const [value, label] of [
-          [data.processed, "items processed"],
-          [data.claimsExtracted, "claims extracted"],
-          [data.evidenceCreated, "evidence records created"],
+          [data.selectedCount, "items selected"],
+          [data.processedCount, "items processed"],
+          [data.noClaimCount, "items with no claims"],
+          [data.failedCount, "items failed"],
+          [data.extractedClaimCount, "claim candidates extracted"],
+          [data.newAssertionCount, "new assertions"],
+          [data.canonicalWriteSuccessCount, "successful canonical-writer calls"],
         ] as Array<[number | undefined, string]>) {
           const line = document.createElement("p");
           const strong = document.createElement("strong");
@@ -189,7 +450,16 @@ if (Astro.request.method === "POST" && Astro.url.searchParams.has("debug")) {
           line.appendChild(document.createTextNode(` ${label}`));
           result.appendChild(line);
         }
-        if (data.processed === 0) {
+        if (data.runId) {
+          const runLink = document.createElement("a");
+          const auditUrl = new URL(window.location.href);
+          auditUrl.searchParams.set("auditRunId", data.runId);
+          auditUrl.hash = "extraction-audit";
+          runLink.href = auditUrl.toString();
+          runLink.textContent = `Open durable audit for run ${data.runId}`;
+          result.appendChild(runLink);
+        }
+        if (data.processedCount === 0) {
           const note = document.createElement("p");
           note.className = "meta";
           note.textContent = "No eligible items were found in the current bounded queue.";
@@ -222,7 +492,8 @@ if (Astro.request.method === "POST" && Astro.url.searchParams.has("debug")) {
           const data = await response.json().catch(() => ({})) as ExtractionResponse;
           if (!response.ok) throw new Error(data.error || `Extraction failed (HTTP ${response.status}).`);
           renderResult(data);
-          setStatus("Durable extraction completed.");
+          const failed = data.runStatus === "completed_with_failures" || (data.failedCount ?? 0) > 0;
+          setStatus(failed ? "Extraction completed with failures." : "Durable extraction completed.");
         } catch (error: unknown) {
           if (result) {
             result.replaceChildren();

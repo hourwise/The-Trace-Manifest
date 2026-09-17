@@ -90,6 +90,7 @@ try {
   db.exec(readFileSync("db/migration-0071-trace-v1-bounded-activation.sql", "utf8"));
   db.exec(readFileSync("db/migration-0073-assertion-governance.sql", "utf8"));
   db.exec(readFileSync("db/migration-0074-assertion-reviewer-governance.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0075-claim-extraction-run-ledger.sql", "utf8"));
 
   const requiredTables = [
     "ai_requests", "ai_budget_reservations", "ai_usage_ledger", "ai_quota_usage",
@@ -134,6 +135,7 @@ try {
     "knowledge_revision_decisions",
     "knowledge_revision_evidence_snapshots",
     "assertion_governance_events", "assertion_governance_recalculation_jobs",
+    "claim_extraction_runs", "claim_extraction_run_items", "claim_extraction_run_effects",
   ];
   const tables = new Set(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((row) => row.name));
   for (const table of requiredTables) if (!tables.has(table)) throw new Error(`Missing table ${table}`);
@@ -187,6 +189,47 @@ try {
   }
   const preservedLegacyEventTable = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('assertion_governance_events_0073', 'assertion_governance_recalculation_jobs_0073')").all();
   if (preservedLegacyEventTable.length !== 0) throw new Error("0073 compatibility tables were not fully cut over");
+
+  const extractionRunColumns = new Set(db.prepare("PRAGMA table_info(claim_extraction_runs)").all().map((row) => row.name));
+  for (const column of [
+    "id", "trigger", "algorithm_version", "request_id", "operator_email", "operator_role",
+    "started_at", "completed_at", "status", "selected_count", "processed_count",
+    "no_claim_count", "failed_count", "extracted_claim_count", "new_assertion_count",
+    "canonical_write_success_count", "failure_code", "failure_message", "created_at", "updated_at",
+  ]) {
+    if (!extractionRunColumns.has(column)) throw new Error(`Missing extraction run ledger column ${column}`);
+  }
+  const extractionItemColumns = new Set(db.prepare("PRAGMA table_info(claim_extraction_run_items)").all().map((row) => row.name));
+  for (const column of ["id", "run_id", "feed_item_id", "ordinal", "selected_at", "outcome", "pipeline_stage_id", "extracted_claim_count", "new_assertion_count", "canonical_write_success_count", "failure_code", "failure_message", "completed_at"]) {
+    if (!extractionItemColumns.has(column)) throw new Error(`Missing extraction run item column ${column}`);
+  }
+  const extractionEffectColumns = new Set(db.prepare("PRAGMA table_info(claim_extraction_run_effects)").all().map((row) => row.name));
+  for (const column of ["id", "run_id", "run_item_id", "feed_item_id", "effect_ordinal", "claim_text", "claim_class", "claim_domain", "attempt_outcome", "canonical_claim_id", "assertion_id", "canonical_claim_inserted", "assertion_inserted", "story_claim_inserted", "failure_code", "failure_message"]) {
+    if (!extractionEffectColumns.has(column)) throw new Error(`Missing extraction run effect column ${column}`);
+  }
+  const extractionRunSql = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'claim_extraction_runs'").get()?.sql ?? "";
+  if (!extractionRunSql.includes("manual_admin") || !extractionRunSql.includes("completed_with_failures") || !extractionRunSql.includes("failure_message")) {
+    throw new Error("Extraction run lifecycle constraints are missing");
+  }
+  const extractionItemSql = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'claim_extraction_run_items'").get()?.sql ?? "";
+  if (!extractionItemSql.includes("pending") || !extractionItemSql.includes("no_claims") || !extractionItemSql.includes("UNIQUE(run_id, feed_item_id)")) {
+    throw new Error("Extraction run item constraints are missing");
+  }
+  const extractionEffectSql = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'claim_extraction_run_effects'").get()?.sql ?? "";
+  if (!extractionEffectSql.includes("inserted") || !extractionEffectSql.includes("reused") || !extractionEffectSql.includes("UNIQUE(run_item_id, effect_ordinal)")) {
+    throw new Error("Extraction run effect constraints are missing");
+  }
+  const extractionTriggers = new Set(db.prepare(`
+    SELECT name FROM sqlite_master
+    WHERE type = 'trigger' AND name LIKE 'prevent_claim_extraction_run%'
+  `).all().map((row) => row.name));
+  for (const trigger of [
+    "prevent_claim_extraction_run_delete", "prevent_claim_extraction_run_identity_update",
+    "prevent_claim_extraction_run_item_delete", "prevent_claim_extraction_run_item_identity_update",
+    "prevent_claim_extraction_run_effect_delete", "prevent_claim_extraction_run_effect_identity_update",
+  ]) {
+    if (!extractionTriggers.has(trigger)) throw new Error(`Missing extraction ledger immutability trigger ${trigger}`);
+  }
 
   const jobColumns = new Set(db.prepare("PRAGMA table_info(ingestion_jobs)").all().map((row) => row.name));
   for (const column of ["result_status", "items_rejected", "items_skipped", "outcome_detail"]) {

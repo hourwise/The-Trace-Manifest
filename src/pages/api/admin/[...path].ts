@@ -11,6 +11,7 @@ const READ_ROUTES = new Set([
   "sources", "sources/health", "jobs", "cron-runs", "corrections",
   "published-stories", "clusters", "cluster-sources", "cluster-evidence",
   "assertion-governance-history", "candidates", "social-signals", "related-items",
+  "extraction-runs", "extraction-run",
 ]);
 const PUBLISH_ROUTES = new Set([
   "ingest", "classify", "dedup", "cluster", "extract-claims", "detect-conflicts",

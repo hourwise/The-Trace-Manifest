@@ -385,7 +385,9 @@ async function routeSecurityTests(): Promise<void> {
     const repeatedExecute = await worker.fetch(await signedPost("/admin/extract-claims", "{}", "publisher"), env, executionContext);
     assert.equal(repeatedExecute.status, 200);
     const repeatedExtraction = await repeatedExecute.json() as { processed?: number; claimsExtracted?: number; evidenceCreated?: number };
-    assert.deepEqual(repeatedExtraction, { status: "ok", processed: 0, claimsExtracted: 0, evidenceCreated: 0 }, "pipeline stage makes repeated extraction a safe no-op");
+    assert.equal(repeatedExtraction.processed, 0, "pipeline stage makes repeated extraction a safe no-op");
+    assert.equal(repeatedExtraction.claimsExtracted, 0);
+    assert.equal(repeatedExtraction.evidenceCreated, 0);
   } finally {
     database.close();
   }
@@ -442,7 +444,8 @@ function staticWorkflowTests(): void {
   assert.match(extractPage, /submitting/);
   assert.match(workerSource, /"\/admin\/extract-claims"/);
   assert.match(workerSource, /case "\/admin\/extract-claims"/);
-  assert.match(workerSource, /runClaimExtraction\(env\.DB\)/);
+  assert.match(workerSource, /runClaimExtraction\(env\.DB,/);
+  assert.match(workerSource, /trigger: "scheduler"/);
   assert.match(extractEngineSource, /LIMIT 50/);
 
   assert.match(reviewPage, /No canonical claims are currently mapped to this story\./);

@@ -21,7 +21,12 @@ export interface CanonicalClaimWriteResult {
   canonicalClaimId: string;
   assertionId: string;
   sourceDocumentVersionId: string;
+  sourceDocumentId: string;
+  sourceDocumentInserted: boolean | null;
+  sourceDocumentVersionInserted: boolean | null;
+  canonicalClaimInserted: boolean;
   inserted: boolean;
+  storyClaimInserted: boolean | null;
 }
 
 /**
@@ -50,7 +55,17 @@ export async function writeCanonicalClaim(
     "SELECT id FROM claim_assertions WHERE id = ?",
   ).bind(assertionId).first<{ id: string }>();
   if (existing) {
-    return { canonicalClaimId, assertionId, sourceDocumentVersionId: sourceVersionId, inserted: false };
+    return {
+      canonicalClaimId,
+      assertionId,
+      sourceDocumentVersionId: sourceVersionId,
+      sourceDocumentId,
+      sourceDocumentInserted: null,
+      sourceDocumentVersionInserted: null,
+      canonicalClaimInserted: false,
+      inserted: false,
+      storyClaimInserted: null,
+    };
   }
 
   const statements = [
@@ -112,11 +127,19 @@ export async function writeCanonicalClaim(
   }
   const results = await db.batch(statements);
   const assertionResult = results[results.length - (input.clusterId != null ? 1 : 0) - 1];
+  const storyClaimResult = input.clusterId != null ? results[results.length - 1] : undefined;
   return {
     canonicalClaimId,
     assertionId,
     sourceDocumentVersionId: sourceVersionId,
+    sourceDocumentId,
+    sourceDocumentInserted: Number(results[0]?.meta.changes ?? 0) === 1,
+    sourceDocumentVersionInserted: Number(results[2]?.meta.changes ?? 0) === 1,
+    canonicalClaimInserted: Number(results[4]?.meta.changes ?? 0) === 1,
     inserted: Number(assertionResult?.meta.changes ?? 0) === 1,
+    storyClaimInserted: input.clusterId != null
+      ? Number(storyClaimResult?.meta.changes ?? 0) === 1
+      : null,
   };
 }
 

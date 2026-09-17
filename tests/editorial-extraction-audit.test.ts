@@ -40,8 +40,20 @@ async function durableProjectionCharacterization(): Promise<void> {
 
     const result = await runClaimExtraction(database.asD1());
     assert.deepEqual(Object.keys(result).sort(), [
-      "claimsExtracted", "evidenceCreated", "processed",
+      "canonicalWriteSuccessCount", "claimsExtracted", "evidenceCreated",
+      "extractedClaimCount", "failedCount", "newAssertionCount", "noClaimCount",
+      "processed", "processedCount", "requestId", "runId", "runStatus", "selectedCount",
     ]);
+    assert.match(result.runId, /^[0-9a-f-]{36}$/i);
+    assert.equal(result.requestId, null);
+    assert.equal(result.runStatus, "completed");
+    assert.equal(result.selectedCount, 2);
+    assert.equal(result.processedCount, 2);
+    assert.equal(result.noClaimCount, 1);
+    assert.equal(result.failedCount, 0);
+    assert.equal(result.extractedClaimCount, result.claimsExtracted);
+    assert.equal(result.newAssertionCount, result.claimsExtracted);
+    assert.equal(result.canonicalWriteSuccessCount, result.evidenceCreated);
     assert.equal(result.processed, 2, "the runner handles both selected items, including the no-claim item");
     assert.ok(result.claimsExtracted > 0, "the rule extractor creates canonical claims for the matching item");
     assert.equal(result.evidenceCreated, result.claimsExtracted, "a first run has one successful writer call per inserted assertion in this fixture");
@@ -98,11 +110,12 @@ async function durableProjectionCharacterization(): Promise<void> {
     assert.ok(assertionIds.every((row) => row.id.startsWith(`feed-claim-assertion-${CLAIM_ITEM_ID}-`)));
 
     const secondResult = await runClaimExtraction(database.asD1());
-    assert.deepEqual(secondResult, {
-      processed: 0,
-      claimsExtracted: 0,
-      evidenceCreated: 0,
-    }, "an existing claim_extracted stage excludes the item from a repeated bounded run");
+    assert.equal(secondResult.processed, 0, "an existing claim_extracted stage excludes the item from a repeated bounded run");
+    assert.equal(secondResult.claimsExtracted, 0);
+    assert.equal(secondResult.evidenceCreated, 0);
+    assert.equal(secondResult.selectedCount, 0);
+    assert.equal(secondResult.processedCount, 0);
+    assert.equal(secondResult.runStatus, "completed");
     assert.equal(
       Number(database.sqlite.prepare("SELECT COUNT(*) AS count FROM pipeline_stages WHERE stage = 'claim_extracted'").get()?.count),
       2,
@@ -122,11 +135,11 @@ async function durableProjectionCharacterization(): Promise<void> {
     assert.equal(failedStage.result_summary, "characterized failed stage");
     assert.equal(failedStage.error_message, null);
     const failedStageRerun = await runClaimExtraction(database.asD1());
-    assert.deepEqual(failedStageRerun, {
-      processed: 0,
-      claimsExtracted: 0,
-      evidenceCreated: 0,
-    }, "a present failed stage is also excluded; this is not a retry ledger");
+    assert.equal(failedStageRerun.processed, 0, "a present failed stage is also excluded; this is not a retry ledger");
+    assert.equal(failedStageRerun.claimsExtracted, 0);
+    assert.equal(failedStageRerun.evidenceCreated, 0);
+    assert.equal(failedStageRerun.selectedCount, 0);
+    assert.equal(failedStageRerun.runStatus, "completed");
   } finally {
     database.close();
   }
@@ -136,19 +149,24 @@ async function failureProjectionCharacterization(): Promise<void> {
   const database = new SQLiteD1();
   try {
     seedExtractionFixture(database);
+    const originalBatch = database.batch.bind(database) as unknown as (statements: unknown[]) => Promise<D1Result[]>;
+    let batchCalls = 0;
     const failingDatabase = database as unknown as {
       batch: D1Database["batch"];
     };
-    failingDatabase.batch = (async () => {
-      throw new Error("simulated canonical write failure");
+    failingDatabase.batch = (async (_statements) => {
+      batchCalls++;
+      if (batchCalls > 1) throw new Error("simulated canonical write failure");
+      return originalBatch(_statements as unknown[]);
     }) as D1Database["batch"];
 
     const result = await runClaimExtraction(database.asD1());
-    assert.deepEqual(result, {
-      processed: 2,
-      claimsExtracted: 0,
-      evidenceCreated: 0,
-    }, "a canonical batch failure is reflected in the transient counters");
+    assert.equal(result.processed, 2, "a canonical batch failure is reflected in the transient counters");
+    assert.equal(result.claimsExtracted, 0);
+    assert.equal(result.evidenceCreated, 0);
+    assert.equal(result.selectedCount, 2);
+    assert.equal(result.failedCount, 1);
+    assert.equal(result.runStatus, "completed_with_failures");
     const failedStage = database.sqlite.prepare(`
       SELECT status, result_summary, error_message
       FROM pipeline_stages
@@ -167,11 +185,11 @@ async function failureProjectionCharacterization(): Promise<void> {
       "a failed canonical batch leaves no canonical rows in this fixture");
 
     const repeated = await runClaimExtraction(database.asD1());
-    assert.deepEqual(repeated, {
-      processed: 0,
-      claimsExtracted: 0,
-      evidenceCreated: 0,
-    }, "the failed pipeline marker is not retried by the current runner");
+    assert.equal(repeated.processed, 0, "the failed pipeline marker is not retried by the current runner");
+    assert.equal(repeated.claimsExtracted, 0);
+    assert.equal(repeated.evidenceCreated, 0);
+    assert.equal(repeated.selectedCount, 0);
+    assert.equal(repeated.runStatus, "completed");
   } finally {
     database.close();
   }
@@ -225,7 +243,7 @@ function staticArchitectureCharacterization(): void {
   assert.match(workerSource, /case "\/admin\/extract-claims"/);
   assert.match(auditDocument, /OUTCOME_B_SCHEMA_GAP_IDENTIFIED/);
   assert.match(auditDocument, /TRANSIENT_ONLY/);
-  assert.match(auditDocument, /no route, UI, migration, or persistence\nmodel/i);
+    assert.match(auditDocument, /no route, UI, migration, or persistence\r?\nmodel/i);
 }
 
 await durableProjectionCharacterization();

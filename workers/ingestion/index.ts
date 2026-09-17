@@ -34,6 +34,11 @@ import {
   AssertionGovernanceHistoryError,
   getAssertionGovernanceHistory,
 } from "../../src/lib/server/assertion-governance-history";
+import {
+  ClaimExtractionAuditError,
+  getClaimExtractionRun,
+  listClaimExtractionRuns,
+} from "../../src/lib/server/claim-extraction-audit";
 import { admitAndQueueFeedCapture, admitAndQueueManualCapture, admitAndQueueKnowledgeDocumentCapture } from "./knowledge-capture-queue";
 import { consumeKnowledgeCaptureBatch } from "./knowledge-capture-consumer";
 import { recalculateEvidenceScores, recalculateExpiredEvidence } from "../../src/lib/server/evidence-recalculation";
@@ -94,6 +99,7 @@ const READ_ADMIN_ROUTES = new Set([
   "/admin/sources", "/admin/sources/health", "/admin/jobs", "/admin/cron-runs",
   "/admin/corrections", "/admin/published-stories", "/admin/clusters", "/admin/cluster-sources", "/admin/cluster-evidence",
   "/admin/assertion-governance-history", "/admin/candidates", "/admin/social-signals", "/admin/related-items",
+  "/admin/extraction-runs", "/admin/extraction-run",
 ]);
 const WRITE_ADMIN_ROUTES = new Set([
   "/admin/ingest", "/admin/classify", "/admin/dedup", "/admin/cluster",
@@ -310,12 +316,12 @@ export default {
 };
 
 function adminTargetId(url: URL, body: string): string | null {
-  const queryTarget = url.searchParams.get("clusterId") ?? url.searchParams.get("sourceId") ?? url.searchParams.get("claimId") ?? url.searchParams.get("candidateId") ?? url.searchParams.get("assertionId");
+  const queryTarget = url.searchParams.get("clusterId") ?? url.searchParams.get("sourceId") ?? url.searchParams.get("claimId") ?? url.searchParams.get("candidateId") ?? url.searchParams.get("assertionId") ?? url.searchParams.get("runId");
   if (queryTarget && /^(?:\d+|[A-Za-z0-9:_-]{1,200})$/.test(queryTarget)) return queryTarget;
   if (!body) return null;
   try {
     const parsed = JSON.parse(body) as Record<string, unknown>;
-    const value = parsed.candidateId ?? parsed.clusterId ?? parsed.sourceId ?? parsed.claimId ?? parsed.assertionId;
+    const value = parsed.candidateId ?? parsed.clusterId ?? parsed.sourceId ?? parsed.claimId ?? parsed.assertionId ?? parsed.runId;
     return typeof value === "string" && /^(?:[0-9a-f-]{36}|[A-Za-z0-9:_-]{1,200})$/i.test(value)
       ? value
       : typeof value === "number" && Number.isInteger(value) && value > 0 ? String(value) : null;
@@ -1006,9 +1012,10 @@ async function runClaimExtractionPipeline(env: Env) {
       if (processed % 50 === 0 || processed === total) {
         console.log(`Claim extraction progress: ${processed}/${total}`);
       }
-    }
+    },
+    { trigger: "scheduler" },
   );
-  console.log(`Claim extraction: done — ${result.claimsExtracted} claims from ${result.processed} items, ${result.evidenceCreated} evidence records`);
+  console.log(`Claim extraction: done — run ${result.runId} ${result.runStatus}, ${result.newAssertionCount} new assertions from ${result.processedCount} items, ${result.canonicalWriteSuccessCount} canonical writer calls`);
 }
 
 // ============================================================
@@ -1093,7 +1100,7 @@ async function handleAdminRoute(
     case "/admin/cluster":
       return handleManualCluster(env);
     case "/admin/extract-claims":
-      return handleManualClaimExtraction(env);
+      return handleManualClaimExtraction(env, operator);
     case "/admin/detect-conflicts":
       return handleManualConflictDetection(env);
     case "/admin/corrections":
@@ -1147,6 +1154,10 @@ async function handleAdminRoute(
       return handleClusterSources(request, env);
     case "/admin/cluster-evidence":
       return handleClusterEvidence(request, env);
+    case "/admin/extraction-runs":
+      return handleExtractionRunList(request, env);
+    case "/admin/extraction-run":
+      return handleExtractionRunDetail(request, env);
     case "/admin/assertion-governance-history":
       return handleAssertionGovernanceHistory(request, env);
     case "/admin/archive-cluster":
@@ -1778,8 +1789,15 @@ async function handleManualCluster(env: Env): Promise<Response> {
   return Response.json({ status: "ok", ...result });
 }
 
-async function handleManualClaimExtraction(env: Env): Promise<Response> {
-  const result = await runClaimExtraction(env.DB);
+async function handleManualClaimExtraction(env: Env, operator: InternalOperator): Promise<Response> {
+  const result = await runClaimExtraction(env.DB, undefined, {
+    trigger: "manual_admin",
+    // This UUID is operator-request metadata, deliberately separate from the
+    // signed request nonce used for replay protection and admin audit identity.
+    requestId: crypto.randomUUID(),
+    operatorEmail: operator.email,
+    operatorRole: operator.role,
+  });
   return Response.json({ status: "ok", ...result });
 }
 
@@ -2086,6 +2104,32 @@ async function handleAssertionGovernanceHistory(request: Request, env: Env): Pro
     }
     console.error("assertion governance history failed", error);
     return Response.json({ error: "Assertion governance history is unavailable." }, { status: 500 });
+  }
+}
+
+async function handleExtractionRunList(request: Request, env: Env): Promise<Response> {
+  if (request.method !== "GET") return Response.json({ error: "Method not allowed — use GET" }, { status: 405 });
+  try {
+    return Response.json(await listClaimExtractionRuns(env.DB));
+  } catch (error) {
+    console.error("extraction run list failed", error);
+    return Response.json({ error: "Extraction run history is unavailable." }, { status: 500 });
+  }
+}
+
+async function handleExtractionRunDetail(request: Request, env: Env): Promise<Response> {
+  if (request.method !== "GET") return Response.json({ error: "Method not allowed — use GET" }, { status: 405 });
+  const runId = new URL(request.url).searchParams.get("runId") ?? "";
+  try {
+    return Response.json(await getClaimExtractionRun(env.DB, runId));
+  } catch (error) {
+    if (error instanceof ClaimExtractionAuditError) {
+      return Response.json({ error: error.message, code: error.code }, {
+        status: error.code === "run_not_found" ? 404 : 400,
+      });
+    }
+    console.error("extraction run detail failed", error);
+    return Response.json({ error: "Extraction run detail is unavailable." }, { status: 500 });
   }
 }
 

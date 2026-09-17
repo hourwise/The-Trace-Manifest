@@ -105,6 +105,7 @@ export class SQLiteD1 {
     if (applyReviewerGovernance) {
       this.sqlite.exec(readFileSync("db/migration-0074-assertion-reviewer-governance.sql", "utf8"));
     }
+    this.sqlite.exec(readFileSync("db/migration-0075-claim-extraction-run-ledger.sql", "utf8"));
   }
 
   prepare(query: string): SQLiteD1Statement {
