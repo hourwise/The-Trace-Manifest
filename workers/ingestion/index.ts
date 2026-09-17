@@ -30,6 +30,10 @@ import type { OperatorRole } from "../../src/security/access-auth";
 import { isReviewQueueScope, REVIEW_QUEUE_DEFAULT_LIMITS, REVIEW_QUEUE_MAX_LIMIT, type ReviewQueueScope } from "../../src/lib/review-queue-contract";
 import { listReviewQueueClusters } from "../../src/lib/server/review-queue";
 import { getEditorialClusterEvidence } from "../../src/lib/server/editorial-evidence";
+import {
+  AssertionGovernanceHistoryError,
+  getAssertionGovernanceHistory,
+} from "../../src/lib/server/assertion-governance-history";
 import { admitAndQueueFeedCapture, admitAndQueueManualCapture, admitAndQueueKnowledgeDocumentCapture } from "./knowledge-capture-queue";
 import { consumeKnowledgeCaptureBatch } from "./knowledge-capture-consumer";
 import { recalculateEvidenceScores, recalculateExpiredEvidence } from "../../src/lib/server/evidence-recalculation";
@@ -89,7 +93,7 @@ const RELATED_ACTION_RELATIONSHIPS: Partial<Record<RelatedItemAction, string>> =
 const READ_ADMIN_ROUTES = new Set([
   "/admin/sources", "/admin/sources/health", "/admin/jobs", "/admin/cron-runs",
   "/admin/corrections", "/admin/published-stories", "/admin/clusters", "/admin/cluster-sources", "/admin/cluster-evidence",
-  "/admin/candidates", "/admin/social-signals", "/admin/related-items",
+  "/admin/assertion-governance-history", "/admin/candidates", "/admin/social-signals", "/admin/related-items",
 ]);
 const WRITE_ADMIN_ROUTES = new Set([
   "/admin/ingest", "/admin/classify", "/admin/dedup", "/admin/cluster",
@@ -1143,6 +1147,8 @@ async function handleAdminRoute(
       return handleClusterSources(request, env);
     case "/admin/cluster-evidence":
       return handleClusterEvidence(request, env);
+    case "/admin/assertion-governance-history":
+      return handleAssertionGovernanceHistory(request, env);
     case "/admin/archive-cluster":
       return handleArchiveCluster(request, env);
     case "/admin/related-items":
@@ -2062,6 +2068,25 @@ async function handleClusterEvidence(request: Request, env: Env): Promise<Respon
   const evidence = await getEditorialClusterEvidence(env.DB, clusterId);
   if (!evidence) return Response.json({ error: "Cluster not found." }, { status: 404 });
   return Response.json(evidence);
+}
+
+async function handleAssertionGovernanceHistory(request: Request, env: Env): Promise<Response> {
+  if (request.method !== "GET") return Response.json({ error: "Method not allowed — use GET" }, { status: 405 });
+  const url = new URL(request.url);
+  const clusterId = Number(url.searchParams.get("clusterId") || "0");
+  const assertionId = url.searchParams.get("assertionId")?.trim() ?? "";
+  if (!Number.isInteger(clusterId) || clusterId < 1 || assertionId.length < 1 || assertionId.length > 200) {
+    return Response.json({ error: "A positive clusterId and bounded assertionId are required.", code: "invalid_request" }, { status: 400 });
+  }
+  try {
+    return Response.json(await getAssertionGovernanceHistory(env.DB, clusterId, assertionId));
+  } catch (error) {
+    if (error instanceof AssertionGovernanceHistoryError) {
+      return Response.json({ error: error.message, code: error.code }, { status: error.status });
+    }
+    console.error("assertion governance history failed", error);
+    return Response.json({ error: "Assertion governance history is unavailable." }, { status: 500 });
+  }
 }
 
 async function handleArchiveCluster(request: Request, env: Env): Promise<Response> {

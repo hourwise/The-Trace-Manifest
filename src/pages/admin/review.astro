@@ -248,6 +248,10 @@ try {
         type AssertionReviewerGovernanceErrorBody,
         type AssertionReviewerGovernanceResponse,
       } from "../../lib/admin/assertion-reviewer-governance-ui";
+      import type {
+        AssertionGovernanceHistory,
+        AssertionGovernanceHistoryEvent,
+      } from "../../lib/server/assertion-governance-history";
 
       function authHeaders(method: string = "GET"): Record<string, string> {
         // Only set Content-Type for requests with a body; adding it to GET
@@ -494,6 +498,7 @@ try {
 
       const assertionGovernanceDrafts = new Map<string, AssertionGovernanceDraft>();
       const assertionReviewerGovernanceDrafts = new Map<string, AssertionReviewerGovernanceDraft>();
+      const assertionGovernanceHistoryCache = new Map<string, AssertionGovernanceHistory>();
 
       function governanceDomSuffix(assertionId: string): string {
         return assertionId.replace(/[^a-zA-Z0-9_-]/g, "-") || "assertion";
@@ -661,6 +666,50 @@ try {
         return `${count} ${count === 1 ? singular : pluralForm}`;
       }
 
+      function governanceHistoryEventMarkup(event: AssertionGovernanceHistoryEvent): string {
+        const transition = event.axis === "admission"
+          ? `Admission: ${displayState(event.previous.admissionState)} → ${displayState(event.current.admissionState)}`
+          : `Editorial review: ${displayState(event.previous.reviewerState)} → ${displayState(event.current.reviewerState)}`;
+        const recalculation = event.recalculation.status === "completed"
+          ? "Recalculation completed"
+          : event.recalculation.status === "queued"
+            ? "Recalculation queued"
+            : event.recalculation.status === "failed"
+              ? "Recalculation failed"
+              : "Recalculation status unavailable";
+        const attempts = `${event.recalculation.attemptCount} attempt${event.recalculation.attemptCount === 1 ? "" : "s"}`;
+        return `
+          <div style="padding:0.55rem 0;border-bottom:1px solid var(--border-light);font-size:0.78rem;">
+            <p style="margin:0;font-weight:650;">${escapeHTML(transition)}</p>
+            <p class="meta" style="margin:0.25rem 0 0;">${escapeHTML(event.action)} · ${escapeHTML(event.actorEmail)} (${escapeHTML(event.actorRole)}) · ${escapeHTML(event.timestamp)}</p>
+            <p style="margin:0.3rem 0 0;white-space:pre-wrap;">${escapeHTML(event.reason)}</p>
+            <p class="meta" style="margin:0.3rem 0 0;">${escapeHTML(recalculation)} · ${escapeHTML(attempts)}${event.recalculation.completedAt ? ` · completed ${escapeHTML(event.recalculation.completedAt)}` : ""}${event.recalculation.failureRecorded ? " · failure recorded" : ""}</p>
+            <p class="meta" style="margin:0.2rem 0 0;font-size:0.7rem;">Event ${escapeHTML(event.eventId)} · request ${escapeHTML(event.requestId)} · replays reuse this durable event</p>
+          </div>
+        `;
+      }
+
+      function governanceHistoryBodyMarkup(history: AssertionGovernanceHistory): string {
+        if (history.events.length === 0) {
+          return '<p class="meta">No governed admission or reviewer decisions have been recorded for this assertion.</p>';
+        }
+        const truncation = history.truncated
+          ? `<p class="meta" style="margin:0 0 0.35rem;">History is truncated to the oldest ${history.limit} events.</p>`
+          : "";
+        return `${truncation}${history.events.map(governanceHistoryEventMarkup).join("")}`;
+      }
+
+      function governanceHistoryMarkup(assertion: EditorialAssertion): string {
+        const assertionId = escapeHTML(assertion.assertionId);
+        const cached = assertionGovernanceHistoryCache.get(assertion.assertionId);
+        return `
+          <details data-governance-history data-assertion-id="${assertionId}" style="margin-top:0.7rem;padding-top:0.55rem;border-top:1px solid var(--border-light);">
+            <summary style="cursor:pointer;font-size:0.78rem;font-weight:650;">Governance history</summary>
+            <div data-governance-history-body role="status" aria-live="polite" style="margin-top:0.35rem;">${cached ? governanceHistoryBodyMarkup(cached) : '<p class="meta">Open to load immutable admission and editorial review history.</p>'}</div>
+          </details>
+        `;
+      }
+
       function assertionPosture(relationship: string): { label: string; style: string } {
         if (["supports", "partially_supports", "reproduces"].includes(relationship)) {
           return { label: "Supporting", style: "color:var(--ev-confirmed);" };
@@ -693,7 +742,7 @@ try {
           ? `<div class="meta" style="margin-top:0.35rem;"><strong>Source record:</strong> ${escapeHTML(assertion.sourceDocument.versionId)} · admission ${escapeHTML(displayState(assertion.sourceDocument.admissionState))}${assertion.sourceDocument.startLocator || assertion.sourceDocument.endLocator ? ` · locator ${escapeHTML([assertion.sourceDocument.startLocator, assertion.sourceDocument.endLocator].filter(Boolean).join("–"))}` : ""}</div>`
           : '<div class="meta" style="margin-top:0.35rem;"><strong>Source record:</strong> unavailable</div>';
         return `
-          <details style="padding:0.45rem 0;border-bottom:1px solid var(--border-light);">
+          <details data-assertion-details data-assertion-id="${escapeHTML(assertion.assertionId)}" style="padding:0.45rem 0;border-bottom:1px solid var(--border-light);">
             <summary style="cursor:pointer;display:flex;gap:0.45rem;align-items:baseline;flex-wrap:wrap;">
               <span class="badge" style="font-size:0.63rem;${posture.style}">${posture.label}</span>
               <strong>${escapeHTML(displayState(assertion.relationship))}</strong>
@@ -706,6 +755,7 @@ try {
             ${provenance}
             ${governanceControlsMarkup(assertion)}
             ${reviewerGovernanceControlsMarkup(assertion)}
+            ${governanceHistoryMarkup(assertion)}
           </details>
         `;
       }
@@ -849,7 +899,7 @@ try {
           }
           const response = raw as AssertionGovernanceResponse;
           assertionGovernanceDrafts.delete(assertionId);
-          const evidenceRefreshed = await loadEditorialEvidence(clusterId);
+          const evidenceRefreshed = await loadEditorialEvidence(clusterId, true);
           const listRefreshed = !shouldRefreshPublishableClusters(response)
             || await loadPublishableClusters(true, false);
           let message = governanceDecisionMessage(response);
@@ -934,7 +984,7 @@ try {
           }
           const response = raw as AssertionReviewerGovernanceResponse;
           assertionReviewerGovernanceDrafts.delete(assertionId);
-          const evidenceRefreshed = await loadEditorialEvidence(clusterId);
+          const evidenceRefreshed = await loadEditorialEvidence(clusterId, true);
           const listRefreshed = !shouldRefreshReviewerPublishableClusters(response)
             || await loadPublishableClusters(true, false);
           let message = reviewerGovernanceDecisionMessage(response);
@@ -963,9 +1013,46 @@ try {
         }
       }
 
+      async function loadAssertionGovernanceHistory(assertionId: string, force = false): Promise<boolean> {
+        const clusterId = currentEditorialEvidence?.clusterId;
+        const root = [...document.querySelectorAll<HTMLElement>("[data-governance-history]")]
+          .find((candidate) => candidate.dataset.assertionId === assertionId);
+        const historyBody = root?.querySelector<HTMLElement>("[data-governance-history-body]");
+        if (!clusterId || !historyBody) return false;
+        const cached = assertionGovernanceHistoryCache.get(assertionId);
+        if (cached && !force) {
+          historyBody.innerHTML = governanceHistoryBodyMarkup(cached);
+          return true;
+        }
+        historyBody.textContent = "Loading immutable governance history…";
+        try {
+          const res = await adminFetch(`/api/admin/assertion-governance-history?clusterId=${encodeURIComponent(String(clusterId))}&assertionId=${encodeURIComponent(assertionId)}`);
+          const raw = await res.json().catch(() => ({})) as AssertionGovernanceHistory & { error?: string };
+          if (!res.ok) throw new Error(raw.error || `HTTP ${res.status}`);
+          assertionGovernanceHistoryCache.set(assertionId, raw);
+          historyBody.innerHTML = governanceHistoryBodyMarkup(raw);
+          return true;
+        } catch (error: unknown) {
+          historyBody.innerHTML = `<p class="meta" style="color:var(--ev-disputed);">Governance history could not be loaded. ${escapeHTML(errorMessage(error, "Unknown error"))}</p>`;
+          console.error(error);
+          return false;
+        }
+      }
+
       function bindAssertionGovernanceControls(): void {
         const body = $<HTMLElement>("claims-evidence-body");
         if (!body) return;
+        body.querySelectorAll<HTMLDetailsElement>("[data-governance-history]").forEach((details) => {
+          details.addEventListener("toggle", () => {
+            if (!details.open || details.dataset.historyRequested === "true") return;
+            const assertionId = details.dataset.assertionId;
+            if (!assertionId) return;
+            details.dataset.historyRequested = "true";
+            void loadAssertionGovernanceHistory(assertionId).then((loaded) => {
+              if (!loaded) delete details.dataset.historyRequested;
+            });
+          });
+        });
         body.querySelectorAll<HTMLButtonElement>("[data-reviewer-action]").forEach((button) => {
           button.addEventListener("click", () => {
             const assertionId = button.dataset.assertionId;
@@ -1089,7 +1176,8 @@ try {
         if (!summary || !body) return;
         summary.textContent = `${plural(data.claimCount, "canonical claim")} · ${plural(data.admittedAssertionCount, "admitted assertion")} · ${plural(data.eligibleAttachmentCount, "eligible attachment")}`;
         if (data.claimCount === 0) {
-          body.innerHTML = '<p class="meta">No canonical claims are currently mapped to this story. No extraction or mapping was started.</p>';
+          const extractionHref = `/admin/extract-claims?returnTo=${encodeURIComponent('/admin/review')}&clusterId=${encodeURIComponent(String(data.clusterId))}`;
+          body.innerHTML = `<p class="meta">No canonical claims are currently mapped to this story. No extraction or mapping was started.</p><p style="margin:0.6rem 0 0;"><a class="btn btn-secondary" href="${escapeHTML(extractionHref)}" style="font-size:0.78rem;">Open deterministic claim extraction</a></p>`;
           return;
         }
         body.innerHTML = `${data.claimsTruncated ? `<p class="meta" style="margin:0 0 0.6rem;">Showing ${data.claims.length} of ${data.claimCount} canonical claims.</p>` : ""}${data.claims.map(claimMarkup).join("")}`;
@@ -1099,6 +1187,7 @@ try {
       function resetEditorialEvidenceState(hide = true): void {
         evidenceRequestToken += 1;
         currentEditorialEvidence = null;
+        assertionGovernanceHistoryCache.clear();
         disposeAssertionGovernanceDrafts();
         const panel = document.getElementById("claims-evidence-panel");
         const summary = $<HTMLElement>("claims-evidence-summary");
@@ -1108,11 +1197,16 @@ try {
         if (body) body.replaceChildren();
       }
 
-      async function loadEditorialEvidence(clusterId: number): Promise<boolean> {
+      async function loadEditorialEvidence(clusterId: number, refreshOpenHistories = false): Promise<boolean> {
         const panel = document.getElementById("claims-evidence-panel");
         const summary = $<HTMLElement>("claims-evidence-summary");
         const body = $<HTMLElement>("claims-evidence-body");
         if (!panel || !summary || !body) return false;
+        const openHistoryIds = refreshOpenHistories
+          ? [...body.querySelectorAll<HTMLElement>("[data-governance-history][open]")]
+            .map((element) => element.dataset.assertionId)
+            .filter((assertionId): assertionId is string => Boolean(assertionId))
+          : [];
         disposeAssertionGovernanceDrafts();
         currentEditorialEvidence = null;
         const requestToken = ++evidenceRequestToken;
@@ -1125,6 +1219,16 @@ try {
           const data = await res.json() as EditorialClusterEvidence;
           if (requestToken !== evidenceRequestToken) return false;
           renderEditorialEvidence(data);
+          if (refreshOpenHistories && openHistoryIds.length > 0) {
+            await Promise.all(openHistoryIds.map(async (assertionId) => {
+              const details = [...body.querySelectorAll<HTMLDetailsElement>("[data-governance-history]")]
+                .find((candidate) => candidate.dataset.assertionId === assertionId);
+              if (!details) return;
+              details.open = true;
+              details.dataset.historyRequested = "true";
+              await loadAssertionGovernanceHistory(assertionId, true);
+            }));
+          }
           return true;
         } catch (error: unknown) {
           if (requestToken !== evidenceRequestToken) return false;

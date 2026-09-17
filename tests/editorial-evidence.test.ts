@@ -253,7 +253,8 @@ async function editorialEvidenceTests(): Promise<void> {
     assert.match(reviewPage, /<details open/, "claims use keyboard-accessible native disclosure");
     assert.match(reviewPage, /Supporting|Disputing/, "supporting and disputing assertions remain visibly distinct");
     assert.equal((reviewPage.match(/\/api\/admin\/cluster-evidence\?clusterId=/g) ?? []).length, 1, "one selected-cluster evidence request is declared");
-    assert.doesNotMatch(reviewPage, /Extract Claims|extract-claims/, "selection does not trigger extraction");
+    assert.match(reviewPage, /Open deterministic claim extraction/, "no-claim state offers the bounded extraction handoff");
+    assert.doesNotMatch(reviewPage, /runClaimExtraction|fetch\(["']\/api\/admin\/extract-claims/, "selection does not trigger extraction");
   } finally {
     database.close();
   }

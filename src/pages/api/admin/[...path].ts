@@ -10,7 +10,7 @@ const MAX_INVENTORY_SNAPSHOT_BODY_BYTES = 512 * 1024;
 const READ_ROUTES = new Set([
   "sources", "sources/health", "jobs", "cron-runs", "corrections",
   "published-stories", "clusters", "cluster-sources", "cluster-evidence",
-  "candidates", "social-signals", "related-items",
+  "assertion-governance-history", "candidates", "social-signals", "related-items",
 ]);
 const PUBLISH_ROUTES = new Set([
   "ingest", "classify", "dedup", "cluster", "extract-claims", "detect-conflicts",
