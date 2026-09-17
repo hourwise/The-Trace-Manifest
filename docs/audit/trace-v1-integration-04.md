@@ -134,4 +134,3 @@ Deferred by design: extraction retry/recovery and stage reset; assertion
 amendment/successor work; evidence revocation or reviewer restoration;
 attachment/freshness governance; new extraction rules or AI behavior; and any
 remote promotion or scheduler activation.
-
