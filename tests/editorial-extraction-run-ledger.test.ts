@@ -441,8 +441,8 @@ function schemaAndUiCharacterizationTests(): void {
   assert.ok(page.includes("/api/admin/extraction-runs"));
   assert.ok(page.includes("/api/admin/extraction-run?runId="));
   assert.match(page, /recentRunsDisclosure\?\.addEventListener\("toggle"/);
-  assert.match(page, /new assertions/);
-  assert.match(page, /canonical-writer calls/);
+  assert.match(page, /new assertions/i);
+  assert.match(page, /successful canonical writes/i);
   assert.match(page, /No-claim items/);
   assert.match(page, /completed with failures/);
   assert.match(page, /Run did not record normal completion/);
