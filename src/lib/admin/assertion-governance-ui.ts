@@ -53,6 +53,17 @@ export function shouldRenderAssertionGovernanceControls(
   return role === "publisher" && isAssertionGovernanceEligible(admissionState);
 }
 
+/**
+ * An active admission or reviewer form re-renders the evidence panel, so its
+ * assertion row must stay expanded or the just-opened reason form is hidden.
+ */
+export function shouldKeepAssertionDetailsOpen(
+  assertionId: string,
+  ...activeDrafts: ReadonlyArray<{ has(assertionId: string): boolean }>
+): boolean {
+  return activeDrafts.some((drafts) => drafts.has(assertionId));
+}
+
 export function createAssertionGovernanceIdempotencyKey(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     return crypto.randomUUID();

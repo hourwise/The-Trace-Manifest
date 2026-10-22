@@ -6,6 +6,7 @@ import {
   governanceDecisionMessage,
   governanceFailureMessage,
   isAssertionGovernanceEligible,
+  shouldKeepAssertionDetailsOpen,
   shouldRenderAssertionGovernanceControls,
   shouldRefreshEvidenceAfterFailure,
   shouldRefreshPublishableClusters,
@@ -128,5 +129,20 @@ const cacheClear = loadEvidence.indexOf("assertionGovernanceHistoryCache.clear()
 assert.ok(cacheClear >= 0, "evidence reload invalidates cached governance history");
 assert.ok(cacheClear < loadEvidence.indexOf("renderEditorialEvidence(data)"), "history cache is cleared before the refreshed evidence renders");
 assert.ok(loadEvidence.includes("loadAssertionGovernanceHistory(assertionId, true)"), "open histories are still force-refreshed");
+
+// Opening an admission or reviewer form re-renders the evidence panel, so the
+// assertion row must stay expanded while either form is active; otherwise the
+// just-opened reason form is hidden inside a collapsed row.
+const admissionDrafts = new Map([["assertion-a", {}]]);
+const reviewerDrafts = new Map([["assertion-b", {}]]);
+assert.equal(shouldKeepAssertionDetailsOpen("assertion-a", admissionDrafts, reviewerDrafts), true);
+assert.equal(shouldKeepAssertionDetailsOpen("assertion-b", admissionDrafts, reviewerDrafts), true);
+assert.equal(shouldKeepAssertionDetailsOpen("assertion-c", admissionDrafts, reviewerDrafts), false);
+assert.equal(shouldKeepAssertionDetailsOpen("assertion-a", new Map(), new Map()), false);
+const assertionMarkupStart = reviewPage.indexOf("function assertionMarkup(");
+const assertionMarkupSource = reviewPage.slice(assertionMarkupStart, reviewPage.indexOf("\n      }\n", assertionMarkupStart));
+assert.match(assertionMarkupSource, /shouldKeepAssertionDetailsOpen\(assertion\.assertionId, assertionGovernanceDrafts, assertionReviewerGovernanceDrafts\)/,
+  "assertion rows consult both draft maps");
+assert.match(assertionMarkupSource, /<details data-assertion-details[^>]*\$\{detailsOpen\}/, "the assertion row renders open while a form is active");
 
 console.log("assertion governance UI tests passed");

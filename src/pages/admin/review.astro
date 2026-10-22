@@ -229,6 +229,7 @@ try {
         governanceDecisionMessage,
         governanceFailureMessage,
         shouldRefreshEvidenceAfterFailure,
+        shouldKeepAssertionDetailsOpen,
         shouldRefreshPublishableClusters,
         shouldRenderAssertionGovernanceControls,
         type AssertionGovernanceAction,
@@ -741,8 +742,11 @@ try {
         const document = assertion.sourceDocument
           ? `<div class="meta" style="margin-top:0.35rem;"><strong>Source record:</strong> ${escapeHTML(assertion.sourceDocument.versionId)} · admission ${escapeHTML(displayState(assertion.sourceDocument.admissionState))}${assertion.sourceDocument.startLocator || assertion.sourceDocument.endLocator ? ` · locator ${escapeHTML([assertion.sourceDocument.startLocator, assertion.sourceDocument.endLocator].filter(Boolean).join("–"))}` : ""}</div>`
           : '<div class="meta" style="margin-top:0.35rem;"><strong>Source record:</strong> unavailable</div>';
+        const detailsOpen = shouldKeepAssertionDetailsOpen(assertion.assertionId, assertionGovernanceDrafts, assertionReviewerGovernanceDrafts)
+          ? " open"
+          : "";
         return `
-          <details data-assertion-details data-assertion-id="${escapeHTML(assertion.assertionId)}" style="padding:0.45rem 0;border-bottom:1px solid var(--border-light);">
+          <details data-assertion-details data-assertion-id="${escapeHTML(assertion.assertionId)}"${detailsOpen} style="padding:0.45rem 0;border-bottom:1px solid var(--border-light);">
             <summary style="cursor:pointer;display:flex;gap:0.45rem;align-items:baseline;flex-wrap:wrap;">
               <span class="badge" style="font-size:0.63rem;${posture.style}">${posture.label}</span>
               <strong>${escapeHTML(displayState(assertion.relationship))}</strong>
