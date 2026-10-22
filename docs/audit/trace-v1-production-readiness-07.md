@@ -264,7 +264,10 @@ Not started. Brief:
    Queue, evidence, history and audit; sees no mutation controls; POST rejected.
 6. **`GIT_PUBLICATION_PENDING`** — `950fb42`, `658f68c`, `2d70328` and this
    report are unpushed; no PR; CI has not run on any candidate.
-7. **D4 product decision** (§10) — not a safety blocker.
+7. **D4 — owner decision (2026-10-22): first post-launch V1.0.1 usability
+   mission.** Pending Review cannot open the evidence/governance panel, so
+   auto-flagged clusters (50+ in Production) cannot reach admission or
+   reviewer controls. Not implemented in this release.
 
 Separately: `TRACE_V1_SCHEDULER_STOP_BURN_STILL_ACTIVE`. Editorial promotion
 does not close the incident; 0072 activation remains its own mission
