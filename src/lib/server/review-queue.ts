@@ -45,9 +45,35 @@ function mapPublishableRow(row: ReviewQueuePublishableDatabaseRow): ReviewQueueP
   return { ...row, source_names: [] };
 }
 
-async function sourceNamesForClusters(db: D1Database, clusterIds: number[]): Promise<Map<number, string[]>> {
-  if (clusterIds.length === 0) return new Map();
+/**
+ * D1 rejects statements with more than 100 bound parameters, and the queue
+ * allows 200 clusters, so the lookup runs in batches of at most this many ids:
+ * two statements at the 200-cluster cap.
+ */
+export const REVIEW_QUEUE_SOURCE_NAME_BATCH_SIZE = 100;
 
+async function sourceNamesForClusters(db: D1Database, clusterIds: number[]): Promise<Map<number, string[]>> {
+  const uniqueIds = [...new Set(clusterIds)];
+  if (uniqueIds.length === 0) return new Map();
+
+  const batches: number[][] = [];
+  for (let start = 0; start < uniqueIds.length; start += REVIEW_QUEUE_SOURCE_NAME_BATCH_SIZE) {
+    batches.push(uniqueIds.slice(start, start + REVIEW_QUEUE_SOURCE_NAME_BATCH_SIZE));
+  }
+  // Each cluster's names come only from its own rows, so batches partition the
+  // result exactly; per-cluster order is fixed by the query's ORDER BY.
+  const results = await Promise.all(batches.map((batch) => sourceNameRows(db, batch)));
+
+  const namesByCluster = new Map<number, string[]>();
+  for (const row of results.flat()) {
+    const names = namesByCluster.get(row.cluster_id) ?? [];
+    names.push(row.source_name);
+    namesByCluster.set(row.cluster_id, names);
+  }
+  return namesByCluster;
+}
+
+async function sourceNameRows(db: D1Database, clusterIds: number[]): Promise<ReviewQueueSourceNameRow[]> {
   const placeholders = clusterIds.map(() => "?").join(",");
   const result = await db.prepare(`
     WITH ranked_source_names AS (
@@ -67,14 +93,7 @@ async function sourceNamesForClusters(db: D1Database, clusterIds: number[]): Pro
     WHERE source_rank <= 3
     ORDER BY cluster_id ASC, source_rank ASC
   `).bind(...clusterIds).all<ReviewQueueSourceNameRow>();
-
-  const namesByCluster = new Map<number, string[]>();
-  for (const row of result.results) {
-    const names = namesByCluster.get(row.cluster_id) ?? [];
-    names.push(row.source_name);
-    namesByCluster.set(row.cluster_id, names);
-  }
-  return namesByCluster;
+  return result.results;
 }
 
 /**

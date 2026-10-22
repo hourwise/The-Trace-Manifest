@@ -1,6 +1,9 @@
 import { DatabaseSync, type StatementSync } from "node:sqlite";
 import { readFileSync } from "node:fs";
 
+/** Cloudflare D1 rejects any statement with more than 100 bound parameters. */
+export const D1_MAX_BOUND_PARAMETERS = 100;
+
 class SQLiteD1Statement {
   private parameters: unknown[] = [];
 
@@ -11,7 +14,17 @@ class SQLiteD1Statement {
     return this;
   }
 
+  // node:sqlite allows tens of thousands of parameters; D1 fails the statement
+  // at execution, so the adapter does the same to keep oversized queries out of CI.
+  private enforceD1Limits(): void {
+    this.owner.recordStatement(this.statement.sourceSQL, this.parameters.length);
+    if (this.parameters.length > D1_MAX_BOUND_PARAMETERS) {
+      throw new Error(`D1_ERROR: too many SQL variables (${this.parameters.length} bound parameters; D1 allows ${D1_MAX_BOUND_PARAMETERS})`);
+    }
+  }
+
   executeRun(): D1Result {
+    this.enforceD1Limits();
     const totalBefore = this.owner.countTriggerChanges ? this.owner.totalChanges() : 0;
     const result = this.statement.run(...this.parameters as any[]);
     // D1 reports meta.changes including rows written by triggers; node:sqlite's
@@ -34,11 +47,13 @@ class SQLiteD1Statement {
   }
 
   async all<T = Record<string, unknown>>(): Promise<D1Result<T>> {
+    this.enforceD1Limits();
     const results = this.statement.all(...this.parameters as any[]) as T[];
     return { success: true, meta: {}, results } as D1Result<T>;
   }
 
   async first<T = Record<string, unknown>>(column?: string): Promise<T | null> {
+    this.enforceD1Limits();
     const row = this.statement.get(...this.parameters as any[]) as Record<string, unknown> | undefined;
     if (!row) return null;
     return (column ? row[column] : row) as T;
@@ -53,6 +68,12 @@ export class SQLiteD1 {
   readonly sqlite = new DatabaseSync(":memory:");
   /** When true, meta.changes includes trigger-written rows, matching D1. */
   countTriggerChanges = false;
+  /** Every statement executed through the adapter, with its bound-parameter count. */
+  readonly statementLog: Array<{ sql: string; parameterCount: number }> = [];
+
+  recordStatement(sql: string, parameterCount: number): void {
+    this.statementLog.push({ sql, parameterCount });
+  }
 
   constructor(
     applyLegacyClaimsCutover = true,
