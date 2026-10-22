@@ -11,6 +11,9 @@ export default defineConfig({
     platformProxy: {
       enabled: true,
     },
+    // TRACE has no astro:assets usage. Passthrough keeps the Sharp image
+    // service (GHSA-26w7-cxv4-gfx2, AVIF decoding) out of build and runtime.
+    imageService: "passthrough",
   }),
   markdown: {
     shikiConfig: {
