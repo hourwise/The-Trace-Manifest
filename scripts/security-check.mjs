@@ -53,6 +53,15 @@ for (const table of ["ai_requests", "ai_budget_reservations", "ai_usage_ledger",
   if (!migration.includes(`CREATE TABLE IF NOT EXISTS ${table}`)) failures.push(`durable control table is missing: ${table}`);
 }
 
+// STOP-BURN guard: every Worker trigger section must declare an empty Cron list
+// until the scheduler activation mission deliberately removes this check.
+const workerConfig = readFileSync(join(root, "wrangler.worker.toml"), "utf8");
+const triggerSections = [...workerConfig.matchAll(/^\[((?:env\.[A-Za-z0-9_-]+\.)?triggers)\]\s*\r?\n\s*crons\s*=\s*\[([^\]]*)\]/gm)];
+if (!triggerSections.some(([, section]) => section === "triggers")) failures.push("wrangler.worker.toml must declare top-level [triggers] crons = [] during STOP-BURN");
+for (const [, section, crons] of triggerSections) {
+  if (crons.replace(/#[^\n]*/g, "").trim() !== "") failures.push(`STOP-BURN: ${section} declares Cron schedules in wrangler.worker.toml`);
+}
+
 try {
   const history = execFileSync("git", ["log", "-p", "--all", "--no-ext-diff", "--", ".", ":!package-lock.json"], {
     cwd: root, encoding: "utf8", maxBuffer: 64 * 1024 * 1024,
