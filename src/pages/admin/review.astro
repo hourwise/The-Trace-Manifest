@@ -1208,6 +1208,10 @@ try {
             .filter((assertionId): assertionId is string => Boolean(assertionId))
           : [];
         disposeAssertionGovernanceDrafts();
+        // An evidence reload follows a governance decision or a state conflict, so
+        // any cached history may predate it. Open histories are force-refreshed
+        // below; closed ones refetch lazily the next time they are opened.
+        assertionGovernanceHistoryCache.clear();
         currentEditorialEvidence = null;
         const requestToken = ++evidenceRequestToken;
         panel.style.display = "block";

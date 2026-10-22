@@ -133,14 +133,20 @@ export async function writeCanonicalClaim(
     assertionId,
     sourceDocumentVersionId: sourceVersionId,
     sourceDocumentId,
-    sourceDocumentInserted: Number(results[0]?.meta.changes ?? 0) === 1,
-    sourceDocumentVersionInserted: Number(results[2]?.meta.changes ?? 0) === 1,
-    canonicalClaimInserted: Number(results[4]?.meta.changes ?? 0) === 1,
-    inserted: Number(assertionResult?.meta.changes ?? 0) === 1,
-    storyClaimInserted: input.clusterId != null
-      ? Number(storyClaimResult?.meta.changes ?? 0) === 1
-      : null,
+    sourceDocumentInserted: rowInserted(results[0]),
+    sourceDocumentVersionInserted: rowInserted(results[2]),
+    canonicalClaimInserted: rowInserted(results[4]),
+    inserted: rowInserted(assertionResult),
+    storyClaimInserted: input.clusterId != null ? rowInserted(storyClaimResult) : null,
   };
+}
+
+// Each write is a single-row INSERT OR IGNORE, so any change means the row was
+// inserted. D1 includes trigger-written rows in meta.changes (canonical_claims
+// has a knowledge-search AFTER INSERT trigger), so an exact `=== 1` check would
+// misreport a new row as reused.
+function rowInserted(result: D1Result | undefined): boolean {
+  return Number(result?.meta.changes ?? 0) > 0;
 }
 
 async function sha256(value: string): Promise<string> {

@@ -457,7 +457,54 @@ function schemaAndUiCharacterizationTests(): void {
   assert.match(proxy, /"extraction-run"/);
 }
 
+async function d1TriggerChangeAttributionTests(): Promise<void> {
+  // D1 counts trigger-written rows in meta.changes. canonical_claims carries the
+  // 0050 knowledge-search AFTER INSERT trigger, so a new claim reports > 1.
+  const database = new SQLiteD1();
+  database.countTriggerChanges = true;
+  try {
+    const probe = await database.prepare(`
+      INSERT OR IGNORE INTO canonical_claims (id, canonical_text, claim_class, claim_domain, current_state, materiality)
+      VALUES ('d1-change-probe', 'Probe claim text.', 'editorial_synthesis', 'general', 'active', 'low')
+    `).run();
+    assert.ok(Number(probe.meta.changes) > 1, "the D1 change-count mode must include trigger-written rows");
+
+    seedSingleItem(database, "OpenAI announced a new model called Trace.");
+    const result = await runClaimExtraction(database.asD1(), undefined, {
+      trigger: "manual_admin",
+      requestId: "88000000-0000-4000-8000-000000000002",
+      operatorEmail: "publisher@example.test",
+      operatorRole: "publisher",
+    });
+    assert.equal(result.newAssertionCount, 1);
+    assert.equal(result.canonicalWriteSuccessCount, 1);
+    const effect = database.sqlite.prepare(`
+      SELECT attempt_outcome, canonical_claim_inserted, assertion_inserted, story_claim_inserted
+      FROM claim_extraction_run_effects WHERE run_id = ?
+    `).get(result.runId) as Record<string, unknown>;
+    assert.equal(effect.attempt_outcome, "inserted");
+    assert.equal(effect.canonical_claim_inserted, 1, "a newly created canonical claim is not reported as reused under D1 change counting");
+    assert.equal(effect.assertion_inserted, 1);
+    assert.equal(effect.story_claim_inserted, 1);
+
+    const detail = await getClaimExtractionRun(database.asD1(), result.runId);
+    assert.equal(detail.items[0].effects[0].canonicalClaimInserted, true);
+    assert.equal(detail.reconciliation.matchesStoredCounters, true);
+
+    const replay = await runClaimExtraction(database.asD1(), undefined, {
+      trigger: "manual_admin",
+      requestId: "88000000-0000-4000-8000-000000000003",
+      operatorEmail: "publisher@example.test",
+      operatorRole: "publisher",
+    });
+    assert.equal(replay.selectedCount, 0, "a completed item is not reselected");
+  } finally {
+    database.close();
+  }
+}
+
 await durableLedgerRunTests();
+await d1TriggerChangeAttributionTests();
 await failureAndPartialEffectTests();
 await routeAndBoundTests();
 schemaAndUiCharacterizationTests();

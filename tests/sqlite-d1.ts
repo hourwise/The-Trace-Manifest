@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 class SQLiteD1Statement {
   private parameters: unknown[] = [];
 
-  constructor(private readonly statement: StatementSync) {}
+  constructor(private readonly statement: StatementSync, private readonly owner: SQLiteD1) {}
 
   bind(...values: unknown[]): SQLiteD1Statement {
     this.parameters = values;
@@ -12,11 +12,17 @@ class SQLiteD1Statement {
   }
 
   executeRun(): D1Result {
+    const totalBefore = this.owner.countTriggerChanges ? this.owner.totalChanges() : 0;
     const result = this.statement.run(...this.parameters as any[]);
+    // D1 reports meta.changes including rows written by triggers; node:sqlite's
+    // statement-level changes excludes them. The opt-in mode mirrors D1.
+    const changes = this.owner.countTriggerChanges
+      ? this.owner.totalChanges() - totalBefore
+      : Number(result.changes);
     return {
       success: true,
       meta: {
-        changes: Number(result.changes),
+        changes,
         last_row_id: Number(result.lastInsertRowid),
       },
       results: [],
@@ -45,6 +51,8 @@ class SQLiteD1Statement {
 
 export class SQLiteD1 {
   readonly sqlite = new DatabaseSync(":memory:");
+  /** When true, meta.changes includes trigger-written rows, matching D1. */
+  countTriggerChanges = false;
 
   constructor(
     applyLegacyClaimsCutover = true,
@@ -109,7 +117,11 @@ export class SQLiteD1 {
   }
 
   prepare(query: string): SQLiteD1Statement {
-    return new SQLiteD1Statement(this.sqlite.prepare(query));
+    return new SQLiteD1Statement(this.sqlite.prepare(query), this);
+  }
+
+  totalChanges(): number {
+    return Number((this.sqlite.prepare("SELECT total_changes() AS total").get() as { total: number }).total);
   }
 
   async batch<T = unknown>(statements: SQLiteD1Statement[]): Promise<D1Result<T>[]> {

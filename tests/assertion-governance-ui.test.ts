@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
   ASSERTION_GOVERNANCE_REASON_MAX_LENGTH,
   buildAssertionGovernancePayload,
@@ -114,5 +115,18 @@ assert.match(governanceFailureMessage(409, "idempotency_conflict", "fallback"), 
 assert.equal(shouldRefreshEvidenceAfterFailure("state_conflict"), true);
 assert.equal(shouldRefreshEvidenceAfterFailure("invalid_transition"), true);
 assert.equal(shouldRefreshEvidenceAfterFailure("idempotency_conflict"), false);
+
+// Every evidence reload follows a decision or conflict, so it must drop cached
+// governance history before re-rendering; otherwise a history disclosure that
+// was closed during the decision reopens with pre-decision events.
+const reviewPage = readFileSync("src/pages/admin/review.astro", "utf8").replace(/\r\n/g, "\n");
+const loadEvidenceStart = reviewPage.indexOf("async function loadEditorialEvidence(");
+const loadEvidenceEnd = reviewPage.indexOf("\n      }\n", loadEvidenceStart);
+assert.ok(loadEvidenceStart >= 0 && loadEvidenceEnd > loadEvidenceStart, "loadEditorialEvidence is present");
+const loadEvidence = reviewPage.slice(loadEvidenceStart, loadEvidenceEnd);
+const cacheClear = loadEvidence.indexOf("assertionGovernanceHistoryCache.clear()");
+assert.ok(cacheClear >= 0, "evidence reload invalidates cached governance history");
+assert.ok(cacheClear < loadEvidence.indexOf("renderEditorialEvidence(data)"), "history cache is cleared before the refreshed evidence renders");
+assert.ok(loadEvidence.includes("loadAssertionGovernanceHistory(assertionId, true)"), "open histories are still force-refreshed");
 
 console.log("assertion governance UI tests passed");
