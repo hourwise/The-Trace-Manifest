@@ -573,8 +573,13 @@ if (Astro.request.method === "POST" && Astro.url.searchParams.has("debug")) {
     }
   </script>
 
-  {canExecuteExtraction && (
-    <script>
+  {/*
+    Rendered for every role: Astro can bundle a role-conditional <script> with
+    the wrong script body, which once dropped the audit code for readers (D6).
+    Without the publisher-only #extract-form this script does nothing; the
+    server renders that form only for publishers and the Worker enforces the role.
+  */}
+  <script>
       interface ExtractionResponse {
         status?: string;
         runId?: string;
@@ -715,6 +720,5 @@ if (Astro.request.method === "POST" && Astro.url.searchParams.has("debug")) {
           button.textContent = "Run deterministic extraction";
         }
       });
-    </script>
-  )}
+  </script>
 </AdminLayout>
