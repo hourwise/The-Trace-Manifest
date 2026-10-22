@@ -208,3 +208,55 @@ for 24h.
 3. Approve the CI audit-exception mechanism (readiness-07 §14.2).
 4. Decide on source 93 (`lmsys_api`) — scheduler mission.
 5. D4 Pending Review product decision — not a blocker for §7.
+
+## 9. Execution record — §7.1–§7.4 (owner-approved, 2026-10-22)
+
+Scope: Production D1 schema only. No Worker or Pages deploy and no Cron
+change. 0069, 0070 and 0072 were not applied.
+
+- **Target:** `trace-manifest-db`, `1625036a-ffe2-4103-bf9d-086bae150561`
+  (89 tables, 27.8 MB, 0 writes in the prior 24h).
+- **§7.1 recovery points:**
+  - Time Travel bookmark `00003d42-00000000-0000510c-89463f0784289fb423fa667d0900f09a`
+    (2026-10-22T16:55:32Z).
+  - Non-blocking snapshot `trace-manifest-db-production-before-schema08-20261022-logical.json`
+    (SHA-256 `aa2861329f653d8a95628b878ce4365a5975a1d67c5f51a41149e406f999593b`,
+    51,583 rows). Its data and DDL are identical to the rehearsed snapshot.
+  - The optional native export was not taken, because it blocks D1 requests.
+- **§7.2:** the 23 files ran one at a time, each `success: true`, with no
+  failure or retry. Billed `rows_written` by file:
+  - 0050: 25,555
+  - 0061, 0062: 1,810 each
+  - 0065: 1,204
+  - 0066: 420
+  - 0074: 407
+  - 0055: 312
+  - 0064: 183
+  - 0063: 154
+  - all others: ≤ 23 each
+
+  Total about 32.1k. Final bookmark:
+  `00003d42-000000ad-0000510c-157656f2f51d02eda7e170c174bc0bb7`.
+- **§7.4 verification:**
+  - Post-migration snapshot `trace-manifest-db-production-after-schema08-20261022-logical.json`
+    (SHA-256 `56500549d474deb5ffe25c7a366ec862076864c6aa0f77fbd36c12d6ed0f98e7`,
+    113 tables, 55,567 rows).
+  - DDL against the canonical chain: **exactly the 29 accepted divergences**,
+    identical to the rehearsal.
+  - **All 89 pre-existing tables: rows and original columns identical.**
+  - `knowledge_search_records` has 3,984 rows; the FTS table is present.
+  - Remote `foreign_key_check` is empty; `integrity_check` is `ok` on the
+    restored copy.
+  - No `cron_scheduler_leases`; `cron_runs` still has 11 columns.
+  - M2 is `FAIL_CLOSED` only on `sources.ingestion_type`, as planned, with 0
+    missing objects.
+- **Unchanged after migration:**
+  - Production Worker `20d789f4`; Production Pages `247d3b3a` (`0351df7`).
+  - Cron schedules `[]` on both Workers.
+  - The live site, still on the old code, serves home, RSS and corrections
+    (200); `/admin/*` is still Access-gated (302).
+- **Consequence:** from now on `wrangler d1 export` cannot be used on
+  Production (FTS5). Use Time Travel and keyset snapshots instead.
+
+Next approval-gated steps: §7.5 Worker release (Cron-safe config is in place),
+then §7.6 merge to `main` (Pages), then §7.7 smoke and authenticated QA.
