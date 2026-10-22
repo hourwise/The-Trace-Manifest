@@ -240,13 +240,15 @@ Not started. Brief:
      `wrangler d1 export` works now but will stop working once 0050 creates
      `knowledge_search_fts`. Export before 0050 and record a Time Travel
      bookmark.
-2. **`CI_AUDIT_EXCEPTION_NOT_ENCODED`** — `.github/workflows/ci.yml` runs
+2. **Resolved in `fe6ba75` (scoped, expiring, guarded exception).** Was
+   `CI_AUDIT_EXCEPTION_NOT_ENCODED` — `.github/workflows/ci.yml` runs
    `npm run audit:production` (`--audit-level=critical`), which fails on
    `2d70328` because Astro 5 is version-flagged critical. Every PR to `main`
    will fail until the accepted exception is encoded as an explicit,
    advisory-ID-scoped allowlist with an expiry. Changing a security gate needs
    owner approval of the exact mechanism.
-3. **`PRODUCTION_CRON_CONFIG_HAZARD`** — `wrangler.worker.toml` declares five
+3. **Resolved in `4979823` (`crons = []` plus CI guard).** Was
+   `PRODUCTION_CRON_CONFIG_HAZARD` — `wrangler.worker.toml` declared five
    top-level crons. A plain Production `wrangler deploy` would re-enable them
    and end STOP-BURN. The Production Worker must be released with a procedure
    that leaves schedules untouched (for example `wrangler versions upload`

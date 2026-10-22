@@ -117,8 +117,10 @@ database, through a D1-faithful adapter (trigger rows counted in
 ### 7.0 Preconditions
 
 - CI is green on the release PR, including an encoded Astro-5 exception
-  (readiness-07 §14.2). Not yet done.
-- Cron-safe Worker release is settled (§7.5). Not yet done.
+  (readiness-07 §14.2). **Encoded in `fe6ba75`**; `npm run audit:production`
+  passes locally. CI has not yet run on a PR.
+- Cron-safe Worker release (§7.5): **settled in `4979823`** (top-level
+  `crons = []`, enforced by `scripts/security-check.mjs`).
 - STOP-BURN remains active: no ingestion, no Cron, no scheduler jobs.
 - Maintenance note: public reads continue throughout. Each migration is a
   short D1 write batch.
@@ -173,10 +175,10 @@ lost.
 
 ### 7.5 Production Worker release (Cron-safe), after 7.4
 
-- **Primary (needs a reviewed config change on the candidate):** set top-level
-  `[triggers] crons = []` in `wrangler.worker.toml` for the STOP-BURN period,
-  so that even a plain `wrangler deploy` cannot restore Cron. The scheduler
-  mission later restores the schedule together with 0072.
+- **Primary (in place since `4979823`):** top-level `crons = []` in
+  `wrangler.worker.toml`, so even a plain `wrangler deploy` cannot restore
+  Cron; CI fails if any Worker trigger section declares a schedule. The
+  scheduler mission restores the schedule together with 0072.
 - **Secondary:** `wrangler versions upload --config wrangler.worker.toml`
   followed by `wrangler versions deploy <id>@100%`. The docs imply that
   triggers are applied only by `wrangler deploy` or `wrangler triggers deploy`,
