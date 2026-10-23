@@ -183,7 +183,17 @@ export async function getAssertionGovernanceHistory(
     .first<{ id: string; canonical_claim_id: string }>();
   if (!assertion) throw new AssertionGovernanceHistoryError("assertion_not_found", "Assertion not found.", 404);
 
-  const associated = libraryScope ? { present: 1 } : await db.prepare(`
+  // Library scope reads only assertions no real story carries; a story's
+  // assertion history is read through that story.
+  const associated = libraryScope
+    ? await db.prepare(`
+        SELECT 1 AS present WHERE NOT EXISTS (
+          SELECT 1 FROM story_claims link
+          WHERE link.canonical_claim_id = ?
+            AND EXISTS (SELECT 1 FROM story_cluster_members member WHERE member.cluster_id = link.story_cluster_id)
+        )
+      `).bind(assertion.canonical_claim_id).first<{ present: number }>()
+    : await db.prepare(`
     SELECT 1 AS present
     FROM story_claims
     WHERE story_cluster_id = ? AND canonical_claim_id = ?
@@ -192,7 +202,9 @@ export async function getAssertionGovernanceHistory(
   if (!associated) {
     throw new AssertionGovernanceHistoryError(
       "assertion_not_associated",
-      "The assertion is not associated with the selected cluster.",
+      libraryScope
+        ? "The assertion belongs to a story; read its history from that story."
+        : "The assertion is not associated with the selected cluster.",
       409,
     );
   }

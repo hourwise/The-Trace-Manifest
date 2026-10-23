@@ -437,6 +437,114 @@ async function publicationBoundary(): Promise<void> {
   }
 }
 
+// 8. Independent-review regressions.
+/** Runs a concurrent write immediately before the next batch commits. */
+function interceptBatch(database: SQLiteD1, concurrentWrite: () => void): D1Database {
+  const target = database.asD1();
+  let fired = false;
+  return new Proxy(target, {
+    get(object, property) {
+      if (property === "batch") {
+        return async (statements: D1PreparedStatement[]) => {
+          if (!fired) { fired = true; concurrentWrite(); }
+          return object.batch(statements);
+        };
+      }
+      const value = Reflect.get(object, property);
+      return typeof value === "function" ? value.bind(object) : value;
+    },
+  });
+}
+
+async function reviewRegressions(): Promise<void> {
+  const database = new SQLiteD1();
+  try {
+    // A concurrent writer that changes reviewer_state without bumping the
+    // revision (as claim-match review does) must not let a freshness approval
+    // commit without its governance event.
+    seedLibrary(database);
+    await governAssertionAdmission(database.asD1(), libraryInput("admit", "rr-admit"));
+    await governAssertionReviewerDecision(database.asD1(), reviewInput("accept_review", "rr-accept"));
+    const request = await requestFreshnessReview(database.asD1(), {
+      claimAssertionId: LIBRARY_ASSERTION, proposedState: "stale", reason: "Superseded.", actor: "publisher@example.test", idempotencyKey: "rr-stale",
+    });
+    const racing = interceptBatch(database, () => database.sqlite.exec(`UPDATE claim_assertions SET reviewer_state = 'needs_research' WHERE id = '${LIBRARY_ASSERTION}'`));
+    await assert.rejects(approveFreshnessReview(racing, request.reviewId, "publisher@example.test"), (error: unknown) => error instanceof Error && /changed/.test(error.message));
+    assert.equal(count(database, `SELECT COUNT(*) AS count FROM evidence_freshness_reviews WHERE id = '${request.reviewId}' AND state = 'pending'`), 1, "the review stays pending");
+    assert.equal(count(database, "SELECT COUNT(*) AS count FROM assertion_governance_events WHERE action = 'mark_stale'"), 0, "no unaudited transition");
+    assert.equal(count(database, `SELECT COUNT(*) AS count FROM claim_assertions WHERE id = '${LIBRARY_ASSERTION}' AND freshness_state = 'unknown'`), 1, "freshness unchanged");
+  } finally {
+    database.close();
+  }
+
+  const linking = new SQLiteD1();
+  try {
+    // A claim that joins a real story while a library decision is in flight.
+    seedLibrary(linking);
+    seedStory(linking, STORY_ID, true, "rr-other-claim");
+    const racing = interceptBatch(linking, () => linking.sqlite.exec(`INSERT INTO story_claims (story_cluster_id, canonical_claim_id, role, materiality, display_order) VALUES (${STORY_ID}, '${LIBRARY_CLAIM}', 'supporting', 'high', 2)`));
+    await rejectsWith(governAssertionAdmission(racing, libraryInput("admit", "rr-toctou")), "assertion_story_linked");
+    assert.equal(count(linking, "SELECT COUNT(*) AS count FROM assertion_governance_events"), 0);
+    assert.equal(count(linking, `SELECT COUNT(*) AS count FROM claim_assertions WHERE id = '${LIBRARY_ASSERTION}' AND admission_state = 'pending'`), 1);
+    // Its history is now read through the story, not the library.
+    await assert.rejects(getAssertionGovernanceHistory(linking.asD1(), null, LIBRARY_ASSERTION), (error: unknown) => error instanceof Error && /story/.test(error.message));
+  } finally {
+    linking.close();
+  }
+
+  const holding = new SQLiteD1();
+  try {
+    // A memberless holding cluster is not a story: exactly one context applies.
+    seedLibrary(holding);
+    seedStory(holding, HOLDING_ID, false, LIBRARY_CLAIM);
+    await rejectsWith(governAssertionAdmission(holding.asD1(), { ...libraryInput("admit", "rr-holding"), context: "story", clusterId: HOLDING_ID }), "cluster_not_story");
+    assert.equal((await governAssertionAdmission(holding.asD1(), libraryInput("admit", "rr-holding-lib"))).context, "evidence_library");
+  } finally {
+    holding.close();
+  }
+
+  const wide = new SQLiteD1();
+  try {
+    // Freshness approvals are never blocked by the 25-story bound, while
+    // story decisions keep it.
+    seedLibrary(wide, { assertionId: "wide", claimId: "wide-claim" });
+    for (let index = 0; index < 26; index++) seedStory(wide, 5000 + index, true, "wide-claim");
+    await rejectsWith(governAssertionAdmission(wide.asD1(), { ...libraryInput("admit", "wide-admit"), assertionId: "wide", context: "story", clusterId: 5000 }), "recalculation_scope_too_large");
+    wide.sqlite.exec("UPDATE claim_assertions SET admission_state = 'admitted', reviewer_state = 'accepted', reviewed_by = 'p@example.test', reviewed_at = datetime('now') WHERE id = 'wide'");
+    const request = await requestFreshnessReview(wide.asD1(), { claimAssertionId: "wide", proposedState: "stale", reason: "Withdrawn upstream.", actor: "publisher@example.test", idempotencyKey: "wide-stale" });
+    const stale = await approveFreshnessReview(wide.asD1(), request.reviewId, "publisher@example.test");
+    assert.equal(stale.state, "approved", "a stale marking is never blocked");
+    assert.equal(stale.recalculation?.storyIds.length, 25, "recalculation is bounded to 25 stories");
+  } finally {
+    wide.close();
+  }
+
+  const defaults = new SQLiteD1();
+  try {
+    // A pre-0076 Worker's story insert (no context column) still succeeds
+    // during the deploy window; the default never admits a story row without
+    // a cluster.
+    seedLibrary(defaults);
+    seedStory(defaults, STORY_ID, true, LIBRARY_CLAIM);
+    const legacyInsert = (cluster: string, id: string) => defaults.sqlite.exec(`
+      INSERT INTO assertion_governance_events
+        (id, assertion_id, canonical_claim_id, cluster_id, action,
+         previous_admission_state, new_admission_state, previous_reviewer_state, new_reviewer_state,
+         previous_freshness_state, new_freshness_state, previous_admission_revision, new_admission_revision,
+         previous_governance_revision, new_governance_revision, actor_email, actor_role, reason,
+         request_id, idempotency_key, request_fingerprint, recalculation_job_id)
+      VALUES ('${id}', '${LIBRARY_ASSERTION}', '${LIBRARY_CLAIM}', ${cluster}, 'admit',
+              'pending', 'admitted', 'proposed', 'proposed', 'unknown', 'unknown', 0, 1, 0, 1,
+              'p@example.test', 'publisher', 'Old Worker.', '${id}-request', '${id}-key', 'x', '${id}-job');
+    `);
+    legacyInsert(String(STORY_ID), "old-worker");
+    assert.equal((defaults.sqlite.prepare("SELECT governance_context FROM assertion_governance_events WHERE id = 'old-worker'").get() as { governance_context: string }).governance_context, "story");
+    assert.throws(() => legacyInsert("NULL", "old-worker-null"), /CHECK constraint/);
+  } finally {
+    defaults.close();
+  }
+}
+
 const statementCeiling = { max: 0 };
 const originalRecord = SQLiteD1.prototype.recordStatement;
 SQLiteD1.prototype.recordStatement = function record(sql: string, parameterCount: number) {
@@ -449,6 +557,7 @@ await scopeValidation();
 await forgedAssociations();
 await concurrencyAndFreshness();
 await workerRoutes();
+await reviewRegressions();
 await migrationPreservation();
 await publicationBoundary();
 assert.ok(statementCeiling.max <= D1_MAX_BOUND_PARAMETERS, `largest statement bound ${statementCeiling.max} parameters`);

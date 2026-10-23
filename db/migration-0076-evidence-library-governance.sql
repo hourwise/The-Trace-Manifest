@@ -35,7 +35,10 @@ CREATE TABLE assertion_governance_events (
   id TEXT PRIMARY KEY,
   assertion_id TEXT NOT NULL REFERENCES claim_assertions(id) ON DELETE RESTRICT,
   canonical_claim_id TEXT NOT NULL REFERENCES canonical_claims(id) ON DELETE RESTRICT,
-  governance_context TEXT NOT NULL CHECK(governance_context IN ('story','evidence_library')),
+  -- DEFAULT 'story' keeps a pre-0076 Worker's story inserts valid during the
+  -- window between applying this migration and deploying the new Worker; the
+  -- context/cluster CHECK below still refuses a story row without a cluster.
+  governance_context TEXT NOT NULL DEFAULT 'story' CHECK(governance_context IN ('story','evidence_library')),
   cluster_id INTEGER REFERENCES story_clusters(id) ON DELETE RESTRICT,
   action TEXT NOT NULL CHECK(action IN ('admit','reject','accept_review','reject_review','mark_current','mark_stale')),
   previous_admission_state TEXT NOT NULL CHECK(previous_admission_state IN ('pending','admitted','quarantined','rejected')),
@@ -131,7 +134,10 @@ CREATE TABLE assertion_governance_recalculation_jobs (
   event_id TEXT NOT NULL UNIQUE REFERENCES assertion_governance_events(id) ON DELETE RESTRICT,
   assertion_id TEXT NOT NULL REFERENCES claim_assertions(id) ON DELETE RESTRICT,
   canonical_claim_id TEXT NOT NULL REFERENCES canonical_claims(id) ON DELETE RESTRICT,
-  governance_context TEXT NOT NULL CHECK(governance_context IN ('story','evidence_library')),
+  -- DEFAULT 'story' keeps a pre-0076 Worker's story inserts valid during the
+  -- window between applying this migration and deploying the new Worker; the
+  -- context/cluster CHECK below still refuses a story row without a cluster.
+  governance_context TEXT NOT NULL DEFAULT 'story' CHECK(governance_context IN ('story','evidence_library')),
   cluster_id INTEGER REFERENCES story_clusters(id) ON DELETE RESTRICT,
   -- JSON array of genuinely associated story ids; [] is a valid bounded scope.
   story_scope_json TEXT NOT NULL,

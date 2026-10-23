@@ -181,6 +181,13 @@ const MAX_REQUEST_ID_LENGTH = 200;
 const MAX_ACTOR_LENGTH = 320;
 const MAX_DIRECT_STORY_SCOPES = 25;
 
+/** A story_claims row whose cluster has at least one member item is a real story. */
+const REAL_STORY_LINK = (claimColumn: string) => `EXISTS (
+  SELECT 1 FROM story_claims real_link
+  WHERE real_link.canonical_claim_id = ${claimColumn}
+    AND EXISTS (SELECT 1 FROM story_cluster_members real_member WHERE real_member.cluster_id = real_link.story_cluster_id)
+)`;
+
 function isOneOf<T extends readonly string[]>(values: T, value: unknown): value is T[number] {
   return typeof value === "string" && values.includes(value);
 }
@@ -349,7 +356,11 @@ async function loadAssertion(db: D1Database, assertionId: string): Promise<Asser
  * cluster) is not a real story, so it never receives a recalculation or blocks
  * library review.
  */
-export async function loadRealStoryScope(db: D1Database, canonicalClaimId: string): Promise<number[]> {
+export async function loadRealStoryScope(
+  db: D1Database,
+  canonicalClaimId: string,
+  options: { truncate?: boolean } = {},
+): Promise<number[]> {
   const rows = await db.prepare(`
     SELECT DISTINCT story_claim.story_cluster_id
     FROM story_claims story_claim
@@ -360,6 +371,9 @@ export async function loadRealStoryScope(db: D1Database, canonicalClaimId: strin
   `).bind(canonicalClaimId, MAX_DIRECT_STORY_SCOPES + 1).all<{ story_cluster_id: number }>();
   const storyIds = (rows.results ?? []).map((row) => row.story_cluster_id);
   if (storyIds.length > MAX_DIRECT_STORY_SCOPES) {
+    // Freshness approvals must never be blocked (a stale marking is a safety
+    // action), so they recalculate the first bounded set of stories instead.
+    if (options.truncate) return storyIds.slice(0, MAX_DIRECT_STORY_SCOPES);
     throw new AssertionGovernanceError(
       "recalculation_scope_too_large",
       "The assertion is linked to too many story scopes for one bounded governance action.",
@@ -704,18 +718,19 @@ async function assertScopeAssociation(
       LIMIT 1
     `).bind(scope.clusterId, row.canonical_claim_id).first<{ present: number }>();
     if (!associated) throw new AssertionGovernanceError("assertion_not_associated", "The assertion is not associated with the selected cluster.", 409);
+    // A memberless holding cluster (such as the legacy "Unclustered Items"
+    // cluster) is not a story; its claims are governed in the Evidence Library,
+    // so exactly one context applies to any assertion.
+    const member = await db.prepare("SELECT 1 AS present FROM story_cluster_members WHERE cluster_id = ? LIMIT 1")
+      .bind(scope.clusterId).first<{ present: number }>();
+    if (!member) throw new AssertionGovernanceError("cluster_not_story", "This cluster has no member items; govern its claims in the Evidence Library.", 409);
     return;
   }
 
   // Evidence Library: the claim must not belong to a real story, which is
   // governed in its story context instead.
-  const linked = await db.prepare(`
-    SELECT 1 AS present
-    FROM story_claims story_claim
-    WHERE story_claim.canonical_claim_id = ?
-      AND EXISTS (SELECT 1 FROM story_cluster_members member WHERE member.cluster_id = story_claim.story_cluster_id)
-    LIMIT 1
-  `).bind(row.canonical_claim_id).first<{ present: number }>();
+  const linked = await db.prepare(`SELECT 1 AS present WHERE ${REAL_STORY_LINK("?")}`)
+    .bind(row.canonical_claim_id).first<{ present: number }>();
   if (linked) {
     throw new AssertionGovernanceError("assertion_story_linked", "This assertion belongs to a story; govern it from that story.", 409);
   }
@@ -805,6 +820,7 @@ async function governTransition(
         WHERE id = ? AND canonical_claim_id = ?
           AND admission_state = ? AND reviewer_state = ? AND freshness_state = ?
           AND assertion_governance_revision = ?
+          ${scope.context === "evidence_library" ? `AND NOT ${REAL_STORY_LINK("claim_assertions.canonical_claim_id")}` : ""}
       `).bind(
         next.admissionState, newRevision, row.id, row.canonical_claim_id,
         expected.admissionState, expected.reviewerState, expected.freshnessState,
@@ -817,6 +833,7 @@ async function governTransition(
         WHERE id = ? AND canonical_claim_id = ?
           AND admission_state = ? AND reviewer_state = ? AND freshness_state = ?
           AND assertion_governance_revision = ?
+          ${scope.context === "evidence_library" ? `AND NOT ${REAL_STORY_LINK("claim_assertions.canonical_claim_id")}` : ""}
       `).bind(
         next.reviewerState, normalized.actor, newRevision,
         row.id, row.canonical_claim_id,
@@ -846,6 +863,10 @@ async function governTransition(
       }),
     ]);
     if (!applied(writes[0])) {
+      if (scope.context === "evidence_library") {
+        const linkedNow = await db.prepare(`SELECT 1 AS present WHERE ${REAL_STORY_LINK("?")}`).bind(row.canonical_claim_id).first<{ present: number }>();
+        if (linkedNow) throw new AssertionGovernanceError("assertion_story_linked", "This assertion joined a story before the decision committed; govern it from that story.", 409);
+      }
       const current = await loadAssertion(db, normalized.assertionId);
       if (current && !sameExpectedState(current, expected)) {
         throw new AssertionGovernanceError("state_conflict", `The assertion changed before this ${label} committed.`, 409);

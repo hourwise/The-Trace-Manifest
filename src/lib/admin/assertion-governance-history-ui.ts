@@ -16,7 +16,11 @@ export function governanceHistoryTransitionLabel(event: Pick<AssertionGovernance
   }
 }
 
-/** Where a decision was made, for display alongside the event. */
-export function governanceHistoryContextLabel(event: Pick<AssertionGovernanceHistoryEvent, "context" | "clusterId">): string {
+/**
+ * Where a decision was made, for display alongside the event. Freshness
+ * decisions are assertion-level reviews, not library or story decisions.
+ */
+export function governanceHistoryContextLabel(event: Pick<AssertionGovernanceHistoryEvent, "axis" | "context" | "clusterId">): string {
+  if (event.axis === "freshness") return "Freshness review";
   return event.context === "evidence_library" ? "Evidence Library" : `Story ${event.clusterId}`;
 }

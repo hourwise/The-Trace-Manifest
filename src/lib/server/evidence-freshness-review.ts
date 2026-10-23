@@ -402,32 +402,28 @@ export async function approveFreshnessReview(
   } as AssertionGovernanceState;
   let storyScope: number[];
   try {
-    storyScope = await loadRealStoryScope(db, row.canonical_claim_id);
+    storyScope = await loadRealStoryScope(db, row.canonical_claim_id, { truncate: true });
   } catch (error) {
     if (error instanceof AssertionGovernanceError) throw new EvidenceFreshnessReviewError(error.message, error.code, error.status);
     throw error;
   }
 
+  const eventId = crypto.randomUUID();
   let results: D1Result[];
   try {
     results = await db.batch([
+      // The CAS covers every column the event guard checks, so the state can
+      // only change when its governance event is written in the same batch.
       db.prepare(`
         UPDATE claim_assertions SET freshness_state = ?, assertion_governance_revision = ?
-        WHERE id = ? AND freshness_state = ? AND assertion_governance_revision = ?
-      `).bind(review.proposed_state, revision + 1, review.claim_assertion_id, review.prior_state, revision),
-      // Only close the review if this batch's CAS produced the new state, so a
-      // review can never read "approved" without its transition applied.
-      db.prepare(`
-        UPDATE evidence_freshness_reviews
-        SET state = 'approved', reviewed_by = ?, reviewed_at = ?, review_note = ?
-        WHERE id = ? AND state = 'pending'
-          AND EXISTS (
-            SELECT 1 FROM claim_assertions
-            WHERE id = ? AND freshness_state = ? AND assertion_governance_revision = ?
-          )
-      `).bind(actor.trim(), now, note || null, review.id, review.claim_assertion_id, review.proposed_state, revision + 1),
+        WHERE id = ? AND canonical_claim_id = ? AND admission_state = ? AND reviewer_state = ?
+          AND freshness_state = ? AND assertion_governance_revision = ?
+      `).bind(
+        review.proposed_state, revision + 1, review.claim_assertion_id, row.canonical_claim_id,
+        row.admission_state, row.reviewer_state, review.prior_state, revision,
+      ),
       ...governanceEventStatements(db, {
-        eventId: crypto.randomUUID(),
+        eventId,
         jobId: crypto.randomUUID(),
         assertion: { id: row.id, canonicalClaimId: row.canonical_claim_id, revision },
         scope: { context: "evidence_library", clusterId: null },
@@ -444,6 +440,14 @@ export async function approveFreshnessReview(
         fingerprint: await governanceFingerprint(review),
         storyScope,
       }),
+      // The review closes only once its governance event exists, so it can
+      // never read "approved" without an audited, applied transition.
+      db.prepare(`
+        UPDATE evidence_freshness_reviews
+        SET state = 'approved', reviewed_by = ?, reviewed_at = ?, review_note = ?
+        WHERE id = ? AND state = 'pending'
+          AND EXISTS (SELECT 1 FROM assertion_governance_events WHERE id = ? AND freshness_review_id = ?)
+      `).bind(actor.trim(), now, note || null, review.id, eventId, review.id),
     ]);
   } catch {
     // A unique freshness_review_id / idempotency key means a concurrent

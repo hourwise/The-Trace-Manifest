@@ -138,6 +138,8 @@ export function reviewerGovernanceFailureMessage(
       return "This assertion has no captured source version, so it cannot be admitted or accepted in the Evidence Library.";
     case "source_not_admitted":
       return "The assertion's source document is not admitted yet. Admit the source before admitting or accepting its assertions.";
+    case "cluster_not_story":
+      return "This cluster has no member items, so it is not a story. Govern its claims in the Evidence Library.";
     case "invalid_scope":
       return "A decision must be made either in a story or in the Evidence Library, not both.";
     default:
