@@ -11,7 +11,7 @@ const base: EvidenceExcerpt = {
   sourceId: "source:doc-1", sourceKind: "external_primary", sourceRole: "evidence",
   admissionState: "admitted", freshnessState: "current", independentEvidenceWeight: 0,
   evidenceQuality: "moderate", claimId: "claim:a-1", canonicalClaimId: "cc-1", assertionId: "a-1",
-  text: "Published claim.", sourceDocumentVersionId: "v-1", sourceChunkId: "chunk-1",
+  text: "Published claim.", sourceClassification: "Tier A; primary-technical", sourceDocumentVersionId: "v-1", sourceChunkId: "chunk-1",
   startLocator: "p1", endLocator: "p2", relationship: "supports", isDisputed: false, provenanceGroupIds: ["g-1"],
 };
 const other: EvidenceExcerpt = { ...base, sourceId: "source:doc-2", claimId: "claim:a-2", assertionId: "a-2", provenanceGroupIds: ["g-2"] };
