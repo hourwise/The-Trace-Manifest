@@ -1094,6 +1094,15 @@ async function kc05gLegacyCutoverTests(): Promise<void> {
       SET extraction_status = 'extracted', extraction_state = 'extracted', extraction_method = 'deterministic'
       WHERE id = '${first.sourceDocumentVersionId}';
     `);
+    const memberless = await retrievePublishedEvidence(database2.asD1(), "canonical model shipped", 4);
+    assert.equal(memberless.length, 0,
+      "a published story without a published member item (e.g. the unclustered placeholder) is not Ask TRACE evidence");
+    database2.sqlite.exec(`
+      INSERT INTO feed_items (id, source_id, url, url_hash, title, summary, content_excerpt, ingestion_status)
+      VALUES (902, 902, 'https://canonical.example/article', 'canonical-url-hash', 'Canonical article',
+              'Canonical summary', 'Canonical content', 'published');
+      INSERT INTO story_cluster_members (cluster_id, feed_item_id, is_primary) VALUES (902, 902, 1);
+    `);
     const evidence = await retrievePublishedEvidence(database2.asD1(), "canonical model shipped", 4);
     assert.equal(evidence.length, 1, "Ask TRACE retrieves the reviewed canonical assertion");
     assert.equal(evidence[0]?.claimId, `claim:${first.assertionId}`);
