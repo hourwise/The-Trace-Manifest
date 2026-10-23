@@ -316,6 +316,7 @@ Neither decision affects the curated seeding pilot, which uses manual, bounded c
 
 | Gap | Required before |
 |---|---|
+| Assertion governance queue outside story context (admission and reviewer panels are only reachable inside story clusters) | Seeding review |
 | Freshness review UI and work queue | Seeding review |
 | Backfill / capture UI with failure visibility | Seeding at scale (the API suffices for the first pilot batches) |
 | D4: Pending Review → governance panel | Absorption review throughput (not pilot correctness) |

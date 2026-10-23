@@ -84,7 +84,7 @@ Each step uses existing governed routes. Each ⛔ is an owner approval gate.
 
 | Step | Action | Route or tool | Gate |
 |---|---|---|---|
-| 0 | Prerequisites: C1 inventory category for a curated seed list (legacy-absorption doc, §6); freshness review UI (readiness report, §5.4); a quiet D1 baseline on Preview; the QA-fixture exclusion list (Preview clusters 90001–90110 and the governance fixtures) | Code PR and docs | ⛔ Approve the source list (this table) |
+| 0 | Prerequisites: C1 inventory category for a curated seed list (legacy-absorption doc, §6); an **assertion governance queue outside story context** (roadmap, §3: admission and reviewer controls exist only inside the cluster Review panel, and seeded assertions belong to no story); freshness review UI (readiness report, §5.4); a quiet D1 baseline on Preview; the QA-fixture exclusion list (Preview clusters 90001–90110 and the governance fixtures) | Code PR and docs | ⛔ Approve the source list (this table) |
 | 1 | Register missing sources (S05, S07–S09, S21, S24, S26, S27) with tier, treatment, licence terms and `copyright_storage_mode` | `/admin/sources` (registry) | Included in the gate above |
 | 2 | Build a KC-11A inventory snapshot containing **only** the approved seed URLs | `/admin/knowledge/backfill/snapshot` | |
 | 3 | Dry-run plan (plan hash, estimated requests and bytes) | `/admin/knowledge/backfill/plan` | ⛔ Approve the plan hash for batch 1 |
@@ -92,8 +92,8 @@ Each step uses existing governed routes. Each ⛔ is an owner approval gate.
 | 5 | Observe: per-item outcomes, D1 rows read and written, R2 bytes, Worker CPU, `held_for_review` | `/admin/knowledge/backfill/status`, `d1 info` delta | ⛔ Continue or stop |
 | 6 | KC-11D extraction: locator-backed chunks, proposed assertions, match candidates, provenance proposals | Runs within execute (KC-11D) | |
 | 7 | Provenance review: accept or reject provenance groups; record independence | `/admin/knowledge/provenance-groups` | Reviewer |
-| 8 | Admission review | Review panel, assertion governance | Reviewer |
-| 9 | Editorial acceptance | Review panel, reviewer governance | Reviewer |
+| 8 | Admission review | Assertion governance queue (step 0 prerequisite), reusing the existing admission panel | Reviewer |
+| 9 | Editorial acceptance | Assertion governance queue, reusing the existing reviewer panel | Reviewer |
 | 10 | Freshness review: `current` with a domain interval (readiness report, §5.3) | `/admin/knowledge/freshness` (UI from step 0) | Publisher |
 | 11 | Knowledge mapping: link KD 05, 07, 09, 12, 15, 16, 19, 22, 24, 26 and 27 sections to accepted assertions. Renew their revisions (they are review-due). | `/api/admin/knowledge/map`, revisions | Publisher |
 | 12 | Recalculate eligibility and scores (bounded) | `recalculateEvidenceScores` (manual trigger) | |
