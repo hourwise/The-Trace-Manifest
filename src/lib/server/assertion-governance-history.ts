@@ -226,7 +226,9 @@ export async function getAssertionGovernanceHistory(
     FROM assertion_governance_events event
     LEFT JOIN assertion_governance_recalculation_jobs job ON job.event_id = event.id
     WHERE event.assertion_id = ?
-    ORDER BY event.created_at ASC, event.id ASC
+    -- created_at has one-second resolution; the per-assertion governance
+    -- revision (unique since 0076) is the exact decision order.
+    ORDER BY event.new_governance_revision ASC, event.created_at ASC, event.id ASC
     LIMIT ?
   `).bind(normalizedAssertionId, ASSERTION_GOVERNANCE_HISTORY_LIMIT + 1).all<HistoryEventRow>();
 

@@ -343,12 +343,18 @@ async function loadAssertion(db: D1Database, assertionId: string): Promise<Asser
   `).bind(assertionId).first<AssertionRow>();
 }
 
-async function boundedStoryScope(db: D1Database, canonicalClaimId: string, realStoriesOnly: boolean): Promise<number[]> {
+/**
+ * The stories genuinely associated with a canonical claim, bounded. A cluster
+ * with no member items (such as the legacy "Unclustered Items" holding
+ * cluster) is not a real story, so it never receives a recalculation or blocks
+ * library review.
+ */
+export async function loadRealStoryScope(db: D1Database, canonicalClaimId: string): Promise<number[]> {
   const rows = await db.prepare(`
     SELECT DISTINCT story_claim.story_cluster_id
     FROM story_claims story_claim
     WHERE story_claim.canonical_claim_id = ?
-      ${realStoriesOnly ? "AND EXISTS (SELECT 1 FROM story_cluster_members member WHERE member.cluster_id = story_claim.story_cluster_id)" : ""}
+      AND EXISTS (SELECT 1 FROM story_cluster_members member WHERE member.cluster_id = story_claim.story_cluster_id)
     ORDER BY story_claim.story_cluster_id
     LIMIT ?
   `).bind(canonicalClaimId, MAX_DIRECT_STORY_SCOPES + 1).all<{ story_cluster_id: number }>();
@@ -361,15 +367,6 @@ async function boundedStoryScope(db: D1Database, canonicalClaimId: string, realS
     );
   }
   return storyIds;
-}
-
-/**
- * The stories genuinely associated with a canonical claim. A cluster with no
- * member items (such as the legacy "Unclustered Items" holding cluster) is not
- * a real story, so it never receives a recalculation or blocks library review.
- */
-export function loadRealStoryScope(db: D1Database, canonicalClaimId: string): Promise<number[]> {
-  return boundedStoryScope(db, canonicalClaimId, true);
 }
 
 function sameExpectedState(row: AssertionRow, expected: AssertionGovernanceExpectedState): boolean {
@@ -496,6 +493,8 @@ function recalcStatusFromJob(job: RecalculationJobRow, replay: boolean): Asserti
 }
 
 function publicationImpactForEvent(event: EventRow, current: AssertionRow): "unchanged" | "may_change" {
+  // An Evidence Library decision has no story to publish or withdraw.
+  if (event.governance_context === "evidence_library") return "unchanged";
   switch (event.action) {
     case "accept_review":
     case "reject_review":
@@ -784,9 +783,16 @@ async function governTransition(
   const next: AssertionGovernanceState = transition.kind === "admission"
     ? { ...expected, admissionState: nextAdmissionState(transition.action, row.admissionState) }
     : { ...expected, reviewerState: nextReviewerState(transition.action, row.reviewerState) };
-  // Story decisions keep their direct story scope; library decisions have no
-  // real story by construction, so their scope is empty.
-  const storyScope = scope.context === "story" ? await boundedStoryScope(db, row.canonical_claim_id, false) : [];
+  // Story decisions recalculate the selected story plus every real story that
+  // carries the claim; memberless holding clusters (Production story 358 has
+  // 539 claims) are never rescored. Library decisions have no real story by
+  // construction, so their scope is empty.
+  const storyScope = scope.context === "story"
+    ? [...new Set([scope.clusterId, ...await loadRealStoryScope(db, row.canonical_claim_id)])].sort((a, b) => a - b)
+    : [];
+  if (storyScope.length > MAX_DIRECT_STORY_SCOPES) {
+    throw new AssertionGovernanceError("recalculation_scope_too_large", "The assertion is linked to too many story scopes for one bounded governance action.", 409);
+  }
   const eventId = crypto.randomUUID();
   const jobId = crypto.randomUUID();
   const newRevision = row.assertion_governance_revision + 1;
