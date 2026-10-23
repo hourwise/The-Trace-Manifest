@@ -213,6 +213,22 @@ export async function retrievePublishedEvidence(
   });
 }
 
+/**
+ * A stable fingerprint of the governed evidence state behind an answer. Replay
+ * keys include it so a stored answer is reused only while the evidence set is
+ * unchanged; after admission, review, freshness or capture changes, the same
+ * question is decided again.
+ */
+export function evidenceReplayFingerprint(evidence: EvidenceExcerpt[]): string {
+  return JSON.stringify(evidence.map((item) => [
+    item.sourceId, item.claimId ?? null, item.canonicalClaimId ?? null, item.assertionId ?? null,
+    item.sourceDocumentVersionId ?? null, item.sourceChunkId ?? null, item.startLocator ?? null, item.endLocator ?? null,
+    item.admissionState, item.freshnessState, item.sourceRole, item.relationship ?? null, Boolean(item.isDisputed),
+    item.evidenceQuality ?? null, (item.provenanceGroupIds ?? []).slice().sort(), item.knowledgeDocumentId ?? null,
+    item.externalEvidenceResolved ?? null,
+  ]).map((entry) => JSON.stringify(entry)).sort());
+}
+
 export interface DeterministicConfidence {
   label: "high" | "medium" | "low" | "insufficient_evidence";
   score: number;
