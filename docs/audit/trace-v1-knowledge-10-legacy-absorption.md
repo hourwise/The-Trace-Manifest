@@ -226,7 +226,7 @@ These populations will become dead wood unless one of these decisions is made. E
    - Run KC-11D extraction against **recorded fixtures**, not live fetches, using the D1-faithful adapter (`tests/sqlite-d1.ts`: 100-parameter limit, trigger-counted changes).
    - Confirm that a second run produces 0 new rows.
 3. **Preview pilot** (the seeding plan; needs separate approval). The same route runs on Preview with the curated seed corpus first, so the route is proven on new sources before legacy URLs are attempted.
-4. **Production absorption** (separate approval; manual batches; Cron untouched):
+4. **Production absorption** (separate approval; manual batches; Cron untouched). **Prerequisite:** KC-11C is Preview-only in code (`knowledge-source-backfill.ts`), so lifting that guard for Production is its own reviewed change:
    - **First:** the 33 metadata-only documents, then the 160 accepted-evidence URLs, one batch at a time, with rows-read and rows-written observed between batches.
    - **Then:** provenance review, assertion admission and reviewer review, freshness review.
    - **Then:** knowledge revision review (all 30 are review-due), and mapping the 30 documents to the newly eligible assertions.
