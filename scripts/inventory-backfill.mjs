@@ -241,6 +241,7 @@ function collectDatabaseRows() {
   }
 }
 
+/** @param {{ databaseRows?: Array<Record<string, any>>, root?: string, generatedAt?: string }} [options] */
 export function buildInventory({ databaseRows = [], root = ROOT, generatedAt = new Date().toISOString() } = {}) {
   const categories = Object.fromEntries(CATEGORIES.map((category) => [category, []]));
   for (const row of databaseRows) {

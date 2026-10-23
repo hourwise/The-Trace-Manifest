@@ -1,0 +1,144 @@
+---
+// SEED-01: publisher freshness review queue over the existing
+// /admin/knowledge/freshness route. Reads are bounded; every write goes through
+// the signed admin proxy, and the server re-checks every gate.
+import AdminLayout from "../../../layouts/AdminLayout.astro";
+import { authenticateAccessRequest, type AccessEnvironment } from "../../../security/access-auth";
+import { FRESHNESS_BLOCKER_LABELS, listFreshnessQueue } from "../../../lib/server/evidence-freshness-queue";
+
+export const prerender = false;
+const env = Astro.locals.runtime.env;
+const identity = await authenticateAccessRequest(Astro.request, env as unknown as AccessEnvironment);
+if (!identity || identity.role !== "publisher") return new Response("Forbidden", { status: 403 });
+
+const queue = await listFreshnessQueue(env.DB as D1Database);
+const reasonLabel = { never_reviewed: "Never freshness-reviewed", stale: "Stale", source_version_changed: "Source has a newer version" } as const;
+---
+
+<AdminLayout title="Freshness Review — TRACE Knowledge Builder" description="Publisher review of evidence freshness.">
+  <div class="wrap">
+    <h1>Evidence freshness review</h1>
+    <p class="meta">Only admitted, editorially accepted assertions appear here. Marking an assertion <strong>current</strong> makes it eligible for Ask TRACE; the server re-checks provenance, the current source version, the locator, unresolved conflicts and published corrections before applying it. A request and its approval are separate steps.</p>
+    <p style="margin:1rem 0 2rem;"><a href="/admin/knowledge" style="color:var(--color-accent);">&larr; Knowledge Builder</a> &nbsp;|&nbsp; <a href="/admin" style="color:var(--color-accent);">Admin</a></p>
+
+    <h2>Pending reviews <span class="count">{queue.totals.pendingReviews}</span></h2>
+    {queue.pendingReviews.length === 0 ? (
+      <div class="card"><p class="meta">No freshness reviews are waiting for a decision.</p></div>
+    ) : (
+      <div class="queue">
+        {queue.pendingReviews.map((review) => (
+          <form class="card decision-form" data-review-id={review.reviewId}>
+            <div class="heading-row"><h3>{review.priorState} &rarr; {review.proposedState}</h3><code>{review.assertionId}</code></div>
+            <p>{review.canonicalText}</p>
+            <p class="meta">Requested by {review.requestedBy} on {review.requestedAt}{review.sourceDocumentVersionId ? <> · version <code>{review.sourceDocumentVersionId}</code></> : null}</p>
+            <p class="rationale">{review.reason}</p>
+            <label>Review note<textarea name="review-note" rows="2" maxlength="2000" placeholder="Optional note for the audit trail."></textarea></label>
+            <div class="actions">
+              <button type="submit" class="btn" data-operation="approve">Approve</button>
+              <button type="submit" class="btn btn-secondary" data-operation="reject">Reject</button>
+              <span class="result" role="status"></span>
+            </div>
+          </form>
+        ))}
+      </div>
+    )}
+
+    <h2>Candidates <span class="count">{queue.totals.candidates}</span></h2>
+    {queue.totals.candidates > queue.candidates.length && <p class="meta">Showing the first {queue.candidates.length}. Changed source versions are listed first, then stale, then never-reviewed assertions.</p>}
+    {queue.candidates.length === 0 ? (
+      <div class="card"><p class="meta">No accepted assertions need a freshness decision.</p></div>
+    ) : (
+      <div class="queue">
+        {queue.candidates.map((candidate) => (
+          <form class="card request-form" data-assertion-id={candidate.assertionId} data-version-id={candidate.sourceDocumentVersionId ?? ""}>
+            <div class="heading-row"><h3>{reasonLabel[candidate.reason]} · {candidate.freshnessState}</h3><code>{candidate.assertionId}</code></div>
+            <p>{candidate.canonicalText}</p>
+            <p class="meta">{candidate.assertionText}</p>
+            <p class="meta">{candidate.sourceUrl ? <code>{candidate.sourceUrl}</code> : "No captured source"}{candidate.retrievedAt ? ` · retrieved ${candidate.retrievedAt}` : ""}</p>
+            {candidate.blockers.length > 0 ? (
+              <div class="blockers"><strong>Cannot be marked current yet:</strong><ul>{candidate.blockers.map((blocker) => <li>{FRESHNESS_BLOCKER_LABELS[blocker]}</li>)}</ul></div>
+            ) : (
+              <p class="ready">All recorded gates pass. Conflicts and corrections are checked when you submit.</p>
+            )}
+            <label>Reason<textarea name="reason" rows="2" maxlength="2000" required placeholder="What you checked: source version, locator, publication date, review interval."></textarea></label>
+            <div class="actions">
+              <button type="submit" class="btn" data-operation="current" disabled={candidate.blockers.length > 0}>Request current</button>
+              {candidate.freshnessState !== "stale" && <button type="submit" class="btn btn-secondary" data-operation="stale">Request stale</button>}
+              <span class="result" role="status"></span>
+            </div>
+          </form>
+        ))}
+      </div>
+    )}
+  </div>
+</AdminLayout>
+
+<script>
+  async function send(body: Record<string, unknown>): Promise<{ ok: boolean; message: string }> {
+    try {
+      const response = await fetch("/api/admin/knowledge/freshness", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const payload = await response.json() as { error?: string; replay?: boolean };
+      if (!response.ok) return { ok: false, message: payload.error ?? "The decision was not saved." };
+      return { ok: true, message: payload.replay ? "Already recorded. Reloading…" : "Saved. Reloading…" };
+    } catch {
+      return { ok: false, message: "Freshness service unavailable. Your request key is kept, so retrying is safe." };
+    }
+  }
+
+  // One idempotency key per draft: a retry after a network failure replays the
+  // same request instead of creating a second proposal.
+  function draftKey(form: HTMLFormElement, operation: string): string {
+    const name = `key${operation}`;
+    if (!form.dataset[name]) form.dataset[name] = crypto.randomUUID();
+    return form.dataset[name]!;
+  }
+
+  document.querySelectorAll<HTMLFormElement>(".request-form").forEach((form) => {
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const submitter = (event as SubmitEvent).submitter as HTMLButtonElement | null;
+      const proposedState = submitter?.dataset.operation;
+      const result = form.querySelector(".result") as HTMLElement;
+      const reason = (form.querySelector("[name=reason]") as HTMLTextAreaElement).value.trim();
+      if (proposedState !== "current" && proposedState !== "stale") return;
+      if (!reason) { result.textContent = "A reason is required."; return; }
+      result.textContent = "Saving…";
+      const outcome = await send({
+        operation: "request",
+        claimAssertionId: form.dataset.assertionId,
+        proposedState,
+        ...(form.dataset.versionId ? { sourceDocumentVersionId: form.dataset.versionId } : {}),
+        reason,
+        idempotencyKey: draftKey(form, proposedState),
+      });
+      result.textContent = outcome.message;
+      if (outcome.ok) setTimeout(() => location.reload(), 500);
+    });
+  });
+
+  document.querySelectorAll<HTMLFormElement>(".decision-form").forEach((form) => {
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const submitter = (event as SubmitEvent).submitter as HTMLButtonElement | null;
+      const operation = submitter?.dataset.operation;
+      if (operation !== "approve" && operation !== "reject") return;
+      const result = form.querySelector(".result") as HTMLElement;
+      const reviewNote = (form.querySelector("[name=review-note]") as HTMLTextAreaElement).value.trim();
+      result.textContent = "Saving…";
+      const outcome = await send({ operation, reviewId: form.dataset.reviewId, ...(reviewNote ? { reviewNote } : {}) });
+      result.textContent = outcome.message;
+      if (outcome.ok) setTimeout(() => location.reload(), 500);
+    });
+  });
+</script>
+
+<style>
+h2 { font-size:1.1rem; margin:2rem 0 0.75rem; } .count { font-size:0.85rem; color:var(--color-muted); font-weight:400; }
+.queue { display:grid; gap:1rem; } .heading-row { display:flex; justify-content:space-between; gap:1rem; align-items:center; } .heading-row h3 { font-size:1rem; margin:0; }
+.rationale { font-size:0.88rem; color:var(--color-muted); } .ready { font-size:0.85rem; color:var(--ev-confirmed, var(--color-accent)); }
+.blockers { font-size:0.85rem; margin:0.75rem 0; padding:0.6rem 0.75rem; background:var(--color-bg-muted); border:1px solid var(--color-border); border-radius:4px; } .blockers ul { margin:0.35rem 0 0 1.1rem; padding:0; }
+label { display:block; margin-top:0.75rem; font-size:0.85rem; font-weight:600; } textarea { display:block; width:100%; box-sizing:border-box; margin-top:0.25rem; padding:0.5rem; font:inherit; border:1px solid var(--color-border); border-radius:4px; background:var(--color-bg-muted); }
+.actions { display:flex; align-items:center; gap:0.75rem; margin-top:0.75rem; flex-wrap:wrap; } .result { font-size:0.85rem; color:var(--color-muted); }
+button[disabled] { opacity:0.5; cursor:not-allowed; }
+@media (max-width:640px) { .heading-row { align-items:flex-start; flex-direction:column; } .actions { align-items:stretch; flex-direction:column; } }
+</style>

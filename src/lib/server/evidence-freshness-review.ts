@@ -341,7 +341,9 @@ export async function approveFreshnessReview(
       WHERE id = ? AND state = 'pending'
     `).bind(actor.trim(), now, reviewNote.trim() || null, review.id),
   ]);
-  if (Number(results[0]?.meta.changes ?? 0) !== 1 || Number(results[1]?.meta.changes ?? 0) !== 1) {
+  // D1 counts trigger-written rows in meta.changes: a stale transition fires
+  // trg_claim_assertions_expiry_requeue, so a successful update reports 2.
+  if (Number(results[0]?.meta.changes ?? 0) < 1 || Number(results[1]?.meta.changes ?? 0) < 1) {
     const raced = await db.prepare(`
       SELECT id, claim_assertion_id, prior_state, proposed_state,
              source_document_version_id, reason, state, requested_by,

@@ -85,7 +85,7 @@ const tablesOf = (database: SQLiteD1) =>
     ],
   });
   assert.equal(inventory.categories.evidence_url.length, 1, "duplicate evidence URLs merge and invalid URLs are dropped");
-  assert.deepEqual(inventory.categories.evidence_url[0].origin, ["legacy_claim_evidence", "other_origin"]);
+  assert.deepEqual((inventory.categories.evidence_url[0] as { origin: unknown }).origin, ["legacy_claim_evidence", "other_origin"]);
   const seeds = inventory.categories.curated_seed;
   const seedList = JSON.parse(readFileSync("docs/knowledge-seed/pilot-01.json", "utf8"));
   assert.equal(seeds.length, seedList.sources.length, "every pilot-01 seed is inventoried");
