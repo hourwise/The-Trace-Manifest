@@ -9,8 +9,9 @@ const MAX_BODY_BYTES = 64 * 1024;
 const MAX_INVENTORY_SNAPSHOT_BODY_BYTES = 512 * 1024;
 const READ_ROUTES = new Set([
   "sources", "sources/health", "jobs", "cron-runs", "corrections",
-  "published-stories", "clusters", "cluster-sources",
-  "candidates", "social-signals", "related-items",
+  "published-stories", "clusters", "cluster-sources", "cluster-evidence",
+  "assertion-governance-history", "candidates", "social-signals", "related-items",
+  "extraction-runs", "extraction-run",
 ]);
 const PUBLISH_ROUTES = new Set([
   "ingest", "classify", "dedup", "cluster", "extract-claims", "detect-conflicts",
@@ -21,6 +22,8 @@ const PUBLISH_ROUTES = new Set([
   "knowledge/index-preview",
   "knowledge/kc-11g-h",
   "knowledge/freshness",
+  "assertion-review",
+  "assertion-reviewer-decision",
   "knowledge/backfill/snapshot", "knowledge/backfill/plan", "knowledge/backfill/approve",
   "knowledge/backfill/execute", "knowledge/backfill/retry", "knowledge/backfill/recover",
   "candidates", "social-signals", "related-items",

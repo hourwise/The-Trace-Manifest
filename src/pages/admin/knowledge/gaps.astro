@@ -1,7 +1,7 @@
 ---
 // ADR 0017: Question Gap Queue — view unanswered / weakly-answered questions
 // recorded from Admin Ask TRACE. Publisher-only, server-rendered with direct D1.
-import BaseLayout from "../../../layouts/BaseLayout.astro";
+import AdminLayout from "../../../layouts/AdminLayout.astro";
 import { authenticateAccessRequest, type AccessEnvironment } from "../../../security/access-auth";
 
 export const prerender = false;
@@ -63,7 +63,7 @@ function priorityClass(priority: string): string {
 }
 ---
 
-<BaseLayout title="Question Gaps — TRACE Knowledge Builder" description="Unanswered and weakly-answered questions captured from Ask TRACE.">
+<AdminLayout title="Question Gaps — TRACE Knowledge Builder" description="Unanswered and weakly-answered questions captured from Ask TRACE.">
   <div class="wrap">
     <h1>Question Gaps</h1>
     <p class="meta" style="margin-bottom:2rem;">
@@ -154,7 +154,7 @@ function priorityClass(priority: string): string {
       </p>
     </section>
   </div>
-</BaseLayout>
+</AdminLayout>
 
 <style>
 .badge {

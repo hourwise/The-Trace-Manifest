@@ -1,6 +1,6 @@
 ---
 // KC-07D: publisher-only evidence score inspection panel.
-import BaseLayout from "../../../layouts/BaseLayout.astro";
+import AdminLayout from "../../../layouts/AdminLayout.astro";
 import { authenticateAccessRequest, type AccessEnvironment } from "../../../security/access-auth";
 
 export const prerender = false;
@@ -231,7 +231,7 @@ function sourceLabel(assertion: AssertionRow): string {
 }
 ---
 
-<BaseLayout title="Evidence Scores — TRACE Knowledge Builder" description="Publisher-only evidence score and provenance inspection panel.">
+<AdminLayout title="Evidence Scores — TRACE Knowledge Builder" description="Publisher-only evidence score and provenance inspection panel.">
   <div class="wrap">
     <h1>Evidence score panel</h1>
     <p class="meta">Publisher-only inspection of material claims, evidence roots, roles, conflicts, score components, caps, penalties, and the proposed qualitative status. This panel never changes a score or publishes a story.</p>
@@ -297,7 +297,7 @@ function sourceLabel(assertion: AssertionRow): string {
       </section>
     ))}
   </div>
-</BaseLayout>
+</AdminLayout>
 
 <script>
   document.querySelectorAll("[data-approval-decision]").forEach((button) => {

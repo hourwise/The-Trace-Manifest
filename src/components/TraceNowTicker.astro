@@ -1,0 +1,54 @@
+---
+import type { PublicStory } from "../lib/server/d1";
+import { formatTraceNowDate, selectTraceNowStories } from "../lib/trace-now";
+
+interface Props {
+  stories: readonly PublicStory[];
+  limit?: number;
+}
+
+const { stories, limit } = Astro.props;
+const tickerItems = selectTraceNowStories(stories, limit).map((story) => ({
+  ...story,
+  publishedLabel: formatTraceNowDate(story.publishedAt),
+}));
+---
+
+{tickerItems.length > 0 && (
+  <section class="trace-now" aria-label="TRACE NOW — current published stories">
+    <div class="trace-now__inner">
+      <span class="trace-now__label" aria-hidden="true">TRACE NOW</span>
+      <span class="trace-now__divider" aria-hidden="true">·</span>
+      <div class="trace-now__viewport">
+        <div class="trace-now__track">
+          <ul class="trace-now__set" aria-label="Current published stories">
+            {tickerItems.map((story) => (
+              <li class="trace-now__item">
+                <a href={`/stories/${story.slug}`}>
+                  {story.topic && <span class="trace-now__topic">{story.topic}</span>}
+                  <span class="trace-now__headline">{story.headline}</span>
+                  {story.publishedLabel && (
+                    <time class="trace-now__date" datetime={story.publishedAt ?? undefined}>{story.publishedLabel}</time>
+                  )}
+                </a>
+              </li>
+            ))}
+          </ul>
+          <ul class="trace-now__set trace-now__set--duplicate" aria-hidden="true" inert>
+            {tickerItems.map((story) => (
+              <li class="trace-now__item">
+                <a href={`/stories/${story.slug}`} tabindex="-1">
+                  {story.topic && <span class="trace-now__topic">{story.topic}</span>}
+                  <span class="trace-now__headline">{story.headline}</span>
+                  {story.publishedLabel && (
+                    <time class="trace-now__date" datetime={story.publishedAt ?? undefined}>{story.publishedLabel}</time>
+                  )}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+)}

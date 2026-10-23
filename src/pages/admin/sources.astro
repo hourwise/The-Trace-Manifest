@@ -1,5 +1,5 @@
 ---
-import BaseLayout from "../../layouts/BaseLayout.astro";
+import AdminLayout from "../../layouts/AdminLayout.astro";
 
 export const prerender = false;
 
@@ -57,7 +57,7 @@ const safeHttpUrl = (value: string): string | null => {
 };
 ---
 
-<BaseLayout title="Admin — Sources" description="Live source registry and connector health.">
+<AdminLayout title="Admin — Sources" description="Live source registry and connector health.">
   <div class="wrap">
     <h1>Admin: Sources</h1>
     <p class="meta" style="margin-bottom:2rem;"><a href="/admin/jobs">Jobs</a> · <a href="/admin/review">Review</a> · <a href="/admin">Admin home</a></p>
@@ -121,7 +121,7 @@ const safeHttpUrl = (value: string): string | null => {
       </section>
     </>}
   </div>
-</BaseLayout>
+</AdminLayout>
 
 <script>
   const form = document.querySelector<HTMLFormElement>("#source-upload-form");

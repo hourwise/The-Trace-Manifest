@@ -1,5 +1,5 @@
 ---
-import BaseLayout from "../../layouts/BaseLayout.astro";
+import AdminLayout from "../../layouts/AdminLayout.astro";
 
 export const prerender = false;
 
@@ -39,7 +39,7 @@ try {
 const fmt = (value: string | null) => value ? new Date(value).toLocaleString("en-GB") : "—";
 ---
 
-<BaseLayout title="Admin — Ingestion Jobs" description="Real ingestion and schedule outcomes.">
+<AdminLayout title="Admin — Ingestion Jobs" description="Real ingestion and schedule outcomes.">
   <div class="wrap">
     <h1>Admin: Ingestion Jobs</h1>
     <p class="meta" style="margin-bottom:2rem;"><a href="/admin/sources">Sources</a> · <a href="/admin/review">Review</a> · <a href="/admin">Admin home</a></p>
@@ -81,4 +81,4 @@ const fmt = (value: string | null) => value ? new Date(value).toLocaleString("en
       </section>
     </>}
   </div>
-</BaseLayout>
+</AdminLayout>

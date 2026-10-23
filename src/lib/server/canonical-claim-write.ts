@@ -21,7 +21,12 @@ export interface CanonicalClaimWriteResult {
   canonicalClaimId: string;
   assertionId: string;
   sourceDocumentVersionId: string;
+  sourceDocumentId: string;
+  sourceDocumentInserted: boolean | null;
+  sourceDocumentVersionInserted: boolean | null;
+  canonicalClaimInserted: boolean;
   inserted: boolean;
+  storyClaimInserted: boolean | null;
 }
 
 /**
@@ -50,7 +55,17 @@ export async function writeCanonicalClaim(
     "SELECT id FROM claim_assertions WHERE id = ?",
   ).bind(assertionId).first<{ id: string }>();
   if (existing) {
-    return { canonicalClaimId, assertionId, sourceDocumentVersionId: sourceVersionId, inserted: false };
+    return {
+      canonicalClaimId,
+      assertionId,
+      sourceDocumentVersionId: sourceVersionId,
+      sourceDocumentId,
+      sourceDocumentInserted: null,
+      sourceDocumentVersionInserted: null,
+      canonicalClaimInserted: false,
+      inserted: false,
+      storyClaimInserted: null,
+    };
   }
 
   const statements = [
@@ -112,12 +127,26 @@ export async function writeCanonicalClaim(
   }
   const results = await db.batch(statements);
   const assertionResult = results[results.length - (input.clusterId != null ? 1 : 0) - 1];
+  const storyClaimResult = input.clusterId != null ? results[results.length - 1] : undefined;
   return {
     canonicalClaimId,
     assertionId,
     sourceDocumentVersionId: sourceVersionId,
-    inserted: Number(assertionResult?.meta.changes ?? 0) === 1,
+    sourceDocumentId,
+    sourceDocumentInserted: rowInserted(results[0]),
+    sourceDocumentVersionInserted: rowInserted(results[2]),
+    canonicalClaimInserted: rowInserted(results[4]),
+    inserted: rowInserted(assertionResult),
+    storyClaimInserted: input.clusterId != null ? rowInserted(storyClaimResult) : null,
   };
+}
+
+// Each write is a single-row INSERT OR IGNORE, so any change means the row was
+// inserted. D1 includes trigger-written rows in meta.changes (canonical_claims
+// has a knowledge-search AFTER INSERT trigger), so an exact `=== 1` check would
+// misreport a new row as reused.
+function rowInserted(result: D1Result | undefined): boolean {
+  return Number(result?.meta.changes ?? 0) > 0;
 }
 
 async function sha256(value: string): Promise<string> {

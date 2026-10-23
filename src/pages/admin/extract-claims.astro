@@ -1,96 +1,146 @@
 ---
-// ADR 0016: Admin operations — manual claim extraction trigger.
-// Server-rendered page with direct D1 access. Imports the regex-based
-// extraction engine from the Worker module.
-import BaseLayout from "../../layouts/BaseLayout.astro";
-import { runClaimExtraction, extractClaimsFromItem } from "../../../workers/ingestion/extract-claims";
+// ADR 0016: Admin operations — governed deterministic claim extraction.
+// Durable execution belongs behind the signed Worker admin route. The only
+// page-local extraction path is the read-only diagnostic preview.
+import AdminLayout from "../../layouts/AdminLayout.astro";
+import { extractClaimsFromItem } from "../../../workers/ingestion/extract-claims";
 
 export const prerender = false;
 
-interface DebugSample { id: number; title: string; rawText: string; normalizedText: string; textLen: number; claimCount: number; claims: string[]; sourceTier: string; }
-
-let result: { processed: number; claimsExtracted: number; evidenceCreated: number } | null = null;
-let error: string | null = null;
-let debugSamples: DebugSample[] = [];
-
-// Normalise helper — must match extract-claims.ts exactly
-function normaliseText(text: string): string {
-  return text.replace(/<[^>]*>/g, "").replace(/\s+/g, " ").replace(/&#?[a-z0-9]+;/gi, "").trim();
+interface DebugSample {
+  id: number;
+  title: string;
+  rawText: string;
+  normalizedText: string;
+  textLen: number;
+  claimCount: number;
+  claims: string[];
+  sourceTier: string;
 }
 
-if (Astro.request.method === "POST") {
+let debugSamples: DebugSample[] = [];
+let debugError: string | null = null;
+
+function safeReturnTo(value: string | null): string {
+  return value === "/admin/review" ? value : "/admin/review";
+}
+
+const requestedReturnTo = safeReturnTo(Astro.url.searchParams.get("returnTo"));
+const requestedClusterId = Number(Astro.url.searchParams.get("clusterId") ?? "0");
+const contextClusterId = Number.isInteger(requestedClusterId) && requestedClusterId > 0 ? requestedClusterId : null;
+const canExecuteExtraction = Astro.locals.operator?.role === "publisher";
+const debugParams = new URLSearchParams({ debug: "1", returnTo: requestedReturnTo });
+if (contextClusterId) debugParams.set("clusterId", String(contextClusterId));
+const debugAction = `?${debugParams.toString()}`;
+
+// Diagnostic mode intentionally stays pure: it reads a bounded sample and
+// invokes only extractClaimsFromItem, never the database-backed runner.
+if (Astro.request.method === "POST" && Astro.url.searchParams.has("debug")) {
   try {
     const db = Astro.locals.runtime.env.DB;
-    // First run a diagnostic sample on 3 items
-    if (Astro.request.headers.get("content-type")?.includes("multipart/form-data") || new URL(Astro.request.url).searchParams.has("debug")) {
-      const sampleRows = await db.prepare(
-        `SELECT fi.id, fi.title, fi.summary, fi.content_excerpt, s.tier as source_tier, s.treatment as source_treatment
-         FROM feed_items fi JOIN sources s ON s.id=fi.source_id
-         WHERE fi.ingestion_status IN ('clustered','classified')
-         AND (fi.summary IS NOT NULL OR fi.content_excerpt IS NOT NULL)
-         AND fi.fetched_at >= datetime('now', '-7 days')
-         LIMIT 3`
-      ).all<{ id: number; title: string; summary: string | null; content_excerpt: string | null; source_tier: string; source_treatment: string }>();
-      for (const row of sampleRows.results) {
-        const rawText = [row.title, row.summary ?? "", row.content_excerpt ?? ""].join(". ");
-        const normText = normaliseText(rawText);
-        // Claims from raw text (like diagnostic)
-        const rawClaims = extractClaimsFromItem(
-          row as any, row.source_tier ?? "C", row.source_treatment ?? "",
-        );
-        debugSamples.push({
-          id: row.id, title: row.title,
-          rawText: rawText.substring(0, 300), normalizedText: normText.substring(0, 300),
-          textLen: normText.length,
-          claimCount: rawClaims.length,
-          claims: rawClaims.slice(0, 3).map((c: any) => c.claimText?.substring(0, 100)),
-          sourceTier: row.source_tier ?? "C",
-        });
-      }
+    const sampleRows = await db.prepare(
+      `SELECT fi.id, fi.title, fi.summary, fi.content_excerpt, s.tier as source_tier, s.treatment as source_treatment
+       FROM feed_items fi JOIN sources s ON s.id=fi.source_id
+       WHERE fi.ingestion_status IN ('clustered','classified')
+       AND (fi.summary IS NOT NULL OR fi.content_excerpt IS NOT NULL)
+       AND fi.fetched_at >= datetime('now', '-7 days')
+       LIMIT 3`
+    ).all<{ id: number; title: string; summary: string | null; content_excerpt: string | null; source_tier: string; source_treatment: string }>();
+    for (const row of sampleRows.results ?? []) {
+      const rawText = [row.title, row.summary ?? "", row.content_excerpt ?? ""].join(". ");
+      const normalizedText = rawText.replace(/<[^>]*>/g, "").replace(/\s+/g, " ").replace(/&#?[a-z0-9]+;/gi, "").trim();
+      const rawClaims = extractClaimsFromItem(
+        row as never,
+        row.source_tier ?? "C",
+        row.source_treatment ?? "",
+      );
+      debugSamples.push({
+        id: row.id,
+        title: row.title,
+        rawText: rawText.substring(0, 300),
+        normalizedText: normalizedText.substring(0, 300),
+        textLen: normalizedText.length,
+        claimCount: rawClaims.length,
+        claims: rawClaims.slice(0, 3).map((claim) => claim.claimText.substring(0, 100)),
+        sourceTier: row.source_tier ?? "C",
+      });
     }
-    result = await runClaimExtraction(db);
-  } catch (e: any) {
-    error = e.message ?? String(e);
+  } catch (error: unknown) {
+    debugError = error instanceof Error ? error.message : "The diagnostic sample could not be loaded.";
   }
 }
 ---
 
-<BaseLayout title="Admin — Extract Claims" description="Manually trigger claim extraction for feed items.">
+<AdminLayout title="Admin — Extract Claims" description="Governed deterministic claim extraction for eligible feed items.">
   <div class="wrap" style="max-width:700px;">
     <h1>Extract Claims</h1>
     <p class="meta" style="margin-bottom:2rem;">
-      <a href="/admin">← Admin home</a> &middot; Run regex-based claim extraction on clustered/classified feed items.
+      <a href="/admin">← Admin home</a> · Deterministic rule-based extraction for the current bounded eligible queue.
     </p>
 
+    {contextClusterId && (
+      <section class="card" style="margin-bottom:1.25rem;background:var(--surface-2);">
+        <p style="margin:0;">Opened from Review Queue for story cluster <strong>#{contextClusterId}</strong>. Extraction remains a bounded queue workflow; it is not limited to this story.</p>
+        <p style="margin:0.5rem 0 0;"><a href={requestedReturnTo}>Return to Review Queue</a></p>
+      </section>
+    )}
+
     <section class="card" style="margin-bottom:2rem;">
-      <p>This processes up to 500 feed items (ingested within the last 7 days) that have been clustered or classified but not yet had claims extracted. Extraction is regex-based — no AI cost.</p>
-      <div style="display:flex;gap:0.75rem;flex-wrap:wrap;margin-top:1rem;">
-        <form method="POST">
-          <button type="submit" class="btn btn-primary">Run Claim Extraction</button>
+      <h2 style="font-size:1.1rem;margin-bottom:0.55rem;">Run deterministic claim extraction</h2>
+      <p>This scans up to 50 eligible feed items from the last 7 days that are clustered, classified, or published and have not completed the claim-extraction pipeline stage. Extraction is rule-based and has no AI dependency. Durable execution is publisher-only and goes through the signed admin endpoint.</p>
+      {canExecuteExtraction ? (
+        <form id="extract-form" data-extraction-form>
+          <button type="submit" id="run-extraction-btn" class="btn btn-primary">Run deterministic extraction</button>
+          <span id="extract-status" class="meta" role="status" aria-live="polite" style="margin-left:0.65rem;"></span>
         </form>
-        <form method="POST" action="?debug">
-          <button type="submit" class="btn" style="background:var(--bg-muted);">Diagnose — Sample 3 Items</button>
-        </form>
-      </div>
+      ) : (
+        <p class="meta" style="margin:0.75rem 0 0;">Reader access is read-only; a publisher must run durable extraction.</p>
+      )}
+    </section>
+
+    <section id="extraction-result" class="card" aria-live="polite" style="display:none;margin-bottom:2rem;border-left:3px solid var(--ev-confirmed);"></section>
+
+    <section id="extraction-audit" class="card" style="margin-bottom:2rem;">
+      <details id="recent-extraction-runs">
+        <summary style="cursor:pointer;font-weight:600;">Recent extraction runs</summary>
+        <p class="meta" style="margin-top:0.75rem;">The durable ledger records runs created after migration 0075. Earlier extraction activity cannot be reconstructed here.</p>
+        <p id="extraction-runs-status" class="meta" role="status" aria-live="polite">Open to load the bounded read-only run audit.</p>
+        <div id="extraction-runs-list"></div>
+      </details>
+    </section>
+
+    {debugError && (
+      <section class="card" style="margin-bottom:2rem;border-left:3px solid var(--ev-disputed);">
+        <h2 style="font-size:1.1rem;margin-bottom:0.5rem;">Diagnostic Failed</h2>
+        <p style="color:var(--ev-disputed);">{debugError}</p>
+      </section>
+    )}
+
+    <section class="card" style="margin-bottom:2rem;background:var(--surface-2);">
+      <h2 style="font-size:1.1rem;margin-bottom:0.55rem;">Read-only diagnostic preview</h2>
+      <p>This samples three eligible items and runs the pure extractor in memory. It does not create canonical claims, assertions, evidence rows, pipeline stages, or audit mutations.</p>
+      <form method="POST" action={debugAction}>
+        <button type="submit" class="btn" style="background:var(--bg-muted);">Diagnose — Sample 3 Items</button>
+      </form>
     </section>
 
     {debugSamples.length > 0 && (
       <section class="card" style="margin-bottom:2rem;">
         <h2 style="font-size:1.1rem;margin-bottom:0.75rem;">Diagnostic Sample</h2>
-        {debugSamples.map((s) => (
+        {debugSamples.map((sample) => (
           <div style="margin-bottom:1rem;padding-bottom:0.75rem;border-bottom:1px solid var(--border-light);">
-            <p style="font-weight:600;font-size:0.85rem;">#{s.id} — {s.title} <span class="badge badge-sm">Tier {s.sourceTier}</span></p>
-            <p class="meta" style="font-size:0.7rem;margin-bottom:0.25rem;">Normalized length: {s.textLen} chars · Claims found: <strong>{s.claimCount}</strong></p>
+            <p style="font-weight:600;font-size:0.85rem;">#{sample.id} — {sample.title} <span class="badge badge-sm">Tier {sample.sourceTier}</span></p>
+            <p class="meta" style="font-size:0.7rem;margin-bottom:0.25rem;">Normalized length: {sample.textLen} chars · Claims found: <strong>{sample.claimCount}</strong></p>
             <details><summary style="font-size:0.7rem;cursor:pointer;">Raw text (first 300 chars)</summary>
-              <pre style="font-size:0.65rem;white-space:pre-wrap;word-break:break-word;background:var(--bg-muted);padding:0.5rem;margin-top:0.25rem;max-height:120px;overflow-y:auto;">{s.rawText}</pre>
+              <pre style="font-size:0.65rem;white-space:pre-wrap;word-break:break-word;background:var(--bg-muted);padding:0.5rem;margin-top:0.25rem;max-height:120px;overflow-y:auto;">{sample.rawText}</pre>
             </details>
             <details><summary style="font-size:0.7rem;cursor:pointer;">Normalized text (first 300 chars)</summary>
-              <pre style="font-size:0.65rem;white-space:pre-wrap;word-break:break-word;background:var(--bg-muted);padding:0.5rem;margin-top:0.25rem;max-height:120px;overflow-y:auto;">{s.normalizedText}</pre>
+              <pre style="font-size:0.65rem;white-space:pre-wrap;word-break:break-word;background:var(--bg-muted);padding:0.5rem;margin-top:0.25rem;max-height:120px;overflow-y:auto;">{sample.normalizedText}</pre>
             </details>
-            {s.claimCount > 0 && (
+            {sample.claims.length > 0 && (
               <details><summary style="font-size:0.7rem;cursor:pointer;">Show claims</summary>
                 <ul style="font-size:0.7rem;margin-top:0.25rem;">
-                  {s.claims.map((c) => `<li>${c}</li>`)}
+                  {sample.claims.map((claim) => <li>{claim}</li>)}
                 </ul>
               </details>
             )}
@@ -99,20 +149,576 @@ if (Astro.request.method === "POST") {
       </section>
     )}
 
-    {result !== null && (
-      <section class="card" style={error ? "border-left:3px solid var(--ev-disputed)" : "border-left:3px solid var(--ev-confirmed)"}>
-        <h2 style="font-size:1.1rem;margin-bottom:0.5rem;">{error ? "Extraction Failed" : "Extraction Complete"}</h2>
-        {error ? (
-          <p style="color:var(--ev-disputed);">{error}</p>
-        ) : (
-          <div>
-            <p><strong>{result.processed}</strong> items processed</p>
-            <p><strong>{result.claimsExtracted}</strong> claims extracted</p>
-            <p><strong>{result.evidenceCreated}</strong> evidence records created</p>
-            {result.processed === 0 && <p class="meta" style="margin-top:0.5rem;">No eligible items found. Items must be clustered/classified within the last 7 days.</p>}
-          </div>
-        )}
-      </section>
-    )}
+    <p class="meta" style="font-size:0.75rem;">Durable run audit records selected items, terminal outcomes, deterministic claim candidates, newly inserted assertions, and successful canonical writes. The legacy <code>evidenceCreated</code> response field is retained for compatibility and is not an evidence-row count.</p>
   </div>
-</BaseLayout>
+
+  <script>
+    interface ExtractionRunSummary {
+      runId: string;
+      trigger: "manual_admin" | "scheduler";
+      algorithmVersion: string;
+      requestId: string | null;
+      operatorEmail: string | null;
+      operatorRole: "reader" | "publisher" | null;
+      startedAt: string;
+      completedAt: string | null;
+      status: "running" | "completed" | "completed_with_failures" | "failed" | "interrupted";
+      selectedCount: number;
+      processedCount: number;
+      noClaimCount: number;
+      failedCount: number;
+      extractedClaimCount: number;
+      newAssertionCount: number;
+      canonicalWriteSuccessCount: number;
+      failureCode: string | null;
+      failureMessage: string | null;
+      createdAt: string;
+    }
+
+    interface ExtractionRunEffect {
+      effectId: number;
+      effectOrdinal: number;
+      claimText: string;
+      claimClass: string;
+      claimDomain: string;
+      attemptOutcome: "inserted" | "reused" | "failed";
+      canonicalClaimId: string | null;
+      assertionId: string | null;
+      canonicalClaimInserted: boolean | null;
+      assertionInserted: boolean | null;
+      storyClaimInserted: boolean | null;
+      failureCode: string | null;
+      failureMessage: string | null;
+    }
+
+    interface ExtractionRunItem {
+      runItemId: number;
+      feedItemId: number;
+      ordinal: number;
+      selectedAt: string;
+      outcome: "pending" | "extracted" | "no_claims" | "failed";
+      pipelineStageId: number | null;
+      feedItemTitle: string;
+      feedItemUrl: string;
+      sourceName: string | null;
+      extractedClaimCount: number;
+      newAssertionCount: number;
+      canonicalWriteSuccessCount: number;
+      failureCode: string | null;
+      failureMessage: string | null;
+      completedAt: string | null;
+      effects: ExtractionRunEffect[];
+    }
+
+    interface ExtractionRunDetail {
+      run: ExtractionRunSummary;
+      items: ExtractionRunItem[];
+      reconciliation: {
+        selectedCount: number;
+        processedCount: number;
+        noClaimCount: number;
+        failedCount: number;
+        extractedClaimCount: number;
+        newAssertionCount: number;
+        canonicalWriteSuccessCount: number;
+        matchesStoredCounters: boolean;
+      };
+      itemLimit: number;
+      effectLimit: number;
+      itemsTruncated: boolean;
+      effectsTruncated: boolean;
+    }
+
+    interface ExtractionRunsResponse {
+      runs: ExtractionRunSummary[];
+      limit: number;
+      truncated: boolean;
+    }
+
+    const recentRunsDisclosure = document.getElementById("recent-extraction-runs") as HTMLDetailsElement | null;
+    const runsStatus = document.getElementById("extraction-runs-status");
+    const runsList = document.getElementById("extraction-runs-list");
+    const loadedRunDetails = new Set<string>();
+    let runsLoaded = false;
+    let requestedAuditRunId = new URL(window.location.href).searchParams.get("auditRunId");
+
+    function auditText(value: unknown, fallback = "—"): string {
+      return value === null || value === undefined || value === "" ? fallback : String(value);
+    }
+
+    function formatAuditDateTime(value: string | null): string {
+      if (!value) return "—";
+      const normalized = value.includes("T") ? value : `${value.replace(" ", "T")}Z`;
+      const date = new Date(normalized);
+      return Number.isNaN(date.getTime()) ? value : date.toLocaleString("en-GB");
+    }
+
+    function addAuditLine(parent: HTMLElement, label: string, value: unknown): void {
+      const line = document.createElement("p");
+      line.style.margin = "0.3rem 0";
+      const strong = document.createElement("strong");
+      strong.textContent = `${label}: `;
+      line.appendChild(strong);
+      line.appendChild(document.createTextNode(auditText(value)));
+      parent.appendChild(line);
+    }
+
+    function statusLabel(status: ExtractionRunSummary["status"]): string {
+      return status === "completed_with_failures" ? "Completed with failures"
+        : status === "running" ? "Running"
+          : status === "interrupted" ? "Interrupted"
+            : status === "completed" ? "Completed" : "Failed";
+    }
+
+    function statusDescription(status: ExtractionRunSummary["status"]): string {
+      switch (status) {
+        case "running":
+          return "Running — Run did not record normal completion. It may have been interrupted.";
+        case "completed":
+          return "Completed normally — all selected items reached a terminal outcome.";
+        case "completed_with_failures":
+          return "Completed with failures — successful effects remain durable.";
+        case "failed":
+          return "Failed — the runner did not complete normally; any recorded items and effects remain durable.";
+        case "interrupted":
+          return "Interrupted — the interruption was recorded and no normal completion was recorded.";
+      }
+    }
+
+    function outcomeLabel(outcome: ExtractionRunItem["outcome"]): string {
+      return outcome === "no_claims" ? "No claims"
+        : outcome === "extracted" ? "Extracted"
+          : outcome === "failed" ? "Failed" : "Pending";
+    }
+
+    function effectLabel(outcome: ExtractionRunEffect["attemptOutcome"]): string {
+      return outcome === "inserted" ? "Inserted"
+        : outcome === "reused" ? "Reused" : "Failed";
+    }
+
+    function shortRunId(runId: string): string {
+      return runId.substring(0, 8);
+    }
+
+    const counterDefinitions = [
+      ["selectedCount", "Selected items"],
+      ["processedCount", "Processed items"],
+      ["noClaimCount", "No-claim items"],
+      ["failedCount", "Failed items"],
+      ["extractedClaimCount", "Extracted claim candidates"],
+      ["newAssertionCount", "New assertions"],
+      ["canonicalWriteSuccessCount", "Successful canonical writes"],
+    ] as const;
+
+    function renderCounterComparison(parent: HTMLElement, detail: ExtractionRunDetail): void {
+      const comparison = document.createElement("details");
+      comparison.style.marginTop = "0.5rem";
+      const summary = document.createElement("summary");
+      summary.style.cursor = "pointer";
+      summary.textContent = detail.reconciliation.matchesStoredCounters
+        ? "Show stored and derived counters"
+        : "Compare stored and derived counters";
+      comparison.appendChild(summary);
+      const scroll = document.createElement("div");
+      scroll.style.overflowX = "auto";
+      const table = document.createElement("table");
+      table.style.width = "100%";
+      table.style.minWidth = "22rem";
+      const caption = document.createElement("caption");
+      caption.textContent = "Stored run summary compared with counters derived from the returned durable detail.";
+      caption.style.textAlign = "left";
+      caption.style.marginBottom = "0.35rem";
+      table.appendChild(caption);
+      const head = document.createElement("thead");
+      const headRow = document.createElement("tr");
+      for (const label of ["Counter", "Stored", "Derived"]) {
+        const cell = document.createElement("th");
+        cell.scope = "col";
+        cell.textContent = label;
+        headRow.appendChild(cell);
+      }
+      head.appendChild(headRow);
+      table.appendChild(head);
+      const body = document.createElement("tbody");
+      for (const [key, label] of counterDefinitions) {
+        const row = document.createElement("tr");
+        const name = document.createElement("th");
+        name.scope = "row";
+        name.textContent = label;
+        row.appendChild(name);
+        const stored = document.createElement("td");
+        stored.textContent = String(detail.run[key]);
+        row.appendChild(stored);
+        const derived = document.createElement("td");
+        derived.textContent = String(detail.reconciliation[key]);
+        row.appendChild(derived);
+        body.appendChild(row);
+      }
+      table.appendChild(body);
+      scroll.appendChild(table);
+      comparison.appendChild(scroll);
+      parent.appendChild(comparison);
+    }
+
+    function renderRunDetail(container: HTMLElement, detail: ExtractionRunDetail): void {
+      container.replaceChildren();
+      const run = detail.run;
+      const metadata = document.createElement("div");
+      metadata.style.margin = "0.75rem 0";
+      addAuditLine(metadata, "Run ID", run.runId);
+      addAuditLine(metadata, "Trigger", run.trigger === "scheduler" ? "Scheduler" : "Manual");
+      addAuditLine(metadata, "Status", statusLabel(run.status));
+      addAuditLine(metadata, "Lifecycle", statusDescription(run.status));
+      addAuditLine(metadata, "Started", formatAuditDateTime(run.startedAt));
+      addAuditLine(metadata, "Completed", run.completedAt ? formatAuditDateTime(run.completedAt) : "Run did not record normal completion");
+      addAuditLine(metadata, "Algorithm", run.algorithmVersion);
+      if (run.trigger === "scheduler") {
+        addAuditLine(metadata, "Initiated by", "System scheduler");
+      } else {
+        addAuditLine(metadata, "Initiated by", run.operatorEmail ? `${run.operatorEmail} (${run.operatorRole ?? "admin"})` : "Administrator (identity not recorded)");
+      }
+      if (run.requestId) addAuditLine(metadata, "Request ID", run.requestId);
+      if (run.failureMessage) addAuditLine(metadata, "Run failure", `${run.failureCode ?? "failure"}: ${run.failureMessage}`);
+      container.appendChild(metadata);
+
+      const counters = document.createElement("div");
+      counters.style.padding = "0.65rem";
+      counters.style.background = "var(--surface-2)";
+      addAuditLine(counters, "Selected items", run.selectedCount);
+      addAuditLine(counters, "Processed items", run.processedCount);
+      addAuditLine(counters, "No-claim items", run.noClaimCount);
+      addAuditLine(counters, "Failed items", run.failedCount);
+      addAuditLine(counters, "Extracted claim candidates", run.extractedClaimCount);
+      addAuditLine(counters, "New assertions", run.newAssertionCount);
+      addAuditLine(counters, "Successful canonical writes", run.canonicalWriteSuccessCount);
+      container.appendChild(counters);
+
+      const reconciliation = document.createElement("section");
+      reconciliation.style.marginTop = "0.85rem";
+      reconciliation.style.padding = "0.65rem";
+      reconciliation.style.border = "1px solid var(--border-light)";
+      reconciliation.setAttribute("aria-live", "polite");
+      const reconciliationHeading = document.createElement("h4");
+      reconciliationHeading.style.margin = "0 0 0.3rem";
+      const detailIsTruncated = detail.itemsTruncated || detail.effectsTruncated;
+      reconciliationHeading.textContent = detailIsTruncated
+        ? "Ledger reconciliation unavailable"
+        : detail.reconciliation.matchesStoredCounters ? "Ledger reconciled" : "Ledger mismatch";
+      reconciliation.appendChild(reconciliationHeading);
+      const reconciliationCopy = document.createElement("p");
+      reconciliationCopy.className = "meta";
+      reconciliationCopy.style.margin = "0";
+      reconciliationCopy.textContent = detailIsTruncated
+        ? "The returned detail is truncated, so stored counters cannot be certified against the complete ledger."
+        : detail.reconciliation.matchesStoredCounters
+          ? run.status === "running"
+            ? "Stored counters currently match the returned durable detail, but this run is still in progress; completion is not certified."
+            : "Stored counters match the durable run-item and effect detail exactly."
+          : "Stored counters do not match the durable run-item and effect detail. This audit finding is not changed automatically.";
+      reconciliation.appendChild(reconciliationCopy);
+      if (detailIsTruncated || !detail.reconciliation.matchesStoredCounters) renderCounterComparison(reconciliation, detail);
+      container.appendChild(reconciliation);
+      if (detail.itemsTruncated || detail.effectsTruncated) {
+        const truncation = document.createElement("p");
+        truncation.className = "meta";
+        truncation.textContent = `Audit detail is bounded to ${detail.itemLimit} items and ${detail.effectLimit} effects; the response is truncated.`;
+        container.appendChild(truncation);
+      }
+
+      const itemsHeading = document.createElement("h4");
+      itemsHeading.textContent = "Selected item outcomes";
+      itemsHeading.style.margin = "1rem 0 0.5rem";
+      container.appendChild(itemsHeading);
+      for (const item of detail.items) {
+        const itemDetails = document.createElement("details");
+        itemDetails.style.margin = "0.35rem 0";
+        const itemSummary = document.createElement("summary");
+        itemSummary.style.cursor = "pointer";
+        itemSummary.textContent = `#${item.ordinal + 1} · feed item ${item.feedItemId} · ${outcomeLabel(item.outcome)}`;
+        itemDetails.appendChild(itemSummary);
+        const itemBody = document.createElement("div");
+        itemBody.style.padding = "0.4rem 0.75rem";
+        addAuditLine(itemBody, "Outcome", outcomeLabel(item.outcome));
+        addAuditLine(itemBody, "Selection order", item.ordinal + 1);
+        addAuditLine(itemBody, "Feed item ID", item.feedItemId);
+        addAuditLine(itemBody, "Title", item.feedItemTitle);
+        addAuditLine(itemBody, "Source", item.sourceName ?? "Unknown source");
+        addAuditLine(itemBody, "Selected", formatAuditDateTime(item.selectedAt));
+        if (item.completedAt) addAuditLine(itemBody, "Terminal outcome recorded", formatAuditDateTime(item.completedAt));
+        addAuditLine(itemBody, "Claim candidates", item.extractedClaimCount);
+        addAuditLine(itemBody, "New assertions", item.newAssertionCount);
+        addAuditLine(itemBody, "Successful canonical writes", item.canonicalWriteSuccessCount);
+        if (item.failureMessage) addAuditLine(itemBody, "Failure", `${item.failureCode ?? "failure"}: ${item.failureMessage}`);
+        if (item.outcome === "failed" && item.effects.some((effect) => effect.attemptOutcome !== "failed")) {
+          const partial = document.createElement("p");
+          partial.className = "meta";
+          partial.textContent = "This item failed after one or more canonical effects succeeded; those effects remain durable.";
+          itemBody.appendChild(partial);
+        }
+        for (const effect of item.effects) {
+          const effectBox = document.createElement("div");
+          effectBox.style.margin = "0.55rem 0";
+          effectBox.style.padding = "0.45rem 0.65rem";
+          effectBox.style.borderLeft = "2px solid var(--border-light)";
+          const effectHeading = document.createElement("p");
+          effectHeading.style.margin = "0 0 0.25rem";
+          const effectStrong = document.createElement("strong");
+          effectStrong.textContent = `Claim ${effect.effectOrdinal + 1} — ${effectLabel(effect.attemptOutcome)}`;
+          effectHeading.appendChild(effectStrong);
+          effectBox.appendChild(effectHeading);
+          addAuditLine(effectBox, "Claim text", effect.claimText);
+          addAuditLine(effectBox, "Domain / class", `${effect.claimDomain} / ${effect.claimClass}`);
+          if (effect.canonicalClaimId) addAuditLine(effectBox, "Canonical claim ID", effect.canonicalClaimId);
+          if (effect.assertionId) addAuditLine(effectBox, "Assertion ID", effect.assertionId);
+          if (effect.failureMessage) addAuditLine(effectBox, "Failure", `${effect.failureCode ?? "failure"}: ${effect.failureMessage}`);
+          const technical = document.createElement("details");
+          technical.style.marginTop = "0.35rem";
+          const technicalSummary = document.createElement("summary");
+          technicalSummary.style.cursor = "pointer";
+          technicalSummary.textContent = "Technical insertion detail";
+          technical.appendChild(technicalSummary);
+          const technicalBody = document.createElement("div");
+          technicalBody.style.padding = "0.35rem 0.65rem";
+          addAuditLine(technicalBody, "Canonical claim inserted", effect.canonicalClaimInserted === null ? "Not recorded" : effect.canonicalClaimInserted ? "Yes" : "No");
+          addAuditLine(technicalBody, "Assertion inserted", effect.assertionInserted === null ? "Not recorded" : effect.assertionInserted ? "Yes" : "No");
+          addAuditLine(technicalBody, "Story mapping inserted", effect.storyClaimInserted === null ? "Not recorded" : effect.storyClaimInserted ? "Yes" : "No");
+          technical.appendChild(technicalBody);
+          effectBox.appendChild(technical);
+          itemBody.appendChild(effectBox);
+        }
+        itemDetails.appendChild(itemBody);
+        container.appendChild(itemDetails);
+      }
+    }
+
+    function renderRunList(data: ExtractionRunsResponse): void {
+      if (!runsList || !runsStatus) return;
+      runsList.replaceChildren();
+      runsStatus.textContent = data.runs.length === 0
+        ? "No durable extraction runs have been recorded yet. The durable ledger only covers runs created after migration 0075; earlier extraction activity cannot be reconstructed here."
+        : `${data.runs.length} recent run${data.runs.length === 1 ? "" : "s"} shown.`;
+      if (data.truncated) {
+        const note = document.createElement("span");
+        note.textContent = ` The list is bounded to ${data.limit}; older runs are not shown.`;
+        runsStatus.appendChild(note);
+      }
+      for (const run of data.runs) {
+        const runDetails = document.createElement("details");
+        runDetails.style.margin = "0.65rem 0";
+        runDetails.dataset.runId = run.runId;
+        const summary = document.createElement("summary");
+        summary.style.cursor = "pointer";
+        summary.title = run.runId;
+        summary.textContent = `${run.trigger === "scheduler" ? "Scheduler" : "Manual"} · ${statusLabel(run.status)} · ${formatAuditDateTime(run.startedAt)} · ${run.selectedCount} selected · run ${shortRunId(run.runId)}`;
+        runDetails.appendChild(summary);
+        const body = document.createElement("div");
+        body.style.padding = "0.5rem 0.75rem";
+        body.setAttribute("aria-live", "polite");
+        body.textContent = "Open to load durable run detail…";
+        runDetails.appendChild(body);
+        runDetails.addEventListener("toggle", async () => {
+          if (!runDetails.open || loadedRunDetails.has(run.runId)) return;
+          loadedRunDetails.add(run.runId);
+          body.textContent = "Loading durable run detail…";
+          try {
+            const response = await fetch(`/api/admin/extraction-run?runId=${encodeURIComponent(run.runId)}`, { credentials: "include" });
+            const detail = await response.json().catch(() => null) as ExtractionRunDetail | { error?: string } | null;
+            if (!response.ok || !detail || !("run" in detail)) throw new Error((detail && "error" in detail && detail.error) || `Audit detail failed (HTTP ${response.status}).`);
+            renderRunDetail(body, detail);
+          } catch (error: unknown) {
+            body.setAttribute("role", "alert");
+            body.textContent = error instanceof Error ? error.message : "The durable run detail could not be loaded.";
+          }
+        });
+        runsList.appendChild(runDetails);
+      }
+      if (requestedAuditRunId) {
+        const requestedRun = data.runs.find((run) => run.runId === requestedAuditRunId);
+        if (requestedRun) {
+          const runDetails = Array.from(runsList.querySelectorAll("details")).find((element) => (element as HTMLDetailsElement).dataset.runId === requestedRun.runId) as HTMLDetailsElement | undefined;
+          if (runDetails) {
+            runDetails.open = true;
+            runDetails.scrollIntoView({ block: "nearest" });
+          }
+        } else {
+          const note = document.createElement("span");
+          note.textContent = " The requested run is older than the bounded recent-run list or is not recorded by the durable ledger.";
+          runsStatus.appendChild(note);
+        }
+        requestedAuditRunId = null;
+      }
+    }
+
+    async function loadRecentRuns(): Promise<void> {
+      if (runsLoaded || !runsStatus) return;
+      runsLoaded = true;
+      runsStatus.textContent = "Loading recent durable extraction runs…";
+      try {
+        const response = await fetch("/api/admin/extraction-runs", { credentials: "include" });
+        const data = await response.json().catch(() => null) as ExtractionRunsResponse | { error?: string } | null;
+        if (!response.ok || !data || !("runs" in data)) throw new Error((data && "error" in data && data.error) || `Run audit failed (HTTP ${response.status}).`);
+        renderRunList(data);
+      } catch (error: unknown) {
+        runsStatus.textContent = error instanceof Error ? error.message : "The durable run audit could not be loaded.";
+      }
+    }
+
+    recentRunsDisclosure?.addEventListener("toggle", () => {
+      if (recentRunsDisclosure.open) void loadRecentRuns();
+    });
+
+    if (requestedAuditRunId && recentRunsDisclosure) {
+      recentRunsDisclosure.open = true;
+      void loadRecentRuns();
+    }
+  </script>
+
+  {/*
+    Rendered for every role: Astro can bundle a role-conditional <script> with
+    the wrong script body, which once dropped the audit code for readers (D6).
+    Without the publisher-only #extract-form this script does nothing; the
+    server renders that form only for publishers and the Worker enforces the role.
+  */}
+  <script>
+      interface ExtractionResponse {
+        status?: string;
+        runId?: string;
+        runStatus?: string;
+        processed?: number;
+        claimsExtracted?: number;
+        evidenceCreated?: number;
+        selectedCount?: number;
+        processedCount?: number;
+        noClaimCount?: number;
+        failedCount?: number;
+        extractedClaimCount?: number;
+        newAssertionCount?: number;
+        canonicalWriteSuccessCount?: number;
+        error?: string;
+      }
+
+      function manualStatusDescription(status: string | undefined): string {
+        switch (status) {
+          case "running": return "Running — the run has no recorded normal completion and may have been interrupted.";
+          case "completed": return "Completed normally — all selected items reached a terminal outcome.";
+          case "completed_with_failures": return "Completed with failures — successful effects remain durable.";
+          case "failed": return "Failed — the runner did not complete normally; any recorded effects remain durable.";
+          case "interrupted": return "Interrupted — the interruption was recorded and no normal completion was recorded.";
+          default: return "The durable run status was returned with the request result.";
+        }
+      }
+
+      const form = document.getElementById("extract-form") as HTMLFormElement | null;
+      const button = document.getElementById("run-extraction-btn") as HTMLButtonElement | null;
+      const status = document.getElementById("extract-status");
+      const result = document.getElementById("extraction-result");
+      const returnHref = "/admin/review";
+      let submitting = false;
+
+      function setStatus(message: string, isError = false): void {
+        if (!status) return;
+        status.textContent = message;
+        status.style.color = isError ? "var(--ev-disputed)" : "var(--ev-confirmed)";
+        status.setAttribute("role", isError ? "alert" : "status");
+      }
+
+      function renderResult(data: ExtractionResponse): void {
+        if (!result) return;
+        result.replaceChildren();
+        result.style.display = "block";
+        result.style.borderLeftColor = "var(--ev-confirmed)";
+        const heading = document.createElement("h2");
+        heading.style.fontSize = "1.1rem";
+        heading.style.marginBottom = "0.5rem";
+        const failed = data.runStatus === "completed_with_failures" || data.runStatus === "failed" || data.runStatus === "interrupted" || (data.failedCount ?? 0) > 0;
+        if (failed) result.style.borderLeftColor = "var(--ev-disputed)";
+        heading.textContent = data.runStatus === "completed_with_failures" ? "Extraction completed with failures"
+          : data.runStatus === "failed" ? "Extraction run failed"
+            : data.runStatus === "running" || data.runStatus === "interrupted" ? "Extraction run incomplete"
+              : "Last request result";
+        result.appendChild(heading);
+        const lifecycle = document.createElement("p");
+        lifecycle.className = "meta";
+        lifecycle.textContent = manualStatusDescription(data.runStatus);
+        result.appendChild(lifecycle);
+        for (const [value, label] of [
+          [data.selectedCount, "Selected items"],
+          [data.processedCount, "Processed items"],
+          [data.noClaimCount, "No-claim items"],
+          [data.failedCount, "Failed items"],
+          [data.extractedClaimCount, "Extracted claim candidates"],
+          [data.newAssertionCount, "New assertions"],
+          [data.canonicalWriteSuccessCount, "Successful canonical writes"],
+        ] as Array<[number | undefined, string]>) {
+          const line = document.createElement("p");
+          line.textContent = `${label}: ${typeof value === "number" ? value : "—"}`;
+          result.appendChild(line);
+        }
+        if (data.runId) {
+          const runLink = document.createElement("a");
+          const auditUrl = new URL(window.location.href);
+          auditUrl.searchParams.set("auditRunId", data.runId);
+          auditUrl.hash = "extraction-audit";
+          runLink.href = auditUrl.toString();
+          runLink.textContent = `Open durable audit for run ${data.runId}`;
+          result.appendChild(runLink);
+        }
+        if (data.selectedCount === 0) {
+          const note = document.createElement("p");
+          note.className = "meta";
+          note.textContent = "No eligible items were found in the current bounded queue.";
+          result.appendChild(note);
+        }
+        const returnLink = document.createElement("a");
+        returnLink.href = returnHref;
+        returnLink.textContent = "Return to Review Queue";
+        result.appendChild(returnLink);
+      }
+
+      form?.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        if (submitting || !button) return;
+        submitting = true;
+        button.disabled = true;
+        button.textContent = "Running…";
+        setStatus("Running deterministic extraction…");
+        if (result) result.style.display = "none";
+        try {
+          const response = await fetch("/api/admin/extract-claims", {
+            method: "POST",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: "{}",
+          });
+          if (response.status === 401 || response.status === 302 || response.type === "opaqueredirect") {
+            throw new Error("Access session expired — reload the page.");
+          }
+          const data = await response.json().catch(() => ({})) as ExtractionResponse;
+          if (!response.ok) throw new Error(data.error || `Extraction failed (HTTP ${response.status}).`);
+          renderResult(data);
+          const failed = data.runStatus === "completed_with_failures" || data.runStatus === "failed" || data.runStatus === "interrupted" || (data.failedCount ?? 0) > 0;
+          setStatus(failed ? manualStatusDescription(data.runStatus) : "Durable extraction completed normally.");
+        } catch (error: unknown) {
+          if (result) {
+            result.replaceChildren();
+            result.style.display = "block";
+            result.style.borderLeftColor = "var(--ev-disputed)";
+            const heading = document.createElement("h2");
+            heading.style.fontSize = "1.1rem";
+            heading.textContent = "Extraction failed";
+            const message = document.createElement("p");
+            message.style.color = "var(--ev-disputed)";
+            message.textContent = error instanceof Error ? error.message : "The extraction workflow could not be confirmed.";
+            result.appendChild(heading);
+            result.appendChild(message);
+          }
+          setStatus("Extraction failed.", true);
+          console.error(error);
+        } finally {
+          submitting = false;
+          button.disabled = false;
+          button.textContent = "Run deterministic extraction";
+        }
+      });
+  </script>
+</AdminLayout>

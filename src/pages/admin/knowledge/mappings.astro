@@ -1,6 +1,6 @@
 ---
 // KC-08D/E: publisher-only mapper and legacy-link migration review.
-import BaseLayout from "../../../layouts/BaseLayout.astro";
+import AdminLayout from "../../../layouts/AdminLayout.astro";
 import { authenticateAccessRequest, type AccessEnvironment } from "../../../security/access-auth";
 import { suggestKnowledgeLinks, type KnowledgeClaimSuggestion } from "../../../lib/server/knowledge-link-suggestions";
 import { listLegacyKnowledgeSourceLinks, type LegacyKnowledgeSourceLink } from "../../../lib/server/knowledge-source-migration";
@@ -93,7 +93,7 @@ const claimRelationships = ["answers", "supports", "qualifies", "contradicts", "
 const assertionRelationships = ["supports", "qualifies", "contradicts", "contextualises", "reports"];
 ---
 
-<BaseLayout title="Knowledge Evidence Mapper — TRACE Desk" description="Publisher review of knowledge claims and evidence assertions.">
+<AdminLayout title="Knowledge Evidence Mapper — TRACE Desk" description="Publisher review of knowledge claims and evidence assertions.">
   <div class="wrap">
     <h1>Knowledge evidence mapper</h1>
     <p class="meta">Publisher-only review. Select a parsed material statement, choose an existing canonical claim and an eligible external assertion, then save the attributable mapping. Suggestions never create links automatically.</p>
@@ -194,7 +194,7 @@ const assertionRelationships = ["supports", "qualifies", "contradicts", "context
       </>
     )}
   </div>
-</BaseLayout>
+</AdminLayout>
 
 <script>
   const documentSelect = document.getElementById("document-select") as HTMLSelectElement | null;

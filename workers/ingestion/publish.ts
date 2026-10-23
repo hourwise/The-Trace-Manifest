@@ -672,43 +672,8 @@ export async function getRelatedStories(
 }
 
 // ============================================================
-// Admin query — list all clusters (not just published)
+// Admin query helpers
 // ============================================================
-
-export async function getAllClusters(
-  env: Env,
-  options: { limit?: number; status?: string } = {},
-): Promise<{ id: number; title: string; topic: string | null; evidence_status: string; publication_status: string; source_count: number; created_at: string; summary: string | null; why_it_matters: string | null }[]> {
-  const limit = Math.max(1, Math.min(Number.isInteger(options.limit) ? options.limit! : 50, 200));
-
-  let query = `
-    SELECT sc.id, sc.title, sc.topic, sc.evidence_status, sc.publication_status,
-           sc.created_at, sc.summary, sc.why_it_matters,
-           (SELECT COUNT(*) FROM story_cluster_members WHERE cluster_id = sc.id) as source_count
-    FROM story_clusters sc
-    WHERE sc.evidence_status NOT IN ('unverified','outdated','superseded')
-  `;
-
-  const params: any[] = [];
-
-  if (options.status) {
-    query += ` AND sc.publication_status = ?`;
-    params.push(options.status);
-  } else {
-    query += ` AND sc.publication_status NOT IN ('published','withdrawn')`;
-  }
-
-  query += ` ORDER BY sc.id DESC LIMIT ?`;
-  params.push(limit);
-
-  const result = await env.DB.prepare(query).bind(...params).all<{
-    id: number; title: string; topic: string | null;
-    evidence_status: string; publication_status: string;
-    source_count: number; created_at: string;
-    summary: string | null; why_it_matters: string | null;
-  }>();
-  return result.results;
-}
 
 // ============================================================
 // Admin query — get source feed items for a cluster

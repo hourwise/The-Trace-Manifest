@@ -1,0 +1,14 @@
+{
+  "threshold": "critical",
+  "exceptions": [
+    {
+      "advisory": "GHSA-26w7-cxv4-gfx2",
+      "package": "astro",
+      "approvedOn": "2026-10-22",
+      "expires": "2027-01-31",
+      "reason": "Astro 5 has no fix (patched only in astro >=7.2.8, which requires the Workers-only @astrojs/cloudflare 14). The vulnerable Sharp AVIF path is removed from the deployed bundle.",
+      "reference": "docs/audit/trace-v1-production-readiness-07.md §12; expires when the Astro 7 / Workers migration (§13) lands",
+      "guards": ["astro-image-service-passthrough", "no-astro-assets-imports", "no-remote-image-patterns"]
+    }
+  ]
+}

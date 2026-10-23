@@ -12,11 +12,45 @@ import type {
   ClaimClass,
   ClaimDomain,
 } from "./types";
+import type {
+  ClaimExtractionRunStatus,
+  ClaimExtractionRunTrigger,
+} from "../../src/lib/server/claim-extraction-audit";
 
 // ============================================================
 // Algorithm identity
 // ============================================================
 const ALGORITHM_VERSION = "rule-extraction-v1";
+
+export interface ClaimExtractionRunOptions {
+  trigger: ClaimExtractionRunTrigger;
+  requestId?: string | null;
+  operatorEmail?: string | null;
+  operatorRole?: "reader" | "publisher" | null;
+}
+
+export interface ClaimExtractionResult {
+  runId: string;
+  requestId: string | null;
+  runStatus: ClaimExtractionRunStatus;
+  processed: number;
+  claimsExtracted: number;
+  evidenceCreated: number;
+  selectedCount: number;
+  processedCount: number;
+  noClaimCount: number;
+  failedCount: number;
+  extractedClaimCount: number;
+  newAssertionCount: number;
+  canonicalWriteSuccessCount: number;
+}
+
+class ExtractionLedgerWriteError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ExtractionLedgerWriteError";
+  }
+}
 
 /** Returns a usable cluster ID, creating a placeholder cluster for unclustered items.
  *  Result is cached in-memory for the duration of the extraction run. */
@@ -402,32 +436,45 @@ export function extractClaimsFromItem(
 export async function runClaimExtraction(
   db: D1Database,
   onProgress?: (processed: number, total: number) => void,
-): Promise<{ processed: number; claimsExtracted: number; evidenceCreated: number }> {
+  options: ClaimExtractionRunOptions = { trigger: "manual_admin" },
+): Promise<ClaimExtractionResult> {
+  const runId = crypto.randomUUID();
+  const requestId = options.requestId ?? null;
+  let runCreated = false;
+
+  try {
+    await createExtractionRun(db, runId, options);
+    runCreated = true;
+
   // Fetch clustered items with source info, excluding already-extracted.
   // Require at least some content — items with only a title cannot produce claims.
-  const { results } = await db.prepare(
-    `SELECT fi.*, s.tier as source_tier, s.treatment as source_treatment
-     FROM feed_items fi
-     JOIN sources s ON fi.source_id = s.id
-     LEFT JOIN pipeline_stages ps ON ps.feed_item_id = fi.id AND ps.stage = 'claim_extracted'
-     WHERE fi.ingestion_status IN ('clustered', 'classified', 'published')
-     AND ps.id IS NULL
-     AND fi.fetched_at >= datetime('now', '-7 days')
-     AND (fi.summary IS NOT NULL OR fi.content_excerpt IS NOT NULL)
-     ORDER BY fi.fetched_at DESC
-     LIMIT 50`
-  ).all<FeedItem & { source_tier: string; source_treatment: string }>();
+    const { results } = await db.prepare(
+      `SELECT fi.*, s.tier as source_tier, s.treatment as source_treatment
+       FROM feed_items fi
+       JOIN sources s ON fi.source_id = s.id
+       LEFT JOIN pipeline_stages ps ON ps.feed_item_id = fi.id AND ps.stage = 'claim_extracted'
+       WHERE fi.ingestion_status IN ('clustered', 'classified', 'published')
+       AND ps.id IS NULL
+       AND fi.fetched_at >= datetime('now', '-7 days')
+       AND (fi.summary IS NOT NULL OR fi.content_excerpt IS NOT NULL)
+       ORDER BY fi.fetched_at DESC
+       LIMIT 50`
+    ).all<FeedItem & { source_tier: string; source_treatment: string }>();
 
-  if (results.length === 0) {
-    return { processed: 0, claimsExtracted: 0, evidenceCreated: 0 };
-  }
+    // Membership is persisted before any canonical processing. This is the
+    // durable answer to which exact bounded population this run selected.
+    await persistSelectedItems(db, runId, results);
+    const runItems = await db.prepare(
+      "SELECT id, feed_item_id FROM claim_extraction_run_items WHERE run_id = ? ORDER BY ordinal ASC",
+    ).bind(runId).all<{ id: number; feed_item_id: number }>();
+    const runItemIds = new Map(
+      (runItems.results ?? []).map((row) => [Number(row.feed_item_id), Number(row.id)]),
+    );
 
-  const total = results.length;
-  let claimsExtracted = 0;
-  let evidenceCreated = 0;
-  let processed = 0;
+    const total = results.length;
+    let processed = 0;
 
-  for (const row of results) {
+    for (const row of results) {
     const item: FeedItem = {
       id: row.id,
       source_id: row.source_id,
@@ -445,82 +492,371 @@ export async function runClaimExtraction(
       duplicate_of: row.duplicate_of,
       created_at: row.created_at,
     };
+      const runItemId = runItemIds.get(item.id);
+      if (runItemId === undefined) throw new Error(`Missing extraction ledger membership for feed item ${item.id}`);
 
-    // Use effective cluster ID (cached, creates placeholder for unclustered items)
-    let clusterId: number | null = null;
-    try {
-      const clusterRow = await db.prepare(
-        "SELECT cluster_id FROM story_cluster_members WHERE feed_item_id = ? LIMIT 1"
-      ).bind(item.id).first<{ cluster_id: number }>();
-      clusterId = clusterRow?.cluster_id ?? null;
-    } catch { /* unclustered — handled below */ }
-    
-    // Skip DB call if we already have the placeholder cached and clusterId is null
-    const effectiveClusterId = clusterId != null ? clusterId : (_placeholderClusterId ?? await ensureClusterId(db, null, item.id));
+      let stageId: number | null = null;
+      let extractedClaimCount = 0;
+      let newAssertionCount = 0;
+      let canonicalWriteSuccessCount = 0;
+      let failureCode: string | null = null;
+      let failureMessage: string | null = null;
+      let outcome: "extracted" | "no_claims" | "failed" = "failed";
 
-    // Extract claims
-    const claims = extractClaimsFromItem(
-      item,
-      row.source_tier ?? "C",
-      row.source_treatment ?? "",
-    );
-
-    if (claims.length === 0) {
-      // Mark as processed even if no claims found
-      await recordPipelineStage(db, item.id, "claim_extracted", "completed",
-        `No claims extracted — item content too short or no patterns matched`);
-      processed++;
-      onProgress?.(processed, total);
-      continue;
-    }
-
-    // Store claims and source assertions in the canonical graph. Legacy
-    // claims/claim_evidence are frozen by KC-05G and must never receive new
-    // writes.
-    let hadFailure = false;
-    for (const claim of claims) {
       try {
-        const materiality = claim.severity === "extraordinary"
-          ? "critical" : claim.severity === "high" ? "high"
-            : claim.severity === "low" ? "low" : "standard";
-        const written = await writeCanonicalClaim(db, {
-          feedItemId: item.id,
-          clusterId: effectiveClusterId,
-          sourceId: row.source_id,
-          sourceUrl: item.url,
-          sourceUrlHash: item.url_hash,
-          title: item.title,
-          author: item.author,
-          publishedAt: item.published_at,
-          content: item.content_excerpt ?? item.summary,
-          claimText: claim.claimText,
-          claimClass: claim.claimClass,
-          claimDomain: claim.claimDomain,
-          materiality,
-          confidence: claim.confidenceScore,
-          extractionMethod: "rule_based",
-          extractionVersion: ALGORITHM_VERSION,
-        });
-        if (written.inserted) claimsExtracted++;
-        evidenceCreated++;
-      } catch (err) {
-        hadFailure = true;
-        const msg = err instanceof Error ? err.message : String(err);
-        await recordPipelineStage(db, item.id, "claim_extracted", "failed",
-          `Claim insert failed: ${msg.substring(0, 200)}`);
-      }
-    }
 
-    // Mark pipeline stage (skip if already marked as failed above)
-    if (!hadFailure) {
-      await recordPipelineStage(db, item.id, "claim_extracted", "completed",
-        `${claims.length} claims extracted, ${evidenceCreated} evidence records`);
-    }
+        // Use effective cluster ID (cached, creates placeholder for unclustered items)
+        let clusterId: number | null = null;
+        try {
+          const clusterRow = await db.prepare(
+            "SELECT cluster_id FROM story_cluster_members WHERE feed_item_id = ? LIMIT 1"
+          ).bind(item.id).first<{ cluster_id: number }>();
+          clusterId = clusterRow?.cluster_id ?? null;
+        } catch { /* unclustered — handled below */ }
+
+        // Skip DB call if we already have the placeholder cached and clusterId is null
+        const effectiveClusterId = clusterId != null ? clusterId : (_placeholderClusterId ?? await ensureClusterId(db, null, item.id));
+
+        // Extract claims. This remains the pure deterministic rule engine.
+        const claims = extractClaimsFromItem(
+          item,
+          row.source_tier ?? "C",
+          row.source_treatment ?? "",
+        );
+        extractedClaimCount = claims.length;
+
+        if (claims.length === 0) {
+          // Mark as processed even if no claims found
+          stageId = await recordPipelineStage(db, item.id, "claim_extracted", "completed",
+            `No claims extracted — item content too short or no patterns matched`);
+          outcome = "no_claims";
+        } else {
+          // Store claims and source assertions in the canonical graph. Legacy
+          // claims/claim_evidence are frozen by KC-05G and must never receive new
+          // writes.
+          let hadFailure = false;
+          for (let effectOrdinal = 0; effectOrdinal < claims.length; effectOrdinal++) {
+            const claim = claims[effectOrdinal];
+            try {
+              const materiality = claim.severity === "extraordinary"
+                ? "critical" : claim.severity === "high" ? "high"
+                  : claim.severity === "low" ? "low" : "standard";
+              const written = await writeCanonicalClaim(db, {
+                feedItemId: item.id,
+                clusterId: effectiveClusterId,
+                sourceId: row.source_id,
+                sourceUrl: item.url,
+                sourceUrlHash: item.url_hash,
+                title: item.title,
+                author: item.author,
+                publishedAt: item.published_at,
+                content: item.content_excerpt ?? item.summary,
+                claimText: claim.claimText,
+                claimClass: claim.claimClass,
+                claimDomain: claim.claimDomain,
+                materiality,
+                confidence: claim.confidenceScore,
+                extractionMethod: "rule_based",
+                extractionVersion: ALGORITHM_VERSION,
+              });
+              await recordExtractionEffect(db, {
+                runId,
+                runItemId,
+                feedItemId: item.id,
+                effectOrdinal,
+                claimText: claim.claimText,
+                claimClass: claim.claimClass,
+                claimDomain: claim.claimDomain,
+                attemptOutcome: written.inserted ? "inserted" : "reused",
+                sourceDocumentId: written.sourceDocumentId,
+                sourceDocumentVersionId: written.sourceDocumentVersionId,
+                canonicalClaimId: written.canonicalClaimId,
+                assertionId: written.assertionId,
+                canonicalClaimInserted: written.canonicalClaimInserted,
+                assertionInserted: written.inserted,
+                storyClaimInserted: written.storyClaimInserted,
+                failureCode: null,
+                failureMessage: null,
+              });
+              if (written.inserted) {
+                newAssertionCount++;
+              }
+              canonicalWriteSuccessCount++;
+            } catch (error: unknown) {
+              if (error instanceof ExtractionLedgerWriteError) throw error;
+              hadFailure = true;
+              failureCode ??= "canonical_write_failed";
+              failureMessage ??= boundedExtractionError(error);
+              await recordExtractionEffect(db, {
+                runId,
+                runItemId,
+                feedItemId: item.id,
+                effectOrdinal,
+                claimText: claim.claimText,
+                claimClass: claim.claimClass,
+                claimDomain: claim.claimDomain,
+                attemptOutcome: "failed",
+                sourceDocumentId: null,
+                sourceDocumentVersionId: null,
+                canonicalClaimId: null,
+                assertionId: null,
+                canonicalClaimInserted: null,
+                assertionInserted: null,
+                storyClaimInserted: null,
+                failureCode: "canonical_write_failed",
+                failureMessage: boundedExtractionError(error),
+              });
+              stageId = await recordPipelineStage(db, item.id, "claim_extracted", "failed",
+                `Claim insert failed: ${boundedExtractionError(error, 200)}`);
+            }
+          }
+          outcome = hadFailure ? "failed" : "extracted";
+          if (!hadFailure) {
+            stageId = await recordPipelineStage(db, item.id, "claim_extracted", "completed",
+              `${claims.length} claims extracted, ${canonicalWriteSuccessCount} canonical writer calls`);
+          }
+        }
+      } catch (error: unknown) {
+        if (error instanceof ExtractionLedgerWriteError) throw error;
+        failureCode ??= "extraction_failed";
+        failureMessage ??= boundedExtractionError(error);
+        stageId = await recordPipelineStage(db, item.id, "claim_extracted", "failed",
+          `Claim extraction failed: ${boundedExtractionError(error, 200)}`);
+        outcome = "failed";
+      }
+
+      await updateExtractionRunItem(db, {
+        runItemId,
+        outcome,
+        pipelineStageId: stageId,
+        extractedClaimCount,
+        newAssertionCount,
+        canonicalWriteSuccessCount,
+        failureCode,
+        failureMessage,
+      });
+      await refreshExtractionRunCounters(db, runId, false);
     processed++;
     onProgress?.(processed, total);
   }
 
-  return { processed, claimsExtracted, evidenceCreated };
+    const summary = await refreshExtractionRunCounters(db, runId, true);
+    return {
+      runId,
+      requestId,
+      runStatus: summary.status,
+      processed: summary.processed_count,
+      claimsExtracted: summary.new_assertion_count,
+      evidenceCreated: summary.canonical_write_success_count,
+      selectedCount: summary.selected_count,
+      processedCount: summary.processed_count,
+      noClaimCount: summary.no_claim_count,
+      failedCount: summary.failed_count,
+      extractedClaimCount: summary.extracted_claim_count,
+      newAssertionCount: summary.new_assertion_count,
+      canonicalWriteSuccessCount: summary.canonical_write_success_count,
+    };
+  } catch (error: unknown) {
+    if (runCreated) {
+      try {
+        await markExtractionRunFailed(db, runId, error);
+      } catch {
+        // A stale running row is more honest than claiming failed finalization
+        // when the database could not record the failure.
+      }
+    }
+    throw error;
+  }
+}
+
+interface ExtractionRunRow {
+  status: ClaimExtractionRunStatus;
+  selected_count: number;
+  processed_count: number;
+  no_claim_count: number;
+  failed_count: number;
+  extracted_claim_count: number;
+  new_assertion_count: number;
+  canonical_write_success_count: number;
+}
+
+interface RunItemMembership {
+  id: number;
+  feed_item_id: number;
+}
+
+interface ExtractionEffectInput {
+  runId: string;
+  runItemId: number;
+  feedItemId: number;
+  effectOrdinal: number;
+  claimText: string;
+  claimClass: string;
+  claimDomain: string;
+  attemptOutcome: "inserted" | "reused" | "failed";
+  sourceDocumentId: string | null;
+  sourceDocumentVersionId: string | null;
+  canonicalClaimId: string | null;
+  assertionId: string | null;
+  canonicalClaimInserted: boolean | null;
+  assertionInserted: boolean | null;
+  storyClaimInserted: boolean | null;
+  failureCode: string | null;
+  failureMessage: string | null;
+}
+
+async function createExtractionRun(
+  db: D1Database,
+  runId: string,
+  options: ClaimExtractionRunOptions,
+): Promise<void> {
+  await db.prepare(`
+    INSERT INTO claim_extraction_runs
+      (id, trigger, algorithm_version, request_id, operator_email, operator_role, status)
+    VALUES (?, ?, ?, ?, ?, ?, 'running')
+  `).bind(
+    runId,
+    options.trigger,
+    ALGORITHM_VERSION,
+    options.requestId ?? null,
+    options.operatorEmail ?? null,
+    options.operatorRole ?? null,
+  ).run();
+}
+
+async function persistSelectedItems(
+  db: D1Database,
+  runId: string,
+  results: Array<FeedItem & { source_tier: string; source_treatment: string }>,
+): Promise<void> {
+  if (results.length === 0) return;
+  await db.batch(results.map((row, ordinal) => db.prepare(`
+    INSERT INTO claim_extraction_run_items (run_id, feed_item_id, ordinal)
+    VALUES (?, ?, ?)
+  `).bind(runId, row.id, ordinal)));
+}
+
+async function recordExtractionEffect(db: D1Database, effect: ExtractionEffectInput): Promise<void> {
+  try {
+    await db.prepare(`
+      INSERT INTO claim_extraction_run_effects
+        (run_id, run_item_id, feed_item_id, effect_ordinal, claim_text, claim_class,
+         claim_domain, attempt_outcome, source_document_id, source_document_version_id,
+         canonical_claim_id, assertion_id, canonical_claim_inserted, assertion_inserted,
+         story_claim_inserted, failure_code, failure_message)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      effect.runId,
+      effect.runItemId,
+      effect.feedItemId,
+      effect.effectOrdinal,
+      effect.claimText.substring(0, 500),
+      effect.claimClass,
+      effect.claimDomain,
+      effect.attemptOutcome,
+      effect.sourceDocumentId,
+      effect.sourceDocumentVersionId,
+      effect.canonicalClaimId,
+      effect.assertionId,
+      effect.canonicalClaimInserted === null ? null : effect.canonicalClaimInserted ? 1 : 0,
+      effect.assertionInserted === null ? null : effect.assertionInserted ? 1 : 0,
+      effect.storyClaimInserted === null ? null : effect.storyClaimInserted ? 1 : 0,
+      effect.failureCode,
+      effect.failureMessage?.substring(0, 1000) ?? null,
+    ).run();
+  } catch (error: unknown) {
+    throw new ExtractionLedgerWriteError(
+      `Unable to record extraction effect: ${boundedExtractionError(error, 900)}`,
+    );
+  }
+}
+
+async function updateExtractionRunItem(
+  db: D1Database,
+  item: {
+    runItemId: number;
+    outcome: "extracted" | "no_claims" | "failed";
+    pipelineStageId: number | null;
+    extractedClaimCount: number;
+    newAssertionCount: number;
+    canonicalWriteSuccessCount: number;
+    failureCode: string | null;
+    failureMessage: string | null;
+  },
+): Promise<void> {
+  await db.prepare(`
+    UPDATE claim_extraction_run_items
+    SET outcome = ?, pipeline_stage_id = ?, extracted_claim_count = ?,
+        new_assertion_count = ?, canonical_write_success_count = ?,
+        failure_code = ?, failure_message = ?, completed_at = datetime('now')
+    WHERE id = ?
+  `).bind(
+    item.outcome,
+    item.pipelineStageId,
+    item.extractedClaimCount,
+    item.newAssertionCount,
+    item.canonicalWriteSuccessCount,
+    item.failureCode,
+    item.failureMessage,
+    item.runItemId,
+  ).run();
+}
+
+async function refreshExtractionRunCounters(
+  db: D1Database,
+  runId: string,
+  finalize: boolean,
+): Promise<ExtractionRunRow> {
+  await db.prepare(`
+    UPDATE claim_extraction_runs
+    SET selected_count = (SELECT COUNT(*) FROM claim_extraction_run_items WHERE run_id = ?),
+        processed_count = (SELECT COUNT(*) FROM claim_extraction_run_items WHERE run_id = ? AND outcome <> 'pending'),
+        no_claim_count = (SELECT COUNT(*) FROM claim_extraction_run_items WHERE run_id = ? AND outcome = 'no_claims'),
+        failed_count = (SELECT COUNT(*) FROM claim_extraction_run_items WHERE run_id = ? AND outcome = 'failed'),
+        extracted_claim_count = (SELECT COALESCE(SUM(extracted_claim_count), 0) FROM claim_extraction_run_items WHERE run_id = ?),
+        new_assertion_count = (SELECT COUNT(*) FROM claim_extraction_run_effects WHERE run_id = ? AND assertion_inserted = 1),
+        canonical_write_success_count = (SELECT COUNT(*) FROM claim_extraction_run_effects WHERE run_id = ? AND attempt_outcome IN ('inserted', 'reused')),
+        status = CASE WHEN ? = 1 THEN CASE
+          WHEN (SELECT COUNT(*) FROM claim_extraction_run_items WHERE run_id = ? AND outcome = 'failed') > 0
+            THEN 'completed_with_failures' ELSE 'completed' END ELSE status END,
+        completed_at = CASE WHEN ? = 1 THEN datetime('now') ELSE completed_at END,
+        updated_at = datetime('now')
+    WHERE id = ?
+  `).bind(
+    runId, runId, runId, runId, runId, runId, runId,
+    finalize ? 1 : 0, runId, finalize ? 1 : 0, runId,
+  ).run();
+  const row = await db.prepare(`
+    SELECT status, selected_count, processed_count, no_claim_count, failed_count,
+           extracted_claim_count, new_assertion_count, canonical_write_success_count
+    FROM claim_extraction_runs WHERE id = ?
+  `).bind(runId).first<ExtractionRunRow>();
+  if (!row) throw new Error(`Extraction run ${runId} disappeared during finalization`);
+  return {
+    status: row.status,
+    selected_count: Number(row.selected_count),
+    processed_count: Number(row.processed_count),
+    no_claim_count: Number(row.no_claim_count),
+    failed_count: Number(row.failed_count),
+    extracted_claim_count: Number(row.extracted_claim_count),
+    new_assertion_count: Number(row.new_assertion_count),
+    canonical_write_success_count: Number(row.canonical_write_success_count),
+  };
+}
+
+async function markExtractionRunFailed(db: D1Database, runId: string, error: unknown): Promise<void> {
+  const message = boundedExtractionError(error);
+  await db.prepare(`
+    UPDATE claim_extraction_runs
+    SET status = 'failed', failure_code = 'run_failed', failure_message = ?,
+        completed_at = datetime('now'), updated_at = datetime('now')
+    WHERE id = ? AND status = 'running'
+  `).bind(message, runId).run();
+}
+
+function boundedExtractionError(error: unknown, maximum = 1000): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.substring(0, maximum) || "Unknown extraction failure";
 }
 
 // ============================================================
@@ -533,7 +869,7 @@ async function recordPipelineStage(
   status: string,
   summary: string,
   error?: string,
-): Promise<void> {
+): Promise<number | null> {
   try {
     // Check if a record already exists
     const existing = await db.prepare(
@@ -546,14 +882,17 @@ async function recordPipelineStage(
          SET completed_at = datetime('now'), status = ?, result_summary = ?, error_message = ?
          WHERE id = ?`
       ).bind(status, summary, error ?? null, existing.id).run();
+      return existing.id;
     } else {
-      await db.prepare(
+      const result = await db.prepare(
         `INSERT INTO pipeline_stages (feed_item_id, stage, algorithm_version, status, result_summary, error_message, completed_at)
          VALUES (?, ?, ?, ?, ?, ?, datetime('now'))`
       ).bind(feedItemId, stage, ALGORITHM_VERSION, status, summary, error ?? null).run();
+      return result.meta.last_row_id == null ? null : Number(result.meta.last_row_id);
     }
   } catch {
     console.error("Claim pipeline stage tracking failed.");
+    return null;
   }
 }
 
