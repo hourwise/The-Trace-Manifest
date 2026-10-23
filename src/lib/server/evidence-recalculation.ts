@@ -27,6 +27,8 @@ type RecalculationEvent =
   | "assertion_rejected"
   | "assertion_review_accepted"
   | "assertion_review_rejected"
+  | "assertion_freshness_current"
+  | "assertion_freshness_stale"
   | "historical_backfill_initial";
 
 interface ClaimRow {

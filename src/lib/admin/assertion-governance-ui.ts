@@ -11,14 +11,18 @@ export interface AssertionGovernanceExpectedState {
   freshnessState: EditorialAssertion["freshnessState"];
 }
 
-export interface AssertionGovernancePayload {
-  clusterId: number;
+interface AssertionGovernancePayloadBase {
   assertionId: string;
   action: AssertionGovernanceAction;
   expected: AssertionGovernanceExpectedState;
   reason: string;
   idempotencyKey: string;
 }
+
+/** A story decision names its cluster; an Evidence Library decision never does. */
+export type AssertionGovernancePayload =
+  | (AssertionGovernancePayloadBase & { clusterId: number; context?: never })
+  | (AssertionGovernancePayloadBase & { context: "evidence_library"; clusterId?: never });
 
 export interface AssertionGovernanceResponse {
   success: true;
@@ -72,7 +76,8 @@ export function createAssertionGovernanceIdempotencyKey(): string {
 }
 
 export function buildAssertionGovernancePayload(
-  clusterId: number,
+  /** A story cluster id, or null for an Evidence Library decision. */
+  clusterId: number | null,
   assertion: EditorialAssertion,
   action: AssertionGovernanceAction,
   reason: string,
@@ -80,7 +85,7 @@ export function buildAssertionGovernancePayload(
 ): AssertionGovernancePayload {
   const trimmedReason = reason.trim();
   const trimmedKey = idempotencyKey.trim();
-  if (!Number.isInteger(clusterId) || clusterId < 1) throw new Error("A selected cluster is required.");
+  if (clusterId !== null && (!Number.isInteger(clusterId) || clusterId < 1)) throw new Error("A selected cluster is required.");
   if (!isAssertionGovernanceEligible(assertion.admissionState)) {
     throw new Error("This assertion is no longer eligible for admission governance.");
   }
@@ -89,8 +94,7 @@ export function buildAssertionGovernancePayload(
     throw new Error("Reason must be 2,000 characters or fewer.");
   }
   if (!trimmedKey) throw new Error("A safe idempotency key is required.");
-  return {
-    clusterId,
+  const base = {
     assertionId: assertion.assertionId,
     action,
     expected: {
@@ -101,6 +105,7 @@ export function buildAssertionGovernancePayload(
     reason: trimmedReason,
     idempotencyKey: trimmedKey,
   };
+  return clusterId === null ? { ...base, context: "evidence_library" } : { ...base, clusterId };
 }
 
 export function governanceDecisionMessage(
@@ -138,6 +143,14 @@ export function governanceFailureMessage(
       return "This assertion is not associated with the selected cluster. The action was not applied.";
     case "invalid_reason":
       return "Enter a non-blank reason of 2,000 characters or fewer.";
+    case "assertion_story_linked":
+      return "This assertion belongs to a story. Review it from that story's evidence panel.";
+    case "source_missing":
+      return "This assertion has no captured source version, so it cannot be admitted or accepted in the Evidence Library.";
+    case "source_not_admitted":
+      return "The assertion's source document is not admitted yet. Admit the source before admitting or accepting its assertions.";
+    case "invalid_scope":
+      return "A decision must be made either in a story or in the Evidence Library, not both.";
     default:
       return fallback;
   }

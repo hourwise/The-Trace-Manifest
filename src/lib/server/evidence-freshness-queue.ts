@@ -92,7 +92,10 @@ const CANDIDATE_FROM = `
       WHERE review.claim_assertion_id = assertion.id AND review.state = 'pending'
     )`;
 
-const BLOCKER_FLAGS: Array<[keyof CandidateRow, FreshnessBlocker]> = [
+type GateFlag = "claim_ok" | "evidence_ok" | "relationship_ok" | "provenance_ok" | "source_ok"
+  | "version_ok" | "extraction_ok" | "locator_ok" | "url_ok";
+
+const BLOCKER_FLAGS: Array<[GateFlag, FreshnessBlocker]> = [
   ["claim_ok", "claim_state_blocks_current"],
   ["evidence_ok", "evidence_treatment_blocks_current"],
   ["relationship_ok", "relationship_blocks_current"],
@@ -104,7 +107,8 @@ const BLOCKER_FLAGS: Array<[keyof CandidateRow, FreshnessBlocker]> = [
   ["url_ok", "source_url_blocks_current"],
 ];
 
-export function freshnessBlockers(row: Pick<CandidateRow, (typeof BLOCKER_FLAGS)[number][0]>): FreshnessBlocker[] {
+/** Gate flags are SQL 0/1 projections that mirror assertTransitionAllowed. */
+export function freshnessBlockers(row: Record<GateFlag, number>): FreshnessBlocker[] {
   return BLOCKER_FLAGS.filter(([flag]) => Number(row[flag]) !== 1).map(([, blocker]) => blocker);
 }
 

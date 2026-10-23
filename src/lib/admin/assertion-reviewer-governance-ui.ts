@@ -11,14 +11,18 @@ export interface AssertionReviewerGovernanceExpectedState {
   freshnessState: EditorialAssertion["freshnessState"];
 }
 
-export interface AssertionReviewerGovernancePayload {
-  clusterId: number;
+interface AssertionReviewerGovernancePayloadBase {
   assertionId: string;
   action: AssertionReviewerGovernanceAction;
   expected: AssertionReviewerGovernanceExpectedState;
   reason: string;
   idempotencyKey: string;
 }
+
+/** A story decision names its cluster; an Evidence Library decision never does. */
+export type AssertionReviewerGovernancePayload =
+  | (AssertionReviewerGovernancePayloadBase & { clusterId: number; context?: never })
+  | (AssertionReviewerGovernancePayloadBase & { context: "evidence_library"; clusterId?: never });
 
 export interface AssertionReviewerGovernanceResponse {
   success: true;
@@ -61,7 +65,8 @@ export function createAssertionReviewerGovernanceIdempotencyKey(): string {
 }
 
 export function buildAssertionReviewerGovernancePayload(
-  clusterId: number,
+  /** A story cluster id, or null for an Evidence Library decision. */
+  clusterId: number | null,
   assertion: EditorialAssertion,
   action: AssertionReviewerGovernanceAction,
   reason: string,
@@ -69,7 +74,7 @@ export function buildAssertionReviewerGovernancePayload(
 ): AssertionReviewerGovernancePayload {
   const trimmedReason = reason.trim();
   const trimmedKey = idempotencyKey.trim();
-  if (!Number.isInteger(clusterId) || clusterId < 1) throw new Error("A selected cluster is required.");
+  if (clusterId !== null && (!Number.isInteger(clusterId) || clusterId < 1)) throw new Error("A selected cluster is required.");
   if (!ASSERTION_REVIEWER_GOVERNANCE_ACTIONS.includes(action)) throw new Error("This reviewer action is not supported.");
   if (!isAssertionReviewerGovernanceEligible(assertion.reviewerState)) {
     throw new Error("This assertion is no longer eligible for reviewer governance.");
@@ -79,8 +84,7 @@ export function buildAssertionReviewerGovernancePayload(
     throw new Error("Reviewer reason must be 2,000 characters or fewer.");
   }
   if (!trimmedKey) throw new Error("A safe reviewer idempotency key is required.");
-  return {
-    clusterId,
+  const base = {
     assertionId: assertion.assertionId,
     action,
     expected: {
@@ -91,6 +95,7 @@ export function buildAssertionReviewerGovernancePayload(
     reason: trimmedReason,
     idempotencyKey: trimmedKey,
   };
+  return clusterId === null ? { ...base, context: "evidence_library" } : { ...base, clusterId };
 }
 
 export function reviewerGovernanceDecisionMessage(
@@ -127,6 +132,14 @@ export function reviewerGovernanceFailureMessage(
       return "This assertion is not associated with the selected cluster. The reviewer decision was not applied.";
     case "invalid_reason":
       return "Enter a non-blank reviewer reason of 2,000 characters or fewer.";
+    case "assertion_story_linked":
+      return "This assertion belongs to a story. Review it from that story's evidence panel.";
+    case "source_missing":
+      return "This assertion has no captured source version, so it cannot be admitted or accepted in the Evidence Library.";
+    case "source_not_admitted":
+      return "The assertion's source document is not admitted yet. Admit the source before admitting or accepting its assertions.";
+    case "invalid_scope":
+      return "A decision must be made either in a story or in the Evidence Library, not both.";
     default:
       return fallback;
   }

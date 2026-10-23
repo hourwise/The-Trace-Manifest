@@ -1,13 +1,14 @@
 import type {
   AssertionAdmissionState,
   AssertionFreshnessState,
+  AssertionGovernanceContext,
   AssertionGovernanceEventAction,
   AssertionReviewerState,
 } from "./assertion-governance";
 
 export const ASSERTION_GOVERNANCE_HISTORY_LIMIT = 50;
 
-export type AssertionGovernanceHistoryAxis = "admission" | "editorial_review";
+export type AssertionGovernanceHistoryAxis = "admission" | "editorial_review" | "freshness";
 export type AssertionGovernanceHistoryRecalculationStatus = "completed" | "queued" | "failed" | "unknown";
 
 export interface AssertionGovernanceHistoryState {
@@ -31,7 +32,8 @@ export interface AssertionGovernanceHistoryEvent {
   eventId: string;
   assertionId: string;
   canonicalClaimId: string;
-  clusterId: number;
+  context: AssertionGovernanceContext;
+  clusterId: number | null;
   action: AssertionGovernanceEventAction;
   axis: AssertionGovernanceHistoryAxis;
   previous: AssertionGovernanceHistoryState;
@@ -46,7 +48,8 @@ export interface AssertionGovernanceHistoryEvent {
 }
 
 export interface AssertionGovernanceHistory {
-  clusterId: number;
+  context: AssertionGovernanceContext;
+  clusterId: number | null;
   assertionId: string;
   canonicalClaimId: string;
   limit: number;
@@ -70,7 +73,8 @@ interface HistoryEventRow {
   event_id: string;
   assertion_id: string;
   canonical_claim_id: string;
-  cluster_id: number;
+  governance_context: AssertionGovernanceContext;
+  cluster_id: number | null;
   action: AssertionGovernanceEventAction;
   previous_admission_state: AssertionAdmissionState;
   new_admission_state: AssertionAdmissionState;
@@ -94,7 +98,9 @@ interface HistoryEventRow {
 }
 
 function axisForAction(action: AssertionGovernanceEventAction): AssertionGovernanceHistoryAxis {
-  return action === "admit" || action === "reject" ? "admission" : "editorial_review";
+  if (action === "admit" || action === "reject") return "admission";
+  if (action === "mark_current" || action === "mark_stale") return "freshness";
+  return "editorial_review";
 }
 
 function recalculationFromRow(row: HistoryEventRow): AssertionGovernanceHistoryRecalculation {
@@ -121,6 +127,7 @@ function mapEvent(row: HistoryEventRow): AssertionGovernanceHistoryEvent {
     eventId: row.event_id,
     assertionId: row.assertion_id,
     canonicalClaimId: row.canonical_claim_id,
+    context: row.governance_context,
     clusterId: row.cluster_id,
     action: row.action,
     axis: axisForAction(row.action),
@@ -146,32 +153,37 @@ function mapEvent(row: HistoryEventRow): AssertionGovernanceHistoryEvent {
 
 /**
  * Bounded, read-only governance history for one assertion after validating
- * the selected cluster's canonical-claim association. The ledger is queried
+ * the selected cluster's canonical-claim association (story scope), or for an
+ * assertion read from the Evidence Library (no cluster). The ledger is queried
  * across the assertion's durable events because an assertion can be mapped to
  * more than one story; the selected cluster is an authorization/association
  * boundary, not a reason to hide the assertion's lifecycle.
  */
 export async function getAssertionGovernanceHistory(
   db: D1Database,
-  clusterId: number,
+  clusterId: number | null,
   assertionId: string,
 ): Promise<AssertionGovernanceHistory> {
   const normalizedAssertionId = assertionId.trim();
-  if (!Number.isInteger(clusterId) || clusterId < 1 || normalizedAssertionId.length < 1 || normalizedAssertionId.length > 200) {
-    throw new AssertionGovernanceHistoryError("invalid_request", "A positive clusterId and bounded assertionId are required.", 400);
+  const libraryScope = clusterId === null;
+  if ((!libraryScope && (!Number.isInteger(clusterId) || (clusterId as number) < 1))
+    || normalizedAssertionId.length < 1 || normalizedAssertionId.length > 200) {
+    throw new AssertionGovernanceHistoryError("invalid_request", "A positive clusterId (or the Evidence Library scope) and a bounded assertionId are required.", 400);
   }
 
-  const cluster = await db.prepare("SELECT id FROM story_clusters WHERE id = ?")
-    .bind(clusterId)
-    .first<{ id: number }>();
-  if (!cluster) throw new AssertionGovernanceHistoryError("cluster_not_found", "Cluster not found.", 404);
+  if (!libraryScope) {
+    const cluster = await db.prepare("SELECT id FROM story_clusters WHERE id = ?")
+      .bind(clusterId)
+      .first<{ id: number }>();
+    if (!cluster) throw new AssertionGovernanceHistoryError("cluster_not_found", "Cluster not found.", 404);
+  }
 
   const assertion = await db.prepare("SELECT id, canonical_claim_id FROM claim_assertions WHERE id = ?")
     .bind(normalizedAssertionId)
     .first<{ id: string; canonical_claim_id: string }>();
   if (!assertion) throw new AssertionGovernanceHistoryError("assertion_not_found", "Assertion not found.", 404);
 
-  const associated = await db.prepare(`
+  const associated = libraryScope ? { present: 1 } : await db.prepare(`
     SELECT 1 AS present
     FROM story_claims
     WHERE story_cluster_id = ? AND canonical_claim_id = ?
@@ -189,6 +201,7 @@ export async function getAssertionGovernanceHistory(
     SELECT event.id AS event_id,
            event.assertion_id,
            event.canonical_claim_id,
+           event.governance_context,
            event.cluster_id,
            event.action,
            event.previous_admission_state,
@@ -220,6 +233,7 @@ export async function getAssertionGovernanceHistory(
   const rows = result.results ?? [];
   const truncated = rows.length > ASSERTION_GOVERNANCE_HISTORY_LIMIT;
   return {
+    context: libraryScope ? "evidence_library" : "story",
     clusterId,
     assertionId: normalizedAssertionId,
     canonicalClaimId: assertion.canonical_claim_id,
