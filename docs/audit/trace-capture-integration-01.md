@@ -5,7 +5,7 @@
 **Preview candidate:** `codex/trace-capture-preview-01`, which is SEED-01 (PR #3) merged with this branch. Also local only.
 **Android:** `hourwise/Trace-Capture-App`, branch `codex/complete-personal-capture` at `7ea6a78` (1.1.0, versionCode 2). **No Android change is required.**
 
-**Status:** Gate A complete. **Gate B deployed to Preview on 2026-10-24 (§7A).**
+**Status:** Gate A complete. **Gate B deployed to Preview on 2026-10-24 (§7A); Access bypass verified (§7B). Gate C ready (§8).**
 - Nothing was pushed, deployed or migrated.
 - No Access setting or secret was changed.
 - No Preview or Production record was created.
@@ -180,20 +180,72 @@ Each needs a D1 read-back.
 
 **Waiting on the owner:** the Preview Access bypass application for `/api/capture/receipt` (§5). After it is added, `GET /api/capture/receipt` should return 200 `{"protocol":"trace-capture-v1"}` while `/admin/capture` stays 302.
 
-## 8. Gate C: real device
+## 7B. Gate B verification after the Access bypass (2026-10-24)
 
-1. Copy `delivery/TRACE-Capture-1.1.0-debug.apk` to the phone and install it over 1.0.0. Same signer, so it's an update. **Do not uninstall first**, or the local database is lost.
-2. **Before:** note an existing capture. **After:** confirm it is still listed (Room v1→v2 migration).
-3. Share a Reddit post to TRACE Capture and save it. Open it, choose Submit, pick **Preview**, choose **social** and enter a reason.
-4. The browser opens `/admin/capture`. Sign in with Access as the **publisher**. If the page says the handoff is missing after sign-in, return to the app and reopen the same attempt.
-5. Confirm. Tap "Return receipt to TRACE Capture". In the app, run verify. **Expect** `SYNCED` with the record id.
-6. In `/admin/social` on Preview, confirm the exact URL, reason and notes, status pending.
-7. Repeat with an article URL (TRACE Desk) and a text lead (TRACE Desk).
-8. **Offline and retry:**
-   - Enable airplane mode before verifying; expect FAILED with the capture intact. Re-enable and verify again; expect SYNCED.
-   - Submit the same attempt twice; expect "Already saved by this attempt" and no second record.
+The owner added the Preview Access bypass for `/api/capture/receipt`. All checks below are read-only and created no records.
 
-Evidence to keep: screenshots of each step, the record ids, and a D1 read-back.
+| Check | Result |
+|---|---|
+| `GET /api/capture/receipt` (unauthenticated) | **200** `{"protocol":"trace-capture-v1"}`, no redirect; `no-store`, `noindex`, `no-referrer` |
+| `POST /api/capture/receipt` with an empty body or a forged receipt | 400 `Invalid receipt.` and 401 `Invalid or expired receipt.` (no D1 read for invalid proofs, by test) |
+| Bypass scope | `/api/capture`, `/api/capture/`, `/api/capture/receiptx` and `/api/capture/other` still return **302**. `/api/capture/receipt/extra` returns **404** from Pages: Access applies the path bypass to everything beneath it. No route exists there today; **keep it that way**, or narrow the application if a sub-route is ever added. |
+| Privileged Preview routes | Still **302** (Access): `/`, `/admin`, `/admin/capture`, `/admin/social`, `/admin/desk`, `/admin/review`, both knowledge pages, `/capture-intake.js`, and `GET /api/admin/{social-signals, candidates, assertion-governance-history}`. `POST /api/admin/{capture-submit, social-signals, candidates, knowledge/freshness, assertion-review, assertion-reviewer-decision, publish-story, archive-cluster, knowledge/capture-url}` return **302**. A forged `Cf-Access-Jwt-Assertion` header still gets 302. |
+| Production (behaviour) | `thetracemanifest.com`: public pages 200; `/admin/*` and `/api/admin/*` return 302; the receipt route and script return 404 (not deployed). `the-trace-manifest.pages.dev`: admin routes return 401 from TRACE's own JWT check, which is existing behaviour that fails closed. Schedules `[]` / `[]`. Worker `41f31744` and Pages `ed33e35f` unchanged. *The API token cannot read Access settings, so this is evidence from behaviour, not a configuration read.* |
+
+## 8. Gate C: real-device acceptance
+
+**Proven so far:** server logic (98 local checks) and Preview deployment and gating. **Not yet proven:** anything on the phone. Gate C is the evidence.
+
+### 8.1 Install as an update; never uninstall
+
+1. On the PC, the APK is `D:\Users\fleur\Trace Capture App\delivery\TRACE-Capture-1.1.0-debug.apk`, SHA-256 `8a4d684b5a85335f1958d76cd09ee87f47145e6bb2f3c5a672d0096ec2c0afca`.
+2. **Before installing:** open TRACE Capture 1.0.0, note how many captures there are, and screenshot one capture's detail.
+3. Install **over** the existing app, using either:
+   - **USB (adb):** `adb install -r "D:\Users\fleur\Trace Capture App\delivery\TRACE-Capture-1.1.0-debug.apk"`. `-r` replaces and keeps data. Or:
+   - **File copy:** copy the APK to the phone, open it in Files, allow "Install unknown apps" for Files if asked, and choose **Update**.
+
+   **Do not uninstall first.** The signing certificate matches 1.0.0 (`27ac6e13…`). If Android ever says the app "conflicts with an existing package", **stop**; uninstalling would delete the local captures.
+4. **After installing:** check the app version shows 1.1.0. The same number of captures should be present, and the screenshotted capture should be unchanged. This tests the Room v1→v2 migration.
+
+### 8.2 One-time browser sign-in (Preview)
+
+5. In the phone's default browser, open `https://launch-05r-preview.the-trace-manifest.pages.dev/admin`. Sign in through Cloudflare Access with the **publisher** email (not the reader), using the emailed code. You should see the admin page.
+
+   Signing in first means the capture handoff later goes straight to the confirmation page. If you're ever asked to sign in during a submission and the page then says **"This page has no capture to submit…"**, go back to the app and tap **Reopen same browser submission**. The same attempt is reused and nothing is duplicated.
+
+### 8.3 First `[QA-CAPTURE]` submission: a text-only lead
+
+**Steps 6–10 create a real record on Preview. Do them only once you have decided to authorise the test.**
+
+6. In TRACE Capture, create or pick a capture to use for the test. Add the note `[QA-CAPTURE] Gate C test`.
+7. Open it and tap **Submit to TRACE**. On the submission screen:
+   - **Environment:** **Preview**
+   - **Intake type:** **Text-only lead**
+   - **Lead to send:** `[QA-CAPTURE] Gate C text-lead test. Not news; safe to archive.`
+
+   Then tap **Continue to secure TRACE sign-in**.
+8. The browser opens **Review TRACE Capture intake**. Check it shows `Intake: lead`, your lead text, and the provenance line ("TRACE Capture <id>; captured …; source app (unverified) …"). Tap **Confirm private TRACE submission**. Expect **"Saved: lead capture-…"**.
+9. Tap **Return receipt to TRACE Capture**. The app opens the submission screen. If **Verify TRACE receipt** is shown, tap it.
+10. **Expect:** the capture shows **SYNCED** with "TRACE record confirmed: capture-…. Awaiting private editorial review." Screenshot it, and send me the record id (`capture-…`).
+
+**What I then verify (read-only):**
+- one new `editorial_candidates` row with that id;
+- `intake_type = lead`, `state = new`, no URL;
+- your lead plus the provenance in `lead_text`;
+- `created_by` set to the publisher;
+- it appears in **TRACE Desk** on Preview.
+
+### 8.4 Later steps (each authorised separately)
+
+11. **Retry safety:** on the same capture, tap **Reopen same browser submission** and confirm again. Expect "Already saved by this attempt" and no second row.
+12. **Offline:** for a second capture, turn on airplane mode before **Verify TRACE receipt**. Expect `FAILED` with the capture intact. Turn airplane mode off and tap **Verify TRACE receipt** again. Expect `SYNCED`.
+13. **Social signal (Sharesheet):** in Reddit, Share → **TRACE Capture** → save, then submit as **Social signal** (platform `reddit`).
+    - Reason: `[QA-CAPTURE] Gate C social-signal test, not for publication`.
+    - Expect the exact post URL in `/admin/social` on Preview, status pending.
+    - Preview keeps one social signal per URL, so use a post you don't mind occupying that URL on Preview.
+14. **Article:** submit `https://example.com/qa-capture-gate-c` as **Article / public URL**. Expect a `manual_url` candidate in TRACE Desk.
+
+**Gate C passes only with:** your screenshots, the record ids, and my read-back of each record. No result is claimed before that evidence exists.
 
 ## 9. Gate D: Production (separate approval)
 
