@@ -170,6 +170,14 @@ Each needs a D1 read-back.
 - Worker: `wrangler versions deploy c4976ccd-5654-440e-bf3d-ef2949f0a36c@100% --config wrangler.worker.toml --env preview`.
 - Pages: roll `launch-05r-preview` back to `7d7c81e9`.
 
+**Redeploy (owner-approved, 2026-10-24).** Deployed the candidate at `3e0c345`, which adds the handoff-message fix `acbd63e`. No configuration or database change since `4e10dd8`, and the dry run shows no Cron trigger.
+- **Versions:** Preview Worker **`d8e4d10c-209f-45b5-9d0f-d30c46a0d4a3`** first, then Pages **`ed744c77`** on `launch-05r-preview`.
+- **Smoke checks:** schedules `[]` / `[]`. Every unauthenticated capture path returns 302. Production is unchanged (`ed33e35f`, `41f31744`; receipt route 404; Ask off).
+- **Page:** `/admin/capture` without a handoff now shows "This page has no capture to submit. Return to TRACE Capture and reopen the same saved attempt." Submit stays disabled and there is no return link.
+- **Existing features:** Evidence Library (reader, read-only), freshness (403), review (reader notice), social and Desk all as before. History returns 200.
+- **D1:** unchanged: 0 social signals, 19 candidates, 13 events.
+- **Rollback for this round:** Worker `3b8d5721-f1da-4223-ad3a-53a108d26cf3`, Pages `fff5102d`. The original pre-capture targets are Worker `c4976ccd` and Pages `7d7c81e9`.
+
 **Waiting on the owner:** the Preview Access bypass application for `/api/capture/receipt` (§5). After it is added, `GET /api/capture/receipt` should return 200 `{"protocol":"trace-capture-v1"}` while `/admin/capture` stays 302.
 
 ## 8. Gate C: real device
