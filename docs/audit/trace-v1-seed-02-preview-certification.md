@@ -167,7 +167,7 @@ From `wrangler d1 insights` on Preview for the 24 hours ending 2026-10-24 09:40 
 ## 9. Next
 
 **Owner decisions:**
-- the reader identity (§7.2), then live reader QA;
+- ~~the reader identity (§7.2), then live reader QA~~ done on 2026-10-24 (§10.5);
 - ~~a Preview redeploy carrying the freshness reject fix (§7.1)~~ done on 2026-10-24 (§10);
 - approval of the seed list (`docs/knowledge-seed/pilot-01.json`, currently "proposed");
 - the P-1 decision.
@@ -248,5 +248,35 @@ Insights had **not yet** caught up with the approve batch (event, job, snapshots
 ### 10.4 Outcome
 
 - **Section 5 (publisher QA) passes.** The reject reason form, server-side reason enforcement, retry safety and the approval path all behave as designed on Preview.
-- **Section 6 (live reader QA) is still open.** It needs a reader-only Access identity (§7.2), which the owner must create; Claude does not change Access.
-- **Production 0076 stays on hold** until section 6 passes and the owner separately approves the Production sequence (checklist §8).
+- **Section 6 (live reader QA) passes:** see §10.5.
+- **Production 0076:** the Preview hold criteria (checklist §8, items 1–2) are now met. It still needs the owner's separate approval of the Production sequence.
+
+### 10.5 Live reader QA (checklist section 6)
+
+**Identity.** The owner created a reader-only Access identity and signed in with it in the built-in browser pane.
+- The publisher session had already expired: the Access logout URL returned "No Access cookie found".
+- Claude did not sign anyone out and did not change Access or role settings.
+- The read-only notice confirmed the reader role before any probe ran.
+
+**Safe probes.** Every write probe used a body that would also be refused for a publisher: a stale expected state, or a nonexistent assertion, review or cluster id. A wrong role could therefore not have written anything.
+
+| Check | Result |
+|---|---|
+| `/admin/knowledge/evidence-library` (default and `?filter=accepted`) | 200; "You have read-only access. Decisions are recorded by publishers."; **0 decision buttons, 0 forms**; the library fixture is visible under "accepted" |
+| Governance history in the page (reader) | Opens and loads all 3 events with the correct labels: "Evidence Library" ×2, then "Freshness review" |
+| Evidence Library history API for the library fixture | 200; `admit`, `accept_review`, `mark_current` |
+| Story history API (story 90201) | 200; 3 events |
+| `/admin/knowledge/freshness` | **403 Forbidden** |
+| `POST /api/admin/assertion-review`, Evidence Library body | **403** |
+| `POST /api/admin/assertion-review`, story body (cluster 90201) | **403** |
+| `POST /api/admin/assertion-reviewer-decision` | **403** |
+| `POST /api/admin/knowledge/freshness`: `request`, `approve`, `reject` (with a reason) | **403** each |
+| `POST /api/admin/publish-story` and `/api/admin/archive-cluster` (nonexistent cluster) | **403** each |
+| D1 afterwards | 13 events, 13 jobs, 4 freshness reviews; 0 rows with the probe keys or ids; both fixture assertions unchanged; 1 published story |
+| Schedules and Production | `[]` / `[]`; Production Worker `41f31744` and Pages `247d3b3a` unchanged |
+
+**Observations (not acted on):**
+
+1. **`/admin/review` shows readers "Publish Story" and "Archive (not news)",** with no read-only notice. The server refuses both (403, above), so nothing can be written. But the page offers controls a reader cannot use. The assertion governance controls on the same page *are* role-gated (`data-assertion-governance-role`). This predates SEED-01. *Recommend:* role-gate those controls, or show the read-only notice, in a small follow-up.
+2. While the reader opened the history panel, the browser pane reported that the **page wrote to the OS clipboard** during a synthetic click. Claude copied nothing. Check the clipboard before pasting. The likely cause is a copy handler on the page; worth a look in the same follow-up.
+3. The reader-only identity stays configured. The owner decides whether to remove it or keep it for later QA.
