@@ -19,7 +19,7 @@
 
 | Item | Value |
 |---|---|
-| Account | `b7765d4c91a51c079125912afcd840cf` |
+| Account | `<account-id>` (redacted; owner-held) |
 | Production D1 | `trace-manifest-db` / `1625036a-ffe2-4103-bf9d-086bae150561` |
 | Method | **One** read-only keyset snapshot (2026-10-23 05:52–05:56Z): 113 tables, 55,718 rows. **D1 rows read: 56,338.** All analysis ran locally. |
 | Additional live SQL | **0** |

@@ -31,7 +31,7 @@ Each queue will hit one of three constraints:
 
 | Item | Value |
 |---|---|
-| Cloudflare account | `b7765d4c91a51c079125912afcd840cf` (OAuth, `wrangler whoami`) |
+| Cloudflare account | `<account-id>` (redacted; owner-held) (OAuth, `wrangler whoami`) |
 | Production D1 | `trace-manifest-db` / `1625036a-ffe2-4103-bf9d-086bae150561`, region WEUR, 118 objects reported by `d1 info` |
 | Snapshot method | One read-only keyset pass: per table, `ORDER BY rowid LIMIT 2000`, FTS shadow tables skipped (`scripts/knowledge-10/logical-backup-keyset.mjs`) |
 | Snapshot window | Started `2026-10-23T05:52:19Z`, captured `2026-10-23T05:56:41Z` |
