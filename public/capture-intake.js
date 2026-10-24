@@ -1,5 +1,3 @@
-
-
   const preview = document.getElementById("preview");
   const status = document.getElementById("status");
   const button = document.getElementById("submit");
@@ -35,4 +33,3 @@
       }
     });
   } catch (error) { status.textContent = error instanceof Error ? error.message : "Invalid capture."; }
-
