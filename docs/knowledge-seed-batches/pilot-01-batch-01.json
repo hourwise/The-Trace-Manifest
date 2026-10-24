@@ -1,0 +1,984 @@
+{
+  "schemaVersion": "trace-seed-batch-v1",
+  "batchId": "pilot-01-batch-01",
+  "listId": "pilot-01",
+  "approval": "proposed",
+  "preparedOn": "2026-10-24",
+  "environment": "preview",
+  "note": "SEED-03 local preparation only. Nothing here has been captured, registered or written. Expected assertions are what a reviewer should look for in the captured text; none is a finding. An assertion is admitted only if the captured, located text supports it. 'approval' becomes 'approved' only by an owner decision, and the backfill plan hash needs its own approval.",
+  "policy": {
+    "conclusionPolicy": "P-1 unchanged: 'supported' needs two independent provenance groups",
+    "publicAsk": "disabled until V1.2; evaluation runs on /admin/ask in deterministic mode",
+    "inference": "0 paid calls",
+    "vectorize": "0 operations",
+    "cron": "[] (STOP-BURN active)"
+  },
+  "excludedFromBatch": [
+    {
+      "id": "S25",
+      "reason": "P-1 single-primary-source test; waits for the owner's P-1 decision (batch 2)"
+    },
+    {
+      "id": "S26",
+      "reason": "P-1 single-primary-source test; waits for the owner's P-1 decision (batch 2)"
+    },
+    {
+      "id": "S27",
+      "reason": "P-1 single-primary-source test; waits for the owner's P-1 decision (batch 2)"
+    }
+  ],
+  "budgets": {
+    "capture": {
+      "storageMode": "private_full_text",
+      "storageModeNote": "One plan, one storage mode (BackfillSelection.storageMode; the default is metadata_only). Only private_full_text stores the body and yields a 'captured' version with locator-backed chunks (source-capture.ts). short_excerpt and metadata_only captures are never evidence. Full text stays private in Preview R2; only bounded excerpts are ever shown.",
+      "maxRecords": 25,
+      "concurrency": 1,
+      "maxBytesPerRecordKiB": 512,
+      "maxBytesPerBatchMiB": 5,
+      "maxRetriesPerItem": 2,
+      "maxSourceRequests": 28,
+      "maxR2MiB": 10,
+      "extractionPerRecord": {
+        "maxBlocks": 200,
+        "maxCandidates": 100,
+        "maxProvenanceGroups": 10
+      }
+    },
+    "d1": {
+      "targetRowsReadPerPhase": 20000,
+      "targetRowsWrittenPerPhase": 5000,
+      "stopRowsReadPerBatch": 50000,
+      "stopRowsWrittenPerBatch": 10000,
+      "projectionCheckAfterRecords": 3,
+      "governanceSessionMaxAssertions": 40,
+      "measuredGovernanceRowsWrittenPerAssertion": 120,
+      "measurementSource": "SEED-02 Preview insights, 2026-10-24: ~10 rows per governance event insert, ~5 per recalculation job, ~5 per audited admin request, ~4 per score-explanation insert"
+    }
+  },
+  "independenceGroups": {
+    "mcp-project": [
+      "S01",
+      "S02"
+    ],
+    "anthropic": [
+      "S03",
+      "S10"
+    ],
+    "openai": [
+      "S04",
+      "S06",
+      "S22",
+      "S28"
+    ],
+    "bfcl-maintainers": [
+      "S05"
+    ],
+    "owasp": [
+      "S07",
+      "S09"
+    ],
+    "uk-ncsc": [
+      "S08"
+    ],
+    "rag-paper-authors": [
+      "S11"
+    ],
+    "agentic-rag-survey-authors": [
+      "S12"
+    ],
+    "lost-in-the-middle-authors": [
+      "S13"
+    ],
+    "ruler-authors": [
+      "S14"
+    ],
+    "tau-bench-authors": [
+      "S15"
+    ],
+    "gptq-authors": [
+      "S16"
+    ],
+    "awq-authors": [
+      "S17"
+    ],
+    "llama-cpp-project": [
+      "S18",
+      "S19"
+    ],
+    "swe-bench-maintainers": [
+      "S20",
+      "S21"
+    ],
+    "livecodebench-authors": [
+      "S23"
+    ],
+    "terminal-bench-maintainers": [
+      "S24"
+    ]
+  },
+  "reviewRequirements": {
+    "everyAssertion": [
+      "The locator resolves to the captured version, and the quoted span stays within the storage mode (a bounded excerpt for short_excerpt).",
+      "The span itself supports the assertion text; nothing is admitted from the lookFor wording alone.",
+      "claim_class, source_role, relationship, directness and evidence_treatment are set as listed, or the reviewer records why they differ.",
+      "The provenance group is reviewed and its independence group recorded. Two sources in the same independence group never count as two groups.",
+      "Vendor sources use source_role reported_claim. They are authoritative only for the vendor's own feature or price.",
+      "Freshness is requested with the listed interval through /admin/knowledge/freshness. A rejection needs a reason."
+    ],
+    "ratingNote": "Ask rates an assertion strong only for source_role evidence, direct, factual_support and relationship supports or reproduces. Moderate covers reported_claim with reports or partially_supports. contextualises and qualifies are unrated context.",
+    "neverAdmit": [
+      "metadata_only captures",
+      "PDF bodies",
+      "leaderboard values without version, harness and date",
+      "anything from a held_for_review item before its drift is resolved"
+    ]
+  },
+  "sources": [
+    {
+      "id": "S01",
+      "registry": {
+        "sourceId": 115,
+        "action": "existing"
+      },
+      "identity": {
+        "format": "html",
+        "versionPin": "spec revision date shown on the page",
+        "stabilityCheck": false,
+        "expectedOutcome": "captured"
+      },
+      "provenance": {
+        "originType": "primary",
+        "group": "mcp-project"
+      },
+      "freshness": "on_spec_revision",
+      "reviewEffort": "M",
+      "expectedAssertions": [
+        {
+          "question": "G01",
+          "claimClass": "specification_defined",
+          "sourceRole": "evidence",
+          "relationship": "supports",
+          "treatment": "factual_support",
+          "lookFor": "How the specification defines MCP: the roles it names (hosts, clients, servers) and the capabilities servers expose (such as tools, resources, prompts).",
+          "directness": "direct"
+        },
+        {
+          "question": "G02",
+          "claimClass": "specification_defined",
+          "sourceRole": "evidence",
+          "relationship": "supports",
+          "treatment": "factual_support",
+          "lookFor": "The transports the captured revision defines, and any changelog statement about which earlier transport Streamable HTTP replaced.",
+          "directness": "direct"
+        }
+      ]
+    },
+    {
+      "id": "S02",
+      "registry": {
+        "sourceId": 35,
+        "action": "existing"
+      },
+      "identity": {
+        "format": "github_markdown",
+        "versionPin": "commit SHA at capture",
+        "stabilityCheck": false,
+        "expectedOutcome": "captured"
+      },
+      "provenance": {
+        "originType": "primary",
+        "group": "mcp-project"
+      },
+      "freshness": "90d",
+      "reviewEffort": "L",
+      "expectedAssertions": [
+        {
+          "question": "G02",
+          "claimClass": "observed_implementation_behaviour",
+          "sourceRole": "evidence",
+          "relationship": "supports",
+          "treatment": "factual_support",
+          "lookFor": "Which transports the SDK documents as implemented. Same independence group as S01, so it never counts as a second group.",
+          "directness": "direct"
+        }
+      ]
+    },
+    {
+      "id": "S03",
+      "registry": {
+        "sourceId": 4,
+        "action": "existing"
+      },
+      "identity": {
+        "format": "html",
+        "versionPin": "none (dated announcement)",
+        "stabilityCheck": true,
+        "expectedOutcome": "captured"
+      },
+      "provenance": {
+        "originType": "vendor_statement",
+        "group": "anthropic"
+      },
+      "freshness": "365d",
+      "reviewEffort": "L",
+      "expectedAssertions": [
+        {
+          "question": "G01",
+          "claimClass": "official_vendor_claim",
+          "sourceRole": "reported_claim",
+          "relationship": "contextualises",
+          "treatment": "attributed_opinion",
+          "lookFor": "How the announcement describes MCP's purpose and its introduction. History and context only, attributed to the vendor.",
+          "directness": "direct"
+        }
+      ]
+    },
+    {
+      "id": "S04",
+      "registry": {
+        "sourceId": 3,
+        "action": "existing"
+      },
+      "identity": {
+        "format": "html_maybe_client_rendered",
+        "versionPin": "none (undated docs page)",
+        "stabilityCheck": false,
+        "expectedOutcome": "metadata_only_possible"
+      },
+      "provenance": {
+        "originType": "vendor_statement",
+        "group": "openai"
+      },
+      "freshness": "90d",
+      "reviewEffort": "M",
+      "expectedAssertions": [
+        {
+          "question": "G01",
+          "claimClass": "official_vendor_claim",
+          "sourceRole": "reported_claim",
+          "relationship": "reports",
+          "treatment": "factual_support",
+          "lookFor": "How the provider describes function calling: the model proposes a call, and the application executes it.",
+          "directness": "direct"
+        },
+        {
+          "question": "G03",
+          "claimClass": "official_vendor_claim",
+          "sourceRole": "reported_claim",
+          "relationship": "reports",
+          "treatment": "factual_support",
+          "lookFor": "Any reliability guidance the provider gives (schema strictness, tool descriptions).",
+          "directness": "direct"
+        }
+      ]
+    },
+    {
+      "id": "S05",
+      "registry": {
+        "sourceId": null,
+        "action": "register",
+        "proposed": {
+          "name": "Berkeley Function Calling Leaderboard",
+          "tier": "B",
+          "treatment": "primary-research",
+          "copyrightStorageMode": "private_full_text",
+          "licenceTerms": "confirm at registration"
+        }
+      },
+      "identity": {
+        "format": "html",
+        "versionPin": "leaderboard version label on the page",
+        "stabilityCheck": false,
+        "expectedOutcome": "captured"
+      },
+      "provenance": {
+        "originType": "independent_test",
+        "group": "bfcl-maintainers"
+      },
+      "freshness": "90d",
+      "reviewEffort": "M",
+      "expectedAssertions": [
+        {
+          "question": "G03",
+          "claimClass": "independent_research_finding",
+          "sourceRole": "evidence",
+          "relationship": "supports",
+          "treatment": "factual_support",
+          "lookFor": "The methodology: what categories of function-calling ability are evaluated and how. Not the moving leaderboard values.",
+          "directness": "direct"
+        }
+      ]
+    },
+    {
+      "id": "S06",
+      "registry": {
+        "sourceId": 3,
+        "action": "existing"
+      },
+      "identity": {
+        "format": "html_maybe_client_rendered",
+        "versionPin": "none (undated docs page)",
+        "stabilityCheck": false,
+        "expectedOutcome": "metadata_only_possible"
+      },
+      "provenance": {
+        "originType": "vendor_statement",
+        "group": "openai"
+      },
+      "freshness": "90d",
+      "reviewEffort": "M",
+      "expectedAssertions": [
+        {
+          "question": "G04",
+          "claimClass": "official_vendor_claim",
+          "sourceRole": "reported_claim",
+          "relationship": "reports",
+          "treatment": "factual_support",
+          "lookFor": "The provider's own statement of how structured outputs differ from JSON mode (schema adherence versus valid JSON).",
+          "directness": "direct"
+        }
+      ]
+    },
+    {
+      "id": "S07",
+      "registry": {
+        "sourceId": null,
+        "action": "register",
+        "proposed": {
+          "name": "OWASP GenAI Security Project",
+          "tier": "B",
+          "treatment": "primary-research",
+          "copyrightStorageMode": "private_full_text",
+          "licenceTerms": "confirm the OWASP licence at registration"
+        }
+      },
+      "identity": {
+        "format": "html",
+        "versionPin": "list edition year on the page",
+        "stabilityCheck": true,
+        "expectedOutcome": "captured"
+      },
+      "provenance": {
+        "originType": "research",
+        "group": "owasp"
+      },
+      "freshness": "365d",
+      "reviewEffort": "M",
+      "expectedAssertions": [
+        {
+          "question": "G05",
+          "claimClass": "independent_research_finding",
+          "sourceRole": "evidence",
+          "relationship": "supports",
+          "treatment": "factual_support",
+          "lookFor": "Prompt injection as a listed risk, with its description and the mitigations the list recommends.",
+          "directness": "direct"
+        },
+        {
+          "question": "G07",
+          "claimClass": "independent_research_finding",
+          "sourceRole": "evidence",
+          "relationship": "supports",
+          "treatment": "factual_support",
+          "lookFor": "Any entry on sensitive information disclosure or excessive agency that bears on secrets. Same group as S09.",
+          "directness": "direct"
+        }
+      ]
+    },
+    {
+      "id": "S08",
+      "registry": {
+        "sourceId": null,
+        "action": "register",
+        "proposed": {
+          "name": "UK National Cyber Security Centre",
+          "tier": "A",
+          "treatment": "primary-research",
+          "copyrightStorageMode": "private_full_text",
+          "licenceTerms": "Open Government Licence; store private full text, publish bounded excerpts only"
+        }
+      },
+      "identity": {
+        "format": "html",
+        "versionPin": "none (dated blog post)",
+        "stabilityCheck": true,
+        "expectedOutcome": "captured"
+      },
+      "provenance": {
+        "originType": "government",
+        "group": "uk-ncsc"
+      },
+      "freshness": "365d",
+      "reviewEffort": "L",
+      "expectedAssertions": [
+        {
+          "question": "G05",
+          "claimClass": "independent_research_finding",
+          "sourceRole": "evidence",
+          "relationship": "supports",
+          "treatment": "factual_support",
+          "lookFor": "Why the post argues prompt injection differs from SQL injection, and the mitigations or design stance it recommends.",
+          "directness": "direct"
+        }
+      ]
+    },
+    {
+      "id": "S09",
+      "registry": {
+        "sourceId": null,
+        "action": "register",
+        "proposed": {
+          "name": "OWASP Cheat Sheet Series",
+          "tier": "B",
+          "treatment": "primary-research",
+          "copyrightStorageMode": "private_full_text",
+          "licenceTerms": "confirm the OWASP licence at registration"
+        }
+      },
+      "identity": {
+        "format": "html",
+        "versionPin": "none (living page)",
+        "stabilityCheck": false,
+        "expectedOutcome": "captured"
+      },
+      "provenance": {
+        "originType": "research",
+        "group": "owasp"
+      },
+      "freshness": "365d",
+      "reviewEffort": "L",
+      "expectedAssertions": [
+        {
+          "question": "G07",
+          "claimClass": "independent_research_finding",
+          "sourceRole": "evidence",
+          "relationship": "supports",
+          "treatment": "factual_support",
+          "lookFor": "Secret-management practices the cheat sheet recommends (central storage, rotation, least privilege, no secrets in code).",
+          "directness": "direct"
+        }
+      ]
+    },
+    {
+      "id": "S10",
+      "registry": {
+        "sourceId": 5,
+        "action": "existing"
+      },
+      "identity": {
+        "format": "html",
+        "versionPin": "none (dated article)",
+        "stabilityCheck": false,
+        "expectedOutcome": "captured"
+      },
+      "provenance": {
+        "originType": "vendor_statement",
+        "group": "anthropic"
+      },
+      "freshness": "365d",
+      "reviewEffort": "M",
+      "expectedAssertions": [
+        {
+          "question": "G08",
+          "claimClass": "official_vendor_claim",
+          "sourceRole": "reported_claim",
+          "relationship": "reports",
+          "treatment": "attributed_opinion",
+          "lookFor": "The vendor's guidance on when to add agentic or multi-agent complexity versus simpler workflows.",
+          "directness": "direct"
+        },
+        {
+          "question": "G06",
+          "claimClass": "official_vendor_claim",
+          "sourceRole": "reported_claim",
+          "relationship": "reports",
+          "treatment": "attributed_opinion",
+          "lookFor": "Any guidance on human checkpoints or guardrails for agent actions.",
+          "directness": "direct"
+        }
+      ]
+    },
+    {
+      "id": "S11",
+      "registry": {
+        "sourceId": 24,
+        "action": "existing"
+      },
+      "identity": {
+        "format": "arxiv_abstract",
+        "versionPin": "arXiv version (vN) at capture",
+        "stabilityCheck": false,
+        "expectedOutcome": "captured"
+      },
+      "provenance": {
+        "originType": "research",
+        "group": "rag-paper-authors"
+      },
+      "freshness": "stable",
+      "reviewEffort": "L",
+      "expectedAssertions": [
+        {
+          "question": "G09",
+          "claimClass": "independent_research_finding",
+          "sourceRole": "evidence",
+          "relationship": "supports",
+          "treatment": "factual_support",
+          "lookFor": "How the abstract defines retrieval-augmented generation (a parametric model combined with a retrieved non-parametric memory) and what it reports.",
+          "directness": "direct"
+        }
+      ]
+    },
+    {
+      "id": "S12",
+      "registry": {
+        "sourceId": 24,
+        "action": "existing"
+      },
+      "identity": {
+        "format": "arxiv_abstract",
+        "versionPin": "arXiv version (vN) at capture",
+        "stabilityCheck": false,
+        "expectedOutcome": "captured"
+      },
+      "provenance": {
+        "originType": "research",
+        "group": "agentic-rag-survey-authors"
+      },
+      "freshness": "stable",
+      "reviewEffort": "L",
+      "expectedAssertions": [
+        {
+          "question": "G19",
+          "claimClass": "independent_research_finding",
+          "sourceRole": "evidence",
+          "relationship": "supports",
+          "treatment": "factual_support",
+          "lookFor": "The survey's definition of agentic RAG: agents embedded in the retrieval pipeline, for example planning, reflection and tool use.",
+          "directness": "direct"
+        }
+      ]
+    },
+    {
+      "id": "S13",
+      "registry": {
+        "sourceId": 24,
+        "action": "existing"
+      },
+      "identity": {
+        "format": "arxiv_abstract",
+        "versionPin": "arXiv version (vN) at capture",
+        "stabilityCheck": false,
+        "expectedOutcome": "captured"
+      },
+      "provenance": {
+        "originType": "research",
+        "group": "lost-in-the-middle-authors"
+      },
+      "freshness": "stable",
+      "reviewEffort": "L",
+      "expectedAssertions": [
+        {
+          "question": "G10",
+          "claimClass": "independent_research_finding",
+          "sourceRole": "evidence",
+          "relationship": "supports",
+          "treatment": "factual_support",
+          "lookFor": "The reported dependence of performance on where relevant information sits in a long context.",
+          "directness": "direct"
+        }
+      ]
+    },
+    {
+      "id": "S14",
+      "registry": {
+        "sourceId": 24,
+        "action": "existing"
+      },
+      "identity": {
+        "format": "arxiv_abstract",
+        "versionPin": "arXiv version (vN) at capture",
+        "stabilityCheck": false,
+        "expectedOutcome": "captured"
+      },
+      "provenance": {
+        "originType": "independent_test",
+        "group": "ruler-authors"
+      },
+      "freshness": "stable",
+      "reviewEffort": "L",
+      "expectedAssertions": [
+        {
+          "question": "G10",
+          "claimClass": "benchmark_result",
+          "sourceRole": "evidence",
+          "relationship": "supports",
+          "treatment": "factual_support",
+          "lookFor": "The reported gap between a model's claimed context length and the length at which it performs well on the benchmark.",
+          "directness": "direct"
+        }
+      ]
+    },
+    {
+      "id": "S15",
+      "registry": {
+        "sourceId": 24,
+        "action": "existing"
+      },
+      "identity": {
+        "format": "arxiv_abstract",
+        "versionPin": "arXiv version (vN) at capture",
+        "stabilityCheck": false,
+        "expectedOutcome": "captured"
+      },
+      "provenance": {
+        "originType": "independent_test",
+        "group": "tau-bench-authors"
+      },
+      "freshness": "stable",
+      "reviewEffort": "L",
+      "expectedAssertions": [
+        {
+          "question": "G20",
+          "claimClass": "specification_defined",
+          "sourceRole": "evidence",
+          "relationship": "supports",
+          "treatment": "factual_support",
+          "lookFor": "The definition of pass^k (consistency across k trials) and what the benchmark measures.",
+          "directness": "direct"
+        }
+      ]
+    },
+    {
+      "id": "S16",
+      "registry": {
+        "sourceId": 25,
+        "action": "existing"
+      },
+      "identity": {
+        "format": "arxiv_abstract",
+        "versionPin": "arXiv version (vN) at capture",
+        "stabilityCheck": false,
+        "expectedOutcome": "captured"
+      },
+      "provenance": {
+        "originType": "research",
+        "group": "gptq-authors"
+      },
+      "freshness": "stable",
+      "reviewEffort": "L",
+      "expectedAssertions": [
+        {
+          "question": "G11",
+          "claimClass": "independent_research_finding",
+          "sourceRole": "evidence",
+          "relationship": "supports",
+          "treatment": "factual_support",
+          "lookFor": "The bit widths studied and the accuracy degradation the authors report, with the models and settings named.",
+          "directness": "direct"
+        }
+      ]
+    },
+    {
+      "id": "S17",
+      "registry": {
+        "sourceId": 25,
+        "action": "existing"
+      },
+      "identity": {
+        "format": "arxiv_abstract",
+        "versionPin": "arXiv version (vN) at capture",
+        "stabilityCheck": false,
+        "expectedOutcome": "captured"
+      },
+      "provenance": {
+        "originType": "research",
+        "group": "awq-authors"
+      },
+      "freshness": "stable",
+      "reviewEffort": "L",
+      "expectedAssertions": [
+        {
+          "question": "G11",
+          "claimClass": "independent_research_finding",
+          "sourceRole": "evidence",
+          "relationship": "supports",
+          "treatment": "factual_support",
+          "lookFor": "The low-bit weight-only quantisation results the authors report, and the conditions under which they hold.",
+          "directness": "direct"
+        }
+      ]
+    },
+    {
+      "id": "S18",
+      "registry": {
+        "sourceId": 29,
+        "action": "existing"
+      },
+      "identity": {
+        "format": "github_markdown",
+        "versionPin": "commit SHA at capture",
+        "stabilityCheck": false,
+        "expectedOutcome": "captured"
+      },
+      "provenance": {
+        "originType": "primary",
+        "group": "llama-cpp-project"
+      },
+      "freshness": "90d",
+      "reviewEffort": "M",
+      "expectedAssertions": [
+        {
+          "question": "G11",
+          "claimClass": "observed_implementation_behaviour",
+          "sourceRole": "evidence",
+          "relationship": "supports",
+          "treatment": "factual_support",
+          "lookFor": "The quantisation types the tool documents and any quality or size comparison it publishes, with its own measurement conditions.",
+          "directness": "direct"
+        }
+      ]
+    },
+    {
+      "id": "S19",
+      "registry": {
+        "sourceId": 29,
+        "action": "existing"
+      },
+      "identity": {
+        "format": "github_markdown",
+        "versionPin": "commit SHA at capture",
+        "stabilityCheck": false,
+        "expectedOutcome": "captured"
+      },
+      "provenance": {
+        "originType": "primary",
+        "group": "llama-cpp-project"
+      },
+      "freshness": "90d",
+      "reviewEffort": "M",
+      "expectedAssertions": [
+        {
+          "question": "H06",
+          "claimClass": "specification_defined",
+          "sourceRole": "evidence",
+          "relationship": "supports",
+          "treatment": "factual_support",
+          "lookFor": "How the runtime splits a model across GPUs (split modes) and any stated per-GPU overhead.",
+          "directness": "direct"
+        },
+        {
+          "question": "H11",
+          "claimClass": "specification_defined",
+          "sourceRole": "evidence",
+          "relationship": "supports",
+          "treatment": "factual_support",
+          "lookFor": "How devices are selected or assigned, as the basis for separate models per GPU.",
+          "directness": "direct"
+        }
+      ]
+    },
+    {
+      "id": "S20",
+      "registry": {
+        "sourceId": 27,
+        "action": "existing"
+      },
+      "identity": {
+        "format": "arxiv_abstract",
+        "versionPin": "arXiv version (vN) at capture",
+        "stabilityCheck": false,
+        "expectedOutcome": "captured"
+      },
+      "provenance": {
+        "originType": "independent_test",
+        "group": "swe-bench-maintainers"
+      },
+      "freshness": "stable",
+      "reviewEffort": "L",
+      "expectedAssertions": [
+        {
+          "question": "G15",
+          "claimClass": "specification_defined",
+          "sourceRole": "evidence",
+          "relationship": "contextualises",
+          "treatment": "factual_support",
+          "lookFor": "What SWE-bench evaluates: resolving real GitHub issues, checked by tests.",
+          "directness": "direct"
+        },
+        {
+          "question": "G16",
+          "claimClass": "specification_defined",
+          "sourceRole": "evidence",
+          "relationship": "contextualises",
+          "treatment": "factual_support",
+          "lookFor": "The benchmark's construction, as background for the Verified-subset discussion.",
+          "directness": "direct"
+        }
+      ]
+    },
+    {
+      "id": "S21",
+      "registry": {
+        "sourceId": null,
+        "action": "register",
+        "proposed": {
+          "name": "SWE-bench",
+          "tier": "B",
+          "treatment": "primary-research",
+          "copyrightStorageMode": "private_full_text",
+          "licenceTerms": "confirm at registration"
+        }
+      },
+      "identity": {
+        "format": "html",
+        "versionPin": "none (living site); record the observation date",
+        "stabilityCheck": false,
+        "expectedOutcome": "captured"
+      },
+      "provenance": {
+        "originType": "independent_test",
+        "group": "swe-bench-maintainers"
+      },
+      "freshness": "90d",
+      "reviewEffort": "M",
+      "expectedAssertions": [
+        {
+          "question": "G16",
+          "claimClass": "benchmark_result",
+          "sourceRole": "evidence",
+          "relationship": "supports",
+          "treatment": "factual_support",
+          "lookFor": "The maintainers' own description of the Verified subset and any statement on its status. Not leaderboard values.",
+          "directness": "direct"
+        }
+      ]
+    },
+    {
+      "id": "S22",
+      "registry": {
+        "sourceId": 1,
+        "action": "existing"
+      },
+      "identity": {
+        "format": "html",
+        "versionPin": "none (dated post)",
+        "stabilityCheck": false,
+        "expectedOutcome": "captured"
+      },
+      "provenance": {
+        "originType": "vendor_statement",
+        "group": "openai"
+      },
+      "freshness": "365d",
+      "reviewEffort": "L",
+      "expectedAssertions": [
+        {
+          "question": "G16",
+          "claimClass": "official_vendor_claim",
+          "sourceRole": "reported_claim",
+          "relationship": "reports",
+          "treatment": "attributed_opinion",
+          "lookFor": "The vendor's stated reasons for no longer evaluating on SWE-bench Verified. Attributed critique, not a finding.",
+          "directness": "direct"
+        }
+      ]
+    },
+    {
+      "id": "S23",
+      "registry": {
+        "sourceId": 24,
+        "action": "existing"
+      },
+      "identity": {
+        "format": "arxiv_abstract",
+        "versionPin": "arXiv version (vN) at capture",
+        "stabilityCheck": false,
+        "expectedOutcome": "captured"
+      },
+      "provenance": {
+        "originType": "independent_test",
+        "group": "livecodebench-authors"
+      },
+      "freshness": "stable",
+      "reviewEffort": "L",
+      "expectedAssertions": [
+        {
+          "question": "G15",
+          "claimClass": "independent_research_finding",
+          "sourceRole": "evidence",
+          "relationship": "supports",
+          "treatment": "factual_support",
+          "lookFor": "How the benchmark limits contamination (time-windowed problems) and what it evaluates.",
+          "directness": "direct"
+        }
+      ]
+    },
+    {
+      "id": "S24",
+      "registry": {
+        "sourceId": null,
+        "action": "register",
+        "proposed": {
+          "name": "Terminal-Bench",
+          "tier": "B",
+          "treatment": "primary-research",
+          "copyrightStorageMode": "private_full_text",
+          "licenceTerms": "confirm at registration"
+        }
+      },
+      "identity": {
+        "format": "html",
+        "versionPin": "benchmark version label on the page",
+        "stabilityCheck": false,
+        "expectedOutcome": "captured"
+      },
+      "provenance": {
+        "originType": "independent_test",
+        "group": "terminal-bench-maintainers"
+      },
+      "freshness": "90d",
+      "reviewEffort": "M",
+      "expectedAssertions": [
+        {
+          "question": "G15",
+          "claimClass": "independent_research_finding",
+          "sourceRole": "evidence",
+          "relationship": "supports",
+          "treatment": "factual_support",
+          "lookFor": "What the benchmark evaluates (agents completing terminal tasks) and its harness. Not leaderboard values.",
+          "directness": "direct"
+        }
+      ]
+    },
+    {
+      "id": "S28",
+      "registry": {
+        "sourceId": 3,
+        "action": "existing"
+      },
+      "identity": {
+        "format": "html_maybe_client_rendered",
+        "versionPin": "none (undated docs page)",
+        "stabilityCheck": false,
+        "expectedOutcome": "metadata_only_possible"
+      },
+      "provenance": {
+        "originType": "vendor_statement",
+        "group": "openai"
+      },
+      "freshness": "90d",
+      "reviewEffort": "M",
+      "expectedAssertions": [
+        {
+          "question": "G21",
+          "claimClass": "official_vendor_claim",
+          "sourceRole": "reported_claim",
+          "relationship": "reports",
+          "treatment": "factual_support",
+          "lookFor": "How the provider defines reasoning effort and what the setting trades off (reasoning tokens, latency, cost).",
+          "directness": "direct"
+        }
+      ]
+    }
+  ]
+}

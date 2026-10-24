@@ -3,6 +3,7 @@ import {
   freshnessStateFor, independentEvidenceWeightFor, isAnswerEligibleEvidence, isKnownEvidenceQuality,
   sourceRoleFor, type TraceEvidenceQuality, type TraceSourceKind,
 } from "../../ai/task-policy";
+import { publicStoryEligibilitySql } from "./d1";
 
 interface EvidenceRow {
   source_id: string | number;
@@ -149,13 +150,10 @@ export async function retrievePublishedEvidence(
     LEFT JOIN claim_evidence ce ON ce.id = legacy_map.legacy_evidence_id
     LEFT JOIN feed_items fi ON fi.id = ce.feed_item_id
     LEFT JOIN sources legacy_s ON legacy_s.id = fi.source_id
-    WHERE sc.publication_status = 'published'
-      AND sc.published_at IS NOT NULL
-      AND datetime(sc.published_at) <= datetime('now')
-      AND sc.slug IS NOT NULL
-      AND sc.reviewed_by IS NOT NULL AND sc.reviewed_at IS NOT NULL
-      AND sc.summary IS NOT NULL AND trim(sc.summary) <> ''
-      AND sc.evidence_status NOT IN ('unverified','outdated','superseded')
+    -- Story evidence must come from a story the public site can show. The
+    -- shared predicate also requires a published member item, which excludes
+    -- holding clusters such as "Unclustered Items (placeholder)".
+    WHERE ${publicStoryEligibilitySql("sc")}
       AND (fi.id IS NULL OR fi.ingestion_status = 'published')
       AND ca.admission_state = 'admitted'
       AND ca.reviewer_state = 'accepted'
@@ -213,6 +211,22 @@ export async function retrievePublishedEvidence(
       endLocator: row.end_locator ?? undefined,
     };
   });
+}
+
+/**
+ * A stable fingerprint of the governed evidence state behind an answer. Replay
+ * keys include it so a stored answer is reused only while the evidence set is
+ * unchanged; after admission, review, freshness or capture changes, the same
+ * question is decided again.
+ */
+export function evidenceReplayFingerprint(evidence: EvidenceExcerpt[]): string {
+  return JSON.stringify(evidence.map((item) => [
+    item.sourceId, item.claimId ?? null, item.canonicalClaimId ?? null, item.assertionId ?? null,
+    item.sourceDocumentVersionId ?? null, item.sourceChunkId ?? null, item.startLocator ?? null, item.endLocator ?? null,
+    item.admissionState, item.freshnessState, item.sourceRole, item.relationship ?? null, Boolean(item.isDisputed),
+    item.evidenceQuality ?? null, (item.provenanceGroupIds ?? []).slice().sort(), item.knowledgeDocumentId ?? null,
+    item.externalEvidenceResolved ?? null,
+  ]).map((entry) => JSON.stringify(entry)).sort());
 }
 
 export interface DeterministicConfidence {

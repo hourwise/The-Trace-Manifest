@@ -8,6 +8,7 @@ import {
   KC09_EMBEDDING_POLICY,
   type KnowledgeVectorRecordType,
 } from "./knowledge-embedding-policy";
+import { publicStoryEligibilitySql } from "./d1";
 
 export type KnowledgeVectorMetadata = Record<string, unknown>;
 
@@ -224,9 +225,7 @@ async function resolvePublishedStory(db: D1Database, candidate: KnowledgeVectorC
   const row = await db.prepare(`
     SELECT id, publication_status, published_at, reviewed_by, reviewed_at
     FROM story_clusters
-    WHERE id = ? AND publication_status = 'published'
-      AND published_at IS NOT NULL AND datetime(published_at) <= datetime('now')
-      AND reviewed_by IS NOT NULL AND reviewed_at IS NOT NULL
+    WHERE id = ? AND ${publicStoryEligibilitySql("story_clusters")}
   `).bind(parsed.recordId).first<{ id: number; publication_status: string; published_at: string; reviewed_by: string; reviewed_at: string }>();
   if (!row) return { id: candidate.id, score: candidate.score, reason: "story_not_eligible" };
   const metadataRejection = stateRejected(candidate, { admissionState: "admitted", publicationState: "published" });

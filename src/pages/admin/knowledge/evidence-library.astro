@@ -1,0 +1,216 @@
+---
+// SEED-01: Evidence Library review queue. Assertions whose canonical claim
+// belongs to no real story are governed here in the evidence_library context.
+// Readers can inspect; only publishers see decision controls, and every write
+// is re-authorised by the signed admin proxy and the Worker.
+import AdminLayout from "../../../layouts/AdminLayout.astro";
+import { authenticateAccessRequest, type AccessEnvironment } from "../../../security/access-auth";
+import {
+  EVIDENCE_LIBRARY_FILTER_LABELS,
+  EVIDENCE_LIBRARY_FILTERS,
+  EVIDENCE_LIBRARY_INELIGIBILITY_LABELS,
+  listEvidenceLibrary,
+} from "../../../lib/server/evidence-library-queue";
+
+export const prerender = false;
+const env = Astro.locals.runtime.env;
+const identity = await authenticateAccessRequest(Astro.request, env as unknown as AccessEnvironment);
+if (!identity) return new Response("Forbidden", { status: 403 });
+const isPublisher = identity.role === "publisher";
+
+const page = await listEvidenceLibrary(env.DB as D1Database, {
+  filter: Astro.url.searchParams.get("filter"),
+  cursor: Astro.url.searchParams.get("cursor"),
+});
+const show = (value: string | null | undefined) => (value ?? "not recorded").replaceAll("_", " ");
+const admissionOpen = (state: string) => state === "pending" || state === "quarantined";
+const reviewOpen = (admission: string, reviewer: string) => admission === "admitted" && (reviewer === "proposed" || reviewer === "needs_research");
+---
+
+<AdminLayout title="Evidence Library — TRACE Knowledge Builder" description="Govern evidence assertions that no story carries.">
+  <div class="wrap">
+    <h1>Evidence Library</h1>
+    <p class="meta">Assertions captured from sources that no published or draft story carries. Admission, editorial acceptance and freshness are separate decisions, and none of them publishes anything: an accepted, current assertion reaches Ask TRACE only once it is mapped to approved knowledge and meets the answer policy.</p>
+    <p style="margin:1rem 0 1.25rem;"><a href="/admin/knowledge" style="color:var(--color-accent);">&larr; Knowledge Builder</a> &nbsp;|&nbsp; <a href="/admin/knowledge/freshness" style="color:var(--color-accent);">Freshness review</a> &nbsp;|&nbsp; <a href="/admin" style="color:var(--color-accent);">Admin</a></p>
+    {!isPublisher && <p class="card meta" role="note">You have read-only access. Decisions are recorded by publishers.</p>}
+
+    <nav class="filters" aria-label="Evidence Library filters">
+      {EVIDENCE_LIBRARY_FILTERS.map((key) => (
+        <a href={`?filter=${key}`} aria-current={key === page.filter ? "page" : undefined} class={key === page.filter ? "active" : ""}>
+          {EVIDENCE_LIBRARY_FILTER_LABELS[key]} <span class="count">{page.counts[key].count}{page.counts[key].capped ? "+" : ""}</span>
+        </a>
+      ))}
+    </nav>
+
+    {page.items.length === 0 ? (
+      <div class="card"><p class="meta">Nothing in this view.</p></div>
+    ) : (
+      <div class="queue">
+        {page.items.map((item) => (
+          <article class="card" data-library-assertion data-assertion-id={item.assertionId}
+            data-admission={item.admissionState} data-reviewer={item.reviewerState} data-freshness={item.freshnessState}>
+            <div class="heading-row"><h2>{item.canonicalText}</h2><code>{item.assertionId}</code></div>
+            <p>{item.assertionText}</p>
+            <p class="meta states"><strong>Admission:</strong> {show(item.admissionState)} · <strong>Review:</strong> {show(item.reviewerState)} · <strong>Freshness:</strong> {show(item.freshnessState)}</p>
+            <p class="meta"><strong>Relationship:</strong> {show(item.relationship)} · <strong>treatment:</strong> {show(item.evidenceTreatment)} · <strong>role:</strong> {show(item.sourceRole)} · <strong>directness:</strong> {show(item.directness)}</p>
+            <div class="source">
+              <p class="meta"><strong>Source:</strong> {item.source.url ? <code>{item.source.url}</code> : "no captured source"}{item.source.title ? ` · ${item.source.title}` : ""}</p>
+              <p class="meta"><strong>Version:</strong> {item.source.documentVersionId ?? "none"}{item.source.retrievedAt ? ` · retrieved ${item.source.retrievedAt}` : ""}{item.source.documentVersionId ? (item.source.isCurrentVersion ? " · current version" : " · not the current version") : ""} · <strong>source admission:</strong> {show(item.source.admissionState)}</p>
+              {item.excerpt && <blockquote>{item.excerpt}</blockquote>}
+              <p class="meta"><strong>Locator:</strong> {item.locator.start && item.locator.end ? `${item.locator.start}–${item.locator.end}` : "none"} · <strong>Provenance:</strong> {item.provenance ? `${show(item.provenance.originType)} (group ${item.provenance.groupId})` : "no reviewed group"}{item.knowledgeMapped ? " · mapped to knowledge" : ""}</p>
+            </div>
+            {item.ineligibility.length > 0 ? (
+              <div class="blockers"><strong>Not usable as answer evidence yet:</strong><ul>{item.ineligibility.map((reason) => <li>{EVIDENCE_LIBRARY_INELIGIBILITY_LABELS[reason]}</li>)}</ul></div>
+            ) : (
+              <p class="ready">Meets the recorded evidence gates.</p>
+            )}
+
+            {isPublisher && (admissionOpen(item.admissionState) || reviewOpen(item.admissionState, item.reviewerState)) && (
+              <form class="decision" data-axis={admissionOpen(item.admissionState) ? "admission" : "review"}>
+                <label>Reason<textarea name="reason" rows="2" maxlength="2000" required placeholder="What you checked in the source and why."></textarea></label>
+                <div class="actions">
+                  {admissionOpen(item.admissionState) ? (
+                    <>
+                      <button type="submit" class="btn" data-action="admit">Admit</button>
+                      <button type="submit" class="btn btn-secondary" data-action="reject">Reject</button>
+                    </>
+                  ) : (
+                    <>
+                      <button type="submit" class="btn" data-action="accept_review">Accept</button>
+                      <button type="submit" class="btn btn-secondary" data-action="reject_review">Reject</button>
+                    </>
+                  )}
+                  <span class="result" role="status"></span>
+                </div>
+              </form>
+            )}
+
+            <details class="history" data-history>
+              <summary>Governance history</summary>
+              <div data-history-body><p class="meta">Open to load.</p></div>
+            </details>
+          </article>
+        ))}
+      </div>
+    )}
+
+    {page.nextCursor && <p style="margin-top:1.5rem;"><a href={`?filter=${page.filter}&cursor=${page.nextCursor}`} style="color:var(--color-accent);">Next page &rarr;</a></p>}
+  </div>
+</AdminLayout>
+
+{/* Rendered for every role (see D6): readers use the history loader; the
+    decision handlers find no forms and do nothing. */}
+<script>
+  import {
+    buildAssertionGovernancePayload,
+    createAssertionGovernanceIdempotencyKey,
+    governanceDecisionMessage,
+    governanceFailureMessage,
+    type AssertionGovernanceAction,
+    type AssertionGovernanceErrorBody,
+    type AssertionGovernanceResponse,
+  } from "../../../lib/admin/assertion-governance-ui";
+  import {
+    buildAssertionReviewerGovernancePayload,
+    createAssertionReviewerGovernanceIdempotencyKey,
+    reviewerGovernanceDecisionMessage,
+    reviewerGovernanceFailureMessage,
+    type AssertionReviewerGovernanceAction,
+    type AssertionReviewerGovernanceResponse,
+  } from "../../../lib/admin/assertion-reviewer-governance-ui";
+  import { governanceHistoryContextLabel, governanceHistoryTransitionLabel } from "../../../lib/admin/assertion-governance-history-ui";
+  import type { AssertionGovernanceHistory } from "../../../lib/server/assertion-governance-history";
+  import type { EditorialAssertion } from "../../../lib/editorial-evidence-contract";
+
+  function escapeHTML(value: string): string {
+    return value.replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]!);
+  }
+
+  function assertionFrom(card: HTMLElement): EditorialAssertion {
+    return {
+      assertionId: card.dataset.assertionId!,
+      admissionState: card.dataset.admission,
+      reviewerState: card.dataset.reviewer,
+      freshnessState: card.dataset.freshness,
+    } as EditorialAssertion;
+  }
+
+  // One key per draft decision, so a retry after a network failure replays it.
+  const draftKeys = new Map<string, string>();
+
+  document.querySelectorAll<HTMLFormElement>("form.decision").forEach((form) => {
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const card = form.closest<HTMLElement>("[data-library-assertion]")!;
+      const result = form.querySelector(".result") as HTMLElement;
+      const action = ((event as SubmitEvent).submitter as HTMLButtonElement | null)?.dataset.action ?? "";
+      const reason = (form.querySelector("[name=reason]") as HTMLTextAreaElement).value;
+      const review = form.dataset.axis === "review";
+      const draft = `${card.dataset.assertionId}:${action}`;
+      try {
+        const key = draftKeys.get(draft) ?? (review ? createAssertionReviewerGovernanceIdempotencyKey() : createAssertionGovernanceIdempotencyKey());
+        draftKeys.set(draft, key);
+        const body = review
+          ? buildAssertionReviewerGovernancePayload(null, assertionFrom(card), action as AssertionReviewerGovernanceAction, reason, key)
+          : buildAssertionGovernancePayload(null, assertionFrom(card), action as AssertionGovernanceAction, reason, key);
+        result.textContent = "Saving…";
+        const response = await fetch(review ? "/api/admin/assertion-reviewer-decision" : "/api/admin/assertion-review", {
+          method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+        });
+        const payload = await response.json() as Record<string, unknown>;
+        if (response.ok) {
+          draftKeys.delete(draft);
+          result.textContent = `${review
+            ? reviewerGovernanceDecisionMessage(payload as unknown as AssertionReviewerGovernanceResponse)
+            : governanceDecisionMessage(payload as unknown as AssertionGovernanceResponse)} Reloading…`;
+          setTimeout(() => location.reload(), 900);
+          return;
+        }
+        const failure = payload as AssertionGovernanceErrorBody;
+        if (failure.code === "idempotency_conflict") draftKeys.delete(draft);
+        result.textContent = review
+          ? reviewerGovernanceFailureMessage(response.status, failure.code, failure.error ?? "The decision was not saved.")
+          : governanceFailureMessage(response.status, failure.code, failure.error ?? "The decision was not saved.");
+      } catch (error) {
+        result.textContent = error instanceof Error ? error.message : "The decision service is unavailable; retrying is safe.";
+      }
+    });
+  });
+
+  document.querySelectorAll<HTMLDetailsElement>("details[data-history]").forEach((details) => {
+    details.addEventListener("toggle", async () => {
+      if (!details.open || details.dataset.loaded) return;
+      const card = details.closest<HTMLElement>("[data-library-assertion]")!;
+      const body = details.querySelector("[data-history-body]") as HTMLElement;
+      body.innerHTML = '<p class="meta">Loading…</p>';
+      try {
+        const response = await fetch(`/api/admin/assertion-governance-history?scope=evidence_library&assertionId=${encodeURIComponent(card.dataset.assertionId!)}`, { credentials: "include" });
+        if (!response.ok) throw new Error();
+        const history = await response.json() as AssertionGovernanceHistory;
+        details.dataset.loaded = "true";
+        body.innerHTML = history.events.length === 0
+          ? '<p class="meta">No governance decisions have been recorded for this assertion.</p>'
+          : history.events.map((item) => `
+              <div class="history-event">
+                <p><strong>${escapeHTML(governanceHistoryTransitionLabel(item))}</strong> · ${escapeHTML(governanceHistoryContextLabel(item))}</p>
+                <p class="meta">${escapeHTML(item.action)} · ${escapeHTML(item.actorEmail)} · ${escapeHTML(item.timestamp)} · recalculation ${escapeHTML(item.recalculation.status)}</p>
+                <p>${escapeHTML(item.reason)}</p>
+              </div>`).join("") + (history.truncated ? `<p class="meta">Showing the oldest ${history.limit} events.</p>` : "");
+      } catch {
+        body.innerHTML = '<p class="meta">Governance history is unavailable.</p>';
+      }
+    });
+  });
+</script>
+
+<style>
+.filters { display:flex; gap:0.5rem; flex-wrap:wrap; margin-bottom:1.25rem; } .filters a { padding:0.4rem 0.8rem; border:1px solid var(--color-border); border-radius:4px; text-decoration:none; color:var(--color-muted); font-size:0.85rem; } .filters a.active { color:var(--color-text); border-color:var(--color-accent); } .count { opacity:0.7; }
+.queue { display:grid; gap:1rem; } .heading-row { display:flex; justify-content:space-between; gap:1rem; align-items:flex-start; } .heading-row h2 { font-size:1rem; margin:0; }
+.source { margin:0.6rem 0; padding:0.6rem 0.75rem; background:var(--color-bg-muted); border:1px solid var(--color-border); border-radius:4px; } .source p { margin:0.2rem 0; }
+blockquote { margin:0.5rem 0; padding-left:0.75rem; border-left:3px solid var(--color-border); font-size:0.88rem; }
+.blockers { font-size:0.85rem; margin:0.6rem 0; } .blockers ul { margin:0.3rem 0 0 1.1rem; padding:0; } .ready { font-size:0.85rem; color:var(--ev-confirmed, var(--color-accent)); }
+label { display:block; margin-top:0.6rem; font-size:0.85rem; font-weight:600; } textarea { display:block; width:100%; box-sizing:border-box; margin-top:0.25rem; padding:0.5rem; font:inherit; border:1px solid var(--color-border); border-radius:4px; background:var(--color-bg-muted); }
+.actions { display:flex; align-items:center; gap:0.75rem; margin-top:0.6rem; flex-wrap:wrap; } .result { font-size:0.85rem; color:var(--color-muted); }
+.history { margin-top:0.75rem; font-size:0.85rem; } .history-event { padding:0.45rem 0; border-bottom:1px solid var(--color-border); } .history-event p { margin:0.15rem 0; }
+@media (max-width:640px) { .heading-row { flex-direction:column; } .actions { align-items:stretch; flex-direction:column; } }
+</style>

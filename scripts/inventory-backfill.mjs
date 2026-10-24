@@ -12,7 +12,11 @@ const ROOT = resolve(".");
 const CATEGORIES = [
   "published_story", "approved_knowledge_document", "static_knowledge_page",
   "knowledge_authoring_input", "guide", "correction", "model", "provider", "benchmark", "source_url",
+  "evidence_url", "curated_seed",
 ];
+// Categories whose items are keyed by URL: one capture per URL, origins merged.
+const URL_KEYED_CATEGORIES = new Set(["source_url", "evidence_url"]);
+const SEED_LIST_DIRECTORY = "docs/knowledge-seed";
 
 const D1_QUERY = `
 SELECT 'published_story' AS category, CAST(id AS TEXT) AS id, title AS label,
@@ -22,13 +26,58 @@ UNION ALL
 SELECT 'approved_knowledge_document', id, canonical_question, status, NULL, 'knowledge_documents'
 FROM knowledge_documents WHERE status = 'approved'
 UNION ALL
-SELECT 'static_legacy_knowledge_page', CAST(id AS TEXT), title, status, NULL, 'knowledge_pages'
-FROM knowledge_pages WHERE status = 'published'
-UNION ALL
 SELECT 'correction', CAST(id AS TEXT), correction_type, CASE WHEN published = 1 THEN 'published' ELSE 'unpublished' END, evidence_url, 'corrections'
 FROM corrections
 ORDER BY category, id;
 `;
+
+// knowledge_pages exists on some legacy databases only (not Production), so it
+// is queried separately and only when present.
+const D1_LEGACY_PAGES_QUERY = `
+SELECT 'static_legacy_knowledge_page' AS category, CAST(id AS TEXT) AS id, title AS label,
+       status AS state, NULL AS url, 'knowledge_pages' AS origin
+FROM knowledge_pages WHERE status = 'published'
+ORDER BY id;
+`;
+
+// KNOWLEDGE-10 C1: the source URLs behind legacy evidence, so the governed
+// capture route can re-derive locator-backed assertions for the same canonical
+// claims. Editorial-synthesis claims are TRACE prose and never evidence.
+const D1_EVIDENCE_QUERY = `
+WITH legacy AS (
+  SELECT fi.url AS url, fi.title AS title,
+         CASE WHEN ca.reviewer_state = 'accepted' THEN 2 ELSE 1 END AS rank
+  FROM claim_assertions ca
+  JOIN legacy_claim_evidence_map lm ON lm.assertion_id = ca.id
+  JOIN claim_evidence ce ON ce.id = lm.legacy_evidence_id
+  JOIN feed_items fi ON fi.id = ce.feed_item_id
+  UNION ALL
+  SELECT fi.url, fi.title, 0
+  FROM canonical_claims cc
+  JOIN legacy_claim_cutover lc ON lc.canonical_claim_id = cc.id
+  JOIN claims c ON c.id = lc.legacy_claim_id
+  JOIN feed_items fi ON fi.id = c.feed_item_id
+  WHERE cc.claim_class <> 'editorial_synthesis'
+)
+SELECT 'evidence_url' AS category, 'evidence:' || url AS id, MIN(title) AS label,
+       CASE MAX(rank) WHEN 2 THEN 'legacy_accepted' WHEN 1 THEN 'legacy_proposed' ELSE 'legacy_claim_only' END AS state,
+       url, 'legacy_claim_evidence' AS origin
+FROM legacy
+WHERE url IS NOT NULL AND trim(url) <> ''
+GROUP BY url
+ORDER BY id;
+`;
+
+const D1_TABLES_QUERY = "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name;";
+
+/** The read-only inventory queries to run, given the tables the database has. */
+export function databaseQueries(tableNames) {
+  const tables = new Set(tableNames);
+  const queries = [D1_QUERY, D1_CATALOGUE_QUERY, D1_SOURCE_QUERY];
+  if (tables.has("knowledge_pages")) queries.push(D1_LEGACY_PAGES_QUERY);
+  if (["claim_assertions", "legacy_claim_evidence_map", "legacy_claim_cutover"].every((table) => tables.has(table))) queries.push(D1_EVIDENCE_QUERY);
+  return queries;
+}
 
 const D1_CATALOGUE_QUERY = `
 SELECT 'model' AS category, CAST(id AS TEXT) AS id, name AS label,
@@ -135,6 +184,25 @@ function staticInventory(categories) {
     addItem(categories, "guide", { id: `document:${relativePath(path)}`, label: relativePath(path), state: "documentation", origin: relativePath(path) });
     collectUrls(readFileSync(path, "utf8"), relativePath(path), categories);
   }
+
+  // KNOWLEDGE-10 C1: owner-curated seed lists. Each list's state is carried
+  // through so an unapproved list is visible as such in any plan.
+  const seedLists = collectFiles(resolve(ROOT, SEED_LIST_DIRECTORY), (path) => path.endsWith(".json"));
+  for (const path of seedLists) {
+    const list = JSON.parse(readFileSync(path, "utf8"));
+    if (list.schemaVersion !== "trace-seed-list-v1" || !/^[a-z0-9-]+$/.test(String(list.listId)) || !Array.isArray(list.sources)) {
+      throw new Error(`${relativePath(path)} is not a trace-seed-list-v1 file.`);
+    }
+    for (const source of list.sources) {
+      if (!/^S\d{2,3}$/.test(String(source.id)) || !validUrl(String(source.url ?? ""))) {
+        throw new Error(`${relativePath(path)} has an invalid seed source: ${JSON.stringify(source.id)}.`);
+      }
+      addItem(categories, "curated_seed", {
+        id: `seed:${list.listId}:${source.id}`, label: source.title ?? source.url, state: `seed_${list.approval ?? "proposed"}`,
+        url: source.url, origin: relativePath(path),
+      });
+    }
+  }
 }
 
 function collectUrls(body, origin, categories) {
@@ -158,25 +226,28 @@ function collectDatabaseRows() {
   if (!/^[A-Za-z0-9_-]+$/.test(database)) throw new Error("Database name contains unsupported characters.");
   const remote = hasArg("--remote");
   const temporaryDirectory = mkdtempSync(join(tmpdir(), "trace-kc11a-"));
+  const run = (query, name) => {
+    const queryFile = join(temporaryDirectory, `${name}.sql`);
+    writeFileSync(queryFile, query, "utf8");
+    const command = `npx.cmd wrangler d1 execute ${database} --config wrangler.toml ${remote ? "--remote" : "--local"} --json --file "${queryFile}"`;
+    const output = execSync(command, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    return parseWranglerJson(output);
+  };
   try {
-    return [D1_QUERY, D1_CATALOGUE_QUERY, D1_SOURCE_QUERY].flatMap((query, index) => {
-      const queryFile = join(temporaryDirectory, `inventory-${index}.sql`);
-      writeFileSync(queryFile, query, "utf8");
-      const command = `npx.cmd wrangler d1 execute ${database} --config wrangler.toml ${remote ? "--remote" : "--local"} --json --file "${queryFile}"`;
-      const output = execSync(command, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
-      return parseWranglerJson(output);
-    });
+    const tableNames = run(D1_TABLES_QUERY, "tables").map((row) => String(row.name));
+    return databaseQueries(tableNames).flatMap((query, index) => run(query, `inventory-${index}`));
   } finally {
     rmSync(temporaryDirectory, { recursive: true, force: true });
   }
 }
 
+/** @param {{ databaseRows?: Array<Record<string, any>>, root?: string, generatedAt?: string }} [options] */
 export function buildInventory({ databaseRows = [], root = ROOT, generatedAt = new Date().toISOString() } = {}) {
   const categories = Object.fromEntries(CATEGORIES.map((category) => [category, []]));
   for (const row of databaseRows) {
     const category = row.category === "static_legacy_knowledge_page" ? "static_knowledge_page" : row.category;
     if (!categories[category]) continue;
-    if (category === "source_url" && !validUrl(String(row.url ?? ""))) continue;
+    if (URL_KEYED_CATEGORIES.has(category) && !validUrl(String(row.url ?? ""))) continue;
     addItem(categories, category, { ...row, origin: row.origin ?? "d1" });
   }
   const previousRoot = process.cwd();
@@ -185,9 +256,9 @@ export function buildInventory({ databaseRows = [], root = ROOT, generatedAt = n
   for (const category of Object.keys(categories)) {
     const unique = new Map();
     for (const item of categories[category]) {
-      const key = category === "source_url" ? item.url : `${item.id}:${item.url ?? ""}`;
+      const key = URL_KEYED_CATEGORIES.has(category) ? item.url : `${item.id}:${item.url ?? ""}`;
       const previous = unique.get(key);
-      if (previous && category === "source_url") {
+      if (previous && URL_KEYED_CATEGORIES.has(category)) {
         const origins = new Set([...(Array.isArray(previous.origin) ? previous.origin : [previous.origin]), item.origin]);
         previous.origin = [...origins].filter(Boolean).sort();
       } else if (!previous) {

@@ -279,6 +279,8 @@ async function rejectionAndBoundTests(): Promise<void> {
     for (let storyId = 2200; storyId < 2225; storyId++) {
       bounded.sqlite.prepare("INSERT INTO story_clusters (id, title, evidence_status, publication_status) VALUES (?, ?, 'unverified', 'review')").run(storyId, `Bounded story ${storyId}`);
       bounded.sqlite.prepare("INSERT INTO story_claims (story_cluster_id, canonical_claim_id, role, materiality, display_order) VALUES (?, ?, 'supporting', 'standard', 1)").run(storyId, CLAIM_ID);
+      // Real stories have member items; memberless clusters are not rescored.
+      bounded.sqlite.prepare("INSERT INTO story_cluster_members (cluster_id, feed_item_id, is_primary) VALUES (?, ?, 0)").run(storyId, CLUSTER_ID);
     }
     await assertGovernanceError(governAssertionAdmission(bounded.asD1(), input(assertionId, "admit", "bound-key", "bound-request")), "recalculation_scope_too_large");
     assert.equal((await bounded.prepare("SELECT admission_state FROM claim_assertions WHERE id = ?").bind(assertionId).first<{ admission_state: string }>())?.admission_state, "pending");

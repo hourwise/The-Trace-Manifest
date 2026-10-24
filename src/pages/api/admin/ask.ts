@@ -10,7 +10,7 @@
 import type { APIRoute } from "astro";
 import { buildConfig } from "../../../ai/config";
 import { askTrace, hashPrivateIdentifier } from "../../../ai/trace-model-gateway";
-import { retrievePublishedEvidence, retrieveApprovedKnowledge } from "../../../lib/server/ask-evidence";
+import { evidenceReplayFingerprint, retrievePublishedEvidence, retrieveApprovedKnowledge } from "../../../lib/server/ask-evidence";
 import { buildAskTraceDecisionPacket } from "../../../lib/server/ask-trace-decision";
 import { authenticateAccessRequest, type AccessEnvironment } from "../../../security/access-auth";
 
@@ -123,7 +123,10 @@ export const POST: APIRoute = async ({ request, locals }) => {
 
   const result = await askTrace(env, {
     requestId,
-    idempotencyKeyHash: await hashPrivateIdentifier(`admin-ask:${secret}:${question}`),
+    // Without the evidence fingerprint, a question re-asked within the 7-day
+    // request retention replayed its first answer even after review changed
+    // the evidence, which would hide the effect of each seeding batch.
+    idempotencyKeyHash: await hashPrivateIdentifier(`admin-ask:${secret}:${question}:${evidenceReplayFingerprint(evidence)}`),
     visitorHash: await hashPrivateIdentifier(`admin:${visitorSecret}:${identity.email}`),
     questionHash: await hashPrivateIdentifier(`admin-q:${visitorSecret}:${question.toLowerCase()}`),
     question,

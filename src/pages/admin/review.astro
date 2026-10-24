@@ -253,6 +253,7 @@ try {
         AssertionGovernanceHistory,
         AssertionGovernanceHistoryEvent,
       } from "../../lib/server/assertion-governance-history";
+      import { governanceHistoryContextLabel, governanceHistoryTransitionLabel } from "../../lib/admin/assertion-governance-history-ui";
 
       function authHeaders(method: string = "GET"): Record<string, string> {
         // Only set Content-Type for requests with a body; adding it to GET
@@ -668,9 +669,9 @@ try {
       }
 
       function governanceHistoryEventMarkup(event: AssertionGovernanceHistoryEvent): string {
-        const transition = event.axis === "admission"
-          ? `Admission: ${displayState(event.previous.admissionState)} → ${displayState(event.current.admissionState)}`
-          : `Editorial review: ${displayState(event.previous.reviewerState)} → ${displayState(event.current.reviewerState)}`;
+        // Freshness approvals and Evidence Library decisions share this ledger
+        // since migration 0076, so every axis and context is labelled.
+        const transition = `${governanceHistoryTransitionLabel(event)} · ${governanceHistoryContextLabel(event)}`;
         const recalculation = event.recalculation.status === "completed"
           ? "Recalculation completed"
           : event.recalculation.status === "queued"
