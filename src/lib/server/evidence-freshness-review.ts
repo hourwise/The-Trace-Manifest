@@ -486,16 +486,17 @@ export async function rejectFreshnessReview(
     FROM evidence_freshness_reviews WHERE id = ?
   `).bind(reviewId).first<ReviewRow>();
   if (!review) throw new EvidenceFreshnessReviewError("Freshness review was not found.", "review_not_found", 404);
-  if (review.state === "rejected") return reviewResult(review, false, true);
+  const note = reviewNote.trim();
+  if (review.state === "rejected") return rejectionReplay(review, note);
   if (review.state === "approved") throw new EvidenceFreshnessReviewError("An approved freshness review cannot be rejected.", "review_approved", 409);
   const now = new Date().toISOString();
   const result = await db.prepare(`
     UPDATE evidence_freshness_reviews
     SET state = 'rejected', reviewed_by = ?, reviewed_at = ?, review_note = ?
     WHERE id = ? AND state = 'pending'
-  `).bind(actor.trim(), now, reviewNote.trim() || null, review.id).run();
+  `).bind(actor.trim(), now, note, review.id).run();
   if (Number(result.meta.changes ?? 0) === 1) {
-    return reviewResult({ ...review, state: "rejected", reviewed_by: actor.trim(), reviewed_at: now, review_note: reviewNote.trim() || null }, true, false);
+    return reviewResult({ ...review, state: "rejected", reviewed_by: actor.trim(), reviewed_at: now, review_note: note }, true, false);
   }
   const raced = await db.prepare(`
     SELECT id, claim_assertion_id, prior_state, proposed_state,
@@ -503,6 +504,18 @@ export async function rejectFreshnessReview(
            requested_at, reviewed_by, reviewed_at, review_note, request_fingerprint
     FROM evidence_freshness_reviews WHERE id = ?
   `).bind(review.id).first<ReviewRow>();
-  if (raced?.state === "rejected") return reviewResult(raced, false, true);
+  if (raced?.state === "rejected") return rejectionReplay(raced, note);
   throw new EvidenceFreshnessReviewError("Freshness rejection lost a concurrent approval or state transition.", "rejection_race", 409);
+}
+
+/**
+ * A review is decided once, so its id is the rejection's idempotency key: a
+ * retry with the recorded reason replays the decision, and a different reason
+ * is a conflicting decision, not a retry.
+ */
+function rejectionReplay(review: ReviewRow, note: string): FreshnessReviewResult {
+  if ((review.review_note ?? "").trim() !== note) {
+    throw new EvidenceFreshnessReviewError("This review was already rejected with a different reason.", "rejection_conflict", 409);
+  }
+  return reviewResult(review, false, true);
 }

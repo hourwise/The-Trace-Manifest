@@ -56,6 +56,44 @@ async function serviceRequiresReason(): Promise<void> {
   }
 }
 
+// The review id is the rejection's idempotency key: a retry with the recorded
+// reason returns the same result; a changed reason is a conflict, not a retry.
+async function retrySafety(): Promise<void> {
+  const database = new SQLiteD1();
+  try {
+    seedReview(database, "retry");
+    const first = await rejectFreshnessReview(database.asD1(), "retry", "publisher@example.test", "Source was withdrawn.");
+    const recorded = database.sqlite.prepare("SELECT state, reviewed_by, reviewed_at, review_note FROM evidence_freshness_reviews WHERE id = 'retry'").get();
+    const again = await rejectFreshnessReview(database.asD1(), "retry", "publisher@example.test", "  Source was withdrawn.  ");
+    assert.equal(first.inserted, true);
+    assert.deepEqual({ ...again, inserted: true, replay: false }, first, "a retry with the same reason returns the same result");
+    assert.equal(again.replay, true);
+    await rejectsWith(rejectFreshnessReview(database.asD1(), "retry", "publisher@example.test", "A different reason."), "rejection_conflict");
+    assert.deepEqual(database.sqlite.prepare("SELECT state, reviewed_by, reviewed_at, review_note FROM evidence_freshness_reviews WHERE id = 'retry'").get(), recorded,
+      "neither the replay nor the conflict changes the recorded decision");
+
+    // Concurrent rejections with different reasons: one decision wins, every
+    // retry of the winner replays, and every other reason conflicts.
+    seedReview(database, "concurrent");
+    const reasons = ["Reason A.", "Reason B.", "Reason A.", "Reason C.", "Reason B.", "Reason A."];
+    const outcomes = await Promise.allSettled(reasons.map((reason) => rejectFreshnessReview(database.asD1(), "concurrent", "publisher@example.test", reason)));
+    const winner = reviewRow(database, "concurrent").review_note!;
+    assert.equal(outcomes.filter((outcome) => outcome.status === "fulfilled" && outcome.value.inserted).length, 1, "exactly one rejection commits");
+    outcomes.forEach((outcome, index) => {
+      if (reasons[index] === winner) assert.equal(outcome.status, "fulfilled", "the winning reason never conflicts");
+      else assert.ok(outcome.status === "rejected" && outcome.reason instanceof EvidenceFreshnessReviewError && outcome.reason.code === "rejection_conflict");
+    });
+
+    // A rejection recorded before reasons were required has no note, so no
+    // reason can claim to be its retry.
+    seedReview(database, "legacy");
+    database.sqlite.exec("UPDATE evidence_freshness_reviews SET state = 'rejected', reviewed_by = 'publisher@example.test', reviewed_at = '2026-10-23T21:00:00Z' WHERE id = 'legacy'");
+    await rejectsWith(rejectFreshnessReview(database.asD1(), "legacy", "publisher@example.test", "Any reason."), "rejection_conflict");
+  } finally {
+    database.close();
+  }
+}
+
 async function signedRequest(body: string, role: "reader" | "publisher"): Promise<Request> {
   const path = "/admin/knowledge/freshness";
   const timestamp = String(Date.now());
@@ -89,6 +127,18 @@ async function workerRequiresReason(): Promise<void> {
     const rejected = await send({ operation: "reject", reviewId: "route", reviewNote: "Superseded by a newer version." });
     assert.equal(rejected.status, 200);
     assert.deepEqual({ ...reviewRow(database, "route") }, { state: "rejected", review_note: "Superseded by a newer version." });
+    const firstBody = (await rejected.json()) as Record<string, unknown>;
+
+    const retried = await send({ operation: "reject", reviewId: "route", reviewNote: "Superseded by a newer version." });
+    assert.equal(retried.status, 200, "a retry with the same reason replays");
+    const retriedBody = (await retried.json()) as Record<string, unknown>;
+    assert.equal(retriedBody.replay, true);
+    assert.deepEqual({ ...retriedBody, inserted: true, replay: false }, firstBody, "the replay returns the same decision");
+    const changed = await send({ operation: "reject", reviewId: "route", reviewNote: "A different reason." });
+    assert.equal(changed.status, 409, "a changed reason under the same review is refused");
+    assert.equal(((await changed.json()) as { code?: string }).code, "rejection_conflict");
+    assert.equal((await send({ operation: "approve", reviewId: "route" })).status, 409, "a rejected review cannot then be approved");
+    assert.equal(reviewRow(database, "route").review_note, "Superseded by a newer version.", "the recorded reason is unchanged");
   } finally {
     database.close();
   }
@@ -105,6 +155,7 @@ function pageNeedsConfirmStep(): void {
 
 payloadBuilder();
 await serviceRequiresReason();
+await retrySafety();
 await workerRequiresReason();
 pageNeedsConfirmStep();
 console.log("freshness reject reason tests passed");
