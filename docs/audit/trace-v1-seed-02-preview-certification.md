@@ -277,6 +277,11 @@ Insights had **not yet** caught up with the approve batch (event, job, snapshots
 
 **Observations (not acted on):**
 
-1. **`/admin/review` shows readers "Publish Story" and "Archive (not news)",** with no read-only notice. The server refuses both (403, above), so nothing can be written. But the page offers controls a reader cannot use. The assertion governance controls on the same page *are* role-gated (`data-assertion-governance-role`). This predates SEED-01. *Recommend:* role-gate those controls, or show the read-only notice, in a small follow-up.
+1. **`/admin/review` shows readers "Publish Story" and "Archive (not news)",** with no read-only notice. The server refuses both (403, above), so nothing can be written. But the page offers controls a reader cannot use. The assertion governance controls on the same page *are* role-gated (`data-assertion-governance-role`). This predates SEED-01. **Fixed locally after this QA; not yet deployed.**
+   - Publish and Archive now render only for publishers.
+   - Readers see "You have read-only access. Publishing and archiving are done by publishers."
+   - The page script stays unconditional (D6) and already tolerates the missing buttons. The compiled page guards them with `isPublisher && …`.
+   - Test: `tests/review-publish-role.test.ts`. It fails on the old page.
+   - Still visible to readers on the same page, and still refused by the server: **AI Analyze** (`/api/admin/ai-triage`) and the **related-item review** buttons (`POST /api/admin/related-items`). They are left for a separate decision.
 2. While the reader opened the history panel, the browser pane reported that the **page wrote to the OS clipboard** during a synthetic click. Claude copied nothing. Check the clipboard before pasting. The likely cause is a copy handler on the page; worth a look in the same follow-up.
 3. The reader-only identity stays configured. The owner decides whether to remove it or keep it for later QA.

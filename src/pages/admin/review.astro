@@ -6,6 +6,10 @@ import type { ReviewQueueCluster } from "../../lib/review-queue-contract";
 
 export const prerender = false;
 const editorialAIEnabled = Astro.locals.runtime.env.TRACE_AI_EDITORIAL_ENABLED === "true";
+// Readers may inspect the queue; only publishers get the publish and archive
+// controls. The server refuses reader writes either way. The page script stays
+// unconditional (D6) and tolerates the missing buttons.
+const isPublisher = Astro.locals.operator?.role === "publisher";
 
 // All 10 evidence states with their meanings and review triggers
 const evidenceStates = [
@@ -57,6 +61,7 @@ try {
       <p class="meta" style="margin-bottom:1rem;">
         Select a draft cluster, write the editorial summary, and publish. Published stories appear on the public <a href="/feed">feed</a> and <a href="/">homepage</a>.
       </p>
+      {!isPublisher && <p class="card meta" role="note" data-review-read-only style="margin-bottom:1rem;">You have read-only access. Publishing and archiving are done by publishers.</p>}
 
       <!-- Cluster selector with filters -->
       <div class="card" style="margin-bottom:1.5rem;background:var(--surface-2);">
@@ -110,7 +115,7 @@ try {
       </div>
 
       <!-- Canonical claims and evidence — appears only after a cluster is selected -->
-      <section id="claims-evidence-panel" class="card" data-assertion-governance-role={Astro.locals.operator?.role === "publisher" ? "publisher" : "reader"} style="margin-bottom:1.5rem;background:var(--surface-2);display:none;">
+      <section id="claims-evidence-panel" class="card" data-assertion-governance-role={isPublisher ? "publisher" : "reader"} style="margin-bottom:1.5rem;background:var(--surface-2);display:none;">
         <div style="display:flex;justify-content:space-between;align-items:baseline;gap:0.75rem;flex-wrap:wrap;">
           <h3 style="font-size:0.95rem;margin:0;">Claims &amp; Evidence</h3>
           <span id="claims-evidence-summary" class="meta" style="font-size:0.75rem;"></span>
@@ -143,8 +148,12 @@ try {
           </div>
         </div>
         <div style="margin-top:1rem;display:flex;gap:0.75rem;align-items:center;flex-wrap:wrap;">
-          <button type="button" id="publish-btn" class="btn btn-primary" disabled>Publish Story</button>
-          <button type="button" id="archive-btn" class="btn btn-secondary" style="font-size:0.8rem;" disabled>Archive (not news)</button>
+          {isPublisher && (
+            <>
+              <button type="button" id="publish-btn" class="btn btn-primary" disabled>Publish Story</button>
+              <button type="button" id="archive-btn" class="btn btn-secondary" style="font-size:0.8rem;" disabled>Archive (not news)</button>
+            </>
+          )}
           <span id="publish-status" class="meta"></span>
         </div>
       </div>
