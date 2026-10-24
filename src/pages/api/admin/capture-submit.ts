@@ -34,15 +34,28 @@ export const POST: APIRoute = async ({ request, locals }) => {
     const upstream = await handleAdminProxyRequest(new Request(request.url, {
       method: "POST", headers, body: JSON.stringify(body),
     }), kind === "social" ? "social-signals" : "candidates", env);
-    const duplicate = upstream.status === 409;
-    if (!upstream.ok && !(kind === "social" && duplicate)) return upstream;
+    const conflict = upstream.status === 409;
+    if (!upstream.ok && !(kind === "social" && conflict)) return upstream;
     // A successful POST alone is insufficient. Read the actual private queue row.
+    // `duplicate` means this attempt did not create the record; `replay` means
+    // an earlier try of this same attempt did (its response was lost).
     let id: string;
+    let duplicate = false;
+    let replay = false;
     if (kind === "social") {
-      const row = await env.DB.prepare("SELECT id FROM social_signals WHERE canonical_url_hash = ? AND canonical_url = ?")
-        .bind(await sha256(p.url), p.url).first<{ id: number }>();
+      const row = await env.DB.prepare(`SELECT id, submitted_by, submission_reason, reviewer_notes
+        FROM social_signals WHERE canonical_url_hash = ? AND canonical_url = ?`)
+        .bind(await sha256(p.url), p.url)
+        .first<{ id: number; submitted_by: string; submission_reason: string; reviewer_notes: string | null }>();
       if (!row) throw new Error("Record was not persisted.");
       id = String(row.id);
+      if (conflict) {
+        // The app's notes carry the capture id, so another capture of the same
+        // URL never matches; only a retry of this exact attempt does.
+        replay = row.submitted_by === identity.email && row.submission_reason === p.reason.trim()
+          && (row.reviewer_notes ?? "") === p.notes.trim().slice(0, 4000);
+        duplicate = !replay;
+      }
     } else {
       const result = await upstream.json() as { id?: string; duplicate?: boolean };
       if (!result.id) throw new Error("Candidate identifier is missing.");
@@ -50,12 +63,15 @@ export const POST: APIRoute = async ({ request, locals }) => {
         .bind(result.id, identity.email).first<{ id: string }>();
       if (!row) throw new Error("Record was not persisted.");
       id = row.id;
+      // The candidate id is derived from this request id, so a 200 is always
+      // this attempt's own record, never another submission's.
+      replay = upstream.status === 200;
     }
     const receipt = await signReceipt({ version: 1, origin: new URL(request.url).origin,
       captureId: p.captureId, requestId: p.requestId, digest: await sha256(input.payload),
-      challenge: input.challenge, kind, id, duplicate: duplicate || upstream.status === 200,
-      expires: Date.now() + 7 * 86400000 }, env.TRACE_INTERNAL_SERVICE_SECRET!);
-    return Response.json({ receipt, id, kind, duplicate: duplicate || upstream.status === 200 }, { headers: { "Cache-Control": "no-store" } });
+      challenge: input.challenge, kind, id, duplicate,
+      expires: Date.now() + 7 * 86400000 }, env.TRACE_INTERNAL_SERVICE_SECRET!, env.TRACE_ENVIRONMENT ?? "");
+    return Response.json({ receipt, id, kind, duplicate, replay }, { headers: { "Cache-Control": "no-store" } });
   } catch {
     return Response.json({ error: "Receipt could not be confirmed. Retry the same intake; do not create a new attempt." }, { status: 503 });
   }

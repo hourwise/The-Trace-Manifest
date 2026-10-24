@@ -31,7 +31,8 @@ export function parseCapturePayload(raw: string): CapturePayload | null {
         p.notes.length > 4000 || p.lead.length > 8000 || p.reason.length > 1000) return null;
     if (p.kind === "lead") {
       if (!p.lead.trim() || p.url || p.platform || p.reason) return null;
-    } else if (!publicCaptureUrl(p.url) || p.lead) return null;
+    // The Worker stores the trimmed URL; only an exact URL can be read back.
+    } else if (p.url !== p.url.trim() || !publicCaptureUrl(p.url) || p.lead) return null;
     if (p.kind === "social" && (!PLATFORMS.has(p.platform) || p.reason.trim().length < 10)) return null;
     if (p.kind === "article" && (p.platform || p.reason)) return null;
     // These known social hosts must never enter the article pipeline.
@@ -49,28 +50,43 @@ export async function sha256(value: string): Promise<string> {
 }
 const encode = (s: string) => btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 const decode = (s: string) => atob(s.replace(/-/g, "+").replace(/_/g, "/"));
-async function key(secret: string) {
+/**
+ * The receipt key is derived from the server-only internal secret, never the
+ * secret itself: the internal secret also signs proxy-to-Worker requests, and
+ * the environment label keeps a Preview receipt from verifying in Production
+ * even if both environments shared a secret.
+ */
+async function key(secret: string, environment: string) {
   if (secret.length < 32) throw new Error("Receipt service is not configured.");
-  return crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]);
+  const encoder = new TextEncoder();
+  const base = await crypto.subtle.importKey("raw", encoder.encode(secret), "HKDF", false, ["deriveKey"]);
+  return crypto.subtle.deriveKey(
+    { name: "HKDF", hash: "SHA-256", salt: encoder.encode("trace-capture-receipt"), info: encoder.encode(`${CAPTURE_PROTOCOL}|${environment || "unset"}`) },
+    base, { name: "HMAC", hash: "SHA-256", length: 256 }, false, ["sign", "verify"]);
 }
-export async function signReceipt(receipt: CaptureReceipt, secret: string): Promise<string> {
+/** A receipt names one real queue row: a social_signals rowid or an editorial_candidates id. */
+export function receiptRecordId(kind: CapturePayload["kind"], id: unknown): id is string {
+  if (typeof id !== "string") return false;
+  return kind === "social" ? /^[1-9][0-9]{0,14}$/.test(id) : /^capture-[0-9a-f]{64}$/.test(id) || UUID.test(id);
+}
+export async function signReceipt(receipt: CaptureReceipt, secret: string, environment: string): Promise<string> {
   const body = encode(JSON.stringify(receipt));
-  const mac = await crypto.subtle.sign("HMAC", await key(secret), new TextEncoder().encode(`${CAPTURE_PROTOCOL}\n${body}`));
+  const mac = await crypto.subtle.sign("HMAC", await key(secret, environment), new TextEncoder().encode(`${CAPTURE_PROTOCOL}\n${body}`));
   return `${body}.${encode(String.fromCharCode(...new Uint8Array(mac)))}`;
 }
-export async function verifyReceipt(token: string, verifier: string, origin: string, secret: string): Promise<CaptureReceipt | null> {
+export async function verifyReceipt(token: string, verifier: string, origin: string, secret: string, environment: string): Promise<CaptureReceipt | null> {
   try {
     if (token.length > 6000 || !/^[A-Za-z0-9_-]{43}$/.test(verifier)) return null;
     const parts = token.split(".");
     if (parts.length !== 2) return null;
-    const valid = await crypto.subtle.verify("HMAC", await key(secret),
+    const valid = await crypto.subtle.verify("HMAC", await key(secret, environment),
       Uint8Array.from(decode(parts[1]), c => c.charCodeAt(0)),
       new TextEncoder().encode(`${CAPTURE_PROTOCOL}\n${parts[0]}`));
     if (!valid) return null;
     const r = JSON.parse(decode(parts[0])) as CaptureReceipt;
     if (r.version !== 1 || r.origin !== origin || !UUID.test(r.captureId) || !UUID.test(r.requestId) ||
         r.expires <= Date.now() || r.challenge !== await sha256(verifier) ||
-        !["social", "article", "lead"].includes(r.kind) || typeof r.id !== "string" || !r.id ||
+        !["social", "article", "lead"].includes(r.kind) || !receiptRecordId(r.kind, r.id) ||
         !/^[a-f0-9]{64}$/.test(r.digest) || typeof r.duplicate !== "boolean") return null;
     return r;
   } catch { return null; }
