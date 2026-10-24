@@ -85,6 +85,21 @@ check(replayNodes.status.textContent.startsWith("Already saved by this attempt")
 const duplicateNodes = await browserScript(async () => Response.json({ id: "1", kind: "social", receipt: token, duplicate: true, replay: false }));
 check(duplicateNodes.status.textContent.startsWith("Existing record found"), "a genuine duplicate is reported as not created by this attempt");
 
+// Gate B finding: Access sign-in can drop the URL fragment. An empty or garbled
+// handoff must say how to recover, keep Submit disabled and send nothing.
+for (const [label, hash] of [["empty", ""], ["bare #", "#"], ["garbled", "#not-base64!!"],
+  ["wrong shape", "#" + Buffer.from(JSON.stringify({ payload: "{}" })).toString("base64url")]] as const) {
+  let fetched = false;
+  const nodes = Object.fromEntries(["preview", "status", "submit", "return"].map(id => [id, {
+    textContent: "", disabled: true, hidden: true, href: "", addEventListener() {} }]));
+  runInNewContext(readFileSync("public/capture-intake.js", "utf8"), {
+    document: { getElementById(id: string) { return nodes[id]; } }, location: { hash },
+    atob, Uint8Array, TextDecoder, JSON, Error, AbortSignal, encodeURIComponent, fetch: async () => { fetched = true; },
+  });
+  check(nodes.status.textContent.startsWith("This page has no capture to submit") && nodes.submit.disabled && nodes.return.hidden && !fetched,
+    `${label} handoff explains recovery, keeps Submit disabled and sends nothing`);
+}
+
 const database = new SQLiteD1();
 database.sqlite.exec(readFileSync("db/migration-0024-social-signals.sql", "utf8"));
 const env = { DB: database.asD1(), TRACE_INTERNAL_SERVICE_SECRET: secret, TRACE_ENVIRONMENT: environment };

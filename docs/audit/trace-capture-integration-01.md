@@ -5,7 +5,7 @@
 **Preview candidate:** `codex/trace-capture-preview-01`, which is SEED-01 (PR #3) merged with this branch. Also local only.
 **Android:** `hourwise/Trace-Capture-App`, branch `codex/complete-personal-capture` at `7ea6a78` (1.1.0, versionCode 2). **No Android change is required.**
 
-**Status:** Gate A complete.
+**Status:** Gate A complete. **Gate B deployed to Preview on 2026-10-24 (§7A).**
 - Nothing was pushed, deployed or migrated.
 - No Access setting or secret was changed.
 - No Preview or Production record was created.
@@ -146,6 +146,31 @@ No other route, table or binding is added. The Worker change is one optional, va
 - one social signal on a clearly test URL.
 
 Each needs a D1 read-back.
+
+## 7A. Gate B result: Preview deployment (2026-10-24, owner-approved)
+
+**Scope.** Deployed `codex/trace-capture-preview-01` at `4e10dd8` to Preview only. No migration was run, Cron stayed `[]`, and no test submission was made.
+
+| Step | Result |
+|---|---|
+| Local preflight | Clean tree at `4e10dd8`. The only configuration change since the previous Preview build (`efcec4a`) is PR #2's *Production* Ask flag. Build passes (routing and D6 checks). All three capture routes are in the bundle. The Worker dry run shows no Cron trigger. |
+| Remote preflight | Schedules `[]` / `[]`. Rollback targets: Worker `c4976ccd`, Pages `7d7c81e9`. Production Pages `ed33e35f` and Worker `41f31744`. Preview D1 baseline: 0 social signals, 19 candidates (0 `capture-*`), 13 governance events. |
+| Preview Worker | **`3b8d5721-f1da-4223-ad3a-53a108d26cf3`** (tag `4e10dd8`), deployed first |
+| Preview Pages | **`fff5102d`** on `launch-05r-preview`, commit `4e10dd8` |
+| Schedules after | `[]` / `[]` |
+| Unauthenticated | `GET /admin/capture`, `/capture-intake.js`, `/api/capture/receipt` and `POST /api/admin/capture-submit` and `/api/capture/receipt` all return **302** (Access). The receipt route stays 302 until the owner adds the bypass application in §5. |
+| Authenticated page (reader session) | `/admin/capture` renders and loads only its own same-origin script. Submit stays disabled and no return link appears without a handoff. |
+| Existing Preview features | Evidence Library is read-only for readers, and history returns 200 with 3 events. Freshness returns 403 for readers. `/admin/social` and `/api/admin/social-signals` return 200. TRACE Desk renders. **`/admin/review` now shows readers the read-only notice:** the Publish/Archive role gating (`50fc313`) is verified live for the first time. |
+| D1 after | Unchanged: 0 social signals, 19 candidates, 13 events. No writes. |
+| Production | Unchanged: `/api/capture/receipt` returns 404, `/admin/capture` returns 302, Ask is still off |
+
+**Finding, fixed locally and not yet deployed.** Without a handoff, the page showed the raw "Unexpected end of JSON input". That is exactly what you'd see if Access sign-in drops the fragment. Commit `acbd63e` replaces it with "This page has no capture to submit. Return to TRACE Capture and reopen the same saved attempt." Submit stays disabled and nothing is sent; four tests cover it. It goes out in the next approved Preview deploy, before Gate C.
+
+**Rollback (if needed).**
+- Worker: `wrangler versions deploy c4976ccd-5654-440e-bf3d-ef2949f0a36c@100% --config wrangler.worker.toml --env preview`.
+- Pages: roll `launch-05r-preview` back to `7d7c81e9`.
+
+**Waiting on the owner:** the Preview Access bypass application for `/api/capture/receipt` (§5). After it is added, `GET /api/capture/receipt` should return 200 `{"protocol":"trace-capture-v1"}` while `/admin/capture` stays 302.
 
 ## 8. Gate C: real device
 
