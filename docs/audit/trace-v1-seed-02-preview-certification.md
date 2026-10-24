@@ -168,7 +168,7 @@ From `wrangler d1 insights` on Preview for the 24 hours ending 2026-10-24 09:40 
 
 **Owner decisions:**
 - the reader identity (§7.2), then live reader QA;
-- a Preview redeploy carrying the freshness reject fix (§7.1) before pilot batch 1;
+- ~~a Preview redeploy carrying the freshness reject fix (§7.1)~~ done on 2026-10-24 (§10);
 - approval of the seed list (`docs/knowledge-seed/pilot-01.json`, currently "proposed");
 - the P-1 decision.
 
@@ -176,3 +176,77 @@ From `wrangler d1 insights` on Preview for the 24 hours ending 2026-10-24 09:40 
 - V1.1-B seeding pilot batch 1 on Preview;
 - 0076 on Production with its own bookmark and preflights;
 - the pushes and merges.
+
+## 10. Preview redeploy of the SEED-02 fixes (2026-10-24)
+
+Approved by the owner and run from the [redeploy checklist](trace-v1-seed-02-preview-redeploy-checklist.md), sections 2–5. **Preview only. No migration. Cron stayed `[]`. Production was not touched.**
+
+### 10.1 Preflight and deploy
+
+| Item | Result |
+|---|---|
+| Source | `codex/trace-v1-seed-01-prerequisites` at `efcec4a`, which contains `9104838` (reject needs a reason) and `1b36ad3` (reject retry safety) |
+| Database and configuration diff since `69ef289` | none |
+| Local checks | `npm test`, typecheck, `test:security`, `test:diff`, `test:migrations` and `npm run build` all pass. The dry run shows no Cron trigger. |
+| Remote preflight | schedules `[]` / `[]`; rollback targets: Worker `d260f0fe`, Pages `59f5ad57`; ledger 12 events / 12 jobs; reference bookmark `000000c5-00000000-0000510e-eafccdd2993639ad4cd06074bc9da63d` |
+| Preview Worker | version `c4976ccd-5654-440e-bf3d-ef2949f0a36c` (deployment `48a3cb1b`), tag `efcec4a` |
+| Preview Pages | deployment `7d7c81e9` on `launch-05r-preview`, commit `efcec4a` |
+| Post-deploy | schedules `[]` / `[]`. Production Worker `43aee63e` and Production Pages `247d3b3a` are unchanged. Unauthenticated `GET` and `POST` on the freshness page and API, and the Evidence Library page, return 302. |
+
+### 10.2 Publisher browser QA (labelled fixtures, built-in browser)
+
+Element references were re-read before every click. A `fetch` counter on the page confirmed when requests were and were not sent.
+
+**Reject flow (`qa-seed02-story-assertion`):**
+1. Requested `current` with no blockers. Review `freshness-review-9cfc1c9f…` became pending.
+2. **Reject** opened the reason form. Approve and the note were hidden, the reason box had focus, and **0 requests were sent**.
+3. **Cancel** closed the form and Approve came back. 0 requests.
+4. **Confirm reject** with an empty reason showed "A rejection reason is required." 0 requests; the buttons stayed enabled.
+5. **Confirm reject** with a reason sent 1 request. The page showed "Saving…", reloaded, and the review left the pending list.
+6. **D1:**
+   - the review is `rejected` with the exact note;
+   - the ledger is still 12 / 12;
+   - the assertion is unchanged (`unknown`, revision 2).
+
+**Retry safety (`fetch` as the publisher):**
+
+| Probe | Result |
+|---|---|
+| Reject again with the same reason | 200, `replay: true`, same review, `rejected` / `current` |
+| Same reason with surrounding spaces | 200 replay |
+| A different reason | 409 `rejection_conflict` |
+| No note, or a blank note | 400 `rejection_reason_required` (both) |
+| Approve the rejected review | 409 `review_rejected` |
+| Any reason against the SEED-02 misclick review (rejected with no note) | 409 `rejection_conflict` |
+
+Afterwards D1 shows both reviews with their recorded notes unchanged. No event was added.
+
+**Approve regression:**
+- Requested `current` again (`freshness-review-d8770b9d…`) and approved it in the UI.
+- **D1:**
+  - one new `mark_current` event (`a6444c0c…`) at revision 2→3, linked to the review;
+  - its recalculation job completed with `story_scope_json = [90201]`;
+  - the assertion is now `current`, and the claim score moved from 63.5 to 68.5;
+  - the ledger is **13 events / 13 jobs**;
+  - story 90201 is still `draft`, and the published count is still 1.
+- Replaying the approval returned 200, `replay: true`, the same `governanceEventId`, and recalculation `replayed`.
+
+**Repeat checks:**
+- **Evidence Library:** the library fixture appears only under "accepted"; the story assertion appears under no library filter. Library history: `admit`, `accept_review`, `mark_current`.
+- **Review panel, story 90201:** history reads "Admission: pending → admitted · Story 90201", "Editorial review: proposed → accepted · Story 90201", and **"Freshness: unknown → current · Freshness review"**. That last label is review finding #6, seen live for the first time.
+- Freshness events are stored with context `evidence_library` and no cluster, by design: the 0076 freshness branch is library-context only. The story recalculation scope still came out as `[90201]`.
+
+### 10.3 D1 usage
+
+`wrangler d1 insights` for the last hour, read about 10 minutes after QA, shows about **593 rows read and 276 written** by the app across 131 queries:
+- 35 audit rows produced 175 written rows;
+- 24 nonce inserts produced 72;
+- review inserts produced 20.
+
+Insights had **not yet** caught up with the approve batch (event, job, snapshots) or the Review-panel load, so these totals are partial. On the SEED-02 per-action rates, the full window stays under 1,000 written rows, far inside the pilot budget.
+
+### 10.4 Outcome
+
+- **Section 5 (publisher QA) passes.** The reject reason form, server-side reason enforcement, retry safety and the approval path all behave as designed on Preview.
+- **Section 6 (live reader QA) is still open.** It needs a reader-only Access identity (§7.2), which the owner must create; Claude does not change Access.
+- **Production 0076 stays on hold** until section 6 passes and the owner separately approves the Production sequence (checklist §8).
