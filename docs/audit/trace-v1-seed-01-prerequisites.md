@@ -196,6 +196,8 @@ Separately noted, not changed: `claim-match-review.ts` updates `reviewer_state` 
 7. Check the D1 rows read and written from the step-4 actions against the pilot budget.
 8. Report. Then, separately: the V1.1-B seeding pilot (batch 1) on Preview.
 
+**Run as SEED-02 (2026-10-23/24):** certified on Preview. Live reader QA (step 5) is deferred because no reader-only identity exists; automated evidence is recorded instead. See [trace-v1-seed-02-preview-certification.md](trace-v1-seed-02-preview-certification.md).
+
 ## 11. Recommended next mission
 
 **SEED-02: Preview certification of SEED-01, then pilot batch 1.** Apply 0076 to Preview, deploy and run §10. Then, with the seed list approved, execute seeding-plan batch 1 (≤ 25 sources, including the v3 two-pass identity check) through the Evidence Library and freshness queues, and run the Ask evaluation suite in deterministic mode.
