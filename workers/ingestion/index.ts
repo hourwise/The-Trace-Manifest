@@ -21,12 +21,24 @@ import {
   publishStory, updateStoryStatus, publishBriefing,
   getPublishedStories, getPublishedStoryBySlug, getPublishedTopics,
   getLatestPublishedBriefing, getPublishedSourcesForStory, getRelatedStories,
-  getAllClusters, getClusterSources, archiveCluster,
+  getClusterSources, archiveCluster,
   upgradeClusterEvidence,
 } from "./publish";
 import type { Source, FetchedFeedItem } from "./types";
 import { verifyInternalRequestSignature } from "../../src/security/internal-signature";
 import type { OperatorRole } from "../../src/security/access-auth";
+import { isReviewQueueScope, REVIEW_QUEUE_DEFAULT_LIMITS, REVIEW_QUEUE_MAX_LIMIT, type ReviewQueueScope } from "../../src/lib/review-queue-contract";
+import { listReviewQueueClusters } from "../../src/lib/server/review-queue";
+import { getEditorialClusterEvidence } from "../../src/lib/server/editorial-evidence";
+import {
+  AssertionGovernanceHistoryError,
+  getAssertionGovernanceHistory,
+} from "../../src/lib/server/assertion-governance-history";
+import {
+  ClaimExtractionAuditError,
+  getClaimExtractionRun,
+  listClaimExtractionRuns,
+} from "../../src/lib/server/claim-extraction-audit";
 import { admitAndQueueFeedCapture, admitAndQueueManualCapture, admitAndQueueKnowledgeDocumentCapture } from "./knowledge-capture-queue";
 import { consumeKnowledgeCaptureBatch } from "./knowledge-capture-consumer";
 import { recalculateEvidenceScores, recalculateExpiredEvidence } from "../../src/lib/server/evidence-recalculation";
@@ -40,6 +52,17 @@ import {
   requestFreshnessReview,
   type ProposedFreshnessState,
 } from "../../src/lib/server/evidence-freshness-review";
+import {
+  ASSERTION_ADMISSION_STATES,
+  ASSERTION_FRESHNESS_STATES,
+  ASSERTION_GOVERNANCE_ACTIONS,
+  ASSERTION_REVIEWER_GOVERNANCE_ACTIONS,
+  ASSERTION_REVIEWER_STATES,
+  AssertionGovernanceError,
+  governAssertionAdmission,
+  governAssertionReviewerDecision,
+  type AssertionGovernanceExpectedState,
+} from "../../src/lib/server/assertion-governance";
 import {
   approveBackfillPlan,
   buildBackfillPlan,
@@ -74,8 +97,9 @@ const RELATED_ACTION_RELATIONSHIPS: Partial<Record<RelatedItemAction, string>> =
 
 const READ_ADMIN_ROUTES = new Set([
   "/admin/sources", "/admin/sources/health", "/admin/jobs", "/admin/cron-runs",
-  "/admin/corrections", "/admin/published-stories", "/admin/clusters", "/admin/cluster-sources",
-  "/admin/candidates", "/admin/social-signals", "/admin/related-items",
+  "/admin/corrections", "/admin/published-stories", "/admin/clusters", "/admin/cluster-sources", "/admin/cluster-evidence",
+  "/admin/assertion-governance-history", "/admin/candidates", "/admin/social-signals", "/admin/related-items",
+  "/admin/extraction-runs", "/admin/extraction-run",
 ]);
 const WRITE_ADMIN_ROUTES = new Set([
   "/admin/ingest", "/admin/classify", "/admin/dedup", "/admin/cluster",
@@ -88,6 +112,8 @@ const WRITE_ADMIN_ROUTES = new Set([
   "/admin/knowledge/capture-missing", "/admin/knowledge/index-preview",
   "/admin/knowledge/kc-11g-h",
   "/admin/knowledge/freshness",
+  "/admin/assertion-review",
+  "/admin/assertion-reviewer-decision",
   "/admin/knowledge/backfill/snapshot", "/admin/knowledge/backfill/plan", "/admin/knowledge/backfill/approve",
   "/admin/knowledge/backfill/execute", "/admin/knowledge/backfill/retry", "/admin/knowledge/backfill/recover",
 ]);
@@ -290,13 +316,13 @@ export default {
 };
 
 function adminTargetId(url: URL, body: string): string | null {
-  const queryTarget = url.searchParams.get("clusterId") ?? url.searchParams.get("sourceId") ?? url.searchParams.get("claimId") ?? url.searchParams.get("candidateId");
-  if (queryTarget && /^\d+$/.test(queryTarget)) return queryTarget;
+  const queryTarget = url.searchParams.get("clusterId") ?? url.searchParams.get("sourceId") ?? url.searchParams.get("claimId") ?? url.searchParams.get("candidateId") ?? url.searchParams.get("assertionId") ?? url.searchParams.get("runId");
+  if (queryTarget && /^(?:\d+|[A-Za-z0-9:_-]{1,200})$/.test(queryTarget)) return queryTarget;
   if (!body) return null;
   try {
     const parsed = JSON.parse(body) as Record<string, unknown>;
-    const value = parsed.candidateId ?? parsed.clusterId ?? parsed.sourceId ?? parsed.claimId;
-    return typeof value === "string" && /^[0-9a-f-]{36}$/i.test(value)
+    const value = parsed.candidateId ?? parsed.clusterId ?? parsed.sourceId ?? parsed.claimId ?? parsed.assertionId ?? parsed.runId;
+    return typeof value === "string" && /^(?:[0-9a-f-]{36}|[A-Za-z0-9:_-]{1,200})$/i.test(value)
       ? value
       : typeof value === "number" && Number.isInteger(value) && value > 0 ? String(value) : null;
   } catch {
@@ -986,9 +1012,10 @@ async function runClaimExtractionPipeline(env: Env) {
       if (processed % 50 === 0 || processed === total) {
         console.log(`Claim extraction progress: ${processed}/${total}`);
       }
-    }
+    },
+    { trigger: "scheduler" },
   );
-  console.log(`Claim extraction: done — ${result.claimsExtracted} claims from ${result.processed} items, ${result.evidenceCreated} evidence records`);
+  console.log(`Claim extraction: done — run ${result.runId} ${result.runStatus}, ${result.newAssertionCount} new assertions from ${result.processedCount} items, ${result.canonicalWriteSuccessCount} canonical writer calls`);
 }
 
 // ============================================================
@@ -1073,7 +1100,7 @@ async function handleAdminRoute(
     case "/admin/cluster":
       return handleManualCluster(env);
     case "/admin/extract-claims":
-      return handleManualClaimExtraction(env);
+      return handleManualClaimExtraction(env, operator);
     case "/admin/detect-conflicts":
       return handleManualConflictDetection(env);
     case "/admin/corrections":
@@ -1096,6 +1123,10 @@ async function handleAdminRoute(
       return handleKc11GH(request, env);
     case "/admin/knowledge/freshness":
       return handleFreshnessReview(request, env, operator);
+    case "/admin/assertion-review":
+      return handleAssertionReview(request, env, operator);
+    case "/admin/assertion-reviewer-decision":
+      return handleAssertionReviewerDecision(request, env, operator);
     case "/admin/knowledge/backfill/snapshot":
       return handleKnowledgeBackfillSnapshot(request, env, operator);
     case "/admin/knowledge/backfill/approve":
@@ -1121,6 +1152,14 @@ async function handleAdminRoute(
       return handleClustersList(request, env);
     case "/admin/cluster-sources":
       return handleClusterSources(request, env);
+    case "/admin/cluster-evidence":
+      return handleClusterEvidence(request, env);
+    case "/admin/extraction-runs":
+      return handleExtractionRunList(request, env);
+    case "/admin/extraction-run":
+      return handleExtractionRunDetail(request, env);
+    case "/admin/assertion-governance-history":
+      return handleAssertionGovernanceHistory(request, env);
     case "/admin/archive-cluster":
       return handleArchiveCluster(request, env);
     case "/admin/related-items":
@@ -1240,6 +1279,107 @@ async function handleFreshnessReview(request: Request, env: Env, operator: Inter
     console.error("evidence freshness review failed", error);
     return Response.json({ error: "Evidence freshness review could not be saved." }, { status: 500 });
   }
+}
+
+async function handleAssertionReview(request: Request, env: Env, operator: InternalOperator): Promise<Response> {
+  if (operator.role !== "publisher") return Response.json({ error: "Forbidden" }, { status: 403 });
+  const body = await readAdminObject(request, [
+    "clusterId", "assertionId", "action", "expected", "reason", "idempotencyKey",
+  ]);
+  if (!body || !exactAdminKeys(body, [
+    "clusterId", "assertionId", "action", "expected", "reason", "idempotencyKey",
+  ]) || !positiveInteger(body.clusterId)
+    || !requiredText(body.assertionId, 1, 200)
+    || !isAssertionGovernanceAction(body.action)
+    || !isAssertionGovernanceExpectedState(body.expected)
+    || !requiredText(body.reason, 1, 2_000)
+    || !requiredText(body.idempotencyKey, 1, 256)) {
+    return Response.json({ error: "Invalid assertion review body." }, { status: 400 });
+  }
+
+  try {
+    const result = await governAssertionAdmission(env.DB, {
+      clusterId: body.clusterId as number,
+      assertionId: body.assertionId as string,
+      action: body.action,
+      expected: body.expected,
+      reason: body.reason as string,
+      idempotencyKey: body.idempotencyKey as string,
+      actor: operator.email,
+      requestId: operator.requestId,
+    });
+    return Response.json(result, { status: result.replay ? 200 : 201 });
+  } catch (error) {
+    if (error instanceof AssertionGovernanceError) {
+      return Response.json({
+        error: error.message,
+        code: error.code,
+        ...(error.eventId ? { eventId: error.eventId } : {}),
+      }, { status: error.status });
+    }
+    return Response.json({ error: "Assertion review failed." }, { status: 500 });
+  }
+}
+
+async function handleAssertionReviewerDecision(request: Request, env: Env, operator: InternalOperator): Promise<Response> {
+  if (operator.role !== "publisher") return Response.json({ error: "Forbidden" }, { status: 403 });
+  const body = await readAdminObject(request, [
+    "clusterId", "assertionId", "action", "expected", "reason", "idempotencyKey",
+  ]);
+  if (!body || !exactAdminKeys(body, [
+    "clusterId", "assertionId", "action", "expected", "reason", "idempotencyKey",
+  ]) || !positiveInteger(body.clusterId)
+    || !requiredText(body.assertionId, 1, 200)
+    || !isAssertionReviewerGovernanceAction(body.action)
+    || !isAssertionGovernanceExpectedState(body.expected)
+    || !requiredText(body.reason, 1, 2_000)
+    || !requiredText(body.idempotencyKey, 1, 256)) {
+    return Response.json({ error: "Invalid assertion reviewer decision body." }, { status: 400 });
+  }
+
+  try {
+    const result = await governAssertionReviewerDecision(env.DB, {
+      clusterId: body.clusterId as number,
+      assertionId: body.assertionId as string,
+      action: body.action,
+      expected: body.expected,
+      reason: body.reason as string,
+      idempotencyKey: body.idempotencyKey as string,
+      actor: operator.email,
+      requestId: operator.requestId,
+    });
+    return Response.json(result, { status: result.replay ? 200 : 201 });
+  } catch (error) {
+    if (error instanceof AssertionGovernanceError) {
+      return Response.json({
+        error: error.message,
+        code: error.code,
+        ...(error.eventId ? { eventId: error.eventId } : {}),
+      }, { status: error.status });
+    }
+    return Response.json({ error: "Assertion reviewer decision failed." }, { status: 500 });
+  }
+}
+
+function isAssertionGovernanceAction(value: unknown): value is typeof ASSERTION_GOVERNANCE_ACTIONS[number] {
+  return typeof value === "string" && ASSERTION_GOVERNANCE_ACTIONS.includes(value as typeof ASSERTION_GOVERNANCE_ACTIONS[number]);
+}
+
+function isAssertionReviewerGovernanceAction(value: unknown): value is typeof ASSERTION_REVIEWER_GOVERNANCE_ACTIONS[number] {
+  return typeof value === "string" && ASSERTION_REVIEWER_GOVERNANCE_ACTIONS.includes(value as typeof ASSERTION_REVIEWER_GOVERNANCE_ACTIONS[number]);
+}
+
+function isAssertionGovernanceExpectedState(value: unknown): value is AssertionGovernanceExpectedState {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const state = value as Record<string, unknown>;
+  return Object.keys(state).length === 3
+    && Object.keys(state).every((key) => ["admissionState", "reviewerState", "freshnessState"].includes(key))
+    && typeof state.admissionState === "string"
+    && ASSERTION_ADMISSION_STATES.includes(state.admissionState as typeof ASSERTION_ADMISSION_STATES[number])
+    && typeof state.reviewerState === "string"
+    && ASSERTION_REVIEWER_STATES.includes(state.reviewerState as typeof ASSERTION_REVIEWER_STATES[number])
+    && typeof state.freshnessState === "string"
+    && ASSERTION_FRESHNESS_STATES.includes(state.freshnessState as typeof ASSERTION_FRESHNESS_STATES[number]);
 }
 
 async function handleKnowledgeBackfillPlan(request: Request, env: Env): Promise<Response> {
@@ -1649,8 +1789,15 @@ async function handleManualCluster(env: Env): Promise<Response> {
   return Response.json({ status: "ok", ...result });
 }
 
-async function handleManualClaimExtraction(env: Env): Promise<Response> {
-  const result = await runClaimExtraction(env.DB);
+async function handleManualClaimExtraction(env: Env, operator: InternalOperator): Promise<Response> {
+  const result = await runClaimExtraction(env.DB, undefined, {
+    trigger: "manual_admin",
+    // This UUID is operator-request metadata, deliberately separate from the
+    // signed request nonce used for replay protection and admin audit identity.
+    requestId: crypto.randomUUID(),
+    operatorEmail: operator.email,
+    operatorRole: operator.role,
+  });
   return Response.json({ status: "ok", ...result });
 }
 
@@ -1900,14 +2047,19 @@ async function handlePublishedStoriesList(request: Request, env: Env): Promise<R
 
 async function handleClustersList(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
-  const status = url.searchParams.get("status") || undefined;
-  const limit = Number(url.searchParams.get("limit") || "50");
-  if ((status && !["draft", "review", "published", "withdrawn", "superseded"].includes(status))
-    || !Number.isInteger(limit) || limit < 1 || limit > 200) {
-    return Response.json({ error: "Invalid cluster query." }, { status: 400 });
+  const requestedScope = url.searchParams.get("scope");
+  const scope: ReviewQueueScope = requestedScope === null ? "publishable" : requestedScope as ReviewQueueScope;
+  if (!isReviewQueueScope(scope)) {
+    return Response.json({ error: "Invalid review queue scope." }, { status: 400 });
   }
 
-  const clusters = await getAllClusters(env, { limit, status });
+  const rawLimit = url.searchParams.get("limit");
+  const limit = rawLimit === null ? REVIEW_QUEUE_DEFAULT_LIMITS[scope] : Number(rawLimit);
+  if (!Number.isInteger(limit) || limit < 1 || limit > REVIEW_QUEUE_MAX_LIMIT) {
+    return Response.json({ error: "Invalid review queue limit." }, { status: 400 });
+  }
+
+  const clusters = await listReviewQueueClusters(env.DB, { scope, limit });
   return Response.json(clusters);
 }
 
@@ -1921,6 +2073,64 @@ async function handleClusterSources(request: Request, env: Env): Promise<Respons
 
   const sources = await getClusterSources(env, clusterId);
   return Response.json(sources);
+}
+
+async function handleClusterEvidence(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const clusterId = Number(url.searchParams.get("clusterId") || "0");
+
+  if (!Number.isInteger(clusterId) || clusterId < 1) {
+    return Response.json({ error: "clusterId query param is required" }, { status: 400 });
+  }
+
+  const evidence = await getEditorialClusterEvidence(env.DB, clusterId);
+  if (!evidence) return Response.json({ error: "Cluster not found." }, { status: 404 });
+  return Response.json(evidence);
+}
+
+async function handleAssertionGovernanceHistory(request: Request, env: Env): Promise<Response> {
+  if (request.method !== "GET") return Response.json({ error: "Method not allowed — use GET" }, { status: 405 });
+  const url = new URL(request.url);
+  const clusterId = Number(url.searchParams.get("clusterId") || "0");
+  const assertionId = url.searchParams.get("assertionId")?.trim() ?? "";
+  if (!Number.isInteger(clusterId) || clusterId < 1 || assertionId.length < 1 || assertionId.length > 200) {
+    return Response.json({ error: "A positive clusterId and bounded assertionId are required.", code: "invalid_request" }, { status: 400 });
+  }
+  try {
+    return Response.json(await getAssertionGovernanceHistory(env.DB, clusterId, assertionId));
+  } catch (error) {
+    if (error instanceof AssertionGovernanceHistoryError) {
+      return Response.json({ error: error.message, code: error.code }, { status: error.status });
+    }
+    console.error("assertion governance history failed", error);
+    return Response.json({ error: "Assertion governance history is unavailable." }, { status: 500 });
+  }
+}
+
+async function handleExtractionRunList(request: Request, env: Env): Promise<Response> {
+  if (request.method !== "GET") return Response.json({ error: "Method not allowed — use GET" }, { status: 405 });
+  try {
+    return Response.json(await listClaimExtractionRuns(env.DB));
+  } catch (error) {
+    console.error("extraction run list failed", error);
+    return Response.json({ error: "Extraction run history is unavailable." }, { status: 500 });
+  }
+}
+
+async function handleExtractionRunDetail(request: Request, env: Env): Promise<Response> {
+  if (request.method !== "GET") return Response.json({ error: "Method not allowed — use GET" }, { status: 405 });
+  const runId = new URL(request.url).searchParams.get("runId") ?? "";
+  try {
+    return Response.json(await getClaimExtractionRun(env.DB, runId));
+  } catch (error) {
+    if (error instanceof ClaimExtractionAuditError) {
+      return Response.json({ error: error.message, code: error.code }, {
+        status: error.code === "run_not_found" ? 404 : 400,
+      });
+    }
+    console.error("extraction run detail failed", error);
+    return Response.json({ error: "Extraction run detail is unavailable." }, { status: 500 });
+  }
 }
 
 async function handleArchiveCluster(request: Request, env: Env): Promise<Response> {

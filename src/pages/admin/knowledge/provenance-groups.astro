@@ -1,6 +1,6 @@
 ---
 // KC-05D: publisher-only review queue for shared-origin grouping proposals.
-import BaseLayout from "../../../layouts/BaseLayout.astro";
+import AdminLayout from "../../../layouts/AdminLayout.astro";
 import { authenticateAccessRequest, type AccessEnvironment } from "../../../security/access-auth";
 
 export const prerender = false;
@@ -36,7 +36,7 @@ const proposals = rows.results ?? [];
 const label = (value: string) => value.replace(/_/g, " ");
 ---
 
-<BaseLayout title="Provenance Group Review — TRACE Knowledge Builder" description="Publisher review queue for shared-origin provenance groups.">
+<AdminLayout title="Provenance Group Review — TRACE Knowledge Builder" description="Publisher review queue for shared-origin provenance groups.">
   <div class="wrap">
     <h1>Shared-origin grouping</h1>
     <p class="meta">These proposals identify exact-content derivative coverage. Accepting creates a reviewed provenance group and source memberships, then links source assertions to that group. Evidence scores are not recalculated here.</p>
@@ -59,7 +59,7 @@ const label = (value: string) => value.replace(/_/g, " ");
       </div>
     )}
   </div>
-</BaseLayout>
+</AdminLayout>
 
 <script>
   document.querySelectorAll(".group-form").forEach((form) => {

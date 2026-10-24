@@ -2,7 +2,7 @@
 // ADR 0017: TRACE Knowledge Builder — main workspace.
 // Drag-and-drop Markdown knowledge documents, download templates,
 // and view recently created documents. Publisher-only.
-import BaseLayout from "../../../layouts/BaseLayout.astro";
+import AdminLayout from "../../../layouts/AdminLayout.astro";
 import { authenticateAccessRequest, type AccessEnvironment } from "../../../security/access-auth";
 
 export const prerender = false;
@@ -62,7 +62,7 @@ function typeLabel(t: string): string {
 }
 ---
 
-<BaseLayout title="Knowledge Builder — TRACE Desk" description="Create and manage structured TRACE knowledge documents.">
+<AdminLayout title="Knowledge Builder — TRACE Desk" description="Create and manage structured TRACE knowledge documents.">
   <div class="wrap">
     <h1>TRACE Knowledge Builder</h1>
 
@@ -243,7 +243,7 @@ source_set_hash: ""
       </div>
     </details>
   </div>
-</BaseLayout>
+</AdminLayout>
 
 <!-- ── Drag-and-drop client script ──────────────────────── -->
 <script>

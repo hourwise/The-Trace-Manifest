@@ -1,5 +1,5 @@
 ---
-import BaseLayout from "../../../layouts/BaseLayout.astro";
+import AdminLayout from "../../../layouts/AdminLayout.astro";
 import { authenticateAccessRequest, type AccessEnvironment } from "../../../security/access-auth";
 
 export const prerender = false;
@@ -45,7 +45,7 @@ try {
 const fmt = (value: string) => new Date(value).toLocaleString("en-GB");
 ---
 
-<BaseLayout title="Knowledge Recovery — TRACE Admin" description="Publisher-only view of pending cross-store repair records.">
+<AdminLayout title="Knowledge Recovery — TRACE Admin" description="Publisher-only view of pending cross-store repair records.">
   <div class="wrap">
     <h1>Knowledge recovery</h1>
     <p class="meta">Publisher-only repair view for the KC-02 D1/R2/Vectorize outbox. It does not publish content or run a repair automatically.</p>
@@ -75,4 +75,4 @@ const fmt = (value: string) => new Date(value).toLocaleString("en-GB");
       </section>
     }
   </div>
-</BaseLayout>
+</AdminLayout>

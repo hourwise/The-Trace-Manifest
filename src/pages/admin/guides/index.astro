@@ -1,7 +1,7 @@
 ---
 // ADR 0013: TRACE Guides Lab — admin listing.
 // Publisher-only, server-rendered with direct D1.
-import BaseLayout from "../../../layouts/BaseLayout.astro";
+import AdminLayout from "../../../layouts/AdminLayout.astro";
 import { authenticateAccessRequest, type AccessEnvironment } from "../../../security/access-auth";
 
 export const prerender = false;
@@ -80,7 +80,7 @@ const safetyFlags = (g: GuideRow) => {
 };
 ---
 
-<BaseLayout title="Guides Lab — TRACE Desk" description="Manage TRACE Guides with verification status, command safety, and provenance.">
+<AdminLayout title="Guides Lab — TRACE Desk" description="Manage TRACE Guides with verification status, command safety, and provenance.">
   <div class="wrap">
     <h1>TRACE Guides Lab</h1>
     <p class="meta" style="margin-bottom:2rem;">
@@ -198,7 +198,7 @@ sources:
       </div>
     </details>
   </div>
-</BaseLayout>
+</AdminLayout>
 
 <style>
 .badge {

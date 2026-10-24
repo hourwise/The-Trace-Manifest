@@ -14,14 +14,14 @@ database_id = "1625036a-ffe2-4103-bf9d-086bae150561"
 binding = "RAW_STORE"
 bucket_name = "trace-manifest-raw"
 
+# STOP-BURN: Production scheduled ingestion is paused (D1 read-amplification
+# incident). Cron stays empty so that no Production deploy, including a plain
+# `wrangler deploy`, can re-enable it. The scheduler activation mission (0072
+# lease migration + matching Worker) restores the previous schedule:
+#   "*/30 * * * *", "0 6 * * *", "0 9 * * *", "0 12 * * *", "0 18 * * *"
+# scripts/security-check.mjs enforces the empty list until then.
 [triggers]
-crons = [
-  "*/30 * * * *",
-  "0 6 * * *",
-  "0 9 * * *",
-  "0 12 * * *",
-  "0 18 * * *"
-]
+crons = []
 
 # Isolated control-plane target for LAUNCH-05R/06 checks. Environment bindings
 # are non-inheritable, so each preview resource is named explicitly. No cron

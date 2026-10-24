@@ -1,10 +1,10 @@
 ---
-import BaseLayout from "../../layouts/BaseLayout.astro";
+import AdminLayout from "../../layouts/AdminLayout.astro";
 
 export const prerender = false;
 ---
 
-<BaseLayout title="Admin — Ask TRACE Research" description="Governed admin research mode for Ask TRACE.">
+<AdminLayout title="Admin — Ask TRACE Research" description="Governed admin research mode for Ask TRACE.">
   <div class="wrap" style="max-width:700px;">
     <h1>Ask TRACE Research</h1>
     <p class="meta" style="margin-bottom:2rem;">
@@ -26,7 +26,7 @@ export const prerender = false;
       <div id="result-content"></div>
     </section>
   </div>
-</BaseLayout>
+</AdminLayout>
 
 <script>
   function status(msg: string, isError: boolean) {

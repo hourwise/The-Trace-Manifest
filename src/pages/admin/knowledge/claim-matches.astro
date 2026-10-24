@@ -1,6 +1,6 @@
 ---
 // KC-05B: publisher-only decisions for claim-match candidates.
-import BaseLayout from "../../../layouts/BaseLayout.astro";
+import AdminLayout from "../../../layouts/AdminLayout.astro";
 import { authenticateAccessRequest, type AccessEnvironment } from "../../../security/access-auth";
 
 export const prerender = false;
@@ -42,7 +42,7 @@ const matches = rows.results ?? [];
 const label = (value: string) => value.replace(/_/g, " ");
 ---
 
-<BaseLayout title="Claim Match Review — TRACE Knowledge Builder" description="Publisher review queue for canonical claim match candidates.">
+<AdminLayout title="Claim Match Review — TRACE Knowledge Builder" description="Publisher review queue for canonical claim match candidates.">
   <div class="wrap">
     <h1>Claim-match review</h1>
     <p class="meta">Publisher-only decisions for proposed canonical claim matches. Merge and create-new decisions accept the source assertion; reject leaves it pending. Nothing creates provenance or evidence scores automatically.</p>
@@ -80,7 +80,7 @@ const label = (value: string) => value.replace(/_/g, " ");
       </div>
     )}
   </div>
-</BaseLayout>
+</AdminLayout>
 
 <script>
   document.querySelectorAll(".match-form").forEach((form) => {

@@ -1,6 +1,7 @@
 ---
 import BaseLayout from "../layouts/BaseLayout.astro";
 import EvidenceBadge from "../components/EvidenceBadge.astro";
+import TraceNowTicker from "../components/TraceNowTicker.astro";
 import { getPublishedStories } from "../lib/server/d1";
 
 export const prerender = false;
@@ -16,7 +17,8 @@ let briefingLabel: string | null = null;
 try {
   const db = Astro.locals.runtime.env.DB;
   [latestStories, publishedStoryCount, evidenceCount, modelCount, topicCount, briefingLabel] = await Promise.all([
-    getPublishedStories(db, { limit: 4 }),
+    // One public-story path feeds both the ticker and the existing cards.
+    getPublishedStories(db, { limit: 10 }),
     db.prepare("SELECT COUNT(*) as count FROM story_clusters WHERE publication_status = 'published'").first<{ count: number }>().then(r => r?.count ?? 0),
     db.prepare("SELECT COUNT(*) as count FROM claim_evidence").first<{ count: number }>().then(r => r?.count ?? 0),
     db.prepare("SELECT COUNT(*) as count FROM models WHERE publication_status = 'published'").first<{ count: number }>().then(r => r?.count ?? 0),
@@ -26,6 +28,8 @@ try {
 } catch {
   console.error(JSON.stringify({ message: "Homepage query failed" }));
 }
+
+const featuredStories = latestStories.slice(0, 4);
 ---
 
 <BaseLayout
@@ -33,6 +37,8 @@ try {
   description="The Trace Manifest is a current, evidence-linked intelligence platform tracking AI models, benchmarks, research, providers, and open-source activity. Follow the evidence. Understand the change."
   currentNav="Latest"
 >
+  <TraceNowTicker stories={latestStories} />
+
   <!-- Hero -->
   <section class="hero" style="text-align:center;">
     <div class="wrap">
@@ -73,7 +79,7 @@ try {
           <a href="/feed" class="meta">View all &rarr;</a>
         </div>
         <div class="grid-2">
-          {latestStories.map(s => (
+          {featuredStories.map(s => (
             <article class="card">
               <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:0.5rem;">
                 <span class="meta">{s.topic || "Uncategorised"}</span>
