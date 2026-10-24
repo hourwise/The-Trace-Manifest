@@ -477,6 +477,8 @@ export async function rejectFreshnessReview(
     throw new EvidenceFreshnessReviewError("Bounded reviewId and actor are required.", "invalid_rejection");
   }
   if (typeof reviewNote !== "string" || reviewNote.length > 2000) throw new EvidenceFreshnessReviewError("The review note is too large.", "invalid_review_note");
+  // A rejection closes the review for good, so it records why.
+  if (!reviewNote.trim()) throw new EvidenceFreshnessReviewError("A rejection reason is required.", "rejection_reason_required");
   const review = await db.prepare(`
     SELECT id, claim_assertion_id, prior_state, proposed_state,
            source_document_version_id, reason, state, requested_by,

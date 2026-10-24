@@ -206,7 +206,7 @@ async function freshnessTests(): Promise<void> {
     const rejectedRequest = await requestFreshnessReview(database.asD1(), { claimAssertionId: "freshness-assertion", proposedState: "current", sourceDocumentVersionId: "freshness-version", reason: "Publisher rejected this current transition for test coverage.", actor: "publisher@example.com", idempotencyKey: "freshness-review-reject" });
     const rejected = await rejectFreshnessReview(database.asD1(), rejectedRequest.reviewId, "publisher@example.com", "Rejected by publisher.");
     assert.equal(rejected.state, "rejected");
-    assert.equal((await rejectFreshnessReview(database.asD1(), rejectedRequest.reviewId, "publisher@example.com")).replay, true);
+    assert.equal((await rejectFreshnessReview(database.asD1(), rejectedRequest.reviewId, "publisher@example.com", "Rejected by publisher.")).replay, true);
     database.sqlite.exec(`
       UPDATE source_documents SET current_version_id = 'freshness-version' WHERE id = 'freshness-document';
       INSERT INTO source_document_versions (id, source_document_id, content_hash, retrieved_url, retrieved_at, extraction_status, extraction_state, storage_state)

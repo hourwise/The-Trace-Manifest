@@ -32,12 +32,22 @@ const reasonLabel = { never_reviewed: "Never freshness-reviewed", stale: "Stale"
             <p>{review.canonicalText}</p>
             <p class="meta">Requested by {review.requestedBy} on {review.requestedAt}{review.sourceDocumentVersionId ? <> · version <code>{review.sourceDocumentVersionId}</code></> : null}</p>
             <p class="rationale">{review.reason}</p>
-            <label>Review note<textarea name="review-note" rows="2" maxlength="2000" placeholder="Optional note for the audit trail."></textarea></label>
-            <div class="actions">
-              <button type="submit" class="btn" data-operation="approve">Approve</button>
-              <button type="submit" class="btn btn-secondary" data-operation="reject">Reject</button>
-              <span class="result" role="status"></span>
+            <div class="decision-actions">
+              <label>Review note<textarea name="review-note" rows="2" maxlength="2000" placeholder="Optional note for the audit trail."></textarea></label>
+              <div class="actions">
+                <button type="submit" class="btn" data-operation="approve">Approve</button>
+                <button type="button" class="btn btn-secondary" data-reject-open>Reject</button>
+              </div>
             </div>
+            <div class="reject-panel" hidden>
+              <p class="meta"><strong>Reject review</strong> — this closes the request for good. The assertion's freshness does not change.</p>
+              <label>Rejection reason (required)<textarea name="reject-reason" rows="2" maxlength="2000" placeholder="Why this freshness change should not be applied."></textarea></label>
+              <div class="actions">
+                <button type="submit" class="btn" data-operation="reject">Confirm reject</button>
+                <button type="button" class="btn btn-secondary" data-reject-cancel>Cancel</button>
+              </div>
+            </div>
+            <span class="result" role="status"></span>
           </form>
         ))}
       </div>
@@ -74,6 +84,8 @@ const reasonLabel = { never_reviewed: "Never freshness-reviewed", stale: "Stale"
 </AdminLayout>
 
 <script>
+  import { buildFreshnessDecisionPayload } from "../../../lib/admin/freshness-review-ui";
+
   async function send(body: Record<string, unknown>): Promise<{ ok: boolean; message: string }> {
     try {
       const response = await fetch("/api/admin/knowledge/freshness", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -116,18 +128,41 @@ const reasonLabel = { never_reviewed: "Never freshness-reviewed", stale: "Stale"
     });
   });
 
+  // Reject is a two-step decision: it opens a reason form, and only "Confirm
+  // reject" sends it. Approve keeps its optional note.
   document.querySelectorAll<HTMLFormElement>(".decision-form").forEach((form) => {
+    const decisionActions = form.querySelector(".decision-actions") as HTMLElement;
+    const rejectPanel = form.querySelector(".reject-panel") as HTMLElement;
+    const rejectReason = form.querySelector("[name=reject-reason]") as HTMLTextAreaElement;
+    const result = form.querySelector(".result") as HTMLElement;
+    const showRejectPanel = (open: boolean) => {
+      rejectPanel.hidden = !open;
+      decisionActions.hidden = open;
+      result.textContent = "";
+      if (open) rejectReason.focus();
+    };
+    form.querySelector("[data-reject-open]")?.addEventListener("click", () => showRejectPanel(true));
+    form.querySelector("[data-reject-cancel]")?.addEventListener("click", () => showRejectPanel(false));
+
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
       const submitter = (event as SubmitEvent).submitter as HTMLButtonElement | null;
       const operation = submitter?.dataset.operation;
       if (operation !== "approve" && operation !== "reject") return;
-      const result = form.querySelector(".result") as HTMLElement;
-      const reviewNote = (form.querySelector("[name=review-note]") as HTMLTextAreaElement).value.trim();
+      const note = operation === "reject" ? rejectReason.value : (form.querySelector("[name=review-note]") as HTMLTextAreaElement).value;
+      let payload;
+      try {
+        payload = buildFreshnessDecisionPayload(operation, form.dataset.reviewId ?? "", note);
+      } catch (error) {
+        result.textContent = error instanceof Error ? error.message : "The decision is incomplete.";
+        return;
+      }
       result.textContent = "Saving…";
-      const outcome = await send({ operation, reviewId: form.dataset.reviewId, ...(reviewNote ? { reviewNote } : {}) });
+      form.querySelectorAll("button").forEach((button) => { button.disabled = true; });
+      const outcome = await send({ ...payload });
       result.textContent = outcome.message;
       if (outcome.ok) setTimeout(() => location.reload(), 500);
+      else form.querySelectorAll("button").forEach((button) => { button.disabled = false; });
     });
   });
 </script>

@@ -144,7 +144,11 @@ From `wrangler d1 insights` on Preview for the 24 hours ending 2026-10-24 09:40 
 
 ## 7. Observations and recommended changes (not acted on)
 
-1. **Freshness "Reject" is one click with no confirmation, and its note is optional.** Assertion governance always asks for a reason and a confirm step. *Recommend:* make Reject open a reason form with a confirm step, like the Review panel. This is a small UI change in `freshness.astro` and would need a Preview redeploy.
+1. **Freshness "Reject" was one click with no confirmation, and its note was optional.** Assertion governance always asks for a reason and a confirm step. **Fixed locally after this report; not yet deployed.**
+   - **Page:** Reject now opens a reason form, and only "Confirm reject" sends the rejection.
+   - **Server:** the Worker and the service both refuse a rejection without a non-blank reason (`rejection_reason_required`, 400) and write nothing.
+   - **Tests:** `tests/freshness-reject-reason.test.ts`.
+   - **Preview** still runs `69ef289` until the next approved redeploy.
 2. **Reader identity.** Create a temporary reader-only Access identity for Preview: in the Access policy and in `TRACE_ADMIN_READERS`, not in `TRACE_ADMIN_PUBLISHERS`. That lets the deferred reader QA, and the LAUNCH-06 reader checks, finally run.
 3. **Page-level reader tests.** Add render tests for the Evidence Library page (no controls for readers) and the freshness page (403 for readers), so the role gating is not proved by inspection alone.
 4. **Cluster list read cost.** The cluster-listing queries are the biggest readers (about 1.9k rows per load for the largest). They need watching as stories grow, but they are not a pilot blocker.
@@ -164,7 +168,7 @@ From `wrangler d1 insights` on Preview for the 24 hours ending 2026-10-24 09:40 
 
 **Owner decisions:**
 - the reader identity (§7.2), then live reader QA;
-- whether to fix the freshness reject (§7.1) before pilot batch 1;
+- a Preview redeploy carrying the freshness reject fix (§7.1) before pilot batch 1;
 - approval of the seed list (`docs/knowledge-seed/pilot-01.json`, currently "proposed");
 - the P-1 decision.
 

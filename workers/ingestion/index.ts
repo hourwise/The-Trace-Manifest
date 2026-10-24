@@ -1267,6 +1267,9 @@ async function handleFreshnessReview(request: Request, env: Env, operator: Inter
         || !optionalText(body.reviewNote, 2_000)) {
         return Response.json({ error: "Invalid freshness review body." }, { status: 400 });
       }
+      if (body.operation === "reject" && !requiredText(body.reviewNote, 1, 2_000)) {
+        return Response.json({ error: "A rejection reason is required.", code: "rejection_reason_required" }, { status: 400 });
+      }
       const note = typeof body.reviewNote === "string" ? body.reviewNote : "";
       const result = body.operation === "approve"
         ? await approveFreshnessReview(env.DB, body.reviewId, operator.email, note, operator.requestId)
