@@ -1507,10 +1507,14 @@ function supportedDevelopmentStatus(value: unknown): boolean {
 
 async function handleCandidateIntake(request: Request, env: Env, operator: InternalOperator): Promise<Response> {
   const body = await readAdminObject(request, [
-    "intakeType", "url", "lead", "section", "topic", "storyFormat", "urgency", "developmentStatus", "sourceLanguage",
+    "intakeType", "url", "lead", "section", "topic", "storyFormat", "urgency", "developmentStatus", "sourceLanguage", "captureRequestId",
   ]);
   if (!body || !supportedIntakeType(body.intakeType)) {
     return Response.json({ error: "A supported intakeType is required." }, { status: 400 });
+  }
+  if (body.captureRequestId !== undefined && (typeof body.captureRequestId !== "string" ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(body.captureRequestId))) {
+    return Response.json({ error: "Invalid capture request identifier." }, { status: 400 });
   }
   if (!optionalHttpUrl(body.url) || !optionalText(body.lead, 8_000) || !optionalText(body.section, 80)
     || !optionalText(body.topic, 80) || !optionalText(body.storyFormat, 80) || !optionalText(body.sourceLanguage, 35)
@@ -1538,9 +1542,21 @@ async function handleCandidateIntake(request: Request, env: Env, operator: Inter
     if (!found) return Response.json({ error: "Unknown editorial topic." }, { status: 400 });
   }
 
-  const id = crypto.randomUUID();
+  const id = body.captureRequestId
+    ? `capture-${await hashValue(`${operator.email}\n${body.captureRequestId}`)}`
+    : crypto.randomUUID();
   const sourceHash = await hashValue(`${intakeType}\n${submittedUrl ?? ""}\n${leadText ?? ""}`);
+  const existingReceipt = async (): Promise<Response | null> => {
+    if (!body.captureRequestId) return null;
+    const row = await env.DB.prepare("SELECT id, source_hash, state FROM editorial_candidates WHERE id = ? AND created_by = ?")
+      .bind(id, operator.email).first<{ id: string; source_hash: string; state: string }>();
+    if (!row) return null;
+    if (row.source_hash !== sourceHash) return Response.json({ error: "Capture request already belongs to different content." }, { status: 409 });
+    return Response.json({ id: row.id, state: row.state, duplicate: true, message: "Existing candidate confirmed." });
+  };
   try {
+    const existing = await existingReceipt();
+    if (existing) return existing;
     await env.DB.prepare(`
       INSERT INTO editorial_candidates
         (id, intake_type, submitted_url, lead_text, source_hash, section_slug, topic_slug, story_format, urgency, development_status, source_language, created_by)
@@ -1554,6 +1570,8 @@ async function handleCandidateIntake(request: Request, env: Env, operator: Inter
       operator.email,
     ).run();
   } catch {
+    // A simultaneous retry can lose the primary-key race. Read the committed winner.
+    try { const existing = await existingReceipt(); if (existing) return existing; } catch { /* fail closed */ }
     return Response.json({ error: "TRACE Desk is unavailable until its migration is applied." }, { status: 503 });
   }
   return Response.json({ id, state: "new", message: "Candidate recorded. It has not been fetched, researched, or published." }, { status: 201 });

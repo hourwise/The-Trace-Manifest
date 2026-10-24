@@ -4,6 +4,7 @@ import cloudflare from "@astrojs/cloudflare";
 
 // https://astro.build/config
 export default defineConfig({
+  cacheDir: ".astro/cache",
   site: "https://thetracemanifest.com",
   integrations: [sitemap()],
   output: "server",
@@ -23,4 +24,6 @@ export default defineConfig({
   build: {
     format: "directory",
   },
+  // Keep generated caches inside each checkout when sharing installed dependencies.
+  vite: { cacheDir: ".astro/vite" },
 });
