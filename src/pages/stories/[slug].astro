@@ -6,8 +6,10 @@ import {
   getPublishedStoryBySlug,
   getPublishedSourcesForStory,
   getCorrectionsForStory,
+  getSupersedingStory,
 } from "../../lib/server/d1";
 import { getPublicRelatedStories, getPublicStoryEvidence } from "../../lib/server/public-evidence";
+import { retiredStoryNotice, type ReplacementStory } from "../../lib/public/retired-story";
 
 export const prerender = false;
 
@@ -17,12 +19,22 @@ if (!slug) {
   return new Response("Not found", { status: 404 });
 }
 
-// Fetch story from D1 — returns null if slug doesn't exist or isn't published
+// Fetch story from D1. Withdrawn and superseded stories that were published
+// keep their page (with a status banner below) under the corrections policy;
+// anything never published returns null.
 const db = Astro.locals.runtime.env.DB;
-const story = await getPublishedStoryBySlug(db, slug);
+const story = await getPublishedStoryBySlug(db, slug, { includeRetired: true });
 if (!story) {
   return new Response("Not found", { status: 404 });
 }
+// A replacement is linked only when a reviewed `supersedes` relationship names
+// a currently published story; otherwise the page claims none.
+let replacement: ReplacementStory | null = null;
+if (story.publicationStatus === "superseded") {
+  try { replacement = await getSupersedingStory(db, story.id); } catch { replacement = null; }
+}
+const notice = retiredStoryNotice(story.publicationStatus, replacement);
+const retired = notice !== null;
 
 // Fetch supporting data
 let sources: Awaited<ReturnType<typeof getPublishedSourcesForStory>> = [];
@@ -54,6 +66,7 @@ const hasConflicts = story.evidenceStatus === "disputed";
 <BaseLayout
   title={`${story.headline} — The Trace Manifest`}
   description={story.summary || `Published story: ${story.headline}`}
+  noindex={retired}
 >
   <div class="wrap" style="max-width:42rem;">
     <nav aria-label="Breadcrumb" class="meta" style="margin-bottom:1.5rem;">
@@ -62,6 +75,24 @@ const hasConflicts = story.evidenceStatus === "disputed";
       &rsaquo; <span>{story.headline}</span>
     </nav>
 
+    <!-- Withdrawn or superseded: the historical page stays at its URL, clearly marked -->
+    {notice && (
+      <section
+        class="card retired-notice"
+        role="note"
+        aria-labelledby="retired-notice-title"
+        data-retired-notice={notice.status}
+        style={`margin-bottom:1.5rem;padding:1rem;background:color-mix(in oklch, var(${notice.status === "withdrawn" ? "--ev-corrected" : "--ev-outdated"}) 8%, transparent);border-left:4px solid var(${notice.status === "withdrawn" ? "--ev-corrected" : "--ev-outdated"});`}
+      >
+        <h2 id="retired-notice-title" style="font-size:1.05rem;margin:0 0 0.5rem;">⚠ {notice.title}</h2>
+        {notice.paragraphs.map((paragraph) => <p class="meta" style="margin:0.35rem 0;">{paragraph}</p>)}
+        {notice.replacement && (
+          <p style="margin:0.5rem 0 0;"><a href={`/stories/${notice.replacement.slug}`} data-replacement-story>Current story: {notice.replacement.headline}</a></p>
+        )}
+      </section>
+    )}
+
+    {notice && <p class="meta" data-historical-evidence style="margin:0 0 0.35rem;font-size:0.8rem;">{notice.evidenceLabel}</p>}
     <EvidenceBadge status={story.evidenceStatus} />
 
     <h1 style="margin-top:0.75rem;">{story.headline}</h1>
@@ -72,22 +103,10 @@ const hasConflicts = story.evidenceStatus === "disputed";
       {story.sourceClass && <span>Source: {story.sourceClass}</span>}
     </div>
 
-    <!-- Status banners for withdrawn/superseded -->
-    {story.publicationStatus === "withdrawn" && (
-      <div class="card" style="margin-top:1.5rem;padding:1rem;background:color-mix(in oklch, var(--ev-corrected) 8%, transparent);border-left:4px solid var(--ev-corrected);">
-        <p class="meta" style="font-weight:600;color:var(--ev-corrected);">⚠ This story has been withdrawn. The information below is retained for transparency in accordance with our corrections policy.</p>
-      </div>
-    )}
-    {story.publicationStatus === "superseded" && (
-      <div class="card" style="margin-top:1.5rem;padding:1rem;background:color-mix(in oklch, var(--ev-outdated) 8%, transparent);border-left:4px solid var(--ev-outdated);">
-        <p class="meta" style="font-weight:600;color:var(--ev-outdated);">⚠ This story has been superseded by more recent information. It is retained for reference.</p>
-      </div>
-    )}
-
     <!-- Summary -->
     {story.summary && (
       <div style="margin-top:2rem;">
-        <h2>Summary</h2>
+        <h2>{retired ? "Summary (as published)" : "Summary"}</h2>
         <p>{story.summary}</p>
       </div>
     )}
@@ -95,7 +114,7 @@ const hasConflicts = story.evidenceStatus === "disputed";
     <!-- TRACE Editorial Analysis -->
     {story.editorialAnalysis && (
       <div style="margin-top:2rem;">
-        <h2>TRACE Analysis</h2>
+        <h2>{retired ? "TRACE Analysis (as published)" : "TRACE Analysis"}</h2>
         <div style="padding:1rem;background:color-mix(in oklch, var(--accent) 5%, transparent);border-radius:var(--radius);border-left:4px solid var(--accent);">
           <p style="margin:0;">{story.editorialAnalysis}</p>
         </div>
@@ -122,6 +141,7 @@ const hasConflicts = story.evidenceStatus === "disputed";
       </div>
     )}
 
+    {notice && <p class="meta" data-historical-evidence style="margin-top:2rem;margin-bottom:0;">{notice.evidenceLabel}.</p>}
     <RatingExplanation
       status={story.evidenceStatus}
       sourceClass={story.sourceClass || "Unknown"}
