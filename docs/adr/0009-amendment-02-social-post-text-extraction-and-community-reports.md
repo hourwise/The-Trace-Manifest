@@ -101,6 +101,12 @@ The model still never fetches URLs (§10).
 
     Linked sources and primary-source facts are unaffected.
 11. **Reddit data is never used to train models.** Excerpts may be sent to a drafting model for inference only if that provider does not train on API inputs. This must be confirmed before use.
+
+    Checked on 25 October 2026:
+    - DeepSeek's API terms do not exclude training on inputs.
+    - Its privacy policy permits training, with an email opt-out, and stores data in the PRC.
+
+    Owner-supplied excerpts are therefore **not** sent to DeepSeek until the opt-out is confirmed in writing and the owner accepts PRC processing. Until then, social extraction is deterministic only.
 12. Material sent to any model is limited to public post text and public linked material.
 
 ## 8. Consequences

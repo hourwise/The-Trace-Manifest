@@ -1,10 +1,17 @@
 # TRACE knowledge pipeline: deterministic-first acquisition, catalogue, story inbox, social automation and knowledge absorption
 
 **Date:** 25 October 2026
-**Status:** **Design proposal only.** Nothing here is implemented, migrated, scheduled, deployed or pushed. Each phase in §17 needs its own owner approval.
+**Status:** **Design proposal only.** Nothing here is implemented, migrated, scheduled, deployed or pushed. Each stage in §17 needs its own owner approval.
+**Revision 2 (25 October 2026, owner-approved, relayed by the production-readiness session):**
+- DeepSeek Flash (non-thinking) is the primary language engine for the initial local acquisition system (§10). Qwen3.5-9B on the owner's CPU-only machine (32 GB DDR3-1600, no GPU) is optional only (§10.4).
+- Spending limits are a combined US$6.25 (about £5) a week, with UTC off-peak scheduling and checkpoints (§10.6, §14.1).
+- The design is reconciled with the frozen ingestion Worker and scheduler 0072 (§16.1).
+- New: a staged plan and the smallest safe prototype (§17).
+- References are based on `main` at `5cb64af` (PR #5: the V1.1 release of SEED-01, migration 0076 and TRACE Capture, now on Production).
+
 **Supersedes (as proposals):** the two narrower proposals "social automation" and "story automation and catalogue".
 **Proposed decisions:** ADR 0021 to ADR 0024 and ADR 0009 Amendment 2, all with status **Proposed** (§19).
-**Builds on:** `docs/audit/trace-v1-knowledge-10-local-acquisition-architecture.md` and `docs/audit/trace-v1-knowledge-10-open-model-execution-plan.md`, read from the pushed branch **`origin/codex/trace-v1-seed-01-prerequisites`**, which is being released to Production on 25 October 2026 and adds migration 0076 and the Evidence Library. This design builds on that branch. The same branch carries the KNOWLEDGE-10 final report, readiness, legacy-absorption and seeding documents, `docs/audit/trace-v1-seed-01-prerequisites.md`, the roadmap `docs/roadmap/trace-v1.1-v1.2.md`, the research inventory `docs/research/ai-models-inference-agents-inventory.*`, the evaluation fixture `tests/fixtures/knowledge-10/ask-evaluation-suite.json` and migration `db/migration-0076-evidence-library-governance.sql`. On 2026-10-25 every one of these was verified byte-identical to the copies first read from the local branch `codex/trace-capture-preview-01`. The SEED-03 batch plan is on `origin/codex/trace-v1-seed-03-batch-01` (`docs/audit/trace-v1-seed-03-batch-01-plan.md`). References below cite them by path.
+**Builds on:** `docs/audit/trace-v1-knowledge-10-local-acquisition-architecture.md` and `docs/audit/trace-v1-knowledge-10-open-model-execution-plan.md`, now on **`main` at `5cb64af`** (PR #5, released to Production on 25 October 2026, adding migration 0076 and the Evidence Library); first read from `origin/codex/trace-v1-seed-01-prerequisites`. `main` also carries the KNOWLEDGE-10 final report, readiness, legacy-absorption and seeding documents, `docs/audit/trace-v1-seed-01-prerequisites.md`, the roadmap `docs/roadmap/trace-v1.1-v1.2.md`, the research inventory `docs/research/ai-models-inference-agents-inventory.*`, the evaluation fixture `tests/fixtures/knowledge-10/ask-evaluation-suite.json` and migration `db/migration-0076-evidence-library-governance.sql`. On 2026-10-25 every one of these was verified byte-identical to the copies first read from the local branch `codex/trace-capture-preview-01`. The SEED-03 batch plan is on `origin/codex/trace-v1-seed-03-batch-01` (`docs/audit/trace-v1-seed-03-batch-01-plan.md`). References below cite them by path.
 
 **Hard constraints for this design:**
 - No Production change.
@@ -52,8 +59,8 @@ Models do only what needs language understanding: drafting prose for human appro
 | Measure | Target | Where measured |
 |---|---|---|
 | Share of pipeline operations that are deterministic | **≥ 90 %** of operations per day; **≥ 75 %** of extracted catalogue and claim fields | §13 accounting; run ledger |
-| Model calls per day | **≤ 90** (about 40 story drafts, ≤ 20 social fallbacks, ≤ 30 release-note fallbacks) | Gateway usage ledger |
-| Model spend | **≤ US$0.35 a day** at DeepSeek peak list price (§14.1) | Usage ledger against the provider balance |
+| Model calls per day | **≤ 70** at 50 drafts a day (50 drafts, about 6 release mappings, ≤ 10 reconciliations; social mapping disabled until KP-24) | Usage ledgers |
+| Model spend | **Hard cap US$6.25 a week combined** (about £5; §14.1). Expected about US$0.11–0.41 a week at 10–50 drafts a day, off-peak. | Local and Worker usage ledgers; DeepSeek balance reconciliation |
 | Owner decision time | **20–30 minutes a day** (§12) | Inbox timing telemetry (local, private) |
 | Trust regressions | **0**: no published claim, catalogue value or Ask answer without its existing gate | Sampling audit (§11.8); evaluation suite |
 
@@ -67,12 +74,13 @@ Models do only what needs language understanding: drafting prose for human appro
 | B-2 | 0076 keeps the 0074 rule that each `(assertion, action, previous state, new state)` transition happens at most once (`idx_assertion_governance_events_transition`). | An assertion cannot cycle admitted → rejected → admitted → rejected. Repeated correction therefore needs dedicated revoke/restore actions rather than reusing `admit`/`reject` (§11.7). |
 | B-3 | 0076 permits `mark_current` / `mark_stale` events only in `evidence_library` context, and `mark_current` only when the assertion is admitted and accepted. | Pinned freshness (§11.5) fits the Evidence Library naturally. Story-context freshness keeps today's route. |
 | B-4 | ADR 0012 #3: one provider attempt, zero automatic retries. ADR 0008 §2.1.5: no automatic model substitution or fallback provider. | The model tiers in §10 are **chosen per task by configuration**, never as a runtime fallback chain. |
-| B-5 | `src/ai/config.ts` allows only `deepseek-v4-flash` and `deepseek-v4-pro`, priced at 1/5 and 2/10 USD per million tokens. On 2026-10-25 the DeepSeek pricing page shows `deepseek-flash` as the current name, with `deepseek-v4-flash` retired and served by V4.1-Flash-1017 (§10.2, [X-01]). | Roadmap item **G-1** (allow-list and price update) is a precondition of Lane B at volume (§14.1). |
+| B-5 | `src/ai/config.ts` (main `5cb64af`) allows only `deepseek-v4-flash` and `deepseek-v4-pro`. **Its editorial default is `deepseek-v4-pro`.** Flash is configured at 1/5 and Pro at 2/10 USD per million tokens, and the editorial daily budget is US$0.50. The adapter sends `thinking: {type: "disabled"}`. On 2026-10-25 DeepSeek lists `deepseek-flash` as current, with `deepseek-v4-flash` retired but accepted (§10.2, [X-01]). | The Worker configuration is unchanged by this design. G-1 is a separate change. The workstation uses `deepseek-flash` under its own budgets (§10.5, §14.1). |
 | B-6 | The local-acquisition design proposes: L-1 shrink Cloudflare ingestion; L-2 one KC-11 evidence write path; L-3 the Worker re-fetches and verifies; L-4 no workstation database access. | Lane A runs locally and submits proposals. The Worker remains the authority. These four decisions are reused unchanged. |
 | B-7 | The ADR 0019 catalogue structures are almost entirely missing. The current `models` table is regex-extracted and unevidenced (open-model plan §1). | The catalogue in §6 is new schema (OM-1, OM-2), sequenced after the V1.1 evidence route is proven. |
 | B-8 | Hardware scenarios H01–H16 currently all resolve to `insufficient_evidence` (evaluation fixture). | §6.6 maps each one to the records and estimator outputs that would change its outcome. |
 | B-9 | ADR 0004 lists claim types that always need human review: security, legal, misconduct, major benchmark conclusions, "best" rankings, prominent corrections, sponsored comparisons, claims based mainly on community reports, strong contradictions. | None of these classes can ever be system-admitted (§11.9). Story publication is human for every story anyway. |
 | B-10 | ADR 0015 already defines candidate states including `draft_ready`, `held`, `archived` and server-side draft persistence with prompt, policy, model and source-set hash. | The story inbox (§7) is a UI and orchestration layer over ADR 0015, not a new pipeline. |
+| B-12 | `wrangler.worker.toml` declares `crons = []` (main `5cb64af`). The Production and Preview Workers have Cron `[]` (2026-10-25). The legacy daily pipeline in `scheduled()` and its publisher-triggered routes still exist in code. | §16.1: the pipeline stays paused; the workstation can never reach legacy routes |
 | B-11 | SEED-02 measured about **120 written D1 rows per assertion** for the full governance lifecycle (admit, accept, freshness request and approve, including events, jobs, audit, nonces and score explanations). SEED-03 caps a governance session at **≤ 40 assertions (≤ 5,000 writes)** (`docs/audit/trace-v1-seed-03-batch-01-plan.md` §4). | Batches in §11.4 are capped at 40. D1 estimates in §14.2 use 120 rows per assertion. |
 
 ### 1.1 Existing ingestion baseline (Production source registry)
@@ -435,8 +443,9 @@ Decode ceiling, using whole-file bytes (the approximate form, since the tensor t
 | RX 7900 XTX (960 GB/s, `HW-7900xtx-*`) | ≤ 165.1 | ≤ 142.1 |
 | CPU-only, dual-channel DDR5-5600: 2 × 8 B × 5,600 MT/s = 89.6 GB/s theoretical | ≤ 15.4 | ≤ 13.3 |
 | CPU-only, dual-channel DDR4-3200: 51.2 GB/s theoretical | ≤ 8.8 | ≤ 7.6 |
+| **Owner's machine: CPU-only, 32 GB DDR3-1600, dual channel: 25.6 GB/s theoretical** | **≤ 4.4** | **≤ 3.8** |
 
-**Reading the CPU rows.** The owner's current CPU-only machine running Qwen 3.5 9B has an unrecorded memory configuration, so its profile stays `unknown` until the owner supplies it. If it is dual-channel DDR4-3200, decoding 800 output tokens takes **at least about 90 s** per item before any prefill. That supports the brief's conclusion: **overnight batch at most** (§10.4).
+**Reading the CPU rows.** The owner's machine is 32 GB of DDR3-1600 with no GPU (owner-stated, Revision 2). Decoding 800 output tokens takes **at least about 180 s** per item before any prefill. That confirms Qwen there is an optional benchmark or verifier at most (§10.4). An **actual CPU benchmark** replaces this estimate for that profile.
 
 **Qwen2.5-0.5B Q4_K_M** (header [X-04]): 24 blocks × 2 × 2 KV heads × 64 (= 896 / 14) × 2 B = **12,288 B per token**, so 32,768 tokens = 0.403 GB of KV. This is the unit-test fixture for a plain GQA architecture.
 
@@ -523,12 +532,12 @@ The weights are configuration, changed only by owner decision and recorded with 
 | Parameter | Proposed default | Basis |
 |---|---|---|
 | Model | `deepseek-flash`, **non-thinking mode** | The current alias [X-01]. Thinking is the default mode, and reasoning tokens bill as output, so drafts must set non-thinking explicitly or cap reasoning. |
-| Drafts per day (K) | **40** | 50 stories/day target. The rest are low-rank and shown as "not drafted; draft on demand". |
+| Drafts per day (K) | **10 in P1**, then 25, 40 or 50 by weekly owner decision (§14.1) | 50 stories/day target. The rest are low-rank and shown as "not drafted; draft on demand". |
 | Input cap | 12,000 tokens (fact sheet + bounded source extracts) | Existing `TRACE_AI_MAX_INPUT_TOKENS` default |
 | Output cap | 1,500 tokens | Existing `TRACE_AI_MAX_OUTPUT_TOKENS` default |
 | Attempts | 1; no retries; no regeneration (ADR 0012) | A failed draft shows "Draft failed; draft on demand" |
-| When | **Off-peak** where possible: outside 01:00–04:00 and 06:00–10:00 UTC on weekdays, which halves the price [X-01] | Owner trigger or workstation timer (I-7) |
-| Daily cap | US$0.30 for drafts (editorial task budget) | §14.1 |
+| When | **Workstation model window W1, 22:00–00:45 UTC** (off-peak; §10.6). Worker on-demand drafts remain possible under the unchanged editorial budget. | Workstation timer (I-7) |
+| Daily cap | Workstation `draft_story` US$0.30 a day, within the workstation's US$2.75 a week (§14.1) | §14.1 |
 
 **Input.** The model receives:
 - the deterministic fact sheet;
@@ -640,7 +649,7 @@ The share URL is retained as `submitted_url`, the canonical URL as `canonical_ur
 
 **Each extracted value stores** `{value, startOffset, endOffset, sha256(span)}` against the stored excerpt (I-3).
 
-**Model fallback** (`deepseek-flash`, non-thinking, ≤ 20 a day): used only when a post has a speed number but grammar coverage of the required fields is incomplete. The model returns field → **verbatim span**. Spans that do not re-find are dropped. Values the model "normalises" (for example "about 40" → 40) are rejected.
+**Model fallback** (`deepseek-flash`, non-thinking, ≤ 10 a day; **disabled until KP-24**, so deterministic extraction only in the pilot): used only when a post has a speed number but grammar coverage of the required fields is incomplete. The model returns field → **verbatim span**. Spans that do not re-find are dropped. Values the model "normalises" (for example "about 40" → 40) are rejected.
 
 **Configuration completeness** (deterministic score, 0–7): hardware, artefact or quant, runtime and version, context, batch or settings, pp speed, tg speed. Below 4 ⇒ stored as `configuration_incomplete` and never used in rankings or comparisons, only listed.
 
@@ -688,7 +697,7 @@ Owner time is about 15 s per card (approve card / keep internal / reject), so ab
   - on publication, re-check availability via the route used (R-2: API; R-1: the owner taps "still available?" on open);
   - under R-2, re-check at 30 days;
   - if a post is removed or deleted, the card is withdrawn, the excerpt deleted and the observation **revoked for rights** (§11.7). The linked sources and Lane A facts are unaffected.
-- **No AI training on Reddit data** [X-02]. Excerpts may be sent to the drafting model (inference, not training) only if the provider does not train on API inputs. Check this for DeepSeek's API terms (KP-10).
+- **No AI training on Reddit data** [X-02]. DeepSeek's privacy policy permits training on inputs, with an email opt-out [X-16], and its API terms do not exclude it [X-15]. **Owner-supplied excerpts are therefore not sent to DeepSeek** until the opt-out is confirmed in writing and the owner accepts PRC processing (KP-24).
 - **No mirroring or media:** ADR 0009 §9.3 unchanged.
 
 ---
@@ -712,70 +721,146 @@ The full text is in `docs/adr/0009-amendment-02-social-post-text-extraction-and-
 
 ---
 
-## 10. Model tiering and the gateway
+## 10. Model tiering, DeepSeek-first local processing and the gateway
+
+**Revision 2 (owner-approved, 25 October 2026):**
+- DeepSeek Flash is the **primary language engine** of the initial local acquisition system.
+- Qwen3.5-9B on the owner's CPU-only machine is **optional only**.
+- Deterministic-first (ADR 0021) is unchanged: acquisition, metadata extraction, GGUF parsing, hashing, deduplication, validation and packaging stay deterministic.
 
 ### 10.1 Tiers and assignment
 
-| Tier | What | Allowed tasks | Not allowed |
-|---|---|---|---|
-| **T0 deterministic** | Code | Everything in §3.2 marked D | n/a |
-| **T1 low-cost API** | DeepSeek `deepseek-flash` through the existing gateway | `draft_story`, `draft_social_card`, `map_release_bullet`, `map_social_report` (span-verified), optional Ask explanation | Admission, classification of evidence class, independence, freshness, anything with private data |
-| **T2 optional free or flat tiers** | For example OpenCode Go | **None in the pipeline** (§10.3). At most owner-interactive help on public material, outside TRACE's gateway. | Pipeline automation |
-| **T3 local** | The owner's machines through an OpenAI-compatible local server (ADR 0019 runtime records) | Overnight `map_*` fallbacks and **independent verification passes** (local-acquisition §6 step 6) on public material; later, drafts | Anything requiring a reply in the owner's session on the current CPU machine |
+| Tier | What | Role |
+|---|---|---|
+| **T0 deterministic** | Code | Everything in §3.2 marked D |
+| **T1 DeepSeek `deepseek-flash`, non-thinking** | DeepSeek API through the shared ADR 0008 contracts (§10.5). Called from the workstation for nightly local work, and from the Worker for owner-triggered editorial tasks, as today. | **Primary language engine:** approved drafting and free-text mapping |
+| **T2 free or flat tiers** | For example OpenCode Go | **Excluded** from the pipeline (§10.3) |
+| **T3 local Qwen3.5-9B** | The owner's CPU-only machine (§10.4) | **Optional only:** a local benchmark; an independent verification worker (it can only add `reviewer_required`, I-2); a future substitute after evaluation |
 
-**Assignment is per task type in configuration**, audited and changed only by deployment (ADR 0008 §2.1.5). **There is no runtime fallback chain** (B-4). If T1 is unavailable, the task fails visibly ("draft on demand"). It does not silently move to another tier.
+**When a model may be used.** Model-assisted extraction and knowledge reconciliation are allowed **only where deterministic methods are demonstrably inadequate**, which means:
+- **(a) per task:** the T0 grammar's coverage on the recorded corpus is below the task threshold (proposed 80 % of items fully mapped), measured and recorded in the run ledger before the model task is enabled;
+- **(b) per item:** only items the grammar could not map are sent.
 
-### 10.2 T1: DeepSeek, verified 25 October 2026 [X-01]
+Every model-generated factual candidate must pass schema validation and carry a **re-findable citation**: a verbatim span with offsets in the stored source text (I-3).
 
-| Item | Value (DeepSeek "Models & Pricing" page, read 2026-10-25) |
-|---|---|
-| Current alias | **`deepseek-flash`**, served by **DeepSeek-V4.1-Flash-1017** |
-| Legacy aliases | `deepseek-v4-flash` and `deepseek-v4-flash-vision-exp`: "the corresponding models have been retired", still accepted, served by V4.1-Flash-1017 and billed at the Flash price |
-| Flash price (USD per 1M tokens) | Input cache hit 0.006 peak / 0.003 off-peak; input cache miss **0.30 / 0.15**; output **1.20 / 0.60** |
-| `deepseek-v4-pro` | Served by DeepSeek-V4-Pro-0813: 0.044 / 0.022; 1.32 / 0.66; 3.96 / 1.98 |
-| Off-peak | Half price. Peak is 01:00–04:00 and 06:00–10:00 UTC, Monday–Friday, excluding Chinese public holidays. |
-| Context; max output | 1M; 384K |
-| Thinking | Supports non-thinking and thinking; **thinking is the default** |
-| Concurrency | Flash 2,500; Pro 500 |
-| Search and Fetch APIs | $0.75 per 1,000 requests; free through DeepSeek Harness, Claude Code or Codex until 1 November 2026 (Beijing time). **TRACE must not use them** (ADR 0008 §3.1: no model browsing). |
+| Task type | Tier | Where | Input (public material only) | Output | Validator |
+|---|---|---|---|---|---|
+| `map_release_change` | T1 | Workstation | Template-stripped release text of a watched runtime | List of `{label ∈ closed enum, verbatim bullet span, entity strings}` | Span re-find; enum; entity alias match |
+| `reconcile_entity` | T1 | Workstation | One unmatched entity string, plus up to 10 candidate catalogue ids with their aliases (from the local catalogue) | One of the supplied ids, or `none` | The answer must be one of the supplied ids. **It never creates an entity.** |
+| `draft_story` | T1 | Workstation (nightly pre-run) or Worker (on demand) | Fact sheet plus bounded public extracts | Draft | V1–V6 (§7.6), re-run by the Worker on import |
+| `map_social_report` | T1 | Workstation | Owner-supplied excerpt | Field → verbatim span | **Disabled** until KP-24 (§10.2, §8.9) |
+| `verify_independent` | T3 (optional) | Workstation | Same inputs as a `map_*` task | Agree or disagree | Can add `reviewer_required` only |
 
-**Consequences:**
-- **G-1:** the allow-list should move to `deepseek-flash`, and the pricing variables to 0.30 / 1.20, a **separate config change with approval**.
-- With today's configured 1/5 prices, 40 drafts would reserve US$0.78 a day against the editorial cap of US$0.50 (§14.1). The inbox would stop at about 25 drafts.
+**Assignment rules:**
+- Assignment is per task type in configuration.
+- **There is no runtime fallback between tiers or providers** (ADR 0008 §2.1.5; ADR 0012 #3). A failed or unavailable T1 call defers the item (§10.6). It never moves to T3.
+- **DeepSeek never** admits assertions, sets freshness, decides provenance independence, approves evidence or publishes stories (I-1, I-8).
+
+### 10.2 DeepSeek facts, verified 25 October 2026
+
+| Item | Value | Source |
+|---|---|---|
+| Current Flash id | **`deepseek-flash`**, served by DeepSeek-V4.1-Flash-1017 | [X-01] |
+| Legacy ids | `deepseek-v4-flash` and `deepseek-v4-flash-vision-exp`: "the corresponding models have been retired", still accepted, served by V4.1-Flash-1017 and billed at the Flash price | [X-01] |
+| Pro | `deepseek-v4-pro`, served by DeepSeek-V4-Pro-0813 | [X-01] |
+| Flash price (USD per 1M tokens), peak / off-peak | Input cache hit 0.006 / 0.003; input cache miss **0.30 / 0.15**; output **1.20 / 0.60** | [X-01] |
+| Pro price, peak / off-peak | 0.044 / 0.022; 1.32 / 0.66; 3.96 / 1.98 | [X-01] |
+| Off-peak | Half price. **Peak is 01:00–04:00 and 06:00–10:00 UTC, Monday–Friday, excluding Chinese public holidays.** All other hours are off-peak, including weekends and those holidays in full. | [X-01] |
+| Non-thinking parameter | OpenAI format: `{"thinking": {"type": "disabled"}}`. Thinking is **enabled by default** (effort high). With the OpenAI SDK it is passed in `extra_body`. | [X-13] |
+| Token ratio | About 0.3 tokens per English character (API `usage` is authoritative) | [X-14] |
+| Balance | `GET https://api.deepseek.com/user/balance` returns `is_available` and balances | [X-17] |
+| Context; max output | 1M; 384K | [X-01] |
+| Data terms | The Open Platform Terms (effective 29 April 2026) do not say whether API inputs are used for training or how long they are kept. The Privacy Policy (updated 10 February 2026) lists training on user input, an opt-out by email to `privacy@deepseek.com`, retention "for as long as you have an account", and storage in the People's Republic of China. | [X-15], [X-16] |
+
+**Repository facts** (`main` at `5cb64af`):
+- `src/ai/config.ts` allows `deepseek-v4-flash` and `deepseek-v4-pro`; the **editorial default is `deepseek-v4-pro`**.
+- Configured Flash prices are USD 1 input / 5 output per million, via `TRACE_AI_FLASH_*_USD_PER_MILLION`.
+- The editorial daily budget is **USD 0.50**.
+- `src/ai/providers/deepseek.ts` already sends `thinking: { type: "disabled" }`.
+
+**This design does not change the Worker configuration.** G-1 remains a separate, approved change. Pending G-1, the Worker keeps its conservative configured prices, which over-reserve by 3.3× on input and 4.2× on output.
+
+**Consequences for data sent to DeepSeek:**
+- **Public primary-source material is the first pilot dataset:** release notes, model cards, public docs and published articles.
+- **Owner-supplied social excerpts are not sent** until the owner has requested the training opt-out and has it confirmed in writing (KP-24). Reddit's policy forbids using Reddit data to train models [X-02], and DeepSeek's policy permits training on inputs by default.
+- Private reviewer notes, personal information, credentials, Access identities and private Desk content are **never** sent.
 
 ### 10.3 T2: OpenCode Go, checked 25 October 2026 [X-10]
 
 | Requirement from the brief | Finding | Assessment |
 |---|---|---|
 | Data retention | Per-model table. Most models 0 days and not used for training. Several closed models 30 days. "Muse Spark … Contributor" models train on prompts. **DeepSeek V4.1 Flash / V4 Pro: 0 days, under a ZDR agreement "renewed monthly … valid through October 31, 2026"**. | Retention varies by model and month; it would need re-verifying every month |
-| Permitted automated use | Go is "designed primarily for OpenCode and other coding agents". Clients should "send typical coding agent traffic", identify with their own user agent, and send a stable `x-opencode-session` header per conversation. Traffic is monitored for abuse. Workspaces are single-member. | A batch extraction or drafting pipeline is **not** typical coding-agent traffic. Using Go for it risks breaching the stated intent. |
-| Rate limits and availability | Per-model dollar allowances: 5-hour (20 %), weekly (50 %) and monthly (100 %). The page states no per-minute limits. "Usage limits may change"; "the list of models may change". | Not predictable enough for a daily pipeline |
+| Permitted automated use | Go is "designed primarily for OpenCode and other coding agents". Clients should "send typical coding agent traffic", identify with their own user agent, and send a stable `x-opencode-session` header per conversation. Traffic is monitored for abuse. Workspaces are single-member. | A batch extraction or drafting pipeline is **not** typical coding-agent traffic |
+| Rate limits and availability | Per-model dollar allowances: 5-hour (20 %), weekly (50 %) and monthly (100 %). The page states no per-minute limits. "Usage limits may change"; "the list of models may change". | Not predictable enough for a nightly pipeline |
 | Public material only | It would be public material only | n/a |
 
-**Recommendation:** **do not use T2 in the TRACE pipeline.** It may be revisited by a separate decision if a provider's terms explicitly permit automated batch use, with retention fixed in a contract rather than a monthly renewal. The third-party reviews found in research [X-11] are not used as facts.
+**Recommendation:** do not use T2 in the TRACE pipeline. Third-party reviews [X-11] are not used as facts.
 
-### 10.4 T3: local models
+### 10.4 T3: Qwen3.5-9B on the owner's machine (corrected hardware)
 
-**Current CPU-only machine (Qwen 3.5 9B):**
-- the decode ceiling is ≤ 7.6–15.4 tok/s depending on memory (§6.5, the formula with cited inputs; the actual configuration is `unknown`);
-- prefill is unmeasured.
+**Hardware (owner-stated, 25 October 2026):** 32 GB DDR3-1600 RAM, CPU only, **no GPU**.
 
-It is suitable **only** for overnight, non-urgent T3 tasks:
-- re-running `map_*` fallbacks as an **independent second opinion** (it can only add `reviewer_required`, I-2);
-- verifying that T1 spans re-find. This is deterministic anyway, so the model adds little here.
+| Quantity | Value | Basis |
+|---|---|---|
+| Theoretical memory bandwidth (dual channel) | 2 × 8 B × 1,600 MT/s = **25.6 GB/s**, about half a dual-channel DDR4-3200 desktop (51.2 GB/s) | Arithmetic from the stated configuration. The channel count must be confirmed by the benchmark machine's inventory. |
+| Qwen3.5-9B Q4_K_M weights | 5,680,522,464 B | [X-04] |
+| Decode ceiling (§6.4) | **≤ 4.4 tok/s at 4K context; ≤ 3.8 tok/s at 32K** | `trace-decode-bound-v1`, whole-file approximation |
+| Minimum time for 800 output tokens | **≥ ~180 s per item, before any prefill** | 800 / 4.4 |
 
-**Upcoming PC:** the reference workstation (Arc Pro B70 32 GB + RTX 5060 Ti 16 GB + 128 GB, open-model plan §14 profile 13) would run the same 9B Q4_K_M at a ≤ 90–105 tok/s ceiling on the B70 (§6.5). It becomes eligible for T3 drafting only after an evaluation over recorded fixtures shows validator pass rates at least equal to T1.
+**Conclusion.** This machine is not a production engine for TRACE. Its roles are:
+1. **Benchmark:** produce the first real `trace_tested` performance record for a CPU-only DDR3 profile, which is itself a useful catalogue datum.
+2. **Optional independent verifier:** for a small nightly subset of `map_*` outputs. It can only add `reviewer_required`.
+3. **Future substitute:** evaluated on the upcoming PC, never assumed.
 
-**Local inference uses ADR 0019 runtime records** for the runtime and artefact chosen. The local model is an untrusted preparer: L-4 and I-1 to I-3 apply.
+**CPU benchmark plan** (an actual measurement, not an estimate):
 
-### 10.5 Gateway reuse
+| Element | Specification |
+|---|---|
+| Build | llama.cpp at a pinned release tag (for example the latest `bNNNNN` at run time), CPU backend; the build flags and the CPU's instruction-set flags recorded |
+| Artefact | `unsloth/Qwen3.5-9B-GGUF@3885219b…` `Qwen3.5-9B-Q4_K_M.gguf`; SHA-256 verified after download. **A one-off, owner-approved full download for benchmarking only; Lane A itself never downloads weights.** |
+| Runs | `llama-bench` with `-p 512 -n 128` at thread counts 4, 8 and the physical-core count; 5 repetitions; context 4K and 16K; KV f16 |
+| Recorded | pp and tg tokens per second (mean and standard deviation), peak RSS, CPU model, RAM configuration (channels, speed as reported by the OS), OS, date |
+| Output | A `performance_observation` with evidence class `trace_tested` for this exact profile, and a comparison with the ceiling (tg should be below it; if it is above, the inputs are wrong) |
+| Use | Decides whether role 2 is worth its time. Expected: only for a handful of items a night. |
 
-The provider-neutral gateway is defined in **ADR 0008 §2.2** and implemented in `src/ai/trace-model-gateway.ts`, `provider.ts`, `model-router.ts`, `durable-governance.ts` and `providers/deepseek.ts`. ADR 0019 contributes the local runtime and artefact records and the OpenAI-compatible local-server pattern. The brief cites the gateway as ADR 0019's; this design uses the ADR 0008 gateway, which ADR 0019 relies on.
+**The upcoming PC** (the open-model plan §14 reference workstation, if purchased) is evaluated the same way before any T3 drafting.
 
-**Additions proposed:**
-- task types `draft_story`, `draft_social_card`, `map_release_bullet` and `map_social_report`, each with token ceilings, a daily budget and a schema validator;
-- a `local-openai` adapter for T3, used **only** from the workstation packager, never from the public Worker;
-- the existing `TRACE_MODEL_PROVIDER` seam for tests.
+### 10.5 Gateway reuse: the workstation runner shares the ADR 0008 contracts
+
+**Options:**
+- **(A) Workstation calls DeepSeek directly**, using code shared with the Worker gateway.
+- **(B) Workstation calls a new Worker model route.**
+
+**Recommendation: (A).** With (B), every model call would cost Worker and D1 writes (the `ai_requests` ledger) and would add a new externally reachable model route. (B) can be revisited if central accounting becomes necessary.
+
+| Concern | How (A) stays faithful to ADR 0008 and ADR 0012 |
+|---|---|
+| Task policy | `src/ai/task-policy.ts` (constitution, `TRACE_POLICY_VERSION`) is **imported, not copied**. The runner lives in this repository (`local/acquisition/`, proposed), so it uses the same source files at the same commit. |
+| Request contract | `src/ai/providers/deepseek.ts` request shape: model allow-list, `thinking: {type: "disabled"}`, `max_tokens`, timeout, **one attempt**, no retries, no tools, no URLs. The model-router deprecated-alias guard is reused. |
+| Output validation | `src/ai/schemas.ts` and `src/ai/validation.ts` plus the span re-find validator |
+| Usage accounting | `DurableAIGovernance` is bound to D1 (its constructor takes a `D1Database`). The runner implements **the same lifecycle** (`begin` → `reserve` → `startProvider` → `settleSuccess` / `settleFailure`; circuit breaker; idempotency) as `LocalAIGovernance` on `node:sqlite`. **One contract-test suite runs against both implementations.** |
+| Cost arithmetic | Shared pure function: tokens × price for the request's start time (peak or off-peak by the UTC rule) |
+| No fallback | Unchanged: one provider, one attempt, deferral on failure |
+| Credentials | A **dedicated DeepSeek API key** for the workstation, kept in Windows Credential Manager, never in the repository or packages, and revocable independently of the Worker's key. If DeepSeek offers per-key spending limits, use them. Otherwise the local ledger is the primary cap, and the account's prepaid balance is the final boundary (ADR 0008). |
+| Network | The runner's fetch wrapper allows only `api.deepseek.com`, `huggingface.co` and its CDN redirect hosts (for range reads), `api.github.com` and approved RSS hosts. Everything else is refused. |
+| Reporting | Each import package carries `usage.json`: request ids, model, tokens (hit, miss, output), settled cost, policy version. Cloudflare stores it as audit data in the receipt. **It is never an input to admission.** |
+| Authority | Cloudflare remains the authority for import validation and evidence admission (L-3). The workstation produces proposals only. |
+
+### 10.6 UTC off-peak scheduling, checkpoints and deferral
+
+**Verified rule** [X-01]: peak hours are 01:00–04:00 and 06:00–10:00 UTC, Monday–Friday. Therefore, **on weekdays, off-peak is 10:00–01:00 (next day) and 04:00–06:00 UTC.** Not all overnight hours are off-peak: 01:00–04:00 UTC is peak.
+
+| Rule | Specification |
+|---|---|
+| Model window W1 | **22:00–00:45 UTC** every night: the owner's preferred start, with a 15-minute margin before the 01:00 weekday peak. Weekends are entirely off-peak, but the same window is used for predictability. |
+| Request start guard | A request starts only if `now + request timeout (25 s) + 60 s` is before 00:45 UTC |
+| Deterministic stages | Acquisition, parsing, change detection and verification preparation run **before** W1 (from about 21:30 UTC), so W1 is spent on model calls. They have no model cost and may run at any time. |
+| Checkpoints | A per-item local ledger state machine: `acquired → parsed → model_pending → model_done → verified → packaged`. Each transition is an atomic SQLite transaction. A restart resumes from the last committed state. |
+| In-flight crash | DeepSeek has no idempotency key. A request in flight at a crash is **billing-uncertain**: it is settled at its reservation (the ADR 0012 pattern), never resent in the same window, and the item is retried in the next window. |
+| Deferral | Items not started by 00:45 UTC are deferred to the next W1, in priority order (rank, then age). After 3 deferrals an item is listed in the morning summary. **Model requests are never run in peak hours automatically.** An optional second window W2 (04:00–05:45 UTC) is enabled only by an owner flag. |
+| Clock | The runner refuses to start model calls if the system clock differs from the HTTP `Date` header of `api.deepseek.com` by more than 60 s |
+| Holidays | Chinese public holidays are off-peak, so ignoring them is conservative |
+| Morning summary | A local HTML report: items acquired, changed, mapped, deferred; spans failed; settled cost; budget remaining; alerts |
 
 ---
 
@@ -958,7 +1043,7 @@ Deterministic router `trace-route-v1`:
 | Social decisions | 20 | | | 20 |
 | Absorption: routing, batch formation, system admission, pinned freshness | ~300 | ~900 | | |
 | Batch accepts and audits | ~10 | | | ~10 |
-| **Totals** | | **≈ 3,760** | **≤ 90** | **≈ 80** |
+| **Totals** | | **≈ 3,760** | **≤ 90** (≤ 70 under Revision 2, while social mapping is disabled) | **≈ 80** |
 
 **Shares:**
 - deterministic ≈ **96 %** of operations;
@@ -971,22 +1056,64 @@ Deterministic router `trace-route-v1`:
 
 ## 14. Cost and D1 budgets
 
-### 14.1 Model cost (DeepSeek list prices, 2026-10-25 [X-01])
+### 14.1 Model cost and spending limits (Revision 2)
 
-| Task | Calls/day | Tokens per call (in/out, caps) | Peak cost/call | Daily peak | Daily off-peak |
-|---|---|---|---|---|---|
-| `draft_story` | 40 | 12,000 / 1,500 | $0.0054 | $0.216 | $0.108 |
-| `map_social_report` | ≤ 20 | 4,000 / 800 | $0.00216 | $0.043 | $0.022 |
-| `map_release_bullet` | ≤ 30 | 3,000 / 500 | $0.0015 | $0.045 | $0.023 |
-| **Total** | ≤ 90 | | | **≈ $0.30** | **≈ $0.15** |
+**Prices:** DeepSeek list prices, verified 2026-10-25 [X-01]. All nightly work is scheduled off-peak (§10.6), so expected costs use the **off-peak** price. **Reservations always use the peak price** (fail-safe).
 
-**Notes:**
-- That is about **US$9 a month at peak**, about US$4.60 off-peak, before cache-hit savings on the repeated system prompt (cache-hit input is 0.006 peak).
-- **Caps:**
-  - editorial task daily budget **US$0.35** (KP-14);
-  - existing per-request cap US$0.02;
-  - circuit breaker and prepaid balance as the final boundary (ADR 0008).
-- **Pre-G-1 warning:** with the configured 1/5 prices, one draft reserves US$0.0195. 40 drafts would need US$0.78 against today's US$0.50 editorial cap.
+**Token distributions:**
+
+| Task | Basis | Distribution used |
+|---|---|---|
+| `map_release_change` | **Measured** on 2026-10-25 from the 30 latest releases of 5 watched runtimes [X-18]. Tokens are estimated at 0.3 per character [X-14]. llama.cpp bodies are stripped of their download-link template first. | See the table below. Fallback rate: llama.cpp 30 % (conventional prefixes such as `opencl: add …` are expected to match the grammar; to be measured on the 1,013-item corpus); prose-heavy runtimes 100 %. Prompt 800 tokens; output ≈ 25 % of input, minimum 150, maximum 2,000. |
+| `draft_story` | **Assumption** (no TRACE draft distribution has been measured yet) | Variable input lognormal: median 4,000, p90 8,000, cap 11,000; plus a 1,000-token system prompt (cache hit after the first call). Output: median 600, p90 1,000, cap 1,500. **Replaced by measured distributions after stage P1's first week.** |
+| `reconcile_entity` | Assumption | 10 calls a day × (800 in, 100 out) |
+| `map_social_report` | Assumption; **disabled until KP-24** | If enabled: 10 fallbacks a day × (1,200 in, 250 out) |
+
+Measured release sizes (body tokens):
+
+| Runtime | Releases per day (observed) | Median | p90 | Mean |
+|---|---|---|---|---|
+| llama.cpp (template stripped) | 10.0 | 126 | 256 | 132 |
+| LiteLLM | 2.14 | 526 | 5,745 | 3,090 |
+| Ollama | 0.41 | 194 | 435 | 243 |
+| Transformers | 0.16 | 909 | 8,575 | 2,845 |
+| vLLM | 0.10 | 4,684 | 10,606 | 4,780 |
+
+Release extraction therefore costs about **5.8 calls, 12.7k input tokens and 2.4k output tokens a day ≈ US$0.0033 a day off-peak**.
+
+**Scenarios** (400 simulated days each; off-peak; US$):
+
+| Story drafts per day | Drafts per day: mean (p95) | Drafts per week | **All tasks per week** (drafts + release + reconciliation) | Worst case per week: every request at its token cap **and** peak price (drafts + release) |
+|---|---|---|---|---|
+| 10 | 0.0107 (0.0128) | 0.075 | **0.111** | 0.38 + 0.59 = 0.97 |
+| 25 | 0.0268 (0.0298) | 0.188 | **0.224** | 0.95 + 0.59 = 1.54 |
+| 40 | 0.0429 (0.0470) | 0.300 | **0.336** | 1.51 + 0.59 = 2.10 |
+| 50 | 0.0537 (0.0588) | 0.376 | **0.412** | 1.89 + 0.59 = 2.48 |
+
+- Social extraction, if enabled after KP-24, would add about US$0.023 a week.
+- At 50 drafts a day the realistic spend is about **US$0.41 a week (≈ £0.30)**. Even the theoretical worst case stays below the cap.
+- **The cap exists to stop runaways:** loops, accidental thinking mode, price changes. It is not a forecast.
+
+**Currency.** DeepSeek bills in USD from a prepaid balance. The owner's limit is **£5 a week**, so the hard cap is set at **US$6.25 a week**:
+- that is £5 at 1.25 USD/GBP;
+- September 2026 quotes were about 1.35 [X-19], at which US$6.25 ≈ £4.63;
+- the cap therefore stays at or below £5 unless the pound falls below 1.25 USD.
+
+**Limits** (all hard and fail-closed; the owner's conservative editorial budget is unchanged):
+
+| Limit | Value | Enforcement |
+|---|---|---|
+| **Combined weekly cap** | **US$6.25** = Worker editorial (unchanged US$0.50/day × 7 = US$3.50, at its conservative configured prices) + **workstation US$2.75** | Each side enforces its own share. The combined figure cannot be exceeded even if both sides max out. |
+| Workstation weekly | US$2.75 | `LocalAIGovernance` reservation refused when `settled + reserved + new reservation > cap` |
+| Workstation daily | US$0.40 | Same |
+| Task daily | `draft_story` US$0.30; `map_release_change` US$0.05; `reconcile_entity` US$0.02; `map_social_report` US$0 (disabled) | Same, per task |
+| Per request | Reservation = cap tokens × **peak** price: draft 12k / 1.5k → US$0.0054; release 12k / 2k → US$0.0060. Both are within the existing US$0.02 per-request cap. | Reserve before the call; settle from `usage` after |
+| Settlement | Actual `usage` (cache-hit, cache-miss and output tokens where returned) × the pinned price for the request's start time. The difference from the reservation is released. | Ledger |
+| Thinking guard | Any response containing `reasoning_content` or non-zero reasoning tokens: settle it, **open the circuit for that task**, alert | Non-thinking is required on every request |
+| Pricing-change guard | The pinned price table carries `verified_at`. Preflight before W1: `GET /models` must list `deepseek-flash`, and `GET /user/balance` must show `is_available`. After W1: if the drop in balance minus the settled ledger cost exceeds max(US$0.05, 20 %), **stop all model tasks (fail closed)** and alert "pricing or usage mismatch". A price table older than 30 days pauses model tasks until the owner re-verifies; the pricing page is client-rendered, so this is a human check. | Runner preflight and postflight |
+| Alerts | 50 % and 80 % of the weekly cap; any circuit opening; any failed preflight or postflight | Morning summary |
+
+**Measure before increasing volume.** Stage P1 runs at **10 drafts a day for one week**. Measured token distributions, validator pass rates and cost replace the assumptions above. Volume rises to 25, then 40 or 50, **only by owner decision** after each weekly report.
 
 ### 14.2 D1 budgets (to be measured on Preview before Production ceilings; local-acquisition §11 targets apply)
 
@@ -1020,7 +1147,7 @@ Each automatically suspends the relevant path.
 
 | Topic | Rule |
 |---|---|
-| Material sent to models | **Public material only** (published articles, release notes, owner-supplied excerpts of public posts). No reviewer notes, submitter identity, Access identities, private Desk notes, receipts or secrets (ADR 0019 security rules). DeepSeek processes data under its own terms. Check the training and retention terms for API inputs (KP-10). |
+| Material sent to models | **Public primary-source material first** (release notes, model cards, public docs, published articles). Owner-supplied social excerpts only after KP-24. **Never:** reviewer notes, submitter identity, Access identities, private Desk notes, receipts, personal information or secrets. DeepSeek stores data in the PRC, retains it while the account exists, and may train on inputs unless the owner has opted out [X-15][X-16]. |
 | Social authors | Hashed handle by default; display handle only by owner choice; no profiles; no sensitive inference [X-02]; removal honoured (§8.9) |
 | Hardware profiles (Ask) | Not retained; never sent to a provider (open-model plan §3) |
 | Prompt injection | Sources are untrusted data. Model output is accepted only through schema validation and verbatim span re-find. Adversarial fixtures (local-acquisition §14; evaluation N07) run on every extractor and drafter. |
@@ -1038,7 +1165,7 @@ Each automatically suspends the relevant path.
 | **STOP-BURN** | Production and Preview Cron stay `[]`. Scheduler 0072 track (overlap prevention, stale-running cleanup of 2,667 `ingestion_jobs` and 951 `cron_runs`, source 93 / M2, two clean opportunities) **unchanged** | Automated news-feed discovery on Cloudflare. **Does not block** Lanes A and C, or the inbox with owner or workstation triggers (I-7). |
 | **Public Ask off until V1.2** | `TRACE_AI_PUBLIC_ENABLED=false` (commit `d89850b`) | Public use of catalogue and estimator answers. Admin `/admin/ask` evaluation is allowed. |
 | **0076 on Production** | Release in progress on 2026-10-25 (`origin/codex/trace-v1-seed-01-prerequisites`). Confirm it landed before K9 and K10. | Evidence Library routing on Production |
-| **G-1** | Allow-list `deepseek-flash`; prices 0.30 / 1.20 | Inbox at K = 40 |
+| **G-1** | Allow-list `deepseek-flash`; prices 0.30 / 1.20 | Worker-side on-demand drafting at volume only. Workstation drafts use their own ledger (§10.5), so P1–P3 do not need G-1. |
 | **Revocation and restoration** (§11.7) | Implemented, tested, on the target environment | **Any** system admission or system freshness |
 | **System-actor migration** (§11.2) | Approved migration | System admission |
 | **Policy v1 approved** | Owner hash approval | System admission |
@@ -1046,65 +1173,169 @@ Each automatically suspends the relevant path.
 | **Reddit approval** | Responsible Builder Policy access granted, scope stated truthfully | R-2 only. R-1 needs nothing. |
 | **D1 alerts and quiet baseline** | Roadmap items | Any timer-driven path on Production |
 | **Evaluation** | Hardware scenarios H01–H16 at their expected outcomes; validator suites | Public hardware Ask (V1.2) |
+| **Importer isolation tests** (§16.1) | All six tests green | Any importer deployment (P2) |
+| **DeepSeek data terms** (KP-24) | Opt-out confirmed; PRC processing accepted | Sending social excerpts to DeepSeek |
+| **Spending guards** (§14.1) | Ledger, caps, thinking guard, pricing-change guard implemented and tested | Any unattended nightly model run |
+
+### 16.1 Reconciliation with the frozen ingestion Worker and scheduler 0072
+
+#### State (verified 2026-10-25)
+
+- `wrangler.worker.toml` on `main` (`5cb64af`) declares `crons = []`, both at the top level and in the environment section.
+- The production-readiness session confirmed that the Production and Preview Workers have Cron `[]`.
+- STOP-BURN is active. **Scheduler 0072 is unmerged and inactive.**
+
+The old daily pipeline stays **paused**. It is the `scheduled()` handler's `"0 9 * * *"` case in `workers/ingestion/index.ts` (around line 211), which runs classification → cross-source matching → clustering → evidence upgrade → claim extraction → conflict detection → expiry → reconciliation → model data. The tier fetches `*/30`, `0 6` and `0 12` are paused with it. **Nothing in this design re-enables Cron, merges 0072 or calls these pipelines.**
+
+#### Which ingestion functions can be reused locally (`main` at `5cb64af`)
+
+| Module | Function | Pure? | Touches | Local reuse |
+|---|---|---|---|---|
+| `dedup.ts` | `hashURL` | Yes (Web Crypto; `globalThis.crypto` exists in Node 22) | Nothing | **Reuse.** `normalizeURL` is module-private; export it (a one-line refactor with a behaviour test). |
+| `dedup.ts` | `deduplicateURL`, `deduplicateTitle` | No | D1 `feed_items` | Not reused; a local SQLite equivalent |
+| `classify.ts` | `classifyFeedItem` (`lexical-topic-v1`) | Yes | Nothing | **Reuse** for topic and entity tags |
+| `classify.ts` | `runClassification` | No | D1 | Not reused |
+| `cross-source-match.ts` | `tokenize`, `jaccardSimilarity`, `contentOverlapScore`, `normalizeTitleForComparison` (`lexical-jaccard-v2`) | Yes, but module-private | Nothing | **Export and reuse** |
+| `cross-source-match.ts` | `findCrossSourceMatches`, `runCrossSourceMatching` | No | D1 reads and writes | Not reused |
+| `cluster.ts` | `tokenizeTitle`, `titleKeywordOverlap`, `generateClusterTitle` | Yes, but module-private | Nothing | **Export and reuse** |
+| `cluster.ts` | The grouping loop (topic, entity overlap, title overlap ≥ 0.35 or 0.3) | Pure logic **embedded inside** `runClustering`, which reads three days of `feed_items` and writes clusters | D1 | **Extract a pure `groupItems(items)`** with an identical-behaviour test against recorded inputs, then reuse it. `runClustering` stays as is. |
+| `cluster.ts` | `initialEvidenceStatus`, `needsHumanReview` | Yes, but private | Nothing | **Not reused for evidence.** They derive evidence labels from source tiers, which conflicts with the governance in §11. At most they are UI hints. |
+| `extract-claims.ts` | `extractClaimsFromItem` (`rule-extraction-v1`) | Pure function, but its module imports D1-writing modules (`canonical-claim-write`, `claim-relationship-proposals`) | Nothing directly | **Not reused for evidence.** Its catch-all regexes produced the low-quality rule-based claims KNOWLEDGE-10 found. If used as a hint generator at all, the pure function moves to a D1-free module first. |
+| `extract-claims.ts` | `runClaimExtraction`, `detectClaimConflicts` | No | D1 | Not reused |
+
+**None of these modules calls a model or the `AI` binding.** The only `env.AI` use in the Worker is the Preview-only KC-09 embedding path (`knowledge-embedding-index.ts`, `kc-11g-h.ts`). The legacy cost hazard is **D1 reads and writes**, not model calls.
+
+#### The nightly process must not be able to reach the legacy paths
+
+**Today:**
+- One shared secret, `TRACE_INTERNAL_SERVICE_SECRET`, signs every internal admin request (`authenticateInternalRequest`). The only roles are `reader` and `publisher`.
+- `routeAllowed` lets a publisher POST to any path in `WRITE_ADMIN_ROUTES`. That includes `/admin/ingest`, `/admin/classify`, `/admin/dedup`, `/admin/cluster`, `/admin/extract-claims`, `/admin/detect-conflicts`, `/admin/seed-models` and `/admin/extract-model-data` (dispatcher around lines 1086–1114).
+
+**Any holder of that secret can therefore trigger the expensive legacy pipeline.**
+
+| Rule | Specification |
+|---|---|
+| R-L1 | **The workstation never holds** `TRACE_INTERNAL_SERVICE_SECRET`, Access user sessions, a publisher identity, D1 or R2 credentials, or Cloudflare API tokens (L-4) |
+| R-L2 | A new role **`importer`** with its **own secret** (`TRACE_IMPORTER_SECRET`, ≥ 32 bytes, generated independently) and a Cloudflare Access service token. It is verified by a separate `authenticateImporterRequest`. The internal-service secret never validates an importer request, and the importer secret never validates a reader or publisher request. |
+| R-L3 | **`IMPORTER_ROUTES` allow-list (exact paths):**<br>• `POST /admin/knowledge/import/batches` (manifest ≤ 64 KiB)<br>• `POST /admin/knowledge/import/batches/{batchId}/items` (staged upload, size-limited)<br>• `GET /admin/knowledge/import/batches/{batchId}/receipts`<br>**Nothing else.** `importerRouteAllowed(path, method)` is a separate function. `routeAllowed` never accepts role `importer`. |
+| R-L4 | Import handlers write only staging rows, receipts, and KC-11A inventory and draft-plan rows that need **operator approval**. Their module must not import `ingest`, `classify`, `cluster`, `dedup`, `cross-source-match`, `extract-claims`, `model-data` or the pipeline runners. This is enforced by a static import-graph test. |
+| R-L5 | `TRACE_IMPORT_ENABLED=false` by default. The Access service-token policy is scoped to the import path prefix where the Access layout allows it (an open question in the local-acquisition design §16). |
+| R-L6 | Draft proposals arriving by import are untrusted. The Worker re-runs validators V1–V3 against **its own** captured source versions before Approve is enabled in the inbox. |
+
+**Tests (required before any importer deployment):**
+
+1. For **every** path in `READ_ADMIN_ROUTES ∪ WRITE_ADMIN_ROUTES ∪ BACKFILL_READ_ADMIN_ROUTES` and every method, an importer-signed request is refused (401 or 403), with **zero D1 writes** and **zero calls** to pipeline functions (spies on `ingestTier`, `runClassificationPipeline`, `runClusteringPipeline`, `runClaimExtractionPipeline`, `runModelDataPipeline`, …).
+2. An importer-path request signed with `TRACE_INTERNAL_SERVICE_SECRET` → 401. A reader or publisher request signed with `TRACE_IMPORTER_SECRET` → 401.
+3. `IMPORTER_ROUTES` equals a frozen snapshot. Adding a route fails the test until the snapshot is updated in review.
+4. The import-graph test (R-L4).
+5. The Cron config test stays: `crons = []` (exists since commit `4979823`).
+6. Replay, oversize and unknown-schema rejection, as in local-acquisition §14.
+
+#### Replacement workflow (prioritised)
+
+```text
+approved source acquisition (workstation; watch list + approved feeds)
+  → deduplication (hashURL + local SQLite)
+  → deterministic clustering (extracted groupItems + lexical-jaccard helpers + origin-link rule, §7.3)
+  → DeepSeek draft preparation (W1 off-peak window; budgets §14.1)
+  → local validation (V1–V6, span re-find, schema)
+  → bounded Cloudflare import (importer role only; ≤ 25 evidence + ≤ 200 catalogue + ≤ 40 draft proposals per batch; ≤ 4 batches per day)
+  → human editorial approval (inbox → existing publish route, publisher identity)
+```
+
+**Activation order:**
+1. Build and test locally first.
+2. Measure Preview D1 rows read and written per import batch.
+3. Only then, a separate approval for Production activation.
+
+Workstation timers replace Cloudflare Cron for this workflow. STOP-BURN, `ingestion_jobs` and scheduler 0072 are untouched.
 
 ---
 
-## 17. Phased plan
+## 17. Staged implementation plan (Revision 2)
 
-**Every phase needs its own approval. No phase changes Production unless it says so.**
+**Every stage needs its own approval. No stage changes Production unless it says so. Cloudflare Cron stays `[]` throughout.**
 
-### V1.1: foundations (local and Preview)
+| Stage | Content | Environment | Exit criteria | Earlier phase |
+|---|---|---|---|---|
+| **P0** | **Smallest safe prototype** (§17.1) | Local only: no D1, no remote mutation, no Cron, no GPU | §17.1 exit criteria | Local-acquisition A–B; K2 |
+| **P0b** (parallel) | Estimator library `trace-fit-v1` and `trace-decode-bound-v1` with header fixtures | Local | Tests green | K1 |
+| **P0c** (optional, parallel) | Qwen3.5-9B CPU benchmark (§10.4) | Owner's machine | One `trace_tested` record; decision on the verifier role | n/a |
+| **P1** | **Local nightly pilot.** Approved news feeds polled locally (from an owner-supplied export of the approved source registry; no remote reads by the runner); deduplication and clustering with the reused pure functions (§16.1); `draft_story` at **10 a day**, then 25 by owner decision; validators; a local HTML review of drafts (**not published**) | Local; DeepSeek only | One week at 10 a day: measured token distributions, cost against §14.1, deferrals, validator pass rate, owner usefulness rating | New |
+| **P2** | **Importer on Preview:** role, secret, `IMPORTER_ROUTES`, staging tables, receipts, all §16.1 tests | Preview (code + migration approval) | Tests green. Two labelled batches imported, with D1 rows read and written measured per batch. | Local-acquisition E; K7 (part) |
+| **P3** | **Story inbox on Preview** over imported draft proposals (ADR 0023), with Worker-side re-validation (R-L6); G-1 as a separate configuration change if wanted | Preview | One week of inbox use; owner time measured (§12) | K4 |
+| **P4** | Revocation and restoration; system-actor migration (§11.7, §11.2) | Local → Preview | §11.7 tests green on Preview | K3 |
+| **P5** | Catalogue OM-1 and OM-2, populated from P0's Lane A packages | Preview | Pilot catalogue reviewed | K7 |
+| **P6** | Social R-1 with deterministic extraction only (no DeepSeek until KP-24) | Preview | 20 posts; spans 100 % re-find | K5 |
+| **P7** | Policy engine in shadow, then live on Preview | Preview | §11.8 burn-in and agreement | K8–K9 |
+| **P8** | **Production:** importer activation, then the inbox, then system admission, each per rule | **Production, explicit approval each** | Same metrics as Preview | K10 |
+| **P9** | Hardware Ask (`/admin/ask`), then public (V1.2 gate) | Preview → Production | H01–H16 at their expected outcomes | K11 |
 
-| Phase | Content | Environment | Exit |
-|---|---|---|---|
-| **K0** | Owner decisions KP-1…KP-16; ADRs 0021–0024 and 0009 Amendment 2 moved from Proposed to Accepted (or revised) | Docs | Decisions recorded |
-| **K1** | **OM-3+ estimator library:** `trace-fit-v1` and `trace-decode-bound-v1` as pure functions; header-JSON fixtures (Qwen2.5-0.5B, Qwen3.5-9B); exhaustive tests (no pooling, MoE, hybrid KV, unknown propagation, ceiling never shown as a speed) | Local | Tests green; formula docs |
-| **K2** | **Lane A offline:** `hf-model`, `hf-tree`, `gguf-header` (bounded parser), `gh-release` adapters and parsers over recorded fixtures; packager extension of local-acquisition phases A–B; rebuild-hash test; release-bullet grammar measured offline against the 1,013 existing GitHub release-note `feed_items` (§1.1), taken from a keyset snapshot | Local | Byte-identical rebuilds; adversarial header fixtures rejected; grammar coverage reported |
-| **K3** | **Revocation and restoration** plus the **system-actor and policy-column migration design**; tests on the D1-faithful adapter | Local, then Preview (approval) | §11.7 test list green on Preview |
-| **K4** | **G-1** config change; **story inbox** over ADR 0015 candidates and draft persistence; deterministic clustering, ranking, validators; "Prepare inbox" trigger; hold and archive timers | Preview (approval) | One week of Preview use with seeded test candidates (`[QA-…]` labels); measured owner time and D1 reads |
-| **K5** | **Social R-1:** Capture text field (owner's Android work) + Desk paste; share-link canonicalisation (S-1/S-3); grammar extractor + `llama-bench` parser; linked-source proposals; community-report records as pending candidates | Preview (approval) | 20 recorded posts: extraction precision measured; spans 100 % re-find |
-| **K6** | **Reddit access request** (owner): truthful description of TRACE, the single-post-by-id scope and the removal handling | External | Approval or refusal recorded. Refusal leaves R-1 as the permanent route. |
+**V1.1** covers P0–P3. **V1.2** covers P4–P9. Automated discovery on Cloudflare (scheduler 0072) remains a separate, gated track and is **not** needed for P1–P3, because the workstation polls the approved feeds.
 
-### V1.2: catalogue, absorption automation and hardware Ask
+### 17.1 The smallest safe first prototype (P0)
 
-| Phase | Content | Environment | Exit |
-|---|---|---|---|
-| **K7** | OM-1 and OM-2 catalogue schema; importer route (local-acquisition phase E); catalogue pilot (open-model plan §12) through Lane A | Preview (approval) | Pilot records reviewed; per-batch D1 measured |
-| **K8** | **Policy engine in shadow** for MC-1 to MC-6 on Preview; agreement with owner decisions ≥ 200 items per rule | Preview | ≥ 99.5 % agreement on MC classes, and every disagreement explained |
-| **K9** | System admission **live on Preview** with burn-in and sampling; pinned freshness; Evidence Library routing | Preview (approval) | Two clean weeks; one deliberate cohort revocation drill |
-| **K10** | Production: 0076 (if not already), the K3 migration, system admission **off**, then **on** per rule | **Production (explicit approval each)** | Same audit metrics on Production |
-| **K11** | OM-7 recommender + `/admin/ask` hardware; H01–H16 evaluation; then the public-Ask gate (roadmap) | Preview → Production (approval) | Evaluation passes; Public Ask enabled by separate decision |
+**Goal:** prove the chain *approved sources → deterministic change detection → bounded DeepSeek extraction → local verification → numbered import package* with no Cloudflare involvement.
 
-### Gated track: discovery automation
-
-Automated news-feed discovery comes from one of:
-- **(a)** scheduler 0072 with STOP-BURN closure; or
-- **(b)** feed polling on the workstation submitting candidates via the importer (L-1).
-
-Until then, Lane B volume depends on manual and Capture intake plus Lane A triggers. **The 50-a-day target needs (a) or (b).**
+| Element | Specification |
+|---|---|
+| Location | `local/acquisition/` in this repository (proposed), so it imports `src/ai/*` contracts and `workers/ingestion` pure helpers directly. Node 22, TypeScript, `node:sqlite`. |
+| Sources (owner-approved list in `local/acquisition/sources.json`) | GitHub releases: `ggml-org/llama.cpp`, `vllm-project/vllm`, `ollama/ollama`, `BerriAI/litellm`, `huggingface/transformers`. Hugging Face: `unsloth/Qwen3.5-9B-GGUF` and `Qwen/Qwen3.5-9B` (model and tree API, GGUF header range reads ≤ 16 MiB per file). |
+| Stage 1: acquire | Conditional GET with ETag and revision cursors in SQLite. GitHub optional read-only token; HF anonymous. Budgets per §5.7 and [X-05]–[X-07]. |
+| Stage 2: change detection | `normalized_content_v3`-style hashing (the vendored identity module); change classes from local-acquisition §6; `no_material_change` produces nothing |
+| Stage 3: deterministic parse | Release template stripping; bullet grammar; HF tree (sizes, SHA-256); bounded GGUF header parser (§5.3) |
+| Stage 4: bounded DeepSeek | `map_release_change` **only** for bullets or releases the grammar could not map; `deepseek-flash`, non-thinking, one attempt; W1 window and `LocalAIGovernance` budgets. **Prototype caps: US$0.05 a day, US$0.25 for the first week.** |
+| Stage 5: local verification | Schema; enum; **verbatim span re-find with offsets**; entity alias match; any failure → `reviewer_required` or the value is dropped |
+| Stage 6: package | `out/TRACE-KNOW-YYYYMMDD-NNNN/` containing `manifest.json` (`trace-know-batch-v1`), `items.jsonl`, `usage.json` and a checksum; sequential numbering from the local ledger. **Written to disk only; never uploaded.** |
+| Out of scope | D1, any Cloudflare call, import, story drafts, social, Cron, GPU, Qwen |
+| Run | Manual command first; later a Windows Task Scheduler entry (deterministic stages from 21:30 UTC, model window 22:00–00:45 UTC) |
+| Tests | Offline fixture mode (no network); rebuild-hash identity (I-5); adversarial spans (a paraphrase must fail re-find); bounded-parser fuzz cases; budget fail-closed (reservation refused at the cap); window enforcement with an injected clock; thinking-guard; network allow-list refusal |
+| Exit criteria | (1) Two consecutive runs on unchanged inputs produce byte-identical packages. (2) At least one real release per watched runtime is processed, with 100 % span re-find on every model-mapped value. (3) Measured grammar coverage is reported. (4) Total spend ≤ US$0.25. (5) No request outside W1. (6) The owner reviews one package and the morning summary. |
 
 ---
 
 ## 18. Owner decisions
 
+**Already decided by the owner (Revision 2, 25 October 2026, relayed by the production-readiness session):**
+
+| ID | Decision |
+|---|---|
+| D-R2-1 | Deterministic-first stays (ADR 0021) |
+| D-R2-2 | **DeepSeek Flash is the primary language engine** for the initial local acquisition system, in non-thinking mode. Model-assisted extraction and reconciliation are used only where deterministic methods are demonstrably inadequate, with exact span validation. |
+| D-R2-3 | Nightly off-peak runs, preferring a 22:00 UTC start and finishing before 01:00 UTC |
+| D-R2-4 | Keep the conservative editorial budget. Combined weekly maximum of about **£5** for the initial experiment. |
+| D-R2-5 | Trust rules unchanged: DeepSeek never admits, freshens, decides independence, approves evidence or publishes |
+| D-R2-6 | Qwen3.5-9B is optional only. The hardware is 32 GB DDR3-1600, CPU only, no GPU. Benchmark it rather than estimate. |
+| D-R2-7 | Public primary-source material is the first pilot dataset. Confirm DeepSeek data terms before sending social excerpts. |
+
+**Open decisions:**
+
 | ID | Decision | Recommendation |
 |---|---|---|
 | **KP-1** | Adopt the three-lane, one-absorption architecture and the invariants I-1 to I-8 | Adopt |
-| **KP-2** | Lane A watch list: start with the open-model plan §12 pilot (14 releases, 8 runtimes); additions by owner approval only | Adopt |
+| **KP-2** | Lane A watch list: start with the open-model plan §12 pilot; additions by owner approval only | Adopt |
 | **KP-3** | Catalogue citation rule (I-4): uncited ⇒ "unknown"; file headers over repository summaries | Adopt |
 | **KP-4** | Estimator outputs: the ceiling shown only as "cannot exceed about X"; no prefill estimate; `will_load` cap when overhead is unknown | Adopt |
-| **KP-5** | Inbox: K = 40 drafts a day, non-thinking Flash, off-peak preparation, validators V1–V6 | Adopt |
-| **KP-6** | Hold and archive timers: 72 h → held; 7 days → archived | Adopt, revisit after K4 |
-| **KP-7** | ADR 0009 Amendment 2 (bounded excerpts; one-tap linked candidates; automatic pending community-report records; primary-API lookups of linked primaries) | Adopt |
+| **KP-5** | Inbox drafts prepared on the workstation in W1: **10 a day** in P1, then 25, 40 or 50 by weekly decision; validators V1–V6, re-run by the Worker on import | Adopt |
+| **KP-6** | Hold and archive timers: 72 h → held; 7 days → archived | Adopt, revisit after P3 |
+| **KP-7** | ADR 0009 Amendment 2 | Adopt |
 | **KP-8** | Request Reddit Data API access (R-2), describing TRACE's commercial plans truthfully | Request. R-1 is the default regardless. |
-| **KP-9** | Share-link resolution: S-1 (phone) preferred; S-2 (Worker `Location`-only) only after a terms check | S-1 |
-| **KP-10** | Confirm DeepSeek API terms on training and retention for inputs before sending any owner-supplied social excerpts | Confirm first |
-| **KP-11** | System admission scope: the admission axis only, MC-1 to MC-6 only; reviewer acceptance always human (batched) | Adopt |
+| **KP-9** | Share-link resolution: S-1 (phone) preferred | S-1 |
+| **KP-10** | *Superseded by KP-24* | n/a |
+| **KP-11** | System admission: the admission axis only, MC-1 to MC-6 only; reviewer acceptance always human (batched) | Adopt |
 | **KP-12** | Sampling: burn-in 3 batches or 150 items at 100 %; steady state max(5, 10 %), weekly ≥ 20; automatic suspension on any MC error | Adopt |
-| **KP-13** | Revocation and restoration as a hard precondition of any system admission or system freshness; the system may revoke, never restore | Adopt |
-| **KP-14** | Editorial daily budget US$0.35 after G-1; per-request cap unchanged | Adopt |
-| **KP-15** | T2 free or flat tiers (OpenCode Go) excluded from the pipeline | Adopt |
-| **KP-16** | Source 84 ("Hugging Face Trending Models", `huggingface_api`, never succeeded): deactivate, or mark it superseded by Lane A, rather than repair it. Keep the `github_api` release-note sources as a discovery index only; their facts are re-acquired through Lane A. | Deactivate or supersede (a registry change, so a separate approval) |
+| **KP-13** | Revocation and restoration as a hard precondition; the system may revoke, never restore | Adopt |
+| **KP-14** | Spending limits (§14.1): combined **US$6.25/week** (≈ £5 at 1.25 USD/GBP) = Worker editorial US$0.50/day (unchanged) + workstation US$2.75/week; workstation US$0.40/day; task caps; peak-price reservations; thinking and pricing-change guards | Adopt |
+| **KP-15** | T2 free or flat tiers (OpenCode Go) excluded | Adopt |
+| **KP-16** | Source 84 (HF Trending, never succeeded): deactivate or supersede; `github_api` release sources kept as a discovery index only | Deactivate or supersede (registry change, separate approval) |
+| **KP-17** | Workstation runner option (A): direct DeepSeek calls through the shared ADR 0008 contracts and a `LocalAIGovernance` ledger (§10.5) | Adopt |
+| **KP-18** | A **dedicated DeepSeek API key** for the workstation, kept in Windows Credential Manager; per-key limits if DeepSeek offers them | Adopt |
+| **KP-19** | Model window W1 22:00–00:45 UTC; deferral rules; W2 (04:00–05:45 UTC) only by flag (§10.6) | Adopt |
+| **KP-20** | Importer isolation: separate role and secret, the `IMPORTER_ROUTES` allow-list, the import-graph rule and the §16.1 tests as preconditions of any importer deployment | Adopt |
+| **KP-21** | Prototype P0 scope and source list (§17.1), with caps of US$0.05/day and US$0.25 for week 1 | Approve to start |
+| **KP-22** | Small refactors for reuse: export `normalizeURL`, the lexical helpers and title helpers; extract a pure `groupItems` from `runClustering`, with identical-behaviour tests. **No change to Worker behaviour.** | Approve with P1 |
+| **KP-23** | Qwen3.5-9B CPU benchmark (a one-off, owner-approved artefact download) | Optional; recommended once |
+| **KP-24** | **DeepSeek data terms:** the terms do not exclude training; the privacy policy permits training with an email opt-out and stores data in the PRC (§10.2). Before any owner-supplied social excerpt is sent: (a) request the opt-out at `privacy@deepseek.com` and keep the confirmation; (b) the owner accepts PRC processing of public material. Until then, social extraction is deterministic only. | Keep social deterministic-only until (a) and (b) are done |
 
 ---
 
@@ -1112,9 +1343,9 @@ Until then, Lane B volume depends on manual and Capture intake plus Lane A trigg
 
 | File | Decision |
 |---|---|
-| `docs/adr/0021-deterministic-first-knowledge-acquisition-and-model-tiering.md` | Primary-source lane; deterministic extraction and reproducibility; model roles limited to drafts and span-verified mappings; tier assignment by task, no fallback chain; T2 excluded |
+| `docs/adr/0021-deterministic-first-knowledge-acquisition-and-model-tiering.md` | Primary-source lane; deterministic extraction and reproducibility; model roles limited to drafts and span-verified mappings; **DeepSeek Flash as the primary engine**, with the workstation runner sharing the ADR 0008 contracts; spending limits; off-peak window; importer isolation; Qwen optional; T2 excluded |
 | `docs/adr/0022-model-runtime-hardware-catalogue-and-deterministic-estimators.md` | Catalogue citation rule; file-header authority; `trace-fit-v1` and `trace-decode-bound-v1`; labels and refusals (extends ADR 0019) |
-| `docs/adr/0023-story-inbox-pre-run-drafts-and-one-tap-human-publication.md` | Inbox, ranking, caps, validators, timers; publication stays human (ADR 0004); no use of ADR 0010 automatic publication for stories at this stage |
+| `docs/adr/0023-story-inbox-pre-run-drafts-and-one-tap-human-publication.md` | Inbox, ranking, workstation-prepared drafts imported as untrusted proposals, Worker re-validation, caps, timers; publication stays human (ADR 0004); no use of ADR 0010 automatic publication |
 | `docs/adr/0024-policy-based-system-admission-pinned-freshness-revocation-and-sampling-audit.md` | System actor; MC classes; batched acceptance; pinned freshness; Evidence Library routing; revocation and restoration precondition; sampling audit |
 | `docs/adr/0009-amendment-02-social-post-text-extraction-and-community-reports.md` | The exact ADR 0009 changes in §9 |
 
@@ -1129,7 +1360,10 @@ Until then, Lane B volume depends on manual and Capture intake plus Lane A trigg
 | GGUF architectures evolve (new KV schemes) | Unknown architecture rules ⇒ `kv = unknown`; architecture records are versioned; Lane A flags unrecognised keys |
 | Inbox becomes a rubber stamp | Blocking validators; draft provenance chips; ADR 0004 flags; weekly sample of approved stories re-read (part of the audit summary) |
 | Discovery volume stays low while STOP-BURN is active | The gated track (§17); manual and Capture intake; Lane A triggers |
-| Provider price or alias drift | Weekly check of the DeepSeek pricing page; G-1-style config change; ADR 0008: no silent substitution |
+| Provider price or alias drift | Pinned price table with `verified_at` (30-day expiry); `GET /models` preflight; balance reconciliation stops all model tasks on mismatch (§14.1); ADR 0008: no silent substitution |
+| The nightly runner reaches a legacy Worker route | No internal-service secret on the workstation; separate importer secret; `IMPORTER_ROUTES` allow-list; tests (§16.1) |
+| A run strays into peak hours | Start guard at 00:45 UTC; deferral; clock-skew check (§10.6) |
+| DeepSeek trains on sent material | Public material only in the pilot; social excerpts gated by KP-24 |
 | D1 read spikes from inbox lists | Keyset pagination; measured on Preview; stop conditions |
 | `full_attention_interval` interpretation wrong | OM-3 tests against llama.cpp source for `qwen35`; unknown ⇒ `will_load` cap |
 
@@ -1158,10 +1392,18 @@ Until then, Lane B volume depends on manual and Capture intake plus Lane A trigg
 | X-10 | OpenCode docs, "Go", `https://opencode.ai/docs/go/` (no date shown) | Pricing, limits, per-model retention, DeepSeek ZDR through 31 October 2026, intended traffic, client rules |
 | X-11 | Third-party OpenCode Go reviews (e.g. `tonyreviewsthings.com/opencode-go-review/`, `bitdoze.com/opencode-go-plan/`) | Not used as facts |
 | X-12 | Cloudflare D1 pricing, `https://developers.cloudflare.com/d1/platform/pricing/` | Workers Paid included rows read and written; storage |
+| X-13 | DeepSeek API docs, "Thinking Mode", `https://api-docs.deepseek.com/guides/thinking_mode` | `{"thinking": {"type": "enabled/disabled"}}`; thinking enabled by default (effort high) |
+| X-14 | DeepSeek API docs, "Token & Token Usage" | About 0.3 tokens per English character; API `usage` is authoritative |
+| X-15 | DeepSeek Open Platform Terms of Service (released 22 April 2026, effective 29 April 2026), `https://cdn.deepseek.com/policies/en-US/deepseek-open-platform-terms-of-service.html` | Silent on training on and retention of API inputs |
+| X-16 | DeepSeek Privacy Policy (updated 10 February 2026), `https://cdn.deepseek.com/policies/en-US/deepseek-privacy-policy.html` | Training on user input with an email opt-out; retention while the account exists; storage in the PRC |
+| X-17 | DeepSeek API docs, "Get User Balance", `GET https://api.deepseek.com/user/balance` | Balance reconciliation |
+| X-18 | GitHub REST `GET /repos/{owner}/{repo}/releases?per_page=30` for `ggml-org/llama.cpp`, `vllm-project/vllm`, `ollama/ollama`, `BerriAI/litellm`, `huggingface/transformers` (unauthenticated, 5 requests) | Release-size and frequency measurements (§14.1) |
+| X-19 | Exchange-rate quotes: `30rates.com` (GBP/USD 1.3524 on 2026-09-10), `poundf.co.uk` (1.3559 on 2026-09-09); no 25 October quote found | Conservative 1.25 USD/GBP used for the weekly cap |
 
 ### 21.2 Internal
 
 - ADR 0004, 0008 (§2.1, §2.2, §3), 0009, 0010, 0012, 0015, 0016, 0019, ADR-0020 (Proposed).
+- On `main` at `5cb64af`: `workers/ingestion/{index,cluster,dedup,classify,cross-source-match,extract-claims}.ts` (route sets, `routeAllowed`, `authenticateInternalRequest`, the `scheduled()` cases, the pure-function inventory in §16.1); `src/ai/{durable-governance,providers/deepseek}.ts`; `wrangler.worker.toml` (`crons = []`).
 - `src/ai/config.ts` (allow-list, prices, budgets), `src/ai/trace-model-gateway.ts`, `src/ai/task-policy.ts`.
 - On `origin/codex/trace-v1-seed-01-prerequisites` (being released to Production on 2026-10-25; contents verified identical to the local copies first read):
   - `db/migration-0076-evidence-library-governance.sql`, `db/migration-0024-social-signals.sql`, `db/migration-0068-v1-freshness-review.sql`;

@@ -5,7 +5,8 @@
 - **Decision owners:** The Trace Manifest maintainers
 - **Applies to:** Knowledge acquisition from primary sources, extraction, the local acquisition workstation, use of language models in ingestion, model-provider tiering
 - **Related decisions:** ADR 0004 Human Review Boundary; ADR 0008 Model API and Cost Containment (provider-neutral gateway, §2.2); ADR 0012 Durable Controls; ADR 0016 Governed Ask Research and Source Admission; ADR 0019 Open Model Execution; ADR 0022; ADR 0024; ADR 0009 Amendment 2
-- **Design:** `docs/audit/trace-knowledge-pipeline-design.md` (§3, §5, §10, §13)
+- **Design:** `docs/audit/trace-knowledge-pipeline-design.md` (§3, §5, §10, §13, §14.1, §16.1)
+- **Revision 2 (25 October 2026, owner-approved):** DeepSeek Flash is the primary engine; Qwen is optional; spending limits and off-peak scheduling (§2.8); legacy-path isolation (§2.9)
 - **Review trigger:** before any task type is assigned to a model tier other than T0 or T1; before a provider other than DeepSeek or a local runtime is used; if the measured deterministic share falls below the targets in §2.6
 
 ## 1. Context
@@ -66,13 +67,22 @@ The local-acquisition design (KNOWLEDGE-10 workstream 8) already established:
 
 16. Tiers:
     - **T0** deterministic code;
-    - **T1** a low-cost API through the ADR 0008 gateway (today DeepSeek `deepseek-flash`, subject to the G-1 configuration change);
+    - **T1** DeepSeek `deepseek-flash` in non-thinking mode (`{"thinking": {"type": "disabled"}}`), the **primary language engine** for the initial local acquisition system and for owner-triggered Worker tasks;
     - **T2** optional free or flat-rate tiers;
     - **T3** local models through an OpenAI-compatible local server described by ADR 0019 runtime records.
-17. **Each task type is assigned exactly one tier by configuration.** There is no runtime fallback between tiers or providers (ADR 0008 §2.1.5; ADR 0012 #3). An unavailable tier fails visibly.
+17. **Each task type is assigned exactly one tier by configuration.** There is no runtime fallback between tiers or providers (ADR 0008 §2.1.5; ADR 0012 #3). An unavailable tier defers the item visibly.
 18. **T2 is excluded from the TRACE pipeline** until a separate decision finds a provider whose terms explicitly allow automated batch use with contractually fixed retention. (OpenCode Go, checked 25 October 2026, is intended for coding-agent traffic and has per-model, monthly-renewed retention terms.)
-19. T3 on the owner's current CPU-only machine is limited to overnight, non-urgent second-opinion tasks. A future workstation becomes eligible for drafting only after it matches T1 on recorded validator fixtures.
+19. **T3 is optional only.** The owner's machine (32 GB DDR3-1600, CPU only, no GPU; theoretical ceiling about 4.4 tokens per second for a 9B Q4 model) may serve as a benchmark or as an independent verifier that can only add `reviewer_required`. Any future machine must first match T1 on recorded validator fixtures. Performance is established by an actual benchmark, not an estimate.
 20. Models receive **public material only**. They have no tools and no URL access.
+    - Public primary-source material is the first pilot dataset.
+    - Owner-supplied social excerpts are not sent to DeepSeek until its training opt-out is confirmed in writing and the owner accepts processing in the PRC. DeepSeek's privacy policy (10 February 2026) permits training on inputs, with an email opt-out, and its API terms do not exclude it.
+    - Reviewer notes, personal information, credentials and private Desk content are never sent.
+20a. **The workstation calls DeepSeek directly, faithfully sharing the ADR 0008 contracts.** It imports, from the same repository and commit:
+    - the task policy, schemas and validators;
+    - the model allow-list and deprecated-alias guard;
+    - the provider request shape.
+
+    It implements the `DurableAIGovernance` lifecycle (reserve, settle, circuit breaker, idempotency) on a local ledger, with one contract-test suite run against both implementations. It uses a dedicated, revocable DeepSeek API key, and an outbound host allow-list.
 
 ### 2.6 Targets and measurement
 
@@ -86,7 +96,33 @@ The local-acquisition design (KNOWLEDGE-10 workstream 8) already established:
 ### 2.7 Where work runs
 
 22. Acquisition runs on the workstation, manually or by a workstation timer, and submits proposals through the importer route. The Worker re-reads every value that system admission relies on (ADR 0024).
-23. **No Cloudflare Cron** is introduced by this decision. STOP-BURN and the scheduler 0072 track are unchanged.
+23. **No Cloudflare Cron** is introduced by this decision. STOP-BURN and the scheduler 0072 track are unchanged. The legacy daily classification and clustering pipeline stays paused.
+
+### 2.8 Spending limits and scheduling
+
+24. **Model requests from the workstation start only in the off-peak window 22:00–00:45 UTC.** DeepSeek's peak hours are 01:00–04:00 and 06:00–10:00 UTC on weekdays.
+    - Work is checkpointed per item.
+    - Unstarted items are deferred to the next window.
+    - A request in flight at a crash is settled at its reservation and never resent in the same window.
+    - Requests never run in peak hours automatically.
+25. **Hard limits, all fail-closed:**
+    - a combined US$6.25 a week (about £5): the Worker's unchanged editorial budget of US$0.50 a day, plus US$2.75 a week for the workstation;
+    - a workstation daily limit and per-task daily limits;
+    - reservations at cap tokens × peak price, settled from actual usage.
+26. **Guards:**
+    - a response showing reasoning output opens the task's circuit;
+    - a pinned price table older than 30 days, a missing model id, or a mismatch between the account balance and the settled ledger stops all model tasks until the owner re-verifies.
+27. Volume increases (story drafts from 10 a day upward) only by owner decision after measured weekly reports.
+
+### 2.9 Isolation from legacy Worker paths
+
+28. **The workstation never holds** the internal service secret, a publisher identity, D1 or R2 credentials, or Cloudflare API tokens.
+29. It reaches Cloudflare only as a separate **`importer`** role with its own secret and an Access service token. That role is limited to an exact allow-list of import routes (batch manifest, staged items, receipts).
+30. **Tests must prove all of the following before any importer deployment:**
+    - every existing admin route rejects importer credentials, with no D1 write and no pipeline call;
+    - each secret validates only its own role;
+    - the allow-list matches a reviewed snapshot;
+    - the import module cannot import the legacy ingestion pipeline modules.
 
 ## 3. Consequences
 

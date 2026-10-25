@@ -30,12 +30,14 @@ Separately, approving a story does not create Ask-eligible knowledge (KNOWLEDGE-
 
 ### 2.3 Drafts
 
-7. Only the top **K** clusters by rank are drafted ahead of time (default K = 40 a day). The rest show "draft on demand".
-8. Drafting uses the T1 model assigned by ADR 0021 (today `deepseek-flash`, non-thinking mode) with:
+7. Only the top **K** clusters by rank are drafted ahead of time. K starts at **10 a day** and rises to 25, 40 or 50 only by owner decision after each week's measured report. The rest show "draft on demand".
+8. **Drafts are prepared on the local workstation** in the nightly off-peak window (22:00–00:45 UTC), using the T1 model assigned by ADR 0021 (`deepseek-flash`, non-thinking mode), with:
    - input ≤ 12,000 tokens and output ≤ 1,500;
    - one attempt and no retries;
-   - an editorial daily budget, proposed at US$0.35 after the G-1 configuration change;
-   - preparation off-peak where practical.
+   - the workstation task budget of US$0.30 a day, within the combined weekly cap of US$6.25 (ADR 0021 §2.8).
+
+   Owner-triggered drafting in the Worker remains available under the unchanged editorial daily budget.
+8a. Drafts arrive in Cloudflare only through the importer role (ADR 0021 §2.9) as **untrusted proposals**. The Worker re-runs the blocking validators against its own captured source versions before Approve is enabled.
 9. The model receives the fact sheet, bounded permitted extracts, the output schema and the TRACE constitution. It has no URLs and no tools.
 10. **Blocking validators:**
     - every number, version, date and model name appears in the fact sheet or a quoted span;
