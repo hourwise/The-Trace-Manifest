@@ -25,7 +25,14 @@ All are recorded with outcome `succeeded`.
 
 - **Desk transitions** are conditional on the state that was read (`WHERE id = ? AND state = ?`). A concurrent change now shows "The candidate changed before this update was saved" instead of overwriting. A refused transition writes no audit row.
 - **Social decisions** apply only to `pending` signals. Re-deciding an approved or rejected signal, or a missing id, changes nothing and writes no audit row. The page already showed decision controls only for pending signals.
-- **Desk promotion** is now one atomic batch: feed item, cluster, cluster link, candidate state and audit. The cluster link now finds the feed item by URL hash. Previously, when the URL was already ingested, `INSERT OR IGNORE` could leave `last_row_id` pointing at an unrelated row, so the link was skipped or wrong.
+- **Desk promotion: duplicate fixed** (found in review; also present on `main`).
+  - **Before:** the page offered and accepted **Promote** for both `needs_review` and `published` candidates, so promoting again created a second story cluster and audit row for the same candidate (reproduced: 2 clusters, 2 audit rows).
+  - **Now:** promotion is accepted only from `needs_review`. The batch starts with `UPDATE … WHERE id = ? AND state = 'needs_review'`, and every later statement is conditional on it:
+    - the cluster insert uses `WHERE changes() = 1`;
+    - the audit row uses `WHERE changes() = 1` and records `story_cluster:<id>`;
+    - the feed item and cluster link run only if that audit row exists.
+  - **Result:** a repeated, double-submitted or concurrent promotion writes nothing and shows a "promoted or changed" message.
+- **Desk promotion: one batch.** Candidate state, cluster, audit, feed item and cluster link are written together. The cluster link finds the feed item by URL hash. Previously, when the URL was already ingested, `INSERT OR IGNORE` could leave `last_row_id` pointing at an unrelated row, so the link was skipped or wrong.
 - **Duplicate Social URL** shows "already submitted" instead of the raw constraint error.
 
 ## Not changed
@@ -33,15 +40,16 @@ All are recorded with outcome `succeeded`.
 - The pages still write from frontmatter rather than through the signed proxy. The proxy has intake routes for candidates and signals, but no transition, promotion or review routes. Moving them would need a Worker change and deploy, so this branch puts the proxy's guarantees (role, attribution, audit) on the page path instead.
 - Refused (403) reader POSTs are not audited. The guard returns before any D1 access, as PR #7's boundary test requires.
 - `/admin/ask` still shows readers a form that the server refuses (UX only).
-- The promotion logic is otherwise unchanged: headline, evidence defaults, `source_id = 1` and re-promotion of a `published` candidate.
+- The promotion logic is otherwise unchanged: headline, evidence defaults, `source_id = 1`.
+- Duplicate clusters that earlier re-promotions may already have created in Preview or Production D1 are not detected or cleaned up here.
 
 ## Tests and evidence
 
 | Check | Result |
 |---|---|
-| `tests/admin-page-writes.test.ts` (new, in `npm test`) | Passes. Covers: operator attribution on every write; one audit row per write; stale transitions and repeat decisions write nothing; promotion links an already-ingested feed item without duplicating it; **write rolled back when the audit row cannot be written**; approval creates no `knowledge_documents` row; readers and missing operators are refused before any statement; page frontmatter has no `'Admin'`, no direct `INSERT`/`UPDATE`/`DELETE`, and no `knowledge_documents`. **The page assertions fail on PR #7's pages** (red/green). |
+| `tests/admin-page-writes.test.ts` (new, in `npm test`) | Passes. Covers: operator attribution on every write; one audit row per write; stale transitions, repeat decisions and **repeated promotions** write nothing; promotion links an already-ingested feed item without duplicating it; **write rolled back when the audit row cannot be written**; approval creates no `knowledge_documents` row; readers and missing operators are refused before any statement; page frontmatter has no `'Admin'`, no direct `INSERT`/`UPDATE`/`DELETE`, and no `knowledge_documents`. **The page assertions fail on PR #7's pages** (red/green). |
 | `npm test`, typecheck, `test:security`, `test:migrations`, `test:diff`, `npm run build` | All pass, including the D6 role-script check. |
 
 **Unverified:**
-- The conditional audit insert (`WHERE changes() = 1`) relies on D1 running a batch's statements in order on one connection, which the local SQLite adapter mirrors. It has not been exercised against real D1. A Preview check with a `[QA-…]` candidate would confirm it, but needs deployment approval.
+- The `changes()` and `last_insert_rowid()` chaining relies on D1 running a batch's statements in order on one connection. Cloudflare documents ordered, rolled-back-on-failure batches, and the local SQLite adapter mirrors that, including `story_clusters`' FTS insert trigger. It has not been exercised against real D1. A bounded Preview check with `[QA-…]` rows would confirm it, but needs deployment and write approval.
 - No browser QA.

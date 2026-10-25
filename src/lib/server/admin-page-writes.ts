@@ -26,23 +26,29 @@ interface AuditEntry {
   onlyIfChanged?: boolean;
   /** Use the row id the previous statement inserted as the target id. */
   targetIsLastInsert?: boolean;
+  /** Append the row id the previous statement inserted to detailCode. */
+  detailEndsWithLastInsert?: boolean;
+  requestId?: string;
 }
 
 function auditStatement(db: D1Database, operator: PageOperator, entry: AuditEntry): D1PreparedStatement {
-  const requestId = crypto.randomUUID();
+  const requestId = entry.requestId ?? crypto.randomUUID();
   const targetId = entry.targetIsLastInsert ? "CAST(last_insert_rowid() AS TEXT)" : "?";
+  const detailCode = entry.detailEndsWithLastInsert ? "? || last_insert_rowid()" : "?";
   const statement = db.prepare(`
     INSERT INTO admin_audit_log
       (event_id, operator_email, operator_role, action, target_type, target_id, request_id, outcome, detail_code)
-    SELECT ?, ?, ?, ?, ?, ${targetId}, ?, 'succeeded', ?
+    SELECT ?, ?, ?, ?, ?, ${targetId}, ?, 'succeeded', ${detailCode}
     ${entry.onlyIfChanged ? "WHERE changes() = 1" : ""}
   `);
-  const head = [`${requestId}:succeeded`, operator.email, operator.role, entry.action, entry.targetType];
+  const head = [auditEventId(requestId), operator.email, operator.role, entry.action, entry.targetType];
   const tail = [requestId, entry.detailCode ?? null];
   return entry.targetIsLastInsert
     ? statement.bind(...head, ...tail)
     : statement.bind(...head, entry.targetId ?? null, ...tail);
 }
+
+const auditEventId = (requestId: string) => `${requestId}:succeeded`;
 
 export interface CandidateInput {
   intakeType: string;
@@ -93,36 +99,51 @@ export interface PromotionInput {
   evidenceStatus: string;
 }
 
-/** Creates the review cluster, its source link, the candidate state change and the audit row together. */
-export async function promoteCandidate(db: D1Database, actor: PageOperator | undefined, input: PromotionInput): Promise<number> {
+const PROMOTED_CLUSTER_PREFIX = "story_cluster:";
+
+/**
+ * Promotes a `needs_review` candidate: candidate state, review cluster, audit
+ * row and source link are written together. Every statement after the state
+ * change is conditional on it, so a repeated or concurrent promotion of the
+ * same candidate writes nothing and returns null instead of a second cluster.
+ */
+export async function promoteCandidate(db: D1Database, actor: PageOperator | undefined, input: PromotionInput): Promise<number | null> {
   const operator = requirePublisher(actor);
-  const linkSource = Boolean(input.submittedUrl && input.urlHash);
-  const statements: D1PreparedStatement[] = [];
-  if (linkSource) {
-    statements.push(db.prepare(`
-      INSERT OR IGNORE INTO feed_items (url, url_hash, title, summary, content_excerpt, source_id, ingestion_status, fetched_at, published_at)
-      VALUES (?, ?, ?, ?, ?, ?, 'raw', datetime('now'), datetime('now'))
-    `).bind(input.submittedUrl, input.urlHash, input.headline, input.summary, input.summary.slice(0, 1000), 1));
+  const requestId = crypto.randomUUID();
+  const statements: D1PreparedStatement[] = [
+    db.prepare("UPDATE editorial_candidates SET state='published', updated_at=datetime('now') WHERE id=? AND state='needs_review'")
+      .bind(input.candidateId),
+    db.prepare(`
+      INSERT INTO story_clusters (title, canonical_url, topic, evidence_status, publication_status, needs_human_review, summary, why_it_matters, created_at, updated_at)
+      SELECT ?, ?, ?, ?, 'review', 1, ?, ?, datetime('now'), datetime('now')
+      WHERE changes() = 1
+    `).bind(input.headline, input.submittedUrl, input.topic, input.evidenceStatus, input.summary, input.summary.slice(0, 300)),
+    // Records the new cluster id, and anchors the source-link statements below.
+    auditStatement(db, operator, {
+      action: "promote_candidate_to_cluster", targetType: "candidate", targetId: input.candidateId,
+      detailCode: PROMOTED_CLUSTER_PREFIX, detailEndsWithLastInsert: true, onlyIfChanged: true, requestId,
+    }),
+  ];
+  if (input.submittedUrl && input.urlHash) {
+    const promoted = "EXISTS (SELECT 1 FROM admin_audit_log WHERE event_id = ?)";
+    statements.push(
+      db.prepare(`
+        INSERT OR IGNORE INTO feed_items (url, url_hash, title, summary, content_excerpt, source_id, ingestion_status, fetched_at, published_at)
+        SELECT ?, ?, ?, ?, ?, ?, 'raw', datetime('now'), datetime('now')
+        WHERE ${promoted}
+      `).bind(input.submittedUrl, input.urlHash, input.headline, input.summary, input.summary.slice(0, 1000), 1, auditEventId(requestId)),
+      // The feed item is found by hash, so an already-ingested URL links too.
+      db.prepare(`
+        INSERT OR IGNORE INTO story_cluster_members (cluster_id, feed_item_id, is_primary)
+        SELECT CAST(substr(a.detail_code, ?) AS INTEGER), f.id, 1
+        FROM admin_audit_log a JOIN feed_items f ON f.url_hash = ?
+        WHERE a.event_id = ?
+      `).bind(PROMOTED_CLUSTER_PREFIX.length + 1, input.urlHash, auditEventId(requestId)),
+    );
   }
-  const clusterIndex = statements.length;
-  statements.push(db.prepare(`
-    INSERT INTO story_clusters (title, canonical_url, topic, evidence_status, publication_status, needs_human_review, summary, why_it_matters, created_at, updated_at)
-    VALUES (?, ?, ?, ?, 'review', 1, ?, ?, datetime('now'), datetime('now'))
-  `).bind(input.headline, input.submittedUrl, input.topic, input.evidenceStatus, input.summary, input.summary.slice(0, 300)));
-  if (linkSource) {
-    // Runs straight after the cluster insert, so last_insert_rowid() is the new
-    // cluster. The feed item is found by hash, so an already-ingested URL links too.
-    statements.push(db.prepare(`
-      INSERT OR IGNORE INTO story_cluster_members (cluster_id, feed_item_id, is_primary)
-      SELECT last_insert_rowid(), id, 1 FROM feed_items WHERE url_hash = ?
-    `).bind(input.urlHash));
-  }
-  statements.push(
-    db.prepare("UPDATE editorial_candidates SET state='published', updated_at=datetime('now') WHERE id=?").bind(input.candidateId),
-    auditStatement(db, operator, { action: "promote_candidate_to_cluster", targetType: "candidate", targetId: input.candidateId }),
-  );
   const results = await db.batch(statements);
-  const clusterId = Number(results[clusterIndex]?.meta?.last_row_id ?? 0);
+  if (Number(results[0]?.meta?.changes ?? 0) === 0) return null;
+  const clusterId = Number(results[1]?.meta?.last_row_id ?? 0);
   if (!clusterId) throw new AdminPageWriteError("Promotion did not create a story cluster.");
   return clusterId;
 }
