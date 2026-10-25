@@ -30,6 +30,12 @@ const audits = (db: SQLiteD1) => db.sqlite.prepare(
   "SELECT operator_email, operator_role, action, target_type, target_id, outcome, detail_code FROM admin_audit_log ORDER BY id",
 ).all().map((row) => ({ ...row })) as Array<Record<string, string | null>>;
 
+/** The cluster id of a "created" promotion outcome. */
+function createdCluster(outcome: Awaited<ReturnType<typeof promoteCandidate>>): number {
+  assert.equal(outcome.kind, "created", JSON.stringify(outcome));
+  return (outcome as { clusterId: number }).clusterId;
+}
+
 const candidateInput = {
   intakeType: "manual_url", submittedUrl: "https://news.example/a", leadText: "A lead about a model release",
   sourceHash: "hash-a", section: null, urgency: "normal", sourceLanguage: null,
@@ -62,11 +68,10 @@ const candidateInput = {
   db.sqlite.prepare("UPDATE editorial_candidates SET state = 'needs_review' WHERE id = ?").run(id);
   // The URL was already ingested: the cluster must link the existing feed item.
   db.sqlite.exec("INSERT INTO feed_items (id, source_id, url, url_hash, title, ingestion_status) VALUES (77, 1, 'https://news.example/a', 'url-hash-a', 'Existing', 'raw')");
-  const clusterId = await promoteCandidate(db.asD1(), PUBLISHER, {
+  const clusterId = createdCluster(await promoteCandidate(db.asD1(), PUBLISHER, {
     candidateId: id, submittedUrl: "https://news.example/a", urlHash: "url-hash-a",
     headline: "A lead about a model release", summary: "Summary", topic: "general", evidenceStatus: "vendor_reported",
-  });
-  assert.ok(clusterId, "a needs_review candidate is promoted");
+  }));
   const cluster = db.sqlite.prepare("SELECT publication_status, needs_human_review, evidence_status FROM story_clusters WHERE id = ?").get(clusterId);
   assert.deepEqual({ ...cluster }, { publication_status: "review", needs_human_review: 1, evidence_status: "vendor_reported" });
   assert.equal(count(db, "SELECT COUNT(*) AS n FROM story_cluster_members WHERE cluster_id = ? AND feed_item_id = 77", clusterId), 1,
@@ -87,30 +92,29 @@ const candidateInput = {
     count(db, "SELECT COUNT(*) AS n FROM admin_audit_log"),
   ];
   const beforeRepeat = snapshot();
-  assert.equal(await promoteCandidate(db.asD1(), PUBLISHER, {
+  assert.deepEqual(await promoteCandidate(db.asD1(), PUBLISHER, {
     candidateId: id, submittedUrl: "https://news.example/a", urlHash: "url-hash-a",
     headline: "Again", summary: "Again", topic: "general", evidenceStatus: "vendor_reported",
-  }), null, "a published candidate cannot be promoted again");
+  }), { kind: "not_promotable" }, "a published candidate cannot be promoted again");
   assert.deepEqual(snapshot(), beforeRepeat, "a repeated promotion writes nothing");
 
   // A candidate not in needs_review, with an unseen URL, is refused whole.
   const fresh = await recordCandidate(db.asD1(), PUBLISHER, { ...candidateInput, submittedUrl: "https://news.example/c", sourceHash: "hash-c" });
   const beforeFresh = snapshot();
-  assert.equal(await promoteCandidate(db.asD1(), PUBLISHER, {
+  assert.deepEqual(await promoteCandidate(db.asD1(), PUBLISHER, {
     candidateId: fresh, submittedUrl: "https://news.example/c", urlHash: "url-hash-c",
     headline: "C", summary: "C", topic: "general", evidenceStatus: "unverified",
-  }), null);
+  }), { kind: "not_promotable" });
   assert.deepEqual(snapshot(), beforeFresh, "a refused promotion leaves no orphan cluster or feed item");
   assert.equal(db.sqlite.prepare("SELECT state FROM editorial_candidates WHERE id = ?").get(fresh)?.state, "new");
 
   // A new URL gets a new feed item and its link.
   const second = await recordCandidate(db.asD1(), PUBLISHER, { ...candidateInput, submittedUrl: "https://news.example/b", sourceHash: "hash-b" });
   db.sqlite.prepare("UPDATE editorial_candidates SET state = 'needs_review' WHERE id = ?").run(second);
-  const secondCluster = await promoteCandidate(db.asD1(), PUBLISHER, {
+  const secondCluster = createdCluster(await promoteCandidate(db.asD1(), PUBLISHER, {
     candidateId: second, submittedUrl: "https://news.example/b", urlHash: "url-hash-b",
     headline: "B", summary: "B summary", topic: "general", evidenceStatus: "unverified",
-  });
-  assert.ok(secondCluster, "a needs_review candidate is promoted");
+  }));
   assert.equal(count(db, "SELECT COUNT(*) AS n FROM story_cluster_members m JOIN feed_items f ON f.id = m.feed_item_id WHERE m.cluster_id = ? AND f.url_hash = 'url-hash-b'", secondCluster), 1);
 }
 
@@ -177,7 +181,7 @@ const candidateInput = {
   const desk = read("src/pages/admin/desk.astro");
   assert.match(desk, /const isPromotable = c\.state === "needs_review";/);
   assert.match(frontmatter(desk), /SELECT \* FROM editorial_candidates WHERE id=\? AND state='needs_review'/);
-  assert.match(frontmatter(desk), /if \(clusterId === null\) throw new Error/);
+  assert.match(frontmatter(desk), /if \(outcome\.kind === "not_promotable"\) throw new Error/);
 }
 
 console.log("admin page write attribution tests passed");

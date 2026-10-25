@@ -140,6 +140,7 @@ export class SQLiteD1 {
     if (applyReviewerGovernance && applyEvidenceLibraryGovernance) {
       this.sqlite.exec(readFileSync("db/migration-0076-evidence-library-governance.sql", "utf8"));
     }
+    this.sqlite.exec(readFileSync("db/migration-0077-editorial-source-identity.sql", "utf8"));
   }
 
   prepare(query: string): SQLiteD1Statement {

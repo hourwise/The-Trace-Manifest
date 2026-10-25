@@ -92,6 +92,13 @@ try {
   db.exec(readFileSync("db/migration-0074-assertion-reviewer-governance.sql", "utf8"));
   db.exec(readFileSync("db/migration-0075-claim-extraction-run-ledger.sql", "utf8"));
   db.exec(readFileSync("db/migration-0076-evidence-library-governance.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0077-editorial-source-identity.sql", "utf8"));
+  // 0077 must also apply where 0069 already created the reverse membership index.
+  db.exec(readFileSync("db/migration-0069-trace-d1-reverse-membership-index.sql", "utf8"));
+  const clusterColumns = new Set(db.prepare("PRAGMA table_info(story_clusters)").all().map((row) => row.name));
+  if (!clusterColumns.has("primary_source_key")) throw new Error("Missing story_clusters.primary_source_key");
+  const sourceKeyIndex = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_story_clusters_primary_source_key'").get()?.sql ?? "";
+  if (!/UNIQUE/i.test(sourceKeyIndex) || !/primary_source_key IS NOT NULL/i.test(sourceKeyIndex)) throw new Error("primary_source_key must have a unique partial index");
 
   const requiredTables = [
     "ai_requests", "ai_budget_reservations", "ai_usage_ledger", "ai_quota_usage",
