@@ -312,6 +312,47 @@ The owner added the Preview Access bypass for `/api/capture/receipt`. All checks
 
 The test labels were again absent from the lead text ("capture / offline retry"). The record is identifiable by id, provenance and time.
 
+### 8.7 Gate C result, part 3: Reddit social signal and retry of the same attempt (2026-10-25, owner-authorised)
+
+**Timeline, from the owner's screenshots:**
+
+| Time | Event |
+|---|---|
+| 10:36 | A Reddit post was shared into TRACE Capture (capture `b4043a3e…`, captured 10:36:34Z). The URL was the share link `https://www.reddit.com/r/AI_Agents/s/jdIXHt1ROR`. |
+| 10:37 | Submit to TRACE with **Environment: Preview**, **Intake type: Social signal**, platform **reddit** (auto-detected), and the detected URL selected. |
+| 10:38 | The browser review page showed `Intake: social`, the exact URL, `Platform: reddit`, `Why: Qatar capture gate c`, and the provenance line. Confirm. The app then showed "Receipt received…" with **Reopen** and **Verify**. |
+| 10:38–10:39 | **Reopen same browser submission** gave a fresh review page with the same snapshot. Confirm again showed **"Already saved by this attempt: social 1."** |
+| 10:39 | The app showed **"TRACE record confirmed: 1. Awaiting private editorial review."** |
+
+**D1 read-back (read-only).** `social_signals` row `id = 1`:
+- `platform = reddit`;
+- `canonical_url = https://www.reddit.com/r/AI_Agents/s/jdIXHt1ROR` (exact);
+- `submitted_by` = the publisher;
+- `submission_reason = Qatar capture gate c`;
+- `reviewer_notes` = the capture provenance (`TRACE Capture b4043a3e…; captured 2026-10-25T10:36:34.857Z; source app (unverified): unknown.`);
+- `review_status = pending`, `evidence_status = unreviewed`.
+
+Totals: 1 social signal; candidates unchanged at 21.
+
+**Proven on the device:**
+- the Android Sharesheet capture of a Reddit post;
+- social routing (ADR 0009) with the original URL preserved exactly;
+- the publisher submission;
+- **retry of a completed attempt**, recognised as this attempt's own record (`replay`, not duplicate), with no second row;
+- receipt verification and the private queue record.
+
+**Not evidenced in these screenshots:** the verify step failing under airplane mode, then succeeding. If it was done, a screenshot of the failure message completes it; otherwise it is the one remaining offline case. Offline capture and submission were already proven in §8.6.
+
+**Notes:**
+- The reason was entered as "Qatar capture gate c", probably autocorrect of "QA capture gate c". It is identifiable, but not the agreed `[QA-CAPTURE]` label.
+- The stored URL is a Reddit `/s/` share link: finding 3 in §8.5 (canonicalisation) applies.
+- `/admin/social` was not viewed in the browser pane because the reader's Access session had expired, and no sign-in was attempted. The record is in the table that page lists.
+
+**Still owed for Gate C:**
+- the 1.0.0 → 1.1.0 before and after screenshots (Room migration);
+- the airplane-mode verify screenshot, if taken;
+- the article step (§8.4 step 14), which is optional because article routing is proven by the server tests.
+
 ## 9. Gate D: Production (separate approval)
 
 - Production currently lacks this code. Production also has **no 0076**, and the combined branch contains SEED-01.
