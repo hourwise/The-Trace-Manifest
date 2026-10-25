@@ -3,6 +3,7 @@ import AdminLayout from "../../layouts/AdminLayout.astro";
 import EvidenceBadge from "../../components/EvidenceBadge.astro";
 import { listRecentlyReviewedClusters, listReviewQueueClusters } from "../../lib/server/review-queue";
 import type { ReviewQueueCluster } from "../../lib/review-queue-contract";
+import { pendingReviewGuidance } from "../../lib/admin/review-selection";
 
 export const prerender = false;
 const editorialAIEnabled = Astro.locals.runtime.env.TRACE_AI_EDITORIAL_ENABLED === "true";
@@ -100,13 +101,29 @@ try {
         <p class="meta" style="margin-top:0.35rem;font-size:0.75rem;" id="cluster-count"></p>
       </div>
 
+      <!-- D4: review mode, entered from a Pending Review card. It shows the same
+           evidence and governance panels, but never the publish form: publishing
+           still requires selecting the story from the publishable list above. -->
+      <div id="review-mode-banner" class="card review-mode-banner" role="region" aria-labelledby="review-mode-title" hidden>
+        <h3 id="review-mode-title" tabindex="-1" style="font-size:0.95rem;margin:0 0 0.35rem;">Reviewing pending item</h3>
+        <p id="review-mode-detail" class="meta" style="margin:0 0 0.5rem;font-size:0.8rem;"></p>
+        <p class="meta" style="margin:0 0 0.6rem;font-size:0.78rem;">Review only. Admission and editorial review decisions below are recorded immediately; they do not publish anything. Publication is a separate step from the publishable list.</p>
+        <div class="review-mode-actions">
+          <button type="button" id="review-exit-btn" class="btn btn-secondary" style="font-size:0.8rem;">← Back to Pending Review</button>
+          <button type="button" id="review-open-publish-btn" class="btn btn-secondary" style="font-size:0.8rem;" hidden>Open in publish workflow</button>
+        </div>
+        <p id="review-status" class="meta" role="status" aria-live="polite" style="margin:0.5rem 0 0;font-size:0.78rem;"></p>
+      </div>
+
       <!-- Source Material — appears when cluster selected -->
       <div id="source-material" class="card" style="margin-bottom:1.5rem;background:var(--surface-2);display:none;">
         <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.5rem;margin-bottom:0.75rem;">
           <h3 style="font-size:0.95rem;margin:0;">Source Material <span class="meta" style="font-weight:400;" id="source-count"></span></h3>
-          <div style="display:flex;gap:0.5rem;">
+          <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
             <button type="button" id="find-related-btn" class="btn btn-secondary" style="font-size:0.8rem;" disabled>🔍 Find Related</button>
-            <button type="button" id="ai-analyze-btn" class="btn btn-secondary" style="font-size:0.8rem;" data-ai-enabled={String(editorialAIEnabled)} disabled>{editorialAIEnabled ? "🤖 AI Analyze" : "AI Analyze disabled"}</button>
+            {isPublisher
+              ? <button type="button" id="ai-analyze-btn" class="btn btn-secondary" style="font-size:0.8rem;" data-ai-enabled={String(editorialAIEnabled)} disabled>{editorialAIEnabled ? "🤖 AI Analyze" : "AI Analyze disabled"}</button>
+              : <span class="meta" data-ai-reader-note style="font-size:0.75rem;align-self:center;">AI Analyze drafts publication text and is available to publishers.</span>}
           </div>
         </div>
         <div id="ai-result" style="display:none;margin-bottom:0.75rem;padding:0.75rem;background:color-mix(in oklch, var(--accent) 6%, transparent);border-radius:var(--radius);border-left:3px solid var(--accent);"></div>
@@ -123,8 +140,8 @@ try {
         <div id="claims-evidence-body" style="margin-top:0.75rem;"></div>
       </section>
 
-      <!-- Editorial fields -->
-      <div class="card" style="margin-bottom:1.5rem;background:var(--surface-2);">
+      <!-- Editorial fields (publish mode only; hidden in review mode) -->
+      <div id="publish-form-card" class="card" style="margin-bottom:1.5rem;background:var(--surface-2);">
         <div style="display:flex;flex-direction:column;gap:1rem;">
           <div>
             <label for="pub-headline" style="font-size:0.85rem;font-weight:600;display:block;margin-bottom:0.25rem;">Headline <span class="meta" style="font-weight:400;">(optional — uses cluster title if blank)</span></label>
@@ -166,13 +183,26 @@ try {
     </section>
 
     <!-- Pending review queue -->
-    <section style="margin-bottom:2.5rem;">
+    <section id="pending-review" style="margin-bottom:2.5rem;">
       <h2>Pending Review</h2>
-      {reviewLoadError ? <div class="card"><p class="meta">{reviewLoadError}</p></div> : pendingReviews.length === 0 ?
+      <p id="pending-review-notice" class="meta" role="alert" style="color:var(--ev-disputed);" hidden></p>
+      {reviewLoadError ? <div class="card"><p class="meta" role="alert" style="color:var(--ev-disputed);">{reviewLoadError}</p></div> : pendingReviews.length === 0 ?
         <div class="card" style="text-align:center;padding:2rem;"><p class="meta">No items currently pending review.</p></div> :
-        <div style="display:flex;flex-direction:column;gap:0.65rem;">{pendingReviews.map((item) =>
-          <div class="card"><div style="display:flex;justify-content:space-between;gap:1rem;"><strong>#{item.id} {item.title}</strong><EvidenceBadge status={item.evidence_status} size="sm" /></div><p class="meta">{item.topic ?? "Uncategorised"} · {item.source_count} source{item.source_count === 1 ? "" : "s"} · {item.publication_status}</p></div>
-        )}</div>}
+        <div style="display:flex;flex-direction:column;gap:0.65rem;">{pendingReviews.map((item) => {
+          const guidance = pendingReviewGuidance(item);
+          return (
+            <article class="card pending-review-card" id={`pending-${item.id}`} data-pending-cluster-id={String(item.id)} data-pending-title={item.title} data-pending-evidence={item.evidence_status} data-publication-blocked={String(guidance.publicationBlocked)}>
+              <div class="pending-review-head"><strong>#{item.id} {item.title}</strong><EvidenceBadge status={item.evidence_status} size="sm" /></div>
+              <p class="meta" style="margin:0.25rem 0;">{item.topic ?? "Uncategorised"} · {item.source_count} source{item.source_count === 1 ? "" : "s"} · {item.publication_status}</p>
+              {guidance.reasons.length > 0 && <ul class="pending-review-reasons" aria-label="Why this needs review">{guidance.reasons.map((reason) => <li>{reason}</li>)}</ul>}
+              <p class="meta" style="margin:0.35rem 0;font-size:0.8rem;"><strong>Next:</strong> {guidance.nextAction}</p>
+              <div class="pending-review-actions">
+                <button type="button" class="btn btn-primary" data-review-open={String(item.id)} style="font-size:0.8rem;">{isPublisher ? "Open review" : "Inspect evidence and history"}</button>
+                <span class="meta" data-review-seen hidden style="font-size:0.75rem;">Opened this session</span>
+              </div>
+            </article>
+          );
+        })}</div>}
     </section>
 
     <!-- Evidence state reference -->
@@ -263,6 +293,7 @@ try {
         AssertionGovernanceHistoryEvent,
       } from "../../lib/server/assertion-governance-history";
       import { governanceHistoryContextLabel, governanceHistoryTransitionLabel } from "../../lib/admin/assertion-governance-history-ui";
+      import { canPublishSelection, parseReviewClusterId, reviewSelectionUrl, type ReviewSelectionMode } from "../../lib/admin/review-selection";
 
       function authHeaders(method: string = "GET"): Record<string, string> {
         // Only set Content-Type for requests with a body; adding it to GET
@@ -281,9 +312,16 @@ try {
         return res;
       }
 
+      // Both status lines carry every message: the publish form is hidden in
+      // review mode, so errors there must still be visible.
       function status(msg: string, isError: boolean): void {
-        const el = document.getElementById("publish-status");
-        if (el) { el.textContent = msg; el.style.color = isError ? "var(--ev-disputed)" : "var(--ev-confirmed)"; }
+        for (const id of ["publish-status", "review-status"]) {
+          const el = document.getElementById(id);
+          if (!el) continue;
+          el.textContent = msg;
+          el.style.color = isError ? "var(--ev-disputed)" : "var(--ev-confirmed)";
+          el.setAttribute("role", isError ? "alert" : "status");
+        }
       }
 
       // Helper: typed getElementById
@@ -438,6 +476,7 @@ try {
           select.disabled = false;
 
           applyClusterFilters(preservedSelection);
+          updateReviewPublishLink();
           if (announce) status(`Loaded ${allClusters.length} clusters.`, false);
           return true;
         } catch (e) {
@@ -467,18 +506,24 @@ try {
         applyClusterFilters();
       });
 
+      // Which selection drives the panels: the publish selector, or a Pending
+      // Review item opened in review mode. Review mode never enables publishing.
+      let selectionMode: ReviewSelectionMode = "publish";
+      let activeClusterId: number | null = null;
+
       // Enable publish button when cluster selected and summary has content
       function checkPublishReady(): void {
         const btn = $<HTMLButtonElement>("publish-btn");
         const archBtn = $<HTMLButtonElement>("archive-btn");
         const select = $<HTMLSelectElement>("cluster-select");
         const summary = $<HTMLTextAreaElement>("pub-summary");
+        const selectedId = select?.value ? parseInt(select.value) : null;
         if (btn && select && summary) {
-          const selectedClusterIsPublishable = allClusters.some((cluster) => String(cluster.id) === select.value);
-          btn.disabled = !selectedClusterIsPublishable || !summary.value || summary.value.trim().length < 20;
+          const publishable = canPublishSelection(selectionMode, selectedId, new Set(allClusters.map((cluster) => cluster.id)));
+          btn.disabled = !publishable || !summary.value || summary.value.trim().length < 20;
         }
         if (archBtn && select) {
-          archBtn.disabled = !select.value;
+          archBtn.disabled = selectionMode !== "publish" || !select.value;
         }
       }
       $<HTMLSelectElement>("cluster-select")?.addEventListener("change", checkPublishReady);
@@ -1259,6 +1304,7 @@ try {
       function resetSelectedClusterState(): void {
         const select = $<HTMLSelectElement>("cluster-select");
         if (select) select.value = "";
+        activeClusterId = null;
         currentSources = [];
         resetEditorialEvidenceState();
 
@@ -1285,7 +1331,19 @@ try {
       }
 
       $<HTMLSelectElement>("cluster-select")?.addEventListener("change", async function() {
+        // Choosing from the publish selector always leaves review mode first.
+        if (selectionMode === "review") leaveReviewMode({ resetSelection: false });
         const clusterId = parseInt(this.value || "");
+        activeClusterId = clusterId || null;
+        await openClusterMaterial(clusterId, this.options[this.selectedIndex]?.textContent ?? "Untitled");
+      });
+
+      /**
+       * Loads source material and canonical evidence for one cluster. Shared by
+       * the publish selector and review mode; it only reads (sources, evidence,
+       * history) and never changes publication state.
+       */
+      async function openClusterMaterial(clusterId: number, fallbackHeadline: string): Promise<void> {
         const panel = document.getElementById("source-material");
         const list = document.getElementById("source-list");
         const count = document.getElementById("source-count");
@@ -1305,8 +1363,8 @@ try {
         if (relatedDiv) relatedDiv.style.display = "none";
         currentSources = [];
 
-        // Pre-fill form fields from cluster data if available
-        const detail = clusterDetail[clusterId];
+        // Pre-fill form fields from cluster data if available (publish mode only)
+        const detail = selectionMode === "publish" ? clusterDetail[clusterId] : undefined;
         if (detail) {
           const summaryEl = $<HTMLTextAreaElement>("pub-summary");
           const whyEl = $<HTMLInputElement>("pub-why");
@@ -1321,6 +1379,8 @@ try {
         try {
           const res = await adminFetch(`/api/admin/cluster-sources?clusterId=${clusterId}`);
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          // A later selection may have replaced this one while it loaded.
+          if (activeClusterId !== clusterId) return;
           const sources: Array<{ title: string; url: string; excerpt: string | null; sourceName: string; sourceTier: string; publishedAt: string | null }> = await res.json();
 
           currentSources = sources.map(s => ({ title: s.title, excerpt: s.excerpt }));
@@ -1344,7 +1404,7 @@ try {
             const summaryEl = $<HTMLTextAreaElement>("pub-summary");
             const headlineEl = $<HTMLInputElement>("pub-headline");
             const summary = summaryEl?.value?.trim();
-            const headline = headlineEl?.value?.trim() || (this.options[this.selectedIndex]?.textContent ?? "Untitled");
+            const headline = headlineEl?.value?.trim() || fallbackHeadline;
             if (summary && summary.length >= 20) {
               currentSources = [{ title: headline, excerpt: summary }];
               if (aiBtn) aiBtn.disabled = aiBtn.dataset.aiEnabled !== "true";
@@ -1354,10 +1414,11 @@ try {
             }
           }
         } catch (e) {
-          list.innerHTML = '<p class="meta" style="color:var(--ev-disputed);">Failed to load source material.</p>';
+          if (activeClusterId !== clusterId) return;
+          list.innerHTML = `<p class="meta" role="alert" style="color:var(--ev-disputed);">Failed to load source material: ${escapeHTML(errorMessage(e, "Unknown error"))}</p>`;
           console.error(e);
         }
-      });
+      }
 
       // AI Analyze button — sends source material to TRACE AI for analysis
       $<HTMLButtonElement>("ai-analyze-btn")?.addEventListener("click", async () => {
@@ -1453,7 +1514,7 @@ try {
         const btn = $<HTMLButtonElement>("find-related-btn");
         if (!relatedDiv || !btn) return;
 
-        const clusterId = parseInt($<HTMLSelectElement>("cluster-select")?.value ?? "0");
+        const clusterId = activeClusterId;
         if (!clusterId) { status("Select a cluster first.", true); return; }
 
         btn.disabled = true;
@@ -1485,9 +1546,13 @@ try {
                 const claimSelector = item.kind === "ingested_coverage"
                   ? `<select data-related-claim style="font-size:0.7rem;padding:0.2rem;" ${item.claimOptions.length === 0 ? "disabled" : ""}><option value="">${item.claimOptions.length === 0 ? "No canonical claims" : "Select claim…"}</option>${item.claimOptions.map((claim: { id: string; text: string }) => `<option value="${escapeHTML(claim.id)}">${escapeHTML(claim.text.slice(0, 70))}</option>`).join("")}</select>`
                   : "";
+                // Related-item review is a publisher write (the server refuses
+                // readers); readers see the recorded state, not dead controls.
                 const reviewLabel = item.review
                   ? `<span class="badge" style="font-size:0.6rem;color:${item.review.state === "accepted" ? "var(--ev-confirmed)" : "var(--ev-disputed)"};">${escapeHTML(item.review.state)}: ${escapeHTML(item.review.action)}</span>`
-                  : `<span style="display:flex;gap:0.35rem;align-items:center;flex-wrap:wrap;">${claimSelector}<select data-related-action ${targetAttribute} style="font-size:0.7rem;padding:0.2rem;"><option value="">Review action…</option>${actionOptions}</select><button type="button" class="btn btn-secondary" data-related-review ${targetAttribute} style="font-size:0.7rem;padding:0.2rem 0.45rem;">Apply</button></span>`;
+                  : !canGovernAssertions
+                    ? '<span class="meta" data-related-readonly style="font-size:0.7rem;">Not reviewed yet. Related-item review is publisher-only.</span>'
+                    : `<span style="display:flex;gap:0.35rem;align-items:center;flex-wrap:wrap;">${claimSelector}<select data-related-action ${targetAttribute} style="font-size:0.7rem;padding:0.2rem;"><option value="">Review action…</option>${actionOptions}</select><button type="button" class="btn btn-secondary" data-related-review ${targetAttribute} style="font-size:0.7rem;padding:0.2rem 0.45rem;">Apply</button></span>`;
                 const affected = item.affectedRecords;
                 const affectedLabel = affected && (affected.publishedStories.length > 0 || affected.knowledgePages.length > 0)
                   ? `<div class="meta" style="font-size:0.7rem;margin-top:0.25rem;"><strong>Affected:</strong> ${affected.publishedStories.map(story => story.url ? `<a href="${escapeHTML(story.url)}">${escapeHTML(story.title)}</a>` : escapeHTML(story.title)).join(", ")}${affected.knowledgePages.length > 0 ? `${affected.publishedStories.length > 0 ? " · " : ""}knowledge: ${affected.knowledgePages.map(page => `<a href="${escapeHTML(page.url)}">${escapeHTML(page.title)}</a>`).join(", ")}` : ""}</div>`
@@ -1644,6 +1709,130 @@ try {
         }
       });
 
+      // ── D4: review mode for Pending Review items ──────────────────────────
+      // The pending list is server-rendered; only ids present in it can be
+      // opened, so a stale or forged ?review= id never loads anything.
+      function pendingCard(clusterId: number): HTMLElement | null {
+        return document.querySelector<HTMLElement>(`[data-pending-cluster-id="${clusterId}"]`);
+      }
+
+      function showPendingNotice(message: string | null): void {
+        const notice = document.getElementById("pending-review-notice");
+        if (!notice) return;
+        notice.textContent = message ?? "";
+        notice.hidden = !message;
+      }
+
+      function setReviewUrl(clusterId: number | null): void {
+        try { history.replaceState(history.state, "", reviewSelectionUrl(location.href, clusterId)); } catch { /* URL state is a convenience only */ }
+      }
+
+      /** Shows "Open in publish workflow" only when the publishable list contains this item. */
+      function updateReviewPublishLink(): void {
+        const button = $<HTMLButtonElement>("review-open-publish-btn");
+        if (!button) return;
+        button.hidden = !(selectionMode === "review" && activeClusterId !== null
+          && allClusters.some((cluster) => cluster.id === activeClusterId));
+      }
+
+      function enterReviewMode(clusterId: number): void {
+        const card = pendingCard(clusterId);
+        if (!card) {
+          showPendingNotice(`Pending item #${clusterId} is no longer in the review queue. Reload the page to refresh the queue.`);
+          setReviewUrl(null);
+          return;
+        }
+        showPendingNotice(null);
+        // Explicit mode separation: clear the publish selection, fields and panels.
+        resetSelectedClusterState();
+        selectionMode = "review";
+        activeClusterId = clusterId;
+        checkPublishReady();
+
+        const banner = $<HTMLElement>("review-mode-banner");
+        const detail = $<HTMLElement>("review-mode-detail");
+        const formCard = $<HTMLElement>("publish-form-card");
+        const title = card.dataset.pendingTitle ?? "Untitled";
+        const evidence = (card.dataset.pendingEvidence ?? "unknown").replace(/_/g, " ");
+        const blocked = card.dataset.publicationBlocked === "true";
+        if (detail) detail.textContent = `#${clusterId} ${title} · evidence ${evidence}${blocked ? " · not publication-eligible until the evidence status changes" : ""}`;
+        if (banner) banner.hidden = false;
+        if (formCard) formCard.hidden = true;
+        updateReviewPublishLink();
+        setReviewUrl(clusterId);
+        status(`Reviewing pending item #${clusterId}.`, false);
+
+        void openClusterMaterial(clusterId, title);
+        const seen = card.querySelector<HTMLElement>("[data-review-seen]");
+        if (seen) seen.hidden = false;
+        banner?.scrollIntoView({ block: "start", behavior: "smooth" });
+        $<HTMLElement>("review-mode-title")?.focus({ preventScroll: true });
+      }
+
+      function leaveReviewMode(options: { resetSelection: boolean }): number | null {
+        const previous = activeClusterId;
+        selectionMode = "publish";
+        const banner = $<HTMLElement>("review-mode-banner");
+        const formCard = $<HTMLElement>("publish-form-card");
+        if (banner) banner.hidden = true;
+        if (formCard) formCard.hidden = false;
+        if (options.resetSelection) resetSelectedClusterState();
+        updateReviewPublishLink();
+        setReviewUrl(null);
+        checkPublishReady();
+        return previous;
+      }
+
+      document.querySelectorAll<HTMLButtonElement>("[data-review-open]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const clusterId = parseReviewClusterId(button.dataset.reviewOpen);
+          if (clusterId !== null) enterReviewMode(clusterId);
+        });
+      });
+
+      $<HTMLButtonElement>("review-exit-btn")?.addEventListener("click", () => {
+        const previous = leaveReviewMode({ resetSelection: true });
+        const card = previous !== null ? pendingCard(previous) : null;
+        card?.scrollIntoView({ block: "center", behavior: "smooth" });
+        card?.querySelector<HTMLButtonElement>("[data-review-open]")?.focus({ preventScroll: true });
+        status("Returned to Pending Review.", false);
+      });
+
+      // Moves an item that is also in the publishable list into the normal
+      // publish flow; the publishable list stays the only way to publish.
+      $<HTMLButtonElement>("review-open-publish-btn")?.addEventListener("click", () => {
+        const clusterId = activeClusterId;
+        if (clusterId === null || !allClusters.some((cluster) => cluster.id === clusterId)) {
+          updateReviewPublishLink();
+          status("This item is not in the publishable list. Reload the publishable list after review changes.", true);
+          return;
+        }
+        const select = $<HTMLSelectElement>("cluster-select");
+        if (!select) return;
+        if (![...select.options].some((option) => option.value === String(clusterId))) {
+          status(`#${clusterId} is publishable but hidden by the current list filters. Clear the filters, then try again.`, true);
+          return;
+        }
+        leaveReviewMode({ resetSelection: true });
+        select.value = String(clusterId);
+        select.dispatchEvent(new Event("change"));
+        select.scrollIntoView({ block: "center", behavior: "smooth" });
+      });
+
+      // Restore a review selection from the URL (reload, or a shared link).
+      {
+        const params = new URLSearchParams(location.search);
+        if (params.has("review")) {
+          const requested = parseReviewClusterId(params.get("review"));
+          if (requested === null) {
+            showPendingNotice("The requested pending item id is not valid.");
+            setReviewUrl(null);
+          } else {
+            enterReviewMode(requested);
+          }
+        }
+      }
+
     </script>
 
     <!-- Record a correction -->
@@ -1690,3 +1879,17 @@ Content-Type: application/json
     </section>
   </div>
 </AdminLayout>
+
+<style>
+  /* `hidden` must win over component display rules (.btn is inline-flex). */
+  [hidden] { display: none !important; }
+  .review-mode-banner { margin-bottom: 1.5rem; border-left: 3px solid var(--accent); background: color-mix(in oklch, var(--accent) 6%, var(--surface-2)); }
+  .review-mode-actions, .pending-review-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
+  .pending-review-head { display: flex; justify-content: space-between; gap: 1rem; align-items: flex-start; }
+  .pending-review-reasons { display: flex; flex-wrap: wrap; gap: 0.35rem; list-style: none; margin: 0.35rem 0; padding: 0; }
+  .pending-review-reasons li { font-size: 0.72rem; padding: 0.1rem 0.45rem; border: 1px solid var(--border); border-radius: var(--radius); }
+  @media (max-width: 640px) {
+    .pending-review-head { flex-direction: column; gap: 0.35rem; }
+    .pending-review-actions .btn, .review-mode-actions .btn { width: 100%; }
+  }
+</style>
