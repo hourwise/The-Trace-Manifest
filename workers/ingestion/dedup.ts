@@ -1,12 +1,9 @@
 // URL deduplication utilities
+import { sourceUrlHash } from "../../src/lib/server/source-identity";
 
+/** url_hash for a feed item. Shared with Desk promotion (TRACE-EDITORIAL-DEDUPE-R1). */
 export async function hashURL(url: string): Promise<string> {
-  // Normalize URL before hashing
-  const normalized = normalizeURL(url);
-  const data = new TextEncoder().encode(normalized);
-  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+  return sourceUrlHash(url);
 }
 
 export interface ExistingFeedItem {
@@ -34,23 +31,4 @@ export async function deduplicateTitle(db: D1Database, title: string, sourceId: 
   ).bind(sourceId, title, `-${windowDays} days`).first();
 
   return !!existing;
-}
-
-function normalizeURL(url: string): string {
-  try {
-    const parsed = new URL(url);
-    // Remove tracking parameters
-    const trackingParams = ["utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "ref", "source", "fbclid", "gclid"];
-    for (const param of trackingParams) {
-      parsed.searchParams.delete(param);
-    }
-    // Remove trailing slash for consistency
-    let normalized = parsed.toString();
-    if (normalized.endsWith("/") && !parsed.pathname.endsWith("/")) {
-      normalized = normalized.slice(0, -1);
-    }
-    return normalized;
-  } catch {
-    return url;
-  }
 }
