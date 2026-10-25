@@ -76,7 +76,7 @@ There is no evidence revocation or restoration (`docs/audit/trace-v1-production-
 
 ### 2.4 Batched reviewer acceptance
 
-13. Homogeneous batches (same rule or source version and claim class; at most 50 items; all checks passing) can be accepted with one tap by a publisher.
+13. Homogeneous batches (same rule or source version and claim class; at most **40 items**; all checks passing) can be accepted with one tap by a publisher. The cap follows from SEED-02's measured rate of about 120 written D1 rows per assertion lifecycle and SEED-03's governance-session cap of 5,000 writes.
 14. The batch view shows a seeded random sample of at least three items (or 5 %) in full, plus a field-level diff of the rest.
 15. Acceptance writes one `accept_review` event per assertion with a shared batch id.
 16. One failing item leaves the batch.

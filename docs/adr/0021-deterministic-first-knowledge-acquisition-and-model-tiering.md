@@ -19,6 +19,8 @@ The questions TRACE most wants to answer depend on exact, versioned, machine-rea
 
 Hugging Face metadata, GGUF headers, GitHub releases and official model cards publish those facts directly. Extracting them with a language model would add cost, non-determinism and a new trust surface for no gain.
 
+The existing Production source registry (read-only, 25 October 2026) has ingested nothing since about 6 September 2026 (STOP-BURN). It holds about 1,013 GitHub release-note items as unstructured text. Its Hugging Face source has never succeeded. There is no model-card or GGUF ingestion.
+
 The local-acquisition design (KNOWLEDGE-10 workstream 8) already established:
 - Cloudflare verifies and local proposes (L-3);
 - the workstation has no database access (L-4);

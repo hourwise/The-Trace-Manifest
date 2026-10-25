@@ -4,13 +4,13 @@
 **Status:** **Design proposal only.** Nothing here is implemented, migrated, scheduled, deployed or pushed. Each phase in §17 needs its own owner approval.
 **Supersedes (as proposals):** the two narrower proposals "social automation" and "story automation and catalogue".
 **Proposed decisions:** ADR 0021 to ADR 0024 and ADR 0009 Amendment 2, all with status **Proposed** (§19).
-**Builds on:** `docs/audit/trace-v1-knowledge-10-local-acquisition-architecture.md` and `docs/audit/trace-v1-knowledge-10-open-model-execution-plan.md`, both on `codex/trace-capture-preview-01` and `codex/trace-v1-knowledge-10-readiness`, not yet on `main`. The same applies to the KNOWLEDGE-10 final report, the roadmap `docs/roadmap/trace-v1.1-v1.2.md`, the research inventory `docs/research/ai-models-inference-agents-inventory.*`, the evaluation fixture `tests/fixtures/knowledge-10/ask-evaluation-suite.json` and migration `db/migration-0076-evidence-library-governance.sql`. References below cite them by those paths.
+**Builds on:** `docs/audit/trace-v1-knowledge-10-local-acquisition-architecture.md` and `docs/audit/trace-v1-knowledge-10-open-model-execution-plan.md`, read from the pushed branch **`origin/codex/trace-v1-seed-01-prerequisites`**, which is being released to Production on 25 October 2026 and adds migration 0076 and the Evidence Library. This design builds on that branch. The same branch carries the KNOWLEDGE-10 final report, readiness, legacy-absorption and seeding documents, `docs/audit/trace-v1-seed-01-prerequisites.md`, the roadmap `docs/roadmap/trace-v1.1-v1.2.md`, the research inventory `docs/research/ai-models-inference-agents-inventory.*`, the evaluation fixture `tests/fixtures/knowledge-10/ask-evaluation-suite.json` and migration `db/migration-0076-evidence-library-governance.sql`. On 2026-10-25 every one of these was verified byte-identical to the copies first read from the local branch `codex/trace-capture-preview-01`. The SEED-03 batch plan is on `origin/codex/trace-v1-seed-03-batch-01` (`docs/audit/trace-v1-seed-03-batch-01-plan.md`). References below cite them by path.
 
 **Hard constraints for this design:**
 - No Production change.
 - Trust is not weakened: every existing gate keeps its meaning. Where automation replaces a human click, the replacement is narrower, auditable and reversible, and §11 makes reversibility a precondition.
 - Publication stays human (ADR 0004).
-- The two-independent-provenance-groups rule for `supported` is unchanged. The separate, still-open P-1 `primary_attributed` option is neither adopted nor rejected here (§11.10).
+- The two-independent-provenance-groups rule for `supported` is unchanged. In the SEED-03 plan's words, "P-1 is unchanged". The roadmap's P-1 decision, whether to add a `primary_attributed` mode for single-authoritative-source facts, is still open, and this design neither adopts nor rejects it (§11.10).
 
 ---
 
@@ -23,7 +23,8 @@
 | The intended volume is about **50 news stories and 20 owner-captured social posts a day**, run by one owner in **20–30 minutes of decisions**. | Owner brief |
 | Each news cluster currently needs manual clicks: hours a day at that volume. | Owner brief |
 | Publishing a story does **not** create Ask-ready knowledge. **0 of 417** Production assertions are Ask-eligible, because each fact needs admission, reviewer acceptance and freshness. | KNOWLEDGE-10 final report §C, §E |
-| SEED-01 (migration 0076, PR #3) added an Evidence Library context for facts no story carries. It is applied on **Preview only**. | `migration-0076-…sql`; memory of the Production state on 2026-10-24 |
+| SEED-01 (migration 0076, PR #3) added an Evidence Library context for facts no story carries. It is on Preview, and its **Production release is in progress on 2026-10-25** (`origin/codex/trace-v1-seed-01-prerequisites`). This design assumes it is present. | `migration-0076-…sql`; production-readiness session, 2026-10-25 |
+| The Production source registry has ingested nothing since about 2026-09-06. It has GitHub release notes as text, but **no** Hugging Face model or file metadata, model-card ingestion or GGUF reading (§1.1). | Production source registry, read-only, 2026-10-25 |
 | TRACE Capture (Android) delivers social posts to private `social_signals` and Desk intake, **proven on Preview on 2026-10-25**. | `docs/audit/trace-capture-integration-01.md` §8.8 |
 | ADR 0009 §10 forbids persisting fetched social pages and creating signals, candidates or cards automatically. | ADR 0009 §10 |
 | Production scheduled ingestion is paused (STOP-BURN, Cron `[]`). Public Ask is off until V1.2. | Memory, 2026-10-24; commit `d89850b` |
@@ -72,6 +73,23 @@ Models do only what needs language understanding: drafting prose for human appro
 | B-8 | Hardware scenarios H01–H16 currently all resolve to `insufficient_evidence` (evaluation fixture). | §6.6 maps each one to the records and estimator outputs that would change its outcome. |
 | B-9 | ADR 0004 lists claim types that always need human review: security, legal, misconduct, major benchmark conclusions, "best" rankings, prominent corrections, sponsored comparisons, claims based mainly on community reports, strong contradictions. | None of these classes can ever be system-admitted (§11.9). Story publication is human for every story anyway. |
 | B-10 | ADR 0015 already defines candidate states including `draft_ready`, `held`, `archived` and server-side draft persistence with prompt, policy, model and source-set hash. | The story inbox (§7) is a UI and orchestration layer over ADR 0015, not a new pipeline. |
+| B-11 | SEED-02 measured about **120 written D1 rows per assertion** for the full governance lifecycle (admit, accept, freshness request and approve, including events, jobs, audit, nonces and score explanations). SEED-03 caps a governance session at **≤ 40 assertions (≤ 5,000 writes)** (`docs/audit/trace-v1-seed-03-batch-01-plan.md` §4). | Batches in §11.4 are capped at 40. D1 estimates in §14.2 use 120 rows per assertion. |
+
+### 1.1 Existing ingestion baseline (Production source registry)
+
+The production-readiness session read the Production source registry read-only on 2026-10-25 and relayed these findings. **The owner believed the nightly RSS intake already covered Hugging Face, GitHub releases and model cards. It covers only part of that, and none of it is running:**
+
+| Source class | State on Production | Consequence for this design |
+|---|---|---|
+| All scheduled ingestion | **Stopped since about 2026-09-06** (STOP-BURN). No source has produced items since. | Nothing is currently acquired automatically. |
+| `github_api` release notes | Stored as `feed_items` **text**. Item counts: llama.cpp (source 29) 501; Qwen Code (89) 142; Cline (100) 105; LiteLLM (38) 65; LangChain (32) 59; Ollama (30) 50; Transformers (98) 16; vLLM (31) 15; OpenAI Agents SDK (116) 15; MCP servers (36) 12; PyTorch (99) 11; LlamaIndex (33) 11; LM Eval Harness (37) 11. That is **1,013 items** in total. | **Reusable as an index and a grammar corpus:** the release-bullet grammar (§5.4) can be developed and measured against this text offline. Feed text is **not** evidence. Each fact is re-acquired from the GitHub API, pinned to tag and commit, through the KC-11 route (L-2, L-3). |
+| `huggingface_api` "Hugging Face Trending Models" (84) | 0 items; no `last_success_at`. It has **never worked**. | No HF model or file metadata exists (parameters, context length, licence, quant file sizes). Lane A's `hf-model`, `hf-tree` and `gguf-header` adapters are **new builds**. Source 84 should be deactivated or superseded rather than repaired (KP-16). |
+| Model cards; GGUF headers | Not ingested at all | New (§5.3, §5.5) |
+| Hugging Face Blog RSS (17) | 870 article items | Lane B discovery and context only |
+| `arxiv_api` (23–28) | **0 items stored despite `last_success_at` timestamps** | An anomaly outside this design's scope, to be investigated separately before any arXiv-dependent automation. SEED-03 captures arXiv sources manually through KC-11. |
+| Reddit r/LocalLLaMA (102, `manual`); Stanford HELM, SWE-bench and LiveBench (`github_api`) | 0 items | Lane C replaces the Reddit "source" with owner capture (§8). Benchmark sources come into scope with the catalogue's performance records later. |
+
+The ingestion types in the schema are `rss`, `github_api`, `arxiv_api`, `page_diff`, `huggingface_api`, `hackernews_api` and `manual`. Lane A's adapters are proposed as **local-acquisition adapters submitting through the importer**, not as new Cloudflare ingestion types (L-1). They therefore need no Cron.
 
 ---
 
@@ -260,6 +278,7 @@ Both were range reads (HTTP 206) of the first 8 MiB and 12 MiB respectively, par
   - backend and model names from the catalogue alias table;
   - verbs: add, support, fix, regress, revert, remove.
 - **Unmatched bullets** go to the M fallback (§10) **only** for watched runtimes, ≤ 30 calls a day. The fallback must return the bullet verbatim plus a label from a closed enum.
+- **Existing corpus:** the 1,013 GitHub release-note `feed_items` already on Production (§1.1) are the development and measurement corpus for this grammar: offline, read from a keyset snapshot, never treated as evidence. Coverage (the share of bullets matched by T0) is measured on them before the M fallback is enabled.
 - **Release-note facts are self-describing primary facts.** Under the current conclusion policy they cannot reach `supported` in Ask on their own (P-1 is still open, §11.10). They are still fully usable as **catalogue records** (runtime support with evidence class `runtime_developer_stated`), which is what the hardware Ask needs.
 
 ### 5.5 Model cards and documentation
@@ -820,7 +839,7 @@ These are self-describing primary facts pinned to immutable identifiers, with th
 
 ### 11.4 Batched reviewer acceptance
 
-- **Batch formation** (deterministic): items with the same `rule_id` (or, for human-admitted items, the same source version and claim class), the same entity scope, ≤ 50 items, all checks passing. One failing item leaves the batch and goes to item review.
+- **Batch formation** (deterministic): items with the same `rule_id` (or, for human-admitted items, the same source version and claim class), the same entity scope, **≤ 40 items** (B-11: about 120 written rows per assertion lifecycle, so 40 × 120 = 4,800, within SEED-03's 5,000-write session cap), all checks passing. One failing item leaves the batch and goes to item review.
 - **Batch view:**
   - a header with the rule, source, policy version and counts;
   - **k = max(3, ⌈5 %⌉)** items shown in full, chosen by the seeded sampler (§11.8);
@@ -975,9 +994,9 @@ Deterministic router `trace-route-v1`:
 |---|---|---|---|
 | Story candidates, clusters, drafts, inbox events | ~1,500 | ≤ 50k | Inbox lists use keyset pagination, ≤ 50 per page; no unbounded `NOT IN` scans (the `model-data.ts` anti-pattern, open-model plan §1) |
 | Lane A import (≤ 4 batches, ≤ 25 evidence + ≤ 200 catalogue items each) | ≤ 5k per batch target | ≤ 20k per batch target | Local-acquisition §11 |
-| Governance events + recalculation jobs + trigger writes | ~3,000 | ≤ 30k | Chunked ≤ 100 parameters; trigger-aware `meta.changes` (memory: D1 counts trigger rows) |
+| Governance (full lifecycle: admit, accept, freshness, with events, jobs, audit, nonces, score explanations) | **≤ 200 assertions/day × ~120 rows ≈ 24,000** (B-11) | ≤ 30k | ≤ 40 assertions (≤ 5,000 writes) per batch or session; chunked ≤ 100 parameters; trigger-aware `meta.changes` (D1 counts trigger rows) |
 | Social | ~200 | ≤ 5k | n/a |
-| **Total** | **≈ 10k–25k/day** (≈ 0.3–0.75M a month) | **≤ 0.2M/day** | **Included on Workers Paid: 50M rows written and 25 billion rows read a month** [X-12]. The binding constraint is **per-batch safety, not price**. |
+| **Total** | **≈ 30k–45k/day** (≈ 0.9–1.4M a month) | **≤ 0.2M/day** | **Included on Workers Paid: 50M rows written and 25 billion rows read a month** [X-12]. The binding constraint is **per-batch safety, not price**. |
 
 **Context.** KNOWLEDGE-10 observed about 1.5M rows read in a 24-hour window that included migrations (final report §B). A quiet baseline must be re-measured before enabling any automated path (roadmap item "Quiet D1 baseline").
 
@@ -1018,7 +1037,7 @@ Each automatically suspends the relevant path.
 |---|---|---|
 | **STOP-BURN** | Production and Preview Cron stay `[]`. Scheduler 0072 track (overlap prevention, stale-running cleanup of 2,667 `ingestion_jobs` and 951 `cron_runs`, source 93 / M2, two clean opportunities) **unchanged** | Automated news-feed discovery on Cloudflare. **Does not block** Lanes A and C, or the inbox with owner or workstation triggers (I-7). |
 | **Public Ask off until V1.2** | `TRACE_AI_PUBLIC_ENABLED=false` (commit `d89850b`) | Public use of catalogue and estimator answers. Admin `/admin/ask` evaluation is allowed. |
-| **0076 on Production** | Separate approved release (memory: "Next Production step = 0076 + SEED-01 PR") | Evidence Library routing on Production |
+| **0076 on Production** | Release in progress on 2026-10-25 (`origin/codex/trace-v1-seed-01-prerequisites`). Confirm it landed before K9 and K10. | Evidence Library routing on Production |
 | **G-1** | Allow-list `deepseek-flash`; prices 0.30 / 1.20 | Inbox at K = 40 |
 | **Revocation and restoration** (§11.7) | Implemented, tested, on the target environment | **Any** system admission or system freshness |
 | **System-actor migration** (§11.2) | Approved migration | System admission |
@@ -1038,9 +1057,9 @@ Each automatically suspends the relevant path.
 
 | Phase | Content | Environment | Exit |
 |---|---|---|---|
-| **K0** | Owner decisions KP-1…KP-15; ADRs 0021–0024 and 0009 Amendment 2 moved from Proposed to Accepted (or revised) | Docs | Decisions recorded |
+| **K0** | Owner decisions KP-1…KP-16; ADRs 0021–0024 and 0009 Amendment 2 moved from Proposed to Accepted (or revised) | Docs | Decisions recorded |
 | **K1** | **OM-3+ estimator library:** `trace-fit-v1` and `trace-decode-bound-v1` as pure functions; header-JSON fixtures (Qwen2.5-0.5B, Qwen3.5-9B); exhaustive tests (no pooling, MoE, hybrid KV, unknown propagation, ceiling never shown as a speed) | Local | Tests green; formula docs |
-| **K2** | **Lane A offline:** `hf-model`, `hf-tree`, `gguf-header` (bounded parser), `gh-release` adapters and parsers over recorded fixtures; packager extension of local-acquisition phases A–B; rebuild-hash test | Local | Byte-identical rebuilds; adversarial header fixtures rejected |
+| **K2** | **Lane A offline:** `hf-model`, `hf-tree`, `gguf-header` (bounded parser), `gh-release` adapters and parsers over recorded fixtures; packager extension of local-acquisition phases A–B; rebuild-hash test; release-bullet grammar measured offline against the 1,013 existing GitHub release-note `feed_items` (§1.1), taken from a keyset snapshot | Local | Byte-identical rebuilds; adversarial header fixtures rejected; grammar coverage reported |
 | **K3** | **Revocation and restoration** plus the **system-actor and policy-column migration design**; tests on the D1-faithful adapter | Local, then Preview (approval) | §11.7 test list green on Preview |
 | **K4** | **G-1** config change; **story inbox** over ADR 0015 candidates and draft persistence; deterministic clustering, ranking, validators; "Prepare inbox" trigger; hold and archive timers | Preview (approval) | One week of Preview use with seeded test candidates (`[QA-…]` labels); measured owner time and D1 reads |
 | **K5** | **Social R-1:** Capture text field (owner's Android work) + Desk paste; share-link canonicalisation (S-1/S-3); grammar extractor + `llama-bench` parser; linked-source proposals; community-report records as pending candidates | Preview (approval) | 20 recorded posts: extraction precision measured; spans 100 % re-find |
@@ -1085,6 +1104,7 @@ Until then, Lane B volume depends on manual and Capture intake plus Lane A trigg
 | **KP-13** | Revocation and restoration as a hard precondition of any system admission or system freshness; the system may revoke, never restore | Adopt |
 | **KP-14** | Editorial daily budget US$0.35 after G-1; per-request cap unchanged | Adopt |
 | **KP-15** | T2 free or flat tiers (OpenCode Go) excluded from the pipeline | Adopt |
+| **KP-16** | Source 84 ("Hugging Face Trending Models", `huggingface_api`, never succeeded): deactivate, or mark it superseded by Lane A, rather than repair it. Keep the `github_api` release-note sources as a discovery index only; their facts are re-acquired through Lane A. | Deactivate or supersede (a registry change, so a separate approval) |
 
 ---
 
@@ -1143,11 +1163,14 @@ Until then, Lane B volume depends on manual and Capture intake plus Lane A trigg
 
 - ADR 0004, 0008 (§2.1, §2.2, §3), 0009, 0010, 0012, 0015, 0016, 0019, ADR-0020 (Proposed).
 - `src/ai/config.ts` (allow-list, prices, budgets), `src/ai/trace-model-gateway.ts`, `src/ai/task-policy.ts`.
-- On `codex/trace-capture-preview-01`:
+- On `origin/codex/trace-v1-seed-01-prerequisites` (being released to Production on 2026-10-25; contents verified identical to the local copies first read):
   - `db/migration-0076-evidence-library-governance.sql`, `db/migration-0024-social-signals.sql`, `db/migration-0068-v1-freshness-review.sql`;
-  - `docs/audit/trace-v1-knowledge-10-{final-report,local-acquisition-architecture,open-model-execution-plan,ask-evaluation,seeding-plan}.md`;
-  - `docs/audit/trace-capture-integration-01.md`;
+  - `docs/audit/trace-v1-knowledge-10-{final-report,readiness,legacy-absorption,local-acquisition-architecture,open-model-execution-plan,ask-evaluation,seeding-plan}.md`;
+  - `docs/audit/trace-v1-seed-01-prerequisites.md`;
   - `docs/roadmap/trace-v1.1-v1.2.md`;
   - `docs/research/inventory-hardware-benchmarks-agents.md` (`HW-*` records) and `inventory-models-and-quantisation.md`;
   - `tests/fixtures/knowledge-10/ask-evaluation-suite.json`.
+- On local branch `codex/trace-capture-preview-01`: `docs/audit/trace-capture-integration-01.md`.
+- On `origin/codex/trace-v1-seed-03-batch-01`: `docs/audit/trace-v1-seed-03-batch-01-plan.md` (governance write rate; session cap; independence groups declared up front).
+- Production source-registry findings, read-only, 2026-10-25, relayed by the production-readiness session (§1.1).
 - `docs/audit/trace-v1-production-readiness-07.md` (no revoke, restore or amend controls).
