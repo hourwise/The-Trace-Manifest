@@ -275,6 +275,43 @@ The owner added the Preview Access bypass for `/api/capture/receipt`. All checks
 2. **A social URL can be sent as a text-only lead.** The app doesn't warn when lead text is really a social post link. The record stays private and unverified, so it's safe, but it isn't the ADR 0009 social path. *Follow-up:* a warning in the app, or a server-side check that refuses a lead whose whole text is a known social URL.
 3. **Reddit share links are not canonical.** The Reddit app shares `/r/<sub>/s/<code>` short links, and TRACE stores social URLs exactly as entered. Duplicate detection therefore treats a share link and the permanent `/r/<sub>/comments/<id>/…` URL as different posts. ADR 0009 calls for canonicalisation. *Follow-up* before relying on social dedupe: resolve or canonicalise share links at review time, or have the app record the resolved URL. Captured URLs are never rewritten silently.
 
+### 8.6 Gate C result, part 2: offline capture and retry (2026-10-25, owner-authorised)
+
+**Timeline, from the owner's screenshots (local time = UTC):**
+
+| Time | Event |
+|---|---|
+| 10:28 | A Reddit post was shared into TRACE Capture **with Wi-Fi and mobile data off**. Capture `d8e2aabc…` was saved locally (captured 10:28:15Z). **Submit to TRACE** opened the browser, which showed `ERR_INTERNET_DISCONNECTED`; nothing reached TRACE. |
+| 10:29 | Still offline. Capture Detail showed "Pending / Waiting to sync" with the original content and URL intact. The submission screen showed "Waiting for browser confirmation. Return here to retry if interrupted." with **Reopen same browser submission**. |
+| 10:29 | Back online. **Reopen same browser submission** opened the review page with the same snapshot (`Intake: lead`, provenance `TRACE Capture d8e2aabc…`). Confirm returned "Saved: lead capture-4e803e86…". |
+| 10:29 | Return receipt: the app showed "Receipt received. Verify it against TRACE…" with **Verify TRACE receipt**. |
+| 10:30 | The app showed "TRACE record confirmed: capture-4e803e86cb1737cfc2b5fa90e901baa7c1fe411a4d2f31938b0bf08b4ea476c2. Awaiting private editorial review." |
+
+**D1 read-back (read-only).** Exactly one row with that id: `lead`, `submitted_url = NULL`, `state = new`, publisher `created_by`, `created_at = 2026-10-25 10:29:42`. The `lead_text` is the sent text plus provenance (`TRACE Capture d8e2aabc…; captured 2026-10-25T10:28:15.763Z`). Totals: 21 candidates, of which 2 are `capture-*`. No duplicate was created by the reopen.
+
+**Proven on the device:**
+- capture while fully offline;
+- the local capture survives a failed submission;
+- the same attempt is reused after reconnecting (same snapshot, one record);
+- receipt verification;
+- the server record.
+
+**Not yet shown on the device** (covered only by the server tests so far):
+- **(a)** confirming the *same* attempt a second time after a successful save, which should give "Already saved by this attempt";
+- **(b)** losing the network at the *verify* step.
+
+**Still owed:**
+- the 1.0.0 → 1.1.0 before and after screenshots (Room migration);
+- the social and article steps.
+
+**Recommendation:** fold (a) and (b) into the Reddit **Social signal** step, so the remaining checks create only one more record:
+1. Confirm in the browser.
+2. **Reopen same browser submission** and confirm again. Expect "Already saved by this attempt"; this exercises the social replay path.
+3. Airplane mode on, Return receipt, then **Verify TRACE receipt**. Expect a failure, with the capture kept.
+4. Airplane mode off, then Verify again. Expect "TRACE record confirmed".
+
+The test labels were again absent from the lead text ("capture / offline retry"). The record is identifiable by id, provenance and time.
+
 ## 9. Gate D: Production (separate approval)
 
 - Production currently lacks this code. Production also has **no 0076**, and the combined branch contains SEED-01.
