@@ -51,5 +51,35 @@ All are recorded with outcome `succeeded`.
 | `npm test`, typecheck, `test:security`, `test:migrations`, `test:diff`, `npm run build` | All pass, including the D6 role-script check. |
 
 **Unverified:**
-- The `changes()` and `last_insert_rowid()` chaining relies on D1 running a batch's statements in order on one connection. Cloudflare documents ordered, rolled-back-on-failure batches, and the local SQLite adapter mirrors that, including `story_clusters`' FTS insert trigger. It has not been exercised against real D1. A bounded Preview check with `[QA-…]` rows would confirm it, but needs deployment and write approval.
+- The `changes()` and `last_insert_rowid()` chaining is now **verified on real Preview D1** (see "Real D1 check on Preview").
 - No browser QA.
+
+## Real D1 check on Preview (2026-10-25, owner-approved)
+
+**Scope:** Preview D1 only, with no deployment and no Production access.
+
+**Method:** a local script loaded this branch's `admin-page-writes.ts` (at `dc934f8`) and called it against the real `trace-manifest-db-preview` binding, through wrangler 4.151 `getPlatformProxy` with a remote D1 binding.
+
+**Read-only guard before any write:**
+- the temporary config held only the Preview binding, and its id matched `wrangler d1 info`;
+- the baseline matched the known Preview counts (21 candidates, 1 social signal);
+- no `[QA-PR8…]` rows were present.
+
+**Writes:** `[QA-PR8-…]` rows by operator `qa-pr8@example.test`.
+
+**Result: 23/23 checks pass.**
+
+| Area | Verified on real D1 |
+|---|---|
+| Candidate submission | `created_by` is the operator. Exactly one `submit_candidate` audit row, with operator and role. |
+| Transitions | `new→drafting` applied. A stale repeat returned `false` and added **no** audit row (`WHERE changes() = 1`). Exactly one transition audit row, with `new->drafting`. |
+| Promotion | A `review` cluster was created with `needs_human_review = 1`. The audit `detail_code` is `story_cluster:<id>`, matching the batch's `last_row_id`, so `last_insert_rowid()` survives `story_clusters`' FTS insert trigger. The feed item was created and linked, and the candidate became `published`. |
+| Repeat promotion | Returned `null`. Cluster, link, feed item and audit counts were unchanged. |
+| Social submission | `submitted_by` is the operator. The audit `target_id` equals the new signal id (`last_insert_rowid()`). |
+| Social decision | Approve applied, with `reviewed_by` = the operator. A repeat approve was refused, leaving exactly one approve audit row. **No `knowledge_documents` row was created.** |
+| Rollback | A batch of a valid candidate insert plus an audit insert breaking the `outcome` CHECK threw, and **the candidate insert was rolled back**. |
+
+**Cleanup:**
+- The QA cluster, its link, the feed item, the candidate and the social signal were deleted in one batch.
+- Afterwards, counts equal the baseline: candidates 21, signals 1, clusters 127, links 238, feed items 129, knowledge documents 0.
+- The only change is **7 kept QA audit rows**: 541 → 548, operator `qa-pr8@example.test`, kept as the record of this test.
