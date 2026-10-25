@@ -5,7 +5,7 @@
 **Preview candidate:** `codex/trace-capture-preview-01`, which is SEED-01 (PR #3) merged with this branch. Also local only.
 **Android:** `hourwise/Trace-Capture-App`, branch `codex/complete-personal-capture` at `7ea6a78` (1.1.0, versionCode 2). **No Android change is required.**
 
-**Status:** Gate A complete. **Gate B deployed to Preview on 2026-10-24 (§7A); Access bypass verified (§7B). Gate C ready (§8).**
+**Status:** Gate A complete. **Gate B deployed to Preview on 2026-10-24 (§7A); Access bypass verified (§7B). Gate C ready (§8); first text lead verified end to end on the phone (§8.5).**
 - Nothing was pushed, deployed or migrated.
 - No Access setting or secret was changed.
 - No Preview or Production record was created.
@@ -246,6 +246,27 @@ The owner added the Preview Access bypass for `/api/capture/receipt`. All checks
 14. **Article:** submit `https://example.com/qa-capture-gate-c` as **Article / public URL**. Expect a `manual_url` candidate in TRACE Desk.
 
 **Gate C passes only with:** your screenshots, the record ids, and my read-back of each record. No result is claimed before that evidence exists.
+
+### 8.5 Gate C result, part 1: first text lead (2026-10-25, owner-authorised)
+
+| Evidence | Result |
+|---|---|
+| Phone (owner screenshot, 10:24) | Submission screen: "Environment: Preview" and "TRACE record confirmed: capture-4167852aab4f922e45e284ebf27407c4331c954e2cd7df4fee40bdbf385c66cf. Awaiting private editorial review." The app writes this message only after `/api/capture/receipt` returns 200 and `SubmissionProtocol.matches` passes, in the same Room transaction that sets `SYNCED`. The receipt was therefore verified on the device, through the Access bypass. |
+| D1 read-back (read-only) | One `editorial_candidates` row with exactly that id: `intake_type = lead`, `submitted_url = NULL`, `state = new`, `created_by` = the publisher, `created_at = 2026-10-25 10:23:49`. Its `lead_text` is the sent lead plus the provenance line (`TRACE Capture cf742e0f…; captured 2026-10-25T10:21:12.266Z; source app (unverified): unknown.`). Total candidates went from 19 to 20, with exactly one `capture-*` row and no duplicate. |
+| Governance | Private Desk lead only. Nothing fetched, approved, admitted or published. |
+
+**Passed:**
+- step 4 (browser sign-in with the publisher identity);
+- steps 7–10 (browser confirmation, receipt return, on-device verification, server record).
+
+**Still owed:**
+- **Steps 2–3:** the before and after screenshots showing existing captures survived the 1.0.0 → 1.1.0 update (Room v1→v2).
+- **Steps 11–14:** retry, offline, social and article. Each is authorised separately.
+
+**Findings (not blocking Gate C):**
+1. **Missing `[QA-CAPTURE]` label.** The lead text was a Reddit link plus "capture", and the capture had no note. The record is identifiable by its id, provenance and time. Archive it in TRACE Desk when convenient.
+2. **A social URL can be sent as a text-only lead.** The app doesn't warn when lead text is really a social post link. The record stays private and unverified, so it's safe, but it isn't the ADR 0009 social path. *Follow-up:* a warning in the app, or a server-side check that refuses a lead whose whole text is a known social URL.
+3. **Reddit share links are not canonical.** The Reddit app shares `/r/<sub>/s/<code>` short links, and TRACE stores social URLs exactly as entered. Duplicate detection therefore treats a share link and the permanent `/r/<sub>/comments/<id>/…` URL as different posts. ADR 0009 calls for canonicalisation. *Follow-up* before relying on social dedupe: resolve or canonicalise share links at review time, or have the app record the resolved URL. Captured URLs are never rewritten silently.
 
 ## 9. Gate D: Production (separate approval)
 
