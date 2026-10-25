@@ -1,5 +1,6 @@
 ---
 import AdminLayout from "../../layouts/AdminLayout.astro";
+import { promoteCandidate, recordCandidate, transitionCandidate } from "../../lib/server/admin-page-writes";
 
 export const prerender = false;
 // TRACE Desk is publisher-only: the proxy refuses readers both reading and
@@ -46,7 +47,9 @@ if (Astro.request.method === "POST") {
       const current = await db.prepare("SELECT state FROM editorial_candidates WHERE id=?").bind(candidateId).first<{state:string}>();
       if (!current) throw new Error("Candidate not found.");
       if (!TRANSITIONS[current.state]?.includes(newState)) throw new Error(`Cannot move from ${current.state} to ${newState}.`);
-      await db.prepare("UPDATE editorial_candidates SET state=?, updated_at=datetime('now') WHERE id=?").bind(newState, candidateId).run();
+      if (!await transitionCandidate(db, Astro.locals.operator, candidateId, current.state, newState)) {
+        throw new Error("The candidate changed before this update was saved. Reload and try again.");
+      }
       actionMessage = `Candidate → ${newState}.`;
     } catch (e: any) { actionError = e.message || "Transition failed."; }
   } else if (action === "promote") {
@@ -65,37 +68,14 @@ if (Astro.request.method === "POST") {
         : candidate.intake_type === "social_url" ? "community_reported"
         : "vendor_reported";
 
-      const result = await db.prepare(`
-        INSERT INTO story_clusters (title, canonical_url, topic, evidence_status, publication_status, needs_human_review, summary, why_it_matters, created_at, updated_at)
-        VALUES (?, ?, ?, ?, 'review', 1, ?, ?, datetime('now'), datetime('now'))
-      `).bind(headline, candidate.submitted_url, candidate.topic_slug ?? candidate.section_slug ?? "general", evidenceStatus, summary, summary.slice(0, 300)).run();
-      const clusterId = result.meta?.last_row_id;
-
-      if (clusterId) {
-        // Create a linked feed_item entry for the candidate's URL
-        if (candidate.submitted_url) {
-          const urlHash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(candidate.submitted_url))), (b) => b.toString(16).padStart(2,"0")).join("");
-          const feedResult = await db.prepare(`
-            INSERT OR IGNORE INTO feed_items (url, url_hash, title, summary, content_excerpt, source_id, ingestion_status, fetched_at, published_at)
-            VALUES (?, ?, ?, ?, ?, ?, 'raw', datetime('now'), datetime('now'))
-          `).bind(candidate.submitted_url, urlHash, headline, summary, summary.slice(0, 1000), 1).run();
-          const feedItemId = feedResult.meta?.last_row_id;
-          if (feedItemId) {
-            await db.prepare(`
-              INSERT OR IGNORE INTO story_cluster_members (cluster_id, feed_item_id, is_primary)
-              VALUES (?, ?, 1)
-            `).bind(clusterId, feedItemId).run();
-          }
-        }
-
-        // Record promotion audit
-        await db.prepare(`
-          INSERT INTO admin_audit_log (event_id, operator_email, operator_role, action, target_type, target_id, request_id, outcome)
-          VALUES (?, 'Admin', 'publisher', 'promote_candidate_to_cluster', 'candidate', ?, ?, 'succeeded')
-        `).bind(crypto.randomUUID(), candidateId, crypto.randomUUID()).run();
-      }
-
-      await db.prepare("UPDATE editorial_candidates SET state='published', updated_at=datetime('now') WHERE id=?").bind(candidateId).run();
+      const urlHash = candidate.submitted_url
+        ? Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(candidate.submitted_url))), (b) => b.toString(16).padStart(2,"0")).join("")
+        : null;
+      // The cluster, its source link, the candidate state and the audit row are written together.
+      const clusterId = await promoteCandidate(db, Astro.locals.operator, {
+        candidateId, submittedUrl: candidate.submitted_url, urlHash, headline, summary,
+        topic: candidate.topic_slug ?? candidate.section_slug ?? "general", evidenceStatus,
+      });
       actionMessage = `Candidate promoted to story cluster #${clusterId} (evidence: ${evidenceStatus}). It needs editorial review before homepage placement.`;
     } catch (e: any) { actionError = e.message || "Promotion failed."; }
   } else {
@@ -189,12 +169,9 @@ if (Astro.request.method === "POST") {
           }
         }
 
-        const sourceHash = urlHash;
-        const candidateId = crypto.randomUUID();
-        await db.prepare(`
-          INSERT INTO editorial_candidates (id, intake_type, submitted_url, lead_text, source_hash, state, section_slug, urgency, source_language, created_by)
-          VALUES (?, ?, ?, ?, ?, 'new', ?, ?, ?, 'Admin')
-        `).bind(candidateId, intakeType, url, lead || url, sourceHash, section, urgency, sourceLanguage).run();
+        await recordCandidate(db, Astro.locals.operator, {
+          intakeType, submittedUrl: url, leadText: lead || url, sourceHash: urlHash, section, urgency, sourceLanguage,
+        });
 
         if (matchedCandidate) {
           actionMessage = `Candidate recorded and linked to existing candidate #${matchedCandidate.slice(0, 8)}.`;
@@ -207,11 +184,9 @@ if (Astro.request.method === "POST") {
           new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(lead))),
           (b) => b.toString(16).padStart(2, "0")
         ).join("");
-        const candidateId = crypto.randomUUID();
-        await db.prepare(`
-          INSERT INTO editorial_candidates (id, intake_type, submitted_url, lead_text, source_hash, state, section_slug, urgency, source_language, created_by)
-          VALUES (?, ?, ?, ?, ?, 'new', ?, ?, ?, 'Admin')
-        `).bind(candidateId, intakeType, null, lead, sourceHash, section, urgency, sourceLanguage).run();
+        await recordCandidate(db, Astro.locals.operator, {
+          intakeType, submittedUrl: null, leadText: lead, sourceHash, section, urgency, sourceLanguage,
+        });
         actionMessage = "Editorial lead recorded.";
       }
     } catch (e: any) { actionError = e.message || "Submission failed."; }
