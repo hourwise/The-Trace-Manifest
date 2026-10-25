@@ -1,5 +1,6 @@
 ---
 import AdminLayout from "../../layouts/AdminLayout.astro";
+import { recordSocialSignal, reviewSocialSignal } from "../../lib/server/admin-page-writes";
 
 export const prerender = false;
 const editorialAIEnabled = Astro.locals.runtime.env.TRACE_AI_EDITORIAL_ENABLED === "true";
@@ -37,29 +38,14 @@ if (Astro.request.method === "POST") {
     const summary = (formData.get("trace_summary") as string)?.trim() || null;
     try {
       if (!id || id < 1) throw new Error("Invalid signal ID.");
-      await db.prepare(`
-        UPDATE social_signals SET review_status = ?, reviewed_by = 'Admin', reviewed_at = datetime('now'),
-        trace_summary = COALESCE(?, trace_summary), updated_at = datetime('now')
-        WHERE id = ?
-      `).bind(action === "approve" ? "approved" : "rejected", summary, id).run();
-
-      // For approved signals: create a knowledge document so Ask TRACE can retrieve it
-      if (action === "approve") {
-        const signal = await db.prepare(
-          "SELECT platform, canonical_url, submission_reason, trace_summary, author_display_name, author_handle FROM social_signals WHERE id = ?"
-        ).bind(id).first<{ platform: string; canonical_url: string; submission_reason: string; trace_summary: string | null; author_display_name: string | null; author_handle: string | null }>();
-        if (signal) {
-          const knowledgeTitle = `Social Signal: ${signal.platform} — ${(signal.trace_summary ?? signal.submission_reason).slice(0, 80)}`;
-          const knowledgeBody = `**Platform:** ${signal.platform}\n**URL:** ${signal.canonical_url}\n**Author:** ${signal.author_display_name ?? "Unknown"}${signal.author_handle ? ` (${signal.author_handle})` : ""}\n**Summary:** ${signal.trace_summary ?? signal.submission_reason}`;
-          const docId = crypto.randomUUID();
-          await db.prepare(`
-            INSERT OR IGNORE INTO knowledge_documents (id, canonical_question, answer_text, knowledge_type, status, source_url, created_by, created_at, updated_at)
-            VALUES (?, ?, ?, 'social_signal', 'approved', ?, 'Admin', datetime('now'), datetime('now'))
-          `).bind(docId, knowledgeTitle.slice(0, 200), knowledgeBody, signal.canonical_url).run();
-        }
+      // ADR 0009: a social post is a discovery signal, not proof. Approval records
+      // the review only; it never creates knowledge for Ask TRACE.
+      if (!await reviewSocialSignal(db, Astro.locals.operator, id, action, summary)) {
+        throw new Error("This signal was not found or has already been reviewed.");
       }
-
-      actionMessage = action === "approve" ? "Signal approved and added to knowledge base." : "Signal rejected.";
+      actionMessage = action === "approve"
+        ? "Signal approved. Approval records the review only; linked sources still need their own assessment."
+        : "Signal rejected.";
     } catch (e: any) {
       actionError = e.message || "Action failed.";
     }
@@ -83,14 +69,15 @@ if (Astro.request.method === "POST") {
       const hashBuffer = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonical));
       const canonicalUrlHash = Array.from(new Uint8Array(hashBuffer), (b) => b.toString(16).padStart(2, "0")).join("");
 
-      await db.prepare(`
-        INSERT INTO social_signals (platform, canonical_url, canonical_url_hash, submitted_by, submission_reason, author_display_name, author_handle, reviewer_notes)
-        VALUES (?, ?, ?, 'Admin', ?, ?, ?, ?)
-      `).bind(platform, canonical, canonicalUrlHash, reason, authorDisplayName, authorHandle, notes).run();
+      await recordSocialSignal(db, Astro.locals.operator, {
+        platform, canonicalUrl: canonical, canonicalUrlHash, reason, authorDisplayName, authorHandle, notes,
+      });
 
       actionMessage = "Signal recorded.";
     } catch (e: any) {
-      actionError = e.message || "Submission failed.";
+      actionError = e?.message?.includes?.("UNIQUE constraint")
+        ? "This URL has already been submitted as a social signal."
+        : e.message || "Submission failed.";
     }
   }
 }
