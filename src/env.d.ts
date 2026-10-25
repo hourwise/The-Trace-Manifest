@@ -38,6 +38,20 @@ interface CloudflarePagesEnv {
   TRACE_AI_FLASH_OUTPUT_USD_PER_MILLION?: string;
   TRACE_AI_PRO_INPUT_USD_PER_MILLION?: string;
   TRACE_AI_PRO_OUTPUT_USD_PER_MILLION?: string;
+  /** TRACE Weekly signup; "true" opens /newsletter (also needs the newsletter and visitor secrets). */
+  TRACE_NEWSLETTER_SIGNUP_ENABLED?: string;
+  /** HMAC key (32+ chars) for address hashes and unsubscribe tokens. Secret. */
+  TRACE_NEWSLETTER_SECRET?: string;
+  /** "true" lets a publisher queue an approved, ready TRACE Weekly issue for confirmed subscribers. */
+  TRACE_NEWSLETTER_DISPATCH_ENABLED?: string;
+  /** "true" lets the outbox send through the configured provider. */
+  TRACE_EMAIL_DELIVERY_ENABLED?: string;
+  /** Only "resend" is implemented. */
+  TRACE_EMAIL_PROVIDER?: string;
+  /** Provider API key. Secret. */
+  TRACE_EMAIL_API_KEY?: string;
+  /** Verified sender, e.g. "TRACE Weekly <weekly@thetracemanifest.com>". */
+  TRACE_EMAIL_FROM?: string;
 }
 
 type CloudflareRuntime = import("@astrojs/cloudflare").Runtime<CloudflarePagesEnv>;

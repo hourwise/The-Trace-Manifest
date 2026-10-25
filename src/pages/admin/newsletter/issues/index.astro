@@ -1,0 +1,58 @@
+---
+import AdminLayout from "../../../../layouts/AdminLayout.astro";
+import { NewsletterIssueError, generateIssueDraft, listRecentIssues } from "../../../../lib/server/newsletter-issues";
+
+export const prerender = false;
+// Publisher-only: preparing, approving and dispatching TRACE Weekly.
+if (Astro.locals.operator?.role !== "publisher") return new Response("Forbidden", { status: 403, headers: { "Cache-Control": "no-store" } });
+
+const db = Astro.locals.runtime.env.DB;
+let actionError: string | null = null;
+if (Astro.request.method === "POST") {
+  const form = await Astro.request.formData();
+  try {
+    const outcome = await generateIssueDraft(db, Astro.locals.operator, { issueDate: String(form.get("issueDate") ?? "") });
+    if (outcome.status === "created") return Astro.redirect(`/admin/newsletter/issues/${outcome.issue.id}`, 303);
+    actionError = "No eligible published stories in the 7 days ending on that date, so no draft was created.";
+  } catch (error) {
+    actionError = error instanceof NewsletterIssueError ? error.message : "The draft could not be created.";
+  }
+}
+
+let issues: Awaited<ReturnType<typeof listRecentIssues>> = [];
+let loadError: string | null = null;
+try {
+  issues = await listRecentIssues(db, 20);
+} catch {
+  loadError = "Newsletter issues are unavailable (migration 0079 not applied).";
+}
+const today = new Date().toISOString().slice(0, 10);
+Astro.response.headers.set("Cache-Control", "no-store");
+---
+
+<AdminLayout title="Admin — TRACE Weekly issues" description="Prepare and approve TRACE Weekly issues.">
+  <div class="wrap" style="max-width:820px;">
+    <h1>TRACE Weekly issues</h1>
+    <p class="meta"><a href="/admin/newsletter">← Newsletter</a></p>
+    {actionError && <p class="card" role="alert" style="color:var(--ev-disputed);">{actionError}</p>}
+
+    <form method="POST" class="card" style="margin-top:1rem;display:flex;gap:0.75rem;align-items:end;flex-wrap:wrap;">
+      <label style="display:grid;gap:0.25rem;font-weight:600;font-size:0.9rem;">Issue date
+        <input type="date" name="issueDate" value={today} required />
+      </label>
+      <button type="submit" class="btn btn-primary">Generate draft</button>
+      <p class="meta" style="flex-basis:100%;margin:0;font-size:0.8rem;">Uses stories published in the 7 days ending on this date that are currently public, in publication order. No AI is used. Generating again supersedes earlier drafts for the same date.</p>
+    </form>
+
+    <section class="card" style="margin-top:1rem;">
+      <h2 style="font-size:1.1rem;">Recent issues</h2>
+      {loadError ? <p class="meta">{loadError}</p> : issues.length === 0 ? <p class="meta">No issues yet.</p> : (
+        <ul style="padding-left:1rem;" data-issue-list>
+          {issues.map((issue) => (
+            <li><a href={`/admin/newsletter/issues/${issue.id}`}>{issue.issueDate} · v{issue.version}</a> · <span data-issue-status={issue.status}>{issue.status.replace(/_/g, " ")}</span> · {issue.stories.length} stor{issue.stories.length === 1 ? "y" : "ies"}</li>
+          ))}
+        </ul>
+      )}
+    </section>
+  </div>
+</AdminLayout>
