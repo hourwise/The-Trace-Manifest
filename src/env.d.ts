@@ -42,6 +42,8 @@ interface CloudflarePagesEnv {
   TRACE_NEWSLETTER_SIGNUP_ENABLED?: string;
   /** HMAC key (32+ chars) for address hashes and unsubscribe tokens. Secret. */
   TRACE_NEWSLETTER_SECRET?: string;
+  /** "true" lets a publisher queue an approved, ready TRACE Weekly issue for confirmed subscribers. */
+  TRACE_NEWSLETTER_DISPATCH_ENABLED?: string;
   /** "true" lets the outbox send through the configured provider. */
   TRACE_EMAIL_DELIVERY_ENABLED?: string;
   /** Only "resend" is implemented. */
