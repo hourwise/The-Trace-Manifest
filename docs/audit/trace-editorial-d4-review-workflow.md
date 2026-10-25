@@ -1,6 +1,6 @@
 # EDITORIAL-D4-R1: Pending Review workflow and editorial UI repairs
 
-**Branch:** `claude/trace-editorial-d4-review-workflow`, from `main` at `5cb64af`. Local only; not pushed or deployed.
+**Branch:** `claude/trace-editorial-d4-review-workflow`, from `main` at `5cb64af`. PR #7; deployed to Preview only, for QA (see "Preview QA results").
 **Scope:** `/admin/review` (D4), plus a separate fix for publisher-only writes on `/admin/desk` and `/admin/social`.
 **Boundaries kept:** no migration, no D1/R2 writes, no deployment, no Cron or scheduler 0072 change, no new model calls, public Ask unchanged, Codex's P0 work and PR #6 untouched.
 
@@ -55,7 +55,7 @@ This is live on Production today.
 
 ## Unresolved
 
-- No browser QA has been run: local tests and build only.
+- Browser QA as the **reader** has not been run (deferred by the owner). The reader boundaries are covered by the local tests only; see "Preview QA results".
 - The pending queue is capped at 50 (unchanged). Paging beyond 50 is not added.
 
 ## Next safe Preview QA checklist (needs separate deploy approval)
@@ -78,3 +78,25 @@ This is live on Production today.
    - `/admin/desk` returns 403.
 7. **Mobile width:** cards and banner wrap, and buttons are full-width.
 8. **Read-only checks:** D1 counts are unchanged except for intended `[QA-…]` governance decisions; schedules are `[]`.
+
+## Preview QA results (2026-10-25)
+
+**Deployment (owner-approved, Preview only):** Pages built from `349e0fe` and uploaded directly to the `launch-05r-preview` alias (deployment `63aed908`; rollback target is the previous alias deployment `ed744c77`). The Preview Worker was not redeployed (unchanged code, `d8e4d10c`). No migration. Preview Cron schedules stayed `[]`. No test records were created and no governance decisions, submissions or publications were made.
+
+**Publisher (checklist steps 2, 4, 6 and 7): pass.**
+
+| Check | Result |
+|---|---|
+| Pending Review cards | 10 cards, each with its evidence badge, reasons, a "Next:" action and **Open review**. Publisher controls (AI Analyze, governance) present. |
+| Open a blocked item (#16, unverified) | Banner shows "not publication-eligible". Publish form hidden, publish selection cleared, Publish and Archive disabled, **Open in publish workflow** hidden. Sources and claims load; governance buttons and both history toggles render; history loads. |
+| Reload with `?review=16` | The same item reopens in review mode. |
+| `?review=999999` / `?review=abc` | "No longer in the review queue" / "not valid" notice; nothing loads; `?review=` is removed from the URL. |
+| Back to Pending Review (from #13) | Publish form restored, URL cleared, focus returns to the same card. |
+| `/admin/social` (publisher) | 200. Submission form, approve/reject forms and AI import button present; no read-only note. |
+| `/admin/desk` (publisher) | 200, with its candidate forms. |
+| Mobile (375 px) | No horizontal overflow; card header stacks; **Open review** and **Back** buttons are full width. |
+
+**Not exercised:**
+- **Step 3 (Open in publish workflow):** Preview has no item that is both pending and publishable. The rule is covered by `canPublishSelection` unit tests and the page test.
+- **Steps 5 and 6 as the reader:** deferred by the owner. Reader behaviour (no AI Analyze, no related-item Apply controls, no governance controls, Social read-only with POST 403, Desk 403) is covered by `tests/review-pending-workflow.test.ts` and `tests/admin-page-write-boundaries.test.ts`, not by browser QA.
+- **Step 8 (D1 recount):** no writes were made during publisher QA; the recount was planned to follow the reader checks.
