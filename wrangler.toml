@@ -43,6 +43,13 @@ TRACE_AI_PRO_INPUT_USD_PER_MILLION = "2"
 TRACE_AI_PRO_OUTPUT_USD_PER_MILLION = "10"
 TRACE_AI_EDITORIAL_DAILY_BUDGET_USD = "0.50"
 
+# TRACE Weekly (migration 0078) is OFF unless these are set per environment.
+# Variables: TRACE_NEWSLETTER_SIGNUP_ENABLED ("true" opens /newsletter),
+# TRACE_EMAIL_DELIVERY_ENABLED ("true" lets the outbox send),
+# TRACE_EMAIL_PROVIDER ("resend"), TRACE_EMAIL_FROM (verified sender).
+# Secrets: TRACE_NEWSLETTER_SECRET (32+ chars), TRACE_EMAIL_API_KEY.
+# See docs/audit/trace-newsletter-signup.md before enabling.
+#
 # Server-only secrets configured with `wrangler pages secret put`:
 # DEEPSEEK_API_KEY (only when a governed AI path is intentionally enabled)
 # TRACE_VISITOR_HASH_SECRET

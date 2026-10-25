@@ -3,6 +3,7 @@ import BaseLayout from "../layouts/BaseLayout.astro";
 import EvidenceBadge from "../components/EvidenceBadge.astro";
 import TraceNowTicker from "../components/TraceNowTicker.astro";
 import { getPublishedStories } from "../lib/server/d1";
+import { newsletterSignupEnabled } from "../lib/server/newsletter";
 
 export const prerender = false;
 
@@ -30,6 +31,8 @@ try {
 }
 
 const featuredStories = latestStories.slice(0, 4);
+// Only advertise email delivery when signup is actually open.
+const newsletterOpen = newsletterSignupEnabled(Astro.locals.runtime.env);
 ---
 
 <BaseLayout
@@ -136,7 +139,9 @@ const featuredStories = latestStories.slice(0, 4);
       <h2 class="display h2" style="text-align:center;margin-bottom:1.5rem;">Stay current</h2>
       <div class="grid-2">
         <div class="card card-hover"><h3 class="h3">Daily Briefing</h3><p class="meta" style="margin-top:0.5rem;">Reviewed model releases, pricing changes, research, and security developments when a briefing has been published.</p><p style="margin-top:0.75rem;"><a href="/briefing/daily">Read the latest briefing &rarr;</a></p></div>
-        <div class="card card-hover"><h3 class="h3">Newsletter &amp; RSS</h3><p class="meta" style="margin-top:0.5rem;">Get the daily briefing by email or follow via RSS. Briefings published as downloadable Markdown.</p><p style="margin-top:0.75rem;"><a href="/rss/daily.xml">Subscribe via RSS &rarr;</a></p></div>
+        {newsletterOpen
+          ? <div class="card card-hover" data-newsletter-panel="open"><h3 class="h3">TRACE Weekly &amp; RSS</h3><p class="meta" style="margin-top:0.5rem;">TRACE Weekly is a free weekly email of published stories, with confirmation and one-click unsubscribe. Prefer a feed? Follow the daily briefing via RSS.</p><p style="margin-top:0.75rem;"><a href="/newsletter">Get TRACE Weekly by email &rarr;</a> &middot; <a href="/rss/daily.xml">RSS</a></p></div>
+          : <div class="card card-hover" data-newsletter-panel="rss-only"><h3 class="h3">Daily Briefing &amp; RSS</h3><p class="meta" style="margin-top:0.5rem;">Follow the daily briefing via RSS. An email edition, TRACE Weekly, is in preparation and not yet available.</p><p style="margin-top:0.75rem;"><a href="/rss/daily.xml">Subscribe via RSS &rarr;</a></p></div>}
       </div>
     </div>
   </section>
