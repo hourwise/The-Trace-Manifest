@@ -42,7 +42,7 @@ interface ProxyEnvironment {
   TRACE_INTERNAL_SERVICE_SECRET?: string;
 }
 
-async function auditDenial(
+export async function auditDenial(
   env: ProxyEnvironment,
   identity: { email: string; role: OperatorRole },
   path: string,

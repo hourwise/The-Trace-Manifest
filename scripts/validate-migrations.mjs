@@ -91,6 +91,7 @@ try {
   db.exec(readFileSync("db/migration-0073-assertion-governance.sql", "utf8"));
   db.exec(readFileSync("db/migration-0074-assertion-reviewer-governance.sql", "utf8"));
   db.exec(readFileSync("db/migration-0075-claim-extraction-run-ledger.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0076-evidence-library-governance.sql", "utf8"));
 
   const requiredTables = [
     "ai_requests", "ai_budget_reservations", "ai_usage_ledger", "ai_quota_usage",

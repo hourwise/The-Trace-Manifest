@@ -103,7 +103,7 @@ function insertEvent(database: SQLiteD1, input: EventInput, index: number, job?:
   const newGovernanceRevision = input.newGovernanceRevision ?? (admissionEvent ? newAdmissionRevision : previousGovernanceRevision + 1);
   database.sqlite.prepare(`
     INSERT INTO assertion_governance_events
-      (id, assertion_id, canonical_claim_id, cluster_id, action,
+      (id, assertion_id, canonical_claim_id, governance_context, cluster_id, action,
        previous_admission_state, new_admission_state,
        previous_reviewer_state, new_reviewer_state,
        previous_freshness_state, new_freshness_state,
@@ -111,7 +111,7 @@ function insertEvent(database: SQLiteD1, input: EventInput, index: number, job?:
        previous_governance_revision, new_governance_revision,
        actor_email, actor_role, reason, request_id, idempotency_key,
        request_fingerprint, recalculation_job_id, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'publisher', ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, 'story', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'publisher', ?, ?, ?, ?, ?, ?)
   `).run(
     eventId,
     ASSERTION_ID,
@@ -139,10 +139,10 @@ function insertEvent(database: SQLiteD1, input: EventInput, index: number, job?:
   if (job) {
     database.sqlite.prepare(`
       INSERT INTO assertion_governance_recalculation_jobs
-        (id, event_id, assertion_id, canonical_claim_id, cluster_id, story_scope_json,
+        (id, event_id, assertion_id, canonical_claim_id, governance_context, cluster_id, story_scope_json,
          state, attempt_count, claim_snapshot_count, story_snapshot_count,
          status_change_count, approval_request_count, last_error, completed_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, 'story', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       jobId,
       eventId,
@@ -216,8 +216,10 @@ async function historyProjectionTests(): Promise<void> {
       newAdmission: "admitted",
       previousReviewer: "needs_research",
       newReviewer: "rejected",
-      previousGovernanceRevision: 2,
-      newGovernanceRevision: 3,
+      // One event per governance revision (migration 0076): this follows the
+      // accept_review event, which moved the assertion from revision 2 to 3.
+      previousGovernanceRevision: 3,
+      newGovernanceRevision: 4,
       reason: "A later editorial review reason.",
       requestId: "history-failed-request",
       createdAt: "2026-09-10 10:02:00",

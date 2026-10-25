@@ -1,0 +1,18 @@
+---
+export const prerender = false;
+Astro.response.headers.set("Cache-Control", "no-store");
+Astro.response.headers.set("Referrer-Policy", "no-referrer");
+Astro.response.headers.set("X-Content-Type-Options", "nosniff");
+Astro.response.headers.set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'");
+---
+<html lang="en"><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width" /><title>TRACE Capture intake</title></head>
+<body><main><h1>Review TRACE Capture intake</h1>
+<p>Signed in through Cloudflare Access. Publisher permission is required to submit. This creates a private review record; it does not approve, fetch or publish the content.</p>
+<pre id="preview">Loading the capture from this browser's URL fragment…</pre>
+<p id="status" role="status"></p>
+<button id="submit" disabled>Confirm private TRACE submission</button>
+<a id="return" hidden>Return receipt to TRACE Capture</a>
+<p>Keep this page until you have returned the receipt. If interrupted, reopen the same attempt from the saved capture. Full shared posts and images are not uploaded.</p>
+</main></body></html>
+<style>body{font:18px system-ui;background:#111827;color:#f9fafb;margin:auto;max-width:48rem;padding:1.5rem}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#1f2937;padding:1rem}button,a{font:inherit;display:block;padding:1rem;margin:1rem 0;background:#c4f568;color:#111827;border:0;border-radius:.5rem}button:disabled{opacity:.5}[hidden]{display:none}</style>
+<script is:inline src="/capture-intake.js"></script>

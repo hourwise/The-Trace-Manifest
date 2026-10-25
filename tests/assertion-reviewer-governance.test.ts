@@ -371,6 +371,8 @@ async function boundScopeTest(): Promise<void> {
     for (let storyId = 3200; storyId < 3225; storyId++) {
       database.sqlite.prepare("INSERT INTO story_clusters (id, title, evidence_status, publication_status) VALUES (?, ?, 'unverified', 'review')").run(storyId, `Bounded reviewer story ${storyId}`);
       database.sqlite.prepare("INSERT INTO story_claims (story_cluster_id, canonical_claim_id, role, materiality, display_order) VALUES (?, ?, 'supporting', 'standard', 1)").run(storyId, CLAIM_ID);
+      // Real stories have member items; memberless clusters are not rescored.
+      database.sqlite.prepare("INSERT INTO story_cluster_members (cluster_id, feed_item_id, is_primary) VALUES (?, ?, 0)").run(storyId, CLUSTER_ID);
     }
     await assertGovernanceError(governAssertionReviewerDecision(database.asD1(), input(assertionId, "accept_review", "reviewer-bound-key", "reviewer-bound-request")), "recalculation_scope_too_large");
     assert.equal((await database.prepare("SELECT reviewer_state, assertion_governance_revision FROM claim_assertions WHERE id = ?").bind(assertionId).first<Record<string, unknown>>())?.reviewer_state, "proposed");

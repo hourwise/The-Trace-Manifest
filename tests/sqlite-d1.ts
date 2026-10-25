@@ -80,6 +80,7 @@ export class SQLiteD1 {
     applySourceIdentityDiagnostics = true,
     applySourceIdentityV2 = applySourceIdentityDiagnostics,
     applyReviewerGovernance = true,
+    applyEvidenceLibraryGovernance = applyReviewerGovernance,
   ) {
     this.sqlite.exec(readFileSync("db/schema.sql", "utf8"));
     this.sqlite.exec(readFileSync("db/migration-5e-publication.sql", "utf8"));
@@ -135,6 +136,10 @@ export class SQLiteD1 {
       this.sqlite.exec(readFileSync("db/migration-0074-assertion-reviewer-governance.sql", "utf8"));
     }
     this.sqlite.exec(readFileSync("db/migration-0075-claim-extraction-run-ledger.sql", "utf8"));
+    // 0076 rebuilds the 0074 governance tables, so it follows reviewer governance.
+    if (applyReviewerGovernance && applyEvidenceLibraryGovernance) {
+      this.sqlite.exec(readFileSync("db/migration-0076-evidence-library-governance.sql", "utf8"));
+    }
   }
 
   prepare(query: string): SQLiteD1Statement {

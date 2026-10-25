@@ -5,7 +5,22 @@
  * updater. Requesting a review records a pending proposal. Only an explicit
  * publisher approval can update claim_assertions.freshness_state, and the
  * source/evidence gates are rechecked immediately before that update.
+ *
+ * Since SEED-01 (migration 0076) an approval is also an assertion governance
+ * event: it advances the shared governance revision under CAS, appends a
+ * mark_current / mark_stale Evidence Library event linked to the review, and
+ * carries a durable recalculation obligation, in the same batch.
  */
+
+import {
+  AssertionGovernanceError,
+  type AssertionGovernanceRecalculation,
+  type AssertionGovernanceState,
+  governanceEventStatements,
+  loadGovernanceEventByFreshnessReview,
+  loadRealStoryScope,
+  settleGovernanceEvent,
+} from "./assertion-governance";
 
 export type FreshnessState = "unknown" | "current" | "stale";
 export type ProposedFreshnessState = "current" | "stale";
@@ -36,6 +51,7 @@ interface FreshnessDbRow {
   relationship: string;
   provenance_group_id: string | null;
   legacy_claim_id: number | null;
+  assertion_governance_revision: number;
   claim_state: string | null;
   source_document_id: string | null;
   source_admission_state: string | null;
@@ -80,6 +96,9 @@ export interface FreshnessReviewResult {
   proposedState: ProposedFreshnessState;
   inserted: boolean;
   replay: boolean;
+  /** The governance event an approval recorded (absent for pre-0076 approvals). */
+  governanceEventId?: string;
+  recalculation?: AssertionGovernanceRecalculation;
 }
 
 type FreshnessDb = Pick<D1Database, "prepare" | "batch">;
@@ -136,6 +155,7 @@ async function loadAssertion(db: FreshnessDb, assertionId: string): Promise<Fres
            assertion.reviewer_state, assertion.source_role,
            assertion.evidence_treatment, assertion.relationship,
            assertion.provenance_group_id, assertion.legacy_claim_id,
+           assertion.assertion_governance_revision,
            claim.current_state AS claim_state,
            version.source_document_id, source.admission_state AS source_admission_state,
            source.current_version_id AS source_current_version_id,
@@ -300,58 +320,151 @@ export async function requestFreshnessReview(
   return reviewResult(raced, false, true);
 }
 
-export async function approveFreshnessReview(
-  db: FreshnessDb,
-  reviewId: string,
-  actor: string,
-  reviewNote = "",
-): Promise<FreshnessReviewResult> {
-  if (typeof reviewId !== "string" || !text(reviewId) || reviewId.length > 200) throw new EvidenceFreshnessReviewError("A bounded reviewId is required.", "invalid_approval");
-  if (typeof actor !== "string" || !text(actor) || actor.length > 320) throw new EvidenceFreshnessReviewError("A bounded actor is required.", "invalid_approval");
-  if (typeof reviewNote !== "string" || reviewNote.length > 2000) throw new EvidenceFreshnessReviewError("The review note is too large.", "invalid_review_note");
-  const review = await db.prepare(`
+async function loadReview(db: FreshnessDb, reviewId: string): Promise<ReviewRow | null> {
+  return db.prepare(`
     SELECT id, claim_assertion_id, prior_state, proposed_state,
            source_document_version_id, reason, state, requested_by,
            requested_at, reviewed_by, reviewed_at, review_note, request_fingerprint
     FROM evidence_freshness_reviews WHERE id = ?
   `).bind(reviewId).first<ReviewRow>();
-  if (!review) throw new EvidenceFreshnessReviewError("Freshness review was not found.", "review_not_found", 404);
-  if (review.state === "approved") {
-    return { reviewId: review.id, state: review.state, claimAssertionId: review.claim_assertion_id, priorState: review.prior_state, proposedState: review.proposed_state, inserted: false, replay: true };
+}
+
+/**
+ * Reports an approved review. When the approval recorded a governance event,
+ * its durable recalculation obligation is settled (or retried) here, so a
+ * replay also recovers a recalculation that failed after the commit.
+ */
+async function approvedResult(db: D1Database, review: ReviewRow, inserted: boolean, replay: boolean): Promise<FreshnessReviewResult> {
+  const base = reviewResult({ ...review, state: "approved" }, inserted, replay);
+  const event = await loadGovernanceEventByFreshnessReview(db, review.id);
+  if (!event) return base;
+  try {
+    const settled = await settleGovernanceEvent(db, event, replay);
+    return { ...base, governanceEventId: event.id, recalculation: settled.recalculation };
+  } catch (error) {
+    if (error instanceof AssertionGovernanceError) {
+      throw new EvidenceFreshnessReviewError(error.message, error.code, error.status);
+    }
+    throw error;
   }
+}
+
+async function governanceFingerprint(review: ReviewRow): Promise<string> {
+  const canonical = JSON.stringify({
+    version: "assertion-freshness-governance-v1",
+    reviewId: review.id,
+    assertionId: review.claim_assertion_id,
+    priorState: review.prior_state,
+    proposedState: review.proposed_state,
+  });
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonical));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+export async function approveFreshnessReview(
+  db: D1Database,
+  reviewId: string,
+  actor: string,
+  reviewNote = "",
+  requestId?: string,
+): Promise<FreshnessReviewResult> {
+  if (typeof reviewId !== "string" || !text(reviewId) || reviewId.length > 200) throw new EvidenceFreshnessReviewError("A bounded reviewId is required.", "invalid_approval");
+  if (typeof actor !== "string" || !text(actor) || actor.length > 320) throw new EvidenceFreshnessReviewError("A bounded actor is required.", "invalid_approval");
+  if (typeof reviewNote !== "string" || reviewNote.length > 2000) throw new EvidenceFreshnessReviewError("The review note is too large.", "invalid_review_note");
+  if (requestId !== undefined && (typeof requestId !== "string" || !text(requestId) || requestId.length > 200)) {
+    throw new EvidenceFreshnessReviewError("A bounded requestId is required when supplied.", "invalid_approval");
+  }
+  const review = await loadReview(db, reviewId);
+  if (!review) throw new EvidenceFreshnessReviewError("Freshness review was not found.", "review_not_found", 404);
+  if (review.state === "approved") return approvedResult(db, review, false, true);
   if (review.state === "rejected") throw new EvidenceFreshnessReviewError("A rejected freshness review cannot be approved.", "review_rejected", 409);
 
   const row = await loadAssertion(db, review.claim_assertion_id);
   try {
     await assertTransitionAllowed(db, row, review.proposed_state, review.prior_state, review.source_document_version_id);
   } catch (error) {
-    const raced = await db.prepare("SELECT id, claim_assertion_id, prior_state, proposed_state, source_document_version_id, reason, state, requested_by, requested_at, reviewed_by, reviewed_at, review_note, request_fingerprint FROM evidence_freshness_reviews WHERE id = ?").bind(review.id).first<ReviewRow>();
-    if (raced?.state === "approved") return reviewResult(raced, false, true);
+    const raced = await loadReview(db, review.id);
+    if (raced?.state === "approved") return approvedResult(db, raced, false, true);
     throw error;
   }
+
   const now = new Date().toISOString();
-  const results = await db.batch([
-    db.prepare(`
-      UPDATE claim_assertions SET freshness_state = ?
-      WHERE id = ? AND freshness_state = ?
-    `).bind(review.proposed_state, review.claim_assertion_id, review.prior_state),
-    db.prepare(`
-      UPDATE evidence_freshness_reviews
-      SET state = 'approved', reviewed_by = ?, reviewed_at = ?, review_note = ?
-      WHERE id = ? AND state = 'pending'
-    `).bind(actor.trim(), now, reviewNote.trim() || null, review.id),
-  ]);
-  if (Number(results[0]?.meta.changes ?? 0) !== 1 || Number(results[1]?.meta.changes ?? 0) !== 1) {
-    const raced = await db.prepare(`
-      SELECT id, claim_assertion_id, prior_state, proposed_state,
-             source_document_version_id, reason, state, requested_by,
-             requested_at, reviewed_by, reviewed_at, review_note, request_fingerprint
-      FROM evidence_freshness_reviews WHERE id = ?
-    `).bind(review.id).first<ReviewRow>();
-    if (raced?.state === "approved") return reviewResult(raced, false, true);
+  const normalizedActor = actor.trim().toLowerCase();
+  const note = reviewNote.trim();
+  const revision = Number(row.assertion_governance_revision ?? 0);
+  const governanceKey = `freshness-review:${review.id}`;
+  // assertTransitionAllowed has checked these states for a "current" proposal;
+  // a "stale" proposal may come from any admission or reviewer state.
+  const previous = {
+    admissionState: row.admission_state,
+    reviewerState: row.reviewer_state,
+    freshnessState: review.prior_state,
+  } as AssertionGovernanceState;
+  let storyScope: number[];
+  try {
+    storyScope = await loadRealStoryScope(db, row.canonical_claim_id, { truncate: true });
+  } catch (error) {
+    if (error instanceof AssertionGovernanceError) throw new EvidenceFreshnessReviewError(error.message, error.code, error.status);
+    throw error;
+  }
+
+  const eventId = crypto.randomUUID();
+  let results: D1Result[];
+  try {
+    results = await db.batch([
+      // The CAS covers every column the event guard checks, so the state can
+      // only change when its governance event is written in the same batch.
+      db.prepare(`
+        UPDATE claim_assertions SET freshness_state = ?, assertion_governance_revision = ?
+        WHERE id = ? AND canonical_claim_id = ? AND admission_state = ? AND reviewer_state = ?
+          AND freshness_state = ? AND assertion_governance_revision = ?
+      `).bind(
+        review.proposed_state, revision + 1, review.claim_assertion_id, row.canonical_claim_id,
+        row.admission_state, row.reviewer_state, review.prior_state, revision,
+      ),
+      ...governanceEventStatements(db, {
+        eventId,
+        jobId: crypto.randomUUID(),
+        assertion: { id: row.id, canonicalClaimId: row.canonical_claim_id, revision },
+        scope: { context: "evidence_library", clusterId: null },
+        action: review.proposed_state === "current" ? "mark_current" : "mark_stale",
+        previous,
+        next: { ...previous, freshnessState: review.proposed_state },
+        previousAdmissionRevision: revision,
+        newAdmissionRevision: revision,
+        freshnessReviewId: review.id,
+        actor: normalizedActor,
+        reason: (note || review.reason).slice(0, 2000),
+        requestId: requestId?.trim() || governanceKey,
+        idempotencyKey: governanceKey,
+        fingerprint: await governanceFingerprint(review),
+        storyScope,
+      }),
+      // The review closes only once its governance event exists, so it can
+      // never read "approved" without an audited, applied transition.
+      db.prepare(`
+        UPDATE evidence_freshness_reviews
+        SET state = 'approved', reviewed_by = ?, reviewed_at = ?, review_note = ?
+        WHERE id = ? AND state = 'pending'
+          AND EXISTS (SELECT 1 FROM assertion_governance_events WHERE id = ? AND freshness_review_id = ?)
+      `).bind(actor.trim(), now, note || null, review.id, eventId, review.id),
+    ]);
+  } catch {
+    // A unique freshness_review_id / idempotency key means a concurrent
+    // approval of the same review committed first.
+    const raced = await loadReview(db, review.id);
+    if (raced?.state === "approved") return approvedResult(db, raced, false, true);
     throw new EvidenceFreshnessReviewError("Freshness approval was not applied because the review or assertion changed.", "approval_race", 409);
   }
-  return { reviewId: review.id, state: "approved", claimAssertionId: review.claim_assertion_id, priorState: review.prior_state, proposedState: review.proposed_state, inserted: true, replay: false };
+  // D1 counts trigger-written rows in meta.changes: a stale transition fires
+  // trg_claim_assertions_expiry_requeue, so a successful update reports 2.
+  if (results.some((result) => Number(result?.meta.changes ?? 0) < 1)) {
+    const raced = await loadReview(db, review.id);
+    if (raced?.state === "approved") return approvedResult(db, raced, false, true);
+    throw new EvidenceFreshnessReviewError("Freshness approval was not applied because the review or assertion changed.", "approval_race", 409);
+  }
+  const approved = await loadReview(db, review.id);
+  return approvedResult(db, approved ?? { ...review, state: "approved" }, true, false);
 }
 
 export async function rejectFreshnessReview(
@@ -364,6 +477,8 @@ export async function rejectFreshnessReview(
     throw new EvidenceFreshnessReviewError("Bounded reviewId and actor are required.", "invalid_rejection");
   }
   if (typeof reviewNote !== "string" || reviewNote.length > 2000) throw new EvidenceFreshnessReviewError("The review note is too large.", "invalid_review_note");
+  // A rejection closes the review for good, so it records why.
+  if (!reviewNote.trim()) throw new EvidenceFreshnessReviewError("A rejection reason is required.", "rejection_reason_required");
   const review = await db.prepare(`
     SELECT id, claim_assertion_id, prior_state, proposed_state,
            source_document_version_id, reason, state, requested_by,
@@ -371,16 +486,17 @@ export async function rejectFreshnessReview(
     FROM evidence_freshness_reviews WHERE id = ?
   `).bind(reviewId).first<ReviewRow>();
   if (!review) throw new EvidenceFreshnessReviewError("Freshness review was not found.", "review_not_found", 404);
-  if (review.state === "rejected") return reviewResult(review, false, true);
+  const note = reviewNote.trim();
+  if (review.state === "rejected") return rejectionReplay(review, note);
   if (review.state === "approved") throw new EvidenceFreshnessReviewError("An approved freshness review cannot be rejected.", "review_approved", 409);
   const now = new Date().toISOString();
   const result = await db.prepare(`
     UPDATE evidence_freshness_reviews
     SET state = 'rejected', reviewed_by = ?, reviewed_at = ?, review_note = ?
     WHERE id = ? AND state = 'pending'
-  `).bind(actor.trim(), now, reviewNote.trim() || null, review.id).run();
+  `).bind(actor.trim(), now, note, review.id).run();
   if (Number(result.meta.changes ?? 0) === 1) {
-    return reviewResult({ ...review, state: "rejected", reviewed_by: actor.trim(), reviewed_at: now, review_note: reviewNote.trim() || null }, true, false);
+    return reviewResult({ ...review, state: "rejected", reviewed_by: actor.trim(), reviewed_at: now, review_note: note }, true, false);
   }
   const raced = await db.prepare(`
     SELECT id, claim_assertion_id, prior_state, proposed_state,
@@ -388,6 +504,18 @@ export async function rejectFreshnessReview(
            requested_at, reviewed_by, reviewed_at, review_note, request_fingerprint
     FROM evidence_freshness_reviews WHERE id = ?
   `).bind(review.id).first<ReviewRow>();
-  if (raced?.state === "rejected") return reviewResult(raced, false, true);
+  if (raced?.state === "rejected") return rejectionReplay(raced, note);
   throw new EvidenceFreshnessReviewError("Freshness rejection lost a concurrent approval or state transition.", "rejection_race", 409);
+}
+
+/**
+ * A review is decided once, so its id is the rejection's idempotency key: a
+ * retry with the recorded reason replays the decision, and a different reason
+ * is a conflicting decision, not a retry.
+ */
+function rejectionReplay(review: ReviewRow, note: string): FreshnessReviewResult {
+  if ((review.review_note ?? "").trim() !== note) {
+    throw new EvidenceFreshnessReviewError("This review was already rejected with a different reason.", "rejection_conflict", 409);
+  }
+  return reviewResult(review, false, true);
 }
