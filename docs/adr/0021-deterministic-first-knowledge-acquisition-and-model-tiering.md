@@ -53,7 +53,14 @@ The local-acquisition design (KNOWLEDGE-10 workstream 8) already established:
    - it needs natural-language understanding;
    - a deterministic grammar has been measured as insufficient on recorded fixtures;
    - its output is either a human-approved draft or a structured proposal whose **every value re-finds verbatim** in the stored source text.
-10. Each extraction run records adapter, parser, input and output hashes in the extraction-run ledger. Re-running a recorded input with the same versions must produce **byte-identical output**; otherwise submission is blocked.
+10. **Reproducibility contract.** Each extraction run records adapter, parser, grammar and normalisation versions, plus input and deterministic-output hashes, in the extraction-run ledger. Re-running the same pinned inputs (source bytes identified by SHA-256) with the same versions must produce **byte-identical deterministic extraction output**; otherwise submission is blocked.
+    - Model-assisted output is stored with the run and **replayed, never regenerated**. Re-validating it must be byte-identical.
+    - Run ids, timestamps, package numbers and batch ids, actual API usage and cost, provider request ids and execution receipts may differ between runs.
+10a. **Unchanged source data must not produce duplicate actionable import records:**
+    - an unchanged source produces no item;
+    - every item carries an idempotency key derived from record type, canonical source identity, normalised content hash, proposed action and extractor version. The key is independent of run, batch, time and the model response;
+    - a key already packaged, or rejected, is not packaged again as actionable;
+    - a parser or prompt version change re-extracts existing sources only by an explicit owner-triggered run that emits supersede proposals.
 11. **Untrusted binary inputs** (GGUF headers) are parsed by a bounded parser with explicit limits. Embedded templates are never executed or rendered.
 
 ### 2.4 Models never ingest

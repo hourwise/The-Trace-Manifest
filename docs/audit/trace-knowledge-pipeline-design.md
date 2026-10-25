@@ -7,11 +7,11 @@
 - Spending limits are a combined US$6.25 (about £5) a week, with UTC off-peak scheduling and checkpoints (§10.6, §14.1).
 - The design is reconciled with the frozen ingestion Worker and scheduler 0072 (§16.1).
 - New: a staged plan and the smallest safe prototype (§17).
-- References are based on `main` at `5cb64af` (PR #5: the V1.1 release of SEED-01, migration 0076 and TRACE Capture, now on Production).
+- References are based on `main` at `5cb64af` (PR #5: the V1.1 release of SEED-01, migration 0076 and TRACE Capture). Migration 0076 status: (merged into `main` at `5cb64af` by PR #5. The production-readiness session reported Production application of 0076 on 2026-10-25, but no Production 0076 record is on `main`; the SEED-02 records there predate it. **Confirm it before P2.**)
 
 **Supersedes (as proposals):** the two narrower proposals "social automation" and "story automation and catalogue".
 **Proposed decisions:** ADR 0021 to ADR 0024 and ADR 0009 Amendment 2, all with status **Proposed** (§19).
-**Builds on:** `docs/audit/trace-v1-knowledge-10-local-acquisition-architecture.md` and `docs/audit/trace-v1-knowledge-10-open-model-execution-plan.md`, now on **`main` at `5cb64af`** (PR #5, released to Production on 25 October 2026, adding migration 0076 and the Evidence Library); first read from `origin/codex/trace-v1-seed-01-prerequisites`. `main` also carries the KNOWLEDGE-10 final report, readiness, legacy-absorption and seeding documents, `docs/audit/trace-v1-seed-01-prerequisites.md`, the roadmap `docs/roadmap/trace-v1.1-v1.2.md`, the research inventory `docs/research/ai-models-inference-agents-inventory.*`, the evaluation fixture `tests/fixtures/knowledge-10/ask-evaluation-suite.json` and migration `db/migration-0076-evidence-library-governance.sql`. On 2026-10-25 every one of these was verified byte-identical to the copies first read from the local branch `codex/trace-capture-preview-01`. The SEED-03 batch plan is on `origin/codex/trace-v1-seed-03-batch-01` (`docs/audit/trace-v1-seed-03-batch-01-plan.md`). References below cite them by path.
+**Builds on:** `docs/audit/trace-v1-knowledge-10-local-acquisition-architecture.md` and `docs/audit/trace-v1-knowledge-10-open-model-execution-plan.md`, now on **`main` at `5cb64af`** (PR #5, adding migration 0076 and the Evidence Library; Production status per the header note); first read from `origin/codex/trace-v1-seed-01-prerequisites`. `main` also carries the KNOWLEDGE-10 final report, readiness, legacy-absorption and seeding documents, `docs/audit/trace-v1-seed-01-prerequisites.md`, the roadmap `docs/roadmap/trace-v1.1-v1.2.md`, the research inventory `docs/research/ai-models-inference-agents-inventory.*`, the evaluation fixture `tests/fixtures/knowledge-10/ask-evaluation-suite.json` and migration `db/migration-0076-evidence-library-governance.sql`. On 2026-10-25 every one of these was verified byte-identical to the copies first read from the local branch `codex/trace-capture-preview-01`. The SEED-03 batch plan is on `origin/codex/trace-v1-seed-03-batch-01` (`docs/audit/trace-v1-seed-03-batch-01-plan.md`). References below cite them by path.
 
 **Hard constraints for this design:**
 - No Production change.
@@ -30,7 +30,7 @@
 | The intended volume is about **50 news stories and 20 owner-captured social posts a day**, run by one owner in **20–30 minutes of decisions**. | Owner brief |
 | Each news cluster currently needs manual clicks: hours a day at that volume. | Owner brief |
 | Publishing a story does **not** create Ask-ready knowledge. **0 of 417** Production assertions are Ask-eligible, because each fact needs admission, reviewer acceptance and freshness. | KNOWLEDGE-10 final report §C, §E |
-| SEED-01 (migration 0076, PR #3) added an Evidence Library context for facts no story carries. It is on Preview, and its **Production release is in progress on 2026-10-25** (`origin/codex/trace-v1-seed-01-prerequisites`). This design assumes it is present. | `migration-0076-…sql`; production-readiness session, 2026-10-25 |
+| SEED-01 (migration 0076, PR #3) added an Evidence Library context for facts no story carries. It is on `main` (`5cb64af`) and on Preview. Its Production application was **reported** on 2026-10-25 but is not recorded on `main`; confirm it before P2. | `migration-0076-…sql`; production-readiness session, 2026-10-25 |
 | The Production source registry has ingested nothing since about 2026-09-06. It has GitHub release notes as text, but **no** Hugging Face model or file metadata, model-card ingestion or GGUF reading (§1.1). | Production source registry, read-only, 2026-10-25 |
 | TRACE Capture (Android) delivers social posts to private `social_signals` and Desk intake, **proven on Preview on 2026-10-25**. | `docs/audit/trace-capture-integration-01.md` §8.8 |
 | ADR 0009 §10 forbids persisting fetched social pages and creating signals, candidates or cards automatically. | ADR 0009 §10 |
@@ -120,7 +120,7 @@ The ingestion types in the schema are `rss`, `github_api`, `arxiv_api`, `page_di
 | I-2 | A model may **add** `reviewer_required`, never remove it (local-acquisition §7). | Property test over the pipeline. |
 | I-3 | Every extracted value carries a **source locator** that re-finds byte-exactly in the stored normalised text, or the value is dropped. | A re-find validator runs before persistence. Adversarial fixtures use paraphrased values. |
 | I-4 | Every catalogue number carries `{value, unit, evidence_class, citation}`, where the citation is an external immutable identifier and/or an assertion id. **A number without a citation is `unknown`.** | DB `CHECK` plus a renderer test: an uncited number cannot render. |
-| I-5 | **Extraction is reproducible:** same adapter version + parser version + input bytes ⇒ byte-identical output. | Golden fixtures; rebuild-hash test (the local-acquisition §14 pattern). |
+| I-5 | **Reproducibility contract (§5.6):** same pinned inputs + same adapter, parser, grammar and normalisation versions ⇒ **byte-identical deterministic extraction output**. Model outputs are stored and replayed, never regenerated. Run ids, timestamps, package numbers, usage and receipts may differ. **Unchanged sources produce no new actionable items.** | Golden fixtures; tests (a)–(e) in §5.6 |
 | I-6 | **Automation is reversible:** every system-written state has a revocation path that restores the previous eligibility, and it is exercised in tests before the automation can be enabled. | Gate test in §11.7. |
 | I-7 | **No Cloudflare Cron** while STOP-BURN is active. Pre-run work is triggered by the owner or by a workstation timer calling request-driven routes. | Config test: Worker schedules remain `[]`. This already exists as commit `4979823`. |
 | I-8 | **Publication requires a human tap** on the final text (ADR 0004, ADR 0012 #8). | The existing publication-eligibility tests still pass. Inbox approval goes through the existing publish route. |
@@ -296,11 +296,48 @@ Both were range reads (HTTP 206) of the first 8 MiB and 12 MiB respectively, par
 - **Tables in docs** (support matrices) are parsed deterministically when they are HTML or Markdown tables with recognisable headers. Otherwise the change is surfaced as `changed_source_document` for a human.
 - **JavaScript-rendered pages are a known limit.** For example, the DeepSeek pricing table is not in the server HTML: a plain fetch on 2026-10-25 returned no prices, and they appeared only after client-side rendering. Such sources are **not** machine-checkable. They stay human-reviewed, and the acquisition adapter records `render_required`.
 
-### 5.6 Reproducibility and the extraction ledger
+### 5.6 Reproducibility contract and the extraction ledger (Revision 3)
 
-- Each run writes an extraction-run record in the existing EDITORIAL-03C ledger (`claim_extraction_runs`): adapter id and version, parser id and version, input SHA-256, output SHA-256, and the source version id. Model fallbacks add the model id, prompt version and request id.
-- **Rebuild test:** re-running any recorded run from its stored input produces the same output hash (I-5). A mismatch blocks submission.
-- **Golden fixtures:** recorded API responses and header byte ranges from §5.2–§5.3 (parsed JSON plus hashes; no tokenizer arrays) become test fixtures.
+**Ledger.**
+- **Locally**, each run records in the workstation ledger: adapter id and version, parser and grammar versions, normalisation version, input SHA-256, deterministic-output SHA-256 and the source identity. Model calls add the model id, prompt version, request id and the stored response hash.
+- **On import (proposed, P2+)**, the Worker records the same fields in the existing EDITORIAL-03C ledger (`claim_extraction_runs`).
+- The workstation never writes D1 (L-4).
+
+**The contract has three layers.**
+
+| Layer | Requirement |
+|---|---|
+| **1. Deterministic extraction output: byte-identical** | Same pinned inputs + same versions ⇒ **byte-identical** canonical output. "Pinned inputs" means the source bytes identified by SHA-256: an API response body, a release body, header bytes `[0, n)` of a file with a known SHA-256. "Versions" means adapter, parser, grammar and normalisation versions. Canonical output is UTF-8 JSON with sorted keys and no run ids, timestamps or sequence numbers. This covers change classification, parsed fields, entity matches, locators and validation results. |
+| **2. Model-assisted output: replayable, not regenerable** | DeepSeek output is not deterministic, so a new call need not reproduce an old one. The **stored response** is part of the run record. Re-validating the stored response (schema, enum, span re-find, alias match) **is** deterministic and must reproduce byte-identically. Replays use the stored response and never make a new call. |
+| **3. Envelope and receipts: may differ** | Run id, timestamps (`createdAt`, `retrievedAt`), package number and `batchId`, `usage.json` (actual API usage and cost), provider request ids, deferral counters, morning-summary content, and any later execution receipts. |
+
+**No duplicate actionable records from unchanged sources:**
+
+1. **Unchanged source ⇒ no item.** If the source identity and normalised content hash match the last processed version, the change class is `no_material_change` and **no import item is produced** (local-acquisition §6).
+2. **Stable idempotency key** (independent of run, batch and time):
+
+   ```text
+   SHA-256(recordType, canonical source identity, normalised content hash, proposedAction, extractor id and version)
+   ```
+
+   - **Canonical source identity:** a URL, repo + revision, or file SHA-256.
+   - **Extractor id and version:** the parser or grammar version for deterministic items; the task type and prompt version for model items.
+
+   For model items, the key deliberately **excludes the model response**, so re-asking the model cannot mint a new key.
+3. **Local suppression.** An item whose key was already placed in an earlier package that is `prepared`, `submitted`, `accepted` or `committed` is not packaged again as actionable.
+   - A package that was built but never submitted may be **superseded** by a rebuild. It is then marked `superseded` and must never be submitted.
+   - A **rejected** key is not resubmitted (local-acquisition §12).
+4. **Version changes do not silently re-emit.** A parser, grammar or prompt version change does not regenerate items for unchanged sources. Re-extraction of existing sources is an explicit owner-triggered run. It emits `supersede_proposal` items that reference the prior keys.
+5. **Receiver-side backstop (P2+, proposed).** The importer rejects a key it has seen as `duplicate`, returning the original receipt (local-acquisition §9).
+
+**Tests:**
+- **(a)** Byte-identical layer-1 output across two runs over recorded inputs.
+- **(b)** Two packages built from the same inputs differ **only** in layer-3 fields. A content digest over `items.jsonl` with layer-3 fields removed must match.
+- **(c)** A second live run against unchanged sources emits **zero actionable items**.
+- **(d)** Replaying stored model responses yields byte-identical validated output.
+- **(e)** A version bump without an owner re-extraction emits nothing for unchanged sources.
+
+**Golden fixtures:** recorded API responses and header byte ranges from §5.2–§5.3 (parsed JSON plus hashes; no tokenizer arrays).
 
 ### 5.7 Where Lane A runs and its budgets
 
@@ -1094,16 +1131,45 @@ Release extraction therefore costs about **5.8 calls, 12.7k input tokens and 2.4
 - At 50 drafts a day the realistic spend is about **US$0.41 a week (≈ £0.30)**. Even the theoretical worst case stays below the cap.
 - **The cap exists to stop runaways:** loops, accidental thinking mode, price changes. It is not a forecast.
 
-**Currency.** DeepSeek bills in USD from a prepaid balance. The owner's limit is **£5 a week**, so the hard cap is set at **US$6.25 a week**:
+**Currency.** DeepSeek bills in USD from a prepaid balance. The owner's limit is **£5 a week**. The design's weekly figure is **US$6.25**:
 - that is £5 at 1.25 USD/GBP;
-- September 2026 quotes were about 1.35 [X-19], at which US$6.25 ≈ £4.63;
-- the cap therefore stays at or below £5 unless the pound falls below 1.25 USD.
+- September 2026 quotes were about 1.35 [X-19], at which US$6.25 ≈ £4.63.
 
-**Limits** (all hard and fail-closed; the owner's conservative editorial budget is unchanged):
+#### 14.1.1 What is enforced, and by whom (Revision 3)
+
+**There is no software-enforced global ceiling across the Worker and the workstation.** They keep **separate ledgers** (D1 for the Worker, SQLite for the workstation) and neither can see the other's spend. The US$6.25 a week is therefore:
+- **(a)** the **sum of two separately enforced allocations**, which holds by construction as long as neither allocation is raised without an owner decision; plus
+- **(b)** whatever **account-level ceiling** the owner chooses for the DeepSeek prepaid balance (KP-25).
+
+Only (b) is a true global hard stop, because DeepSeek refuses calls when the balance is exhausted.
+
+| Layer | Ledger and period | What it enforces | Status |
+|---|---|---|---|
+| **Worker allocation** | D1 `ai_budget_reservations`; **UTC calendar day** and **UTC calendar month** keys | Per request US$0.02; all tasks US$1/day (`TRACE_AI_DAILY_PUBLIC_BUDGET_USD` default); US$10/month (`TRACE_AI_MONTHLY_PUBLIC_BUDGET_USD` default); editorial task US$0.50/day (`TRACE_AI_EDITORIAL_DAILY_BUDGET_USD`). Reserved at the **configured** prices (Flash 1/5), which overstate today's list prices. Public Ask is disabled on Production, so its allocation is 0 until V1.2. **Weekly editorial ceiling = 7 × 0.50 = US$3.50.** | **Existing, implemented.** Unchanged by this design (no Production billing change). |
+| **Workstation allocation** | Local SQLite `LocalAIGovernance`; **UTC ISO week** (Monday 00:00 UTC to Sunday 24:00 UTC) and **UTC day** | US$2.75/week; US$0.40/day; per-task daily caps (§14.1, limits table); per request ≤ US$0.02 | **Proposed** (P0 implements a subset, §17.2) |
+| **P0 prototype cap** | Same local ledger, separate counter | **US$0.25 lifetime cap for P0** (from the first model call until the owner raises it) and US$0.05/day. It is checked **before** the weekly allocation and does not depend on the Worker or on balance reconciliation. A run with the cap exhausted continues in **deterministic-only mode**. | **Proposed** for P0 (KP-21) |
+| **Account ceiling** | DeepSeek prepaid balance (shared by every key on the account) | A hard global stop at zero balance. Making it a weekly stop requires a top-up policy, for example topping up at most US$6.25 a week. | **Owner decision KP-25** |
+| **Combined weekly check** | Owner-assisted: a weekly report compares Worker ledger total + workstation ledger total with the DeepSeek balance change | Detection, not prevention | **Proposed** |
+
+**Ledger rules for the workstation** (stricter than the Worker where noted):
+
+| Situation | Rule |
+|---|---|
+| **Outstanding reservations** | A reservation counts against its day, its week and the P0 cap from the moment it is made until it is settled. A new request is refused if `settled + outstanding + new reservation > cap` at any layer. |
+| **Uncertain billing** (timeout, connection loss after send, crash in flight, unparseable response) | Settled at the **full reservation** and flagged `billing_uncertain`. **Never released automatically.** The Worker instead releases unsettled reservations when they expire after 2 minutes (`state = 'expired'`). The workstation deliberately does not, because a crash there can leave a call in flight. Downward correction happens only by owner annotation after balance reconciliation. |
+| **Failed requests** | Non-2xx responses before generation (400 validation, 401, 402 insufficient balance, 429): settled at **0**, counted toward the task circuit breaker. 5xx and timeouts are billing-uncertain (above). 402 also stops all model tasks until the owner checks the balance. |
+| **Successful requests** | Settled from the response `usage` (cache-hit, cache-miss and output tokens) × the pinned price for the request's start time |
+| **Accounting periods** | All periods are UTC. A request belongs to the period in which its reservation was made. Week rollover never releases outstanding reservations. |
+| **Balance reconciliation** | Preflight and postflight `GET /user/balance` around each window. **Shared account:** the Worker may also spend during the window, so the check flags `delta − local_settled > Worker editorial allowance for the window (≤ US$0.50) + max(US$0.05, 20 %)`. This is weaker. **Separate account** (if DeepSeek's terms permit it): the check flags `delta − local_settled > max(US$0.05, 20 %)`. This is exact. A flag stops all model tasks (fail-closed) until the owner reviews it. |
+| **Pricing-change guard** | As in the limits table: `GET /models` must list `deepseek-flash`; a price table older than 30 days pauses model tasks; thinking output opens the circuit |
+
+The allocation-limits table below lists the allocations. Its "Combined weekly cap" row means **combined by allocation** (US$3.50 + US$2.75) **plus the optional account ceiling**. It is not a single software-enforced counter.
+
+**Allocation limits** (each hard and fail-closed within its own ledger; the owner's conservative editorial budget is unchanged):
 
 | Limit | Value | Enforcement |
 |---|---|---|
-| **Combined weekly cap** | **US$6.25** = Worker editorial (unchanged US$0.50/day × 7 = US$3.50, at its conservative configured prices) + **workstation US$2.75** | Each side enforces its own share. The combined figure cannot be exceeded even if both sides max out. |
+| **Combined weekly cap** (by allocation, not a single counter) | **US$6.25** = Worker editorial allocation (unchanged US$0.50/day × 7 = US$3.50, reserved at its conservative configured prices) + **workstation allocation US$2.75** | Each ledger enforces its own allocation. The sum holds while neither allocation is raised. A true global stop exists only through the DeepSeek prepaid balance (KP-25). Public Ask (disabled until V1.2) must be added to this sum before it is enabled. |
 | Workstation weekly | US$2.75 | `LocalAIGovernance` reservation refused when `settled + reserved + new reservation > cap` |
 | Workstation daily | US$0.40 | Same |
 | Task daily | `draft_story` US$0.30; `map_release_change` US$0.05; `reconcile_entity` US$0.02; `map_social_report` US$0 (disabled) | Same, per task |
@@ -1164,7 +1230,7 @@ Each automatically suspends the relevant path.
 |---|---|---|
 | **STOP-BURN** | Production and Preview Cron stay `[]`. Scheduler 0072 track (overlap prevention, stale-running cleanup of 2,667 `ingestion_jobs` and 951 `cron_runs`, source 93 / M2, two clean opportunities) **unchanged** | Automated news-feed discovery on Cloudflare. **Does not block** Lanes A and C, or the inbox with owner or workstation triggers (I-7). |
 | **Public Ask off until V1.2** | `TRACE_AI_PUBLIC_ENABLED=false` (commit `d89850b`) | Public use of catalogue and estimator answers. Admin `/admin/ask` evaluation is allowed. |
-| **0076 on Production** | Release in progress on 2026-10-25 (`origin/codex/trace-v1-seed-01-prerequisites`). Confirm it landed before K9 and K10. | Evidence Library routing on Production |
+| **0076 on Production** | Reported applied on 2026-10-25 (production-readiness session); no record on `main`. Confirm it with the release record or a read-only schema check before P2. | Evidence Library routing on Production |
 | **G-1** | Allow-list `deepseek-flash`; prices 0.30 / 1.20 | Worker-side on-demand drafting at volume only. Workstation drafts use their own ledger (§10.5), so P1–P3 do not need G-1. |
 | **Revocation and restoration** (§11.7) | Implemented, tested, on the target environment | **Any** system admission or system freshness |
 | **System-actor migration** (§11.2) | Approved migration | System admission |
@@ -1284,13 +1350,13 @@ Workstation timers replace Cloudflare Cron for this workflow. STOP-BURN, `ingest
 | Stage 1: acquire | Conditional GET with ETag and revision cursors in SQLite. GitHub optional read-only token; HF anonymous. Budgets per §5.7 and [X-05]–[X-07]. |
 | Stage 2: change detection | `normalized_content_v3`-style hashing (the vendored identity module); change classes from local-acquisition §6; `no_material_change` produces nothing |
 | Stage 3: deterministic parse | Release template stripping; bullet grammar; HF tree (sizes, SHA-256); bounded GGUF header parser (§5.3) |
-| Stage 4: bounded DeepSeek | `map_release_change` **only** for bullets or releases the grammar could not map; `deepseek-flash`, non-thinking, one attempt; W1 window and `LocalAIGovernance` budgets. **Prototype caps: US$0.05 a day, US$0.25 for the first week.** |
+| Stage 4: bounded DeepSeek | `map_release_change` **only** for bullets or releases the grammar could not map; `deepseek-flash`, non-thinking, one attempt; W1 window. **P0 cap: US$0.25 lifetime and US$0.05 a day**, enforced by the local ledger independently of every other limit (§14.1.1). The stored response is the record (§5.6 layer 2). |
 | Stage 5: local verification | Schema; enum; **verbatim span re-find with offsets**; entity alias match; any failure → `reviewer_required` or the value is dropped |
 | Stage 6: package | `out/TRACE-KNOW-YYYYMMDD-NNNN/` containing `manifest.json` (`trace-know-batch-v1`), `items.jsonl`, `usage.json` and a checksum; sequential numbering from the local ledger. **Written to disk only; never uploaded.** |
 | Out of scope | D1, any Cloudflare call, import, story drafts, social, Cron, GPU, Qwen |
 | Run | Manual command first; later a Windows Task Scheduler entry (deterministic stages from 21:30 UTC, model window 22:00–00:45 UTC) |
-| Tests | Offline fixture mode (no network); rebuild-hash identity (I-5); adversarial spans (a paraphrase must fail re-find); bounded-parser fuzz cases; budget fail-closed (reservation refused at the cap); window enforcement with an injected clock; thinking-guard; network allow-list refusal |
-| Exit criteria | (1) Two consecutive runs on unchanged inputs produce byte-identical packages. (2) At least one real release per watched runtime is processed, with 100 % span re-find on every model-mapped value. (3) Measured grammar coverage is reported. (4) Total spend ≤ US$0.25. (5) No request outside W1. (6) The owner reviews one package and the morning summary. |
+| Tests | Offline fixture mode (no network); the §5.6 reproducibility tests (a)–(e); adversarial spans (a paraphrase must fail re-find); bounded-parser fuzz cases; budget fail-closed (reservation refused at each cap, including the P0 cap); window enforcement with an injected clock; thinking-guard; network allow-list refusal |
+| Exit criteria | (1) Two runs over the same pinned inputs produce **byte-identical deterministic extraction output**, and packages that differ only in envelope and receipt fields (§5.6 layer 3). (2) A second run against unchanged live sources emits **zero actionable items**. (3) At least one real release per watched runtime is processed, with 100 % span re-find on every model-mapped value. (4) Measured grammar coverage is reported. (5) Total spend ≤ US$0.25 (P0 cap). (6) No model request outside W1. (7) The owner reviews one package and the morning summary. |
 
 ---
 
@@ -1335,6 +1401,7 @@ Workstation timers replace Cloudflare Cron for this workflow. STOP-BURN, `ingest
 | **KP-21** | Prototype P0 scope and source list (§17.1), with caps of US$0.05/day and US$0.25 for week 1 | Approve to start |
 | **KP-22** | Small refactors for reuse: export `normalizeURL`, the lexical helpers and title helpers; extract a pure `groupItems` from `runClustering`, with identical-behaviour tests. **No change to Worker behaviour.** | Approve with P1 |
 | **KP-23** | Qwen3.5-9B CPU benchmark (a one-off, owner-approved artefact download) | Optional; recommended once |
+| **KP-25** | DeepSeek account ceiling: a top-up policy (for example ≤ US$6.25 a week), and whether the workstation uses a separate account (exact balance reconciliation, if DeepSeek's terms permit it) or the shared one (weaker check) (§14.1.1) | Top-up policy ≤ US$6.25/week. A separate account only if the terms permit it. |
 | **KP-24** | **DeepSeek data terms:** the terms do not exclude training; the privacy policy permits training with an email opt-out and stores data in the PRC (§10.2). Before any owner-supplied social excerpt is sent: (a) request the opt-out at `privacy@deepseek.com` and keep the confirmation; (b) the owner accepts PRC processing of public material. Until then, social extraction is deterministic only. | Keep social deterministic-only until (a) and (b) are done |
 
 ---
