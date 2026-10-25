@@ -5,7 +5,7 @@
 **Preview candidate:** `codex/trace-capture-preview-01`, which is SEED-01 (PR #3) merged with this branch. Also local only.
 **Android:** `hourwise/Trace-Capture-App`, branch `codex/complete-personal-capture` at `7ea6a78` (1.1.0, versionCode 2). **No Android change is required.**
 
-**Status:** Gate A complete. **Gate B deployed to Preview on 2026-10-24 (§7A); Access bypass verified (§7B). Gate C ready (§8); first text lead verified end to end on the phone (§8.5).**
+**Status:** Gate A complete. **Gate B deployed to Preview on 2026-10-24 (§7A); Access bypass verified (§7B). Gate C ready (§8); Gate C met on Preview, with recorded exceptions (§8.8).**
 - Nothing was pushed, deployed or migrated.
 - No Access setting or secret was changed.
 - No Preview or Production record was created.
@@ -352,6 +352,41 @@ Totals: 1 social signal; candidates unchanged at 21.
 - the 1.0.0 → 1.1.0 before and after screenshots (Room migration);
 - the airplane-mode verify screenshot, if taken;
 - the article step (§8.4 step 14), which is optional because article routing is proven by the server tests.
+
+### 8.8 Gate C outcome (2026-10-25)
+
+**Owner clarifications:**
+- Version 1.0.0 was **never installed** on the phone; it was never released. 1.1.0 was a fresh install, so the "local database survives an update" check does **not apply** on this device. The Room v1→v2 migration remains covered only by Codex's instrumented test.
+- The **airplane-mode verify** (fail offline, then succeed online) was performed. **No screenshot exists:** this rests on owner attestation, not captured evidence.
+- **Article routing** on the device was **skipped by the owner**. It is covered by the server tests (manual URL → `manual_url` candidate).
+
+| Gate C requirement | Status | Evidence |
+|---|---|---|
+| Android Sharesheet capture works | **Passed** | §8.6, §8.7 (Reddit shares) |
+| Local database survives an app update | **Not applicable** | Fresh install; no prior version on the device |
+| Original post URL preserved | **Passed** | §8.7: social signal 1 stores the exact URL |
+| Publisher authentication succeeds | **Passed** | §8.5–§8.7: Access sign-in, publisher-only submit |
+| Submission accepted | **Passed** | Two leads and one social signal; D1 read-back |
+| Returned receipt verified | **Passed** | "TRACE record confirmed" on each; receipts redeemed through the Access bypass |
+| Exact record in the expected private queue | **Passed** | D1: Desk candidates `capture-4167852a…`, `capture-4e803e86…` (`new`); `social_signals` 1 (`pending` / `unreviewed`) |
+| Offline and retry | **Passed, with one attested step** | Offline capture and submission plus same-attempt reuse (§8.6); completed-attempt retry gives "Already saved by this attempt" with no duplicate (§8.7); offline verify is owner-attested (no screenshot) |
+
+**Assessment:** the end-to-end integration meets Gate C on Preview. The exceptions are recorded above. **No Production change has been made.**
+
+**Android defect found during Gate C (not an integration defect):**
+- **What happens:** on the **Submit to TRACE** screens, typed text and unselected chips render **white on white**.
+- **Why:** `Theme.TraceCapture` (XML) is `Theme.Material.Light.NoActionBar`, so the window is white. `TraceCaptureTheme` (Compose) follows the system dark mode, so input and chip text are near-white. Both `setContent` blocks in `sync/SubmissionActivity.kt` render without a `Surface` or `Scaffold`, so nothing paints the themed background.
+- **Fix:** wrap each block in `Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background)`. Optionally, move the XML theme to a DayNight parent.
+- **Effect:** probably why the test labels were mistyped or missing (the text was invisible). It needs one APK rebuild, which is the owner's planned app work.
+
+**Android follow-ups (owner's app work):**
+1. Submission screen theming (above).
+2. Warn when a text lead is only a social URL (§8.5, finding 2).
+3. Reddit `/s/` share links: resolve them to the permanent post URL, or flag them for canonicalisation at review (§8.5, finding 3; ADR 0009).
+
+**Test records left on Preview** (labelled by id and provenance; archive when convenient):
+- Desk: `capture-4167852a…`, `capture-4e803e86…`.
+- Social signal: `1` (`/r/AI_Agents/s/jdIXHt1ROR`).
 
 ## 9. Gate D: Production (separate approval)
 
