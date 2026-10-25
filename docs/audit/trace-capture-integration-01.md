@@ -237,8 +237,15 @@ The owner added the Preview Access bypass for `/api/capture/receipt`. All checks
 
 ### 8.4 Later steps (each authorised separately)
 
-11. **Retry safety:** on the same capture, tap **Reopen same browser submission** and confirm again. Expect "Already saved by this attempt" and no second row.
-12. **Offline:** for a second capture, turn on airplane mode before **Verify TRACE receipt**. Expect `FAILED` with the capture intact. Turn airplane mode off and tap **Verify TRACE receipt** again. Expect `SYNCED`.
+11. **Retry safety and offline, on one new capture.** A confirmed capture no longer offers a resubmit option (`prepare` refuses an attempt that already has a server id), so this test uses a new capture and creates exactly one record:
+    1. Submit a new `[QA-CAPTURE]` text lead.
+    2. Confirm in the browser ("Saved: lead capture-X"), but **do not** tap Return.
+    3. Switch back to the app through Recents and tap **Reopen same browser submission**. Confirm again. Expect "Already saved by this attempt: lead capture-X".
+12. **Offline, continuing from step 11.**
+    1. Turn on airplane mode, tap **Return receipt to TRACE Capture**, then **Verify TRACE receipt**. Expect a failure message, with the capture intact and not confirmed.
+    2. Turn airplane mode off and tap **Verify TRACE receipt** again. Expect "TRACE record confirmed: capture-X".
+
+    **Read-back:** exactly one new `capture-*` lead.
 13. **Social signal (Sharesheet):** in Reddit, Share → **TRACE Capture** → save, then submit as **Social signal** (platform `reddit`).
     - Reason: `[QA-CAPTURE] Gate C social-signal test, not for publication`.
     - Expect the exact post URL in `/admin/social` on Preview, status pending.
