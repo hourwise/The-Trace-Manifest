@@ -178,7 +178,8 @@ export async function reviewKnowledgeRevision(
         payload.sourceSetHash ?? document.source_set_hash, payload.evidenceStatus ?? document.evidence_status, payload.reviewAfter ?? document.review_after, payload.hardExpiry ?? document.hard_expiry, revision.knowledge_document_id),
     db.prepare("UPDATE knowledge_revision_decisions SET decision = 'approved', reviewed_by = ?, reviewed_at = datetime('now'), review_note = ? WHERE revision_id = ? AND decision IS NULL").bind(input.reviewer, input.reviewNote ?? null, revision.id),
   ]);
-  if (Number(result[0]?.meta.changes ?? 0) !== 1 || Number(result[1]?.meta.changes ?? 0) !== 1) throw new KnowledgeRevisionError("revision_changed", "Revision changed before review was saved.", 409);
+  // D1 counts trigger-written rows; knowledge_documents has a search-index update trigger.
+  if (Number(result[0]?.meta.changes ?? 0) !== 1 || Number(result[1]?.meta.changes ?? 0) < 1) throw new KnowledgeRevisionError("revision_changed", "Revision changed before review was saved.", 409);
   return { revisionId: revision.id, decision, status: "approved", knowledgeDocumentId: revision.knowledge_document_id };
 }
 

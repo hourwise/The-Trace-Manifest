@@ -272,7 +272,8 @@ export async function publishStory(
     .bind(input.clusterId);
 
   const batchResult = await env.DB.batch([publicationUpdate, memberUpdate]);
-  if (Number(batchResult[0].meta.changes ?? 0) !== 1) {
+  // D1 counts the story_clusters search-index trigger's writes, so success reports more than 1.
+  if (Number(batchResult[0].meta.changes ?? 0) < 1) {
     return { success: false, error: "Publication state changed concurrently; reload and review again." };
   }
 
@@ -728,7 +729,9 @@ export async function archiveCluster(
     `UPDATE story_clusters SET publication_status = 'withdrawn', updated_at = datetime('now')
      WHERE id = ? AND publication_status IN ('draft', 'review')`,
   ).bind(clusterId).run();
-  if (Number(changed.meta.changes ?? 0) !== 1) {
+  // D1 counts rows written by triggers (story_clusters has a search-index
+  // update trigger), so a successful single-row update reports more than 1.
+  if (Number(changed.meta.changes ?? 0) < 1) {
     return { success: false, error: "Only draft or review clusters can be archived." };
   }
 
