@@ -10,6 +10,9 @@ import { POST as submit } from "../src/pages/api/admin/capture-submit";
 
 let checks = 0;
 function check(value: unknown, label: string) { assert.ok(value, label); checks++; }
+/** Changes one character of a receipt's signed body. Never touches the MAC's
+ *  trailing base64url padding bits, which can decode to the same bytes. */
+const tamperBody = (receipt: string, at = 5) => receipt.slice(0, at) + (receipt[at] === "x" ? "y" : "x") + receipt.slice(at + 1);
 const secret = "fixture-only-".repeat(4), origin = "https://thetracemanifest.com", environment = "production";
 const verifier = "a".repeat(43);
 const p = { version: 1, captureId: crypto.randomUUID(), requestId: crypto.randomUUID(), kind: "social",
@@ -33,7 +36,7 @@ check((await verifyReceipt(token, verifier, origin, secret, environment))?.diges
 check(!await verifyReceipt(token, "b".repeat(43), origin, secret, environment), "stolen callback cannot redeem without phone verifier");
 check(!await verifyReceipt(token, verifier, "https://preview.example", secret, environment), "receipt bound to environment");
 check(!await verifyReceipt(token, verifier, origin, "wrong-secret".repeat(4), environment), "wrong signer rejected");
-check(!await verifyReceipt(token.slice(0, 10) + "x" + token.slice(11), verifier, origin, secret, environment), "tampering rejected");
+check(!await verifyReceipt(tamperBody(token, 10), verifier, origin, secret, environment), "tampering rejected");
 check(!await verifyReceipt(await signReceipt({ ...receipt, expires: 1 }, secret, environment), verifier, origin, secret, environment), "expired receipt rejected");
 
 // Integration review: the receipt key is derived, never the raw internal secret,
@@ -243,7 +246,7 @@ try {
     } }) };
     check((await redeemAs(saved.receipt, "c".repeat(43), origin, countingEnv)).status === 401, "wrong verifier refused");
     check((await redeemAs(saved.receipt, verifier, "https://launch-05r-preview.the-trace-manifest.pages.dev", countingEnv)).status === 401, "receipt from another environment refused");
-    check((await redeemAs(saved.receipt.replace(/.$/, (c) => c === "A" ? "B" : "A"), verifier, origin, countingEnv)).status === 401, "tampered receipt refused");
+    check((await redeemAs(tamperBody(saved.receipt), verifier, origin, countingEnv)).status === 401, "tampered receipt refused");
     check((await redeemAs(saved.receipt, verifier, origin, { ...countingEnv, TRACE_ENVIRONMENT: "preview" })).status === 401, "receipt refused under another environment's key");
     check(reads === 0, "no D1 read for any invalid proof");
     check((await redeemAs(saved.receipt, verifier, origin, { ...env, TRACE_INTERNAL_SERVICE_SECRET: "" })).status === 503, "unconfigured receipt service fails closed");
