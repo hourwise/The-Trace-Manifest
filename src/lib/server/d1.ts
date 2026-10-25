@@ -176,6 +176,29 @@ export function retiredPublicStorySql(alias = "sc"): string {
     AND ${alias}.reviewed_at IS NOT NULL`;
 }
 
+/**
+ * The currently published story that a reviewed `supersedes` relationship
+ * names as replacing `storyId`. One indexed lookup (target_story_id,
+ * relationship); null when no such link exists.
+ */
+export async function getSupersedingStory(
+  db: D1Database,
+  storyId: number,
+): Promise<{ slug: string; headline: string } | null> {
+  if (!Number.isInteger(storyId) || storyId < 1) return null;
+  const row = await db.prepare(`
+    SELECT replacement.slug, replacement.title AS headline
+    FROM story_relationships relation
+    JOIN story_clusters replacement ON replacement.id = relation.source_story_id
+    WHERE relation.target_story_id = ? AND relation.relationship = 'supersedes'
+      AND relation.reviewed_at IS NOT NULL
+      AND ${publicStoryEligibilitySql("replacement")}
+    ORDER BY replacement.published_at DESC
+    LIMIT 1
+  `).bind(storyId).first<{ slug: string; headline: string }>();
+  return row ? { slug: row.slug, headline: row.headline } : null;
+}
+
 export async function getPublishedStoryBySlug(
   db: D1Database,
   slug: string,

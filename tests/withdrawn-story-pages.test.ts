@@ -5,7 +5,9 @@ import {
   getPublishedSourcesForStory,
   getPublishedStories,
   getPublishedStoryBySlug,
+  getSupersedingStory,
 } from "../src/lib/server/d1";
+import { retiredStoryNotice } from "../src/lib/public/retired-story";
 import { SQLiteD1 } from "./sqlite-d1";
 
 // A withdrawn or superseded story keeps its public page, with its status
@@ -55,14 +57,45 @@ assert.deepEqual(await getPublishedSourcesForStory(d1, 954), []);
 assert.deepEqual(await getPublishedSourcesForStory(d1, 955), []);
 assert.deepEqual(await getCorrectionsForStory(d1, 954), []);
 
+// Notice wording: never shown for published stories; never claims a replacement it was not given.
+{
+  assert.equal(retiredStoryNotice("published"), null);
+  assert.equal(retiredStoryNotice("draft"), null);
+  const withdrawnNotice = retiredStoryNotice("withdrawn");
+  assert.equal(withdrawnNotice?.title, "This story has been withdrawn");
+  assert.match(withdrawnNotice!.paragraphs.join(" "), /should not be treated as verified information/);
+  assert.doesNotMatch(withdrawnNotice!.paragraphs.join(" "), /because/, "no single cause is implied for every withdrawal");
+  assert.match(withdrawnNotice!.evidenceLabel, /historical, not a current assessment/);
+  const orphan = retiredStoryNotice("superseded");
+  assert.equal(orphan?.replacement, null);
+  assert.doesNotMatch(orphan!.paragraphs.join(" "), /Read the current story/);
+  const linked = retiredStoryNotice("superseded", { slug: "live-story", headline: "Live story" });
+  assert.deepEqual(linked?.replacement, { slug: "live-story", headline: "Live story" });
+}
+
+// Supersession is linked only through a reviewed relationship to a currently published story.
+{
+  db.sqlite.exec(`
+    INSERT INTO story_relationships (id, source_story_id, target_story_id, relationship, created_by, reviewed_at) VALUES
+      ('rel-ok', 951, 953, 'supersedes', 'publisher@example.test', '2026-07-22T00:00:00Z'),
+      ('rel-unreviewed', 951, 952, 'supersedes', 'publisher@example.test', NULL),
+      ('rel-retired-source', 952, 951, 'supersedes', 'publisher@example.test', '2026-07-22T00:00:00Z');
+  `);
+  assert.deepEqual(await getSupersedingStory(d1, 953), { slug: "live-story", headline: "Live story" });
+  assert.equal(await getSupersedingStory(d1, 952), null, "an unreviewed relationship is not a replacement");
+  assert.equal(await getSupersedingStory(d1, 951), null, "a withdrawn story is never offered as the replacement");
+  const plan = db.sqlite.prepare("EXPLAIN QUERY PLAN SELECT 1 FROM story_relationships WHERE target_story_id = 953 AND relationship = 'supersedes'").all() as Array<{ detail: string }>;
+  assert.ok(plan.some((row) => /idx_story_relationships_target/.test(row.detail)), "the lookup uses the target index");
+}
+
 // The page uses the retired-aware loader, shows the banners and is noindex when retired.
 {
   const page = readFileSync("src/pages/stories/[slug].astro", "utf8").replace(/\r\n/g, "\n");
   assert.match(page, /getPublishedStoryBySlug\(db, slug, \{ includeRetired: true \}\)/);
-  assert.match(page, /story\.publicationStatus === "withdrawn" && \(/);
-  assert.match(page, /This story has been withdrawn\./);
-  assert.match(page, /story\.publicationStatus === "superseded" && \(/);
+  assert.match(page, /const notice = retiredStoryNotice\(story\.publicationStatus, replacement\);/);
+  assert.match(page, /data-retired-notice=\{notice\.status\}/);
   assert.match(page, /noindex=\{retired\}/);
+  // Rendered-HTML behaviour is covered by tests/story-page-render.test.ts on the built page.
   const layout = readFileSync("src/layouts/BaseLayout.astro", "utf8").replace(/\r\n/g, "\n");
   assert.match(layout, /\{noindex && <meta name="robots" content="noindex" \/>\}/);
 }

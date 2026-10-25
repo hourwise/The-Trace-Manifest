@@ -29,7 +29,8 @@
     "test:migrations": "node scripts/validate-migrations.mjs && node scripts/validate-legacy-production-migration.mjs",
     "test:diff": "node scripts/diff-check.mjs",
     "audit:production": "node scripts/audit-production.mjs",
-    "ci": "npm run test:diff && npm run typecheck && npm test && npm run test:migrations && npm run test:security && npm run test:evidence-policy && npm run test:knowledge-markdown && npm run build"
+    "test:story-render": "tsx tests/story-page-render.test.ts",
+    "ci": "npm run test:diff && npm run typecheck && npm test && npm run test:migrations && npm run test:security && npm run test:evidence-policy && npm run test:knowledge-markdown && npm run build && npm run test:story-render"
   },
   "dependencies": {
     "@astrojs/check": "^0.9.9",
