@@ -3,6 +3,13 @@ import AdminLayout from "../../layouts/AdminLayout.astro";
 
 export const prerender = false;
 const editorialAIEnabled = Astro.locals.runtime.env.TRACE_AI_EDITORIAL_ENABLED === "true";
+// Readers may list signals (the proxy allows GET), but submitting, approving
+// and rejecting are publisher writes. This page writes D1 directly, so it
+// refuses non-publisher POSTs before any write and renders no write controls.
+const isPublisher = Astro.locals.operator?.role === "publisher";
+if (Astro.request.method === "POST" && !isPublisher) {
+  return new Response("Forbidden", { status: 403, headers: { "Cache-Control": "no-store" } });
+}
 
 interface SignalRow {
   id: number; platform: string; canonical_url: string;
@@ -123,7 +130,8 @@ try {
       <h2>Submit a Social Signal</h2>
       {actionMessage && <div class="card" style="margin-bottom:1rem;background:color-mix(in oklch, var(--ev-confirmed) 10%, transparent);border-left:3px solid var(--ev-confirmed);"><p style="margin:0;">{actionMessage}</p></div>}
       {actionError && <div class="card" style="margin-bottom:1rem;background:color-mix(in oklch, var(--ev-disputed) 10%, transparent);border-left:3px solid var(--ev-disputed);"><p style="margin:0;color:var(--ev-disputed);">{actionError}</p></div>}
-      <form method="POST" class="card" style="background:var(--surface-2);">
+      {!isPublisher && <p class="card meta" role="note" data-social-read-only>You have read-only access. Submitting, approving and rejecting signals are done by publishers.</p>}
+      {isPublisher && <form method="POST" class="card" style="background:var(--surface-2);">
         <div style="display:flex;flex-direction:column;gap:1rem;">
           <div>
             <label for="sig-platform" style="font-size:0.85rem;font-weight:600;display:block;margin-bottom:0.25rem;">Platform</label>
@@ -170,7 +178,7 @@ try {
         <div style="margin-top:1rem;">
           <button type="submit" class="btn btn-primary">Submit Signal</button>
         </div>
-      </form>
+      </form>}
     </section>
 
     <!-- Pending signals -->
@@ -196,7 +204,7 @@ try {
                 {s.reviewed_by ? <p class="meta" style="font-size:0.7rem;margin-top:0.3rem;">Reviewed by {s.reviewed_by} · {s.reviewed_at ? new Date(s.reviewed_at).toLocaleString("en-GB") : "—"}</p> : null}
                 <p class="meta" style="font-size:0.7rem;margin-top:0.3rem;">Submitted by {s.submitted_by} · {s.submitted_at ? new Date(s.submitted_at).toLocaleString("en-GB") : "—"}</p>
               </div>
-              {s.review_status === "pending" ? (
+              {s.review_status === "pending" && isPublisher ? (
                 <div style="display:flex;flex-direction:column;gap:0.35rem;min-width:120px;">
                   <button type="button" class="btn btn-secondary ai-triage-btn" style="font-size:0.65rem;padding:0.2rem 0.4rem;width:100%;" data-signal-id={String(s.id)} data-reason={s.submission_reason} data-notes={s.reviewer_notes ?? ""} data-platform={s.platform} data-url={s.canonical_url}>🤖 AI Summarise</button>
                   <form method="POST" style="display:flex;flex-direction:column;gap:0.35rem;">
@@ -236,7 +244,9 @@ try {
       return "";
     }
 
-    document.getElementById("sig-ai-import-btn").addEventListener("click", async function() {
+    // The submission form is publisher-only markup; this script is rendered for
+    // every role (D6), so it must tolerate the missing button.
+    document.getElementById("sig-ai-import-btn")?.addEventListener("click", async function() {
       if (!aiEnabled) { alert("Editorial AI is disabled for this deployment."); return; }
       var urlField = document.getElementById("sig-url");
       var platformField = document.getElementById("sig-platform");
