@@ -7,8 +7,9 @@ export interface Props {
   description: string;
   ogImage?: string;
   currentNav?: string;
+  noindex?: boolean;
 }
-const { title, description, ogImage, currentNav } = Astro.props;
+const { title, description, ogImage, currentNav, noindex = false } = Astro.props;
 const navItems = [
   { href: "/", label: "Latest" },
   { href: "/briefing/daily", label: "Briefings" },
@@ -26,6 +27,7 @@ const navItems = [
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content={description} />
+    {noindex && <meta name="robots" content="noindex" />}
     <meta property="og:title" content={title} />
     <meta property="og:description" content={description} />
     <meta property="og:type" content="website" />

@@ -17,12 +17,15 @@ if (!slug) {
   return new Response("Not found", { status: 404 });
 }
 
-// Fetch story from D1 — returns null if slug doesn't exist or isn't published
+// Fetch story from D1. Withdrawn and superseded stories that were published
+// keep their page (with a status banner below) under the corrections policy;
+// anything never published returns null.
 const db = Astro.locals.runtime.env.DB;
-const story = await getPublishedStoryBySlug(db, slug);
+const story = await getPublishedStoryBySlug(db, slug, { includeRetired: true });
 if (!story) {
   return new Response("Not found", { status: 404 });
 }
+const retired = story.publicationStatus === "withdrawn" || story.publicationStatus === "superseded";
 
 // Fetch supporting data
 let sources: Awaited<ReturnType<typeof getPublishedSourcesForStory>> = [];
@@ -54,6 +57,7 @@ const hasConflicts = story.evidenceStatus === "disputed";
 <BaseLayout
   title={`${story.headline} — The Trace Manifest`}
   description={story.summary || `Published story: ${story.headline}`}
+  noindex={retired}
 >
   <div class="wrap" style="max-width:42rem;">
     <nav aria-label="Breadcrumb" class="meta" style="margin-bottom:1.5rem;">
