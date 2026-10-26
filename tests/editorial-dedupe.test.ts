@@ -280,4 +280,40 @@ const clustersOf = (db: SQLiteD1, feedItemId: number) =>
   db.close();
 }
 
+// 12. An already published source: promotion links to the story and changes nothing about it.
+{
+  const db = database();
+  const url = "https://lab.example/already-published";
+  await addClassifiedItem(db, 1201, url, "Lab story already published");
+  await runClustering(db.asD1());
+  const [published] = clustersOf(db, 1201);
+  db.sqlite.prepare("UPDATE story_clusters SET publication_status = 'published', slug = 'already-published', summary = 'Published summary' WHERE id = ?").run(published);
+  const before = JSON.stringify(db.sqlite.prepare("SELECT * FROM story_clusters WHERE id = ?").get(published));
+  const outcome = await promote(db, await needsReviewCandidate(db, url), url);
+  assert.deepEqual([outcome.kind, (outcome as { clusterId?: number }).clusterId, (outcome as { publicationStatus?: string }).publicationStatus], ["reused", published, "published"]);
+  assert.equal(JSON.stringify(db.sqlite.prepare("SELECT * FROM story_clusters WHERE id = ?").get(published)), before, "the published story is not modified");
+  assert.deepEqual(clustersOf(db, 1201), [published]);
+  db.close();
+}
+
+// 13. Cost per run: statements scale with groups, not with existing data.
+{
+  const db = database();
+  // Existing history that must not be scanned.
+  for (let index = 0; index < 300; index++) {
+    db.sqlite.prepare("INSERT INTO story_clusters (id, title, topic, evidence_status, publication_status) VALUES (?, ?, 'history', 'vendor_reported', 'published')").run(50_000 + index, `History ${index}`);
+  }
+  for (let index = 0; index < 10; index++) {
+    await addClassifiedItem(db, 20_000 + index, `https://lab.example/cost/${index}`, `Cost item ${index} ${"y".repeat(index)}`, { topic: `cost-${index}` });
+  }
+  const before = db.statementLog.length;
+  const run = await runClustering(db.asD1());
+  const statements = db.statementLog.slice(before);
+  assert.equal(run.clusters, 10);
+  // 1 item read + 1 membership read + per group (cluster, 1 member, 1 status, 1 empty-guard) = 2 + 10 * 4.
+  assert.equal(statements.length, 2 + 10 * 4, `clustering issued ${statements.length} statements`);
+  assert.ok(statements.every((statement) => !/FROM story_clusters\s*$|FROM story_clusters\s+WHERE\s+1/i.test(statement.sql)), "no unfiltered cluster scans");
+  db.close();
+}
+
 console.log("TRACE-EDITORIAL-DEDUPE-R1 tests passed");

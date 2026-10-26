@@ -19,6 +19,7 @@ async function seed(): Promise<SQLiteD1> {
     [703, "https://review-lab.example/withdrawn-shared"],
     [704, "https://review-lab.example/solo"],
     [705, "https://review-lab.example/ambiguous"],
+    [706, "https://review-lab.example/retired-only"],
   ];
   for (const [id, url] of items) {
     db.sqlite.prepare("INSERT INTO feed_items (id, source_id, url, url_hash, title, ingestion_status) VALUES (?, 701, ?, ?, ?, 'clustered')").run(id, url, await hashOf(url), `Item ${id}`);
@@ -33,13 +34,16 @@ async function seed(): Promise<SQLiteD1> {
       (716, NULL, 'Pending D shares with withdrawn', 'models', 'S', 'vendor_reported', 'review', 1, NULL, NULL, NULL),
       (717, NULL, 'Pending E solo', 'models', 'S', 'vendor_reported', 'review', 1, NULL, NULL, NULL),
       (718, NULL, 'Ambiguous one', 'models', 'S', 'vendor_reported', 'draft', 0, NULL, NULL, NULL),
-      (719, NULL, 'Ambiguous two', 'models', 'S', 'vendor_reported', 'draft', 0, NULL, NULL, NULL);
+      (719, NULL, 'Ambiguous two', 'models', 'S', 'vendor_reported', 'draft', 0, NULL, NULL, NULL),
+      (720, 'retired-only', 'Retired only', 'models', 'S', 'vendor_reported', 'withdrawn', 0, '2026-07-01T00:00:00Z', 'p@example.test', '2026-07-01T00:00:00Z'),
+      (721, NULL, 'Pending F shares with two drafts', 'models', 'S', 'vendor_reported', 'review', 1, NULL, NULL, NULL);
     INSERT INTO story_cluster_members (cluster_id, feed_item_id, is_primary) VALUES
       (711, 701, 1), (712, 701, 1),
       (713, 702, 1), (714, 702, 1),
       (715, 703, 1), (716, 703, 1),
       (717, 704, 1),
-      (718, 705, 1), (719, 705, 1);
+      (718, 705, 1), (719, 705, 1), (721, 705, 1),
+      (720, 706, 1);
   `);
   return db;
 }
@@ -55,6 +59,7 @@ if (!existsSync(REVIEW) || !existsSync(DESK)) throw new Error("Run npm run build
     ["c-exact", "https://review-lab.example/solo", "needs_review"],
     ["c-ambiguous", "https://review-lab.example/ambiguous", "needs_review"],
     ["c-done", "https://review-lab.example/solo", "published"],
+    ["c-retired", "https://review-lab.example/retired-only", "needs_review"],
   ] as const) {
     db.sqlite.prepare("INSERT INTO editorial_candidates (id, intake_type, submitted_url, lead_text, source_hash, state, created_by) VALUES (?, 'manual_url', ?, 'Lead text for the candidate', ?, ?, 'publisher@example.test')")
       .run(id, url, `${id}-hash`, state);
@@ -72,7 +77,8 @@ if (!existsSync(REVIEW) || !existsSync(DESK)) throw new Error("Run npm run build
       } as unknown as App.Locals,
       request: new Request(`https://thetracemanifest.com${path.includes("desk") ? "/admin/desk" : "/admin/review"}`),
     });
-    return { status: response.status, html: response.status === 200 ? await response.text() : "" };
+    // Scoped-style attributes are build noise for these assertions.
+    return { status: response.status, html: response.status === 200 ? (await response.text()).replace(/ data-astro-cid-[a-z0-9]+/g, "") : "" };
   };
 
   for (const role of ["publisher", "reader"] as const) {
@@ -89,7 +95,15 @@ if (!existsSync(REVIEW) || !existsSync(DESK)) throw new Error("Run npm run build
     assert.match(card(716), /\(withdrawn story\)/);
     assert.doesNotMatch(card(717), /pending-source-conflicts/, "no warning without a shared source");
     assert.match(card(711), /role="note" aria-label="Source conflicts for #711"/);
-    assert.match(html, /data-queue-summary[^>]*>[^<]*Duplicate source: 2/, "the queue summary counts each category");
+    assert.match(html, /data-queue-summary[^>]*>[^<]*Duplicate source: 3/, "the queue summary counts each category");
+    // Ambiguous: one source item held by several current clusters.
+    assert.match(card(721), /Shares a source item with 2 other clusters/);
+    assert.match(card(721), /data-conflict-cluster="718"[\s\S]*data-conflict-cluster="719"/);
+    assert.match(card(721), /Not in the pending queue\./, "clusters outside the queue are named without a dead link");
+    // Keyboard: every new control is a native, focusable link or button.
+    assert.match(card(711), /<a href="\/admin\/review\?review=712">Open #712 in review<\/a>/);
+    assert.doesNotMatch(card(711) + card(721), /tabindex="-1"|onclick=/);
+    assert.match(card(711), /<button type="button" class="btn btn-primary" data-review-open="711"/);
     if (role === "reader") assert.match(card(711), /Inspect evidence and history/, "readers keep the read-only action");
   }
 
@@ -100,6 +114,9 @@ if (!existsSync(REVIEW) || !existsSync(DESK)) throw new Error("Run npm run build
   assert.match(desk.html, /data-source-relationship="ambiguous"/);
   assert.match(desk.html, /<button[^>]*disabled[^>]*aria-describedby="source-c-ambiguous"/, "an ambiguous source cannot be promoted from the Desk");
   assert.doesNotMatch(desk.html, /id="source-c-done"/, "closed candidates carry no notice");
+  // Retired-only source: refused promotion is explained and the button is disabled.
+  assert.match(desk.html, /id="source-c-retired" data-source-relationship="retired"[^>]*>\s*Source appears only in withdrawn or superseded stories \(#720 \(withdrawn\)\)/);
+  assert.match(desk.html, /<button[^>]*disabled[^>]*aria-describedby="source-c-retired"/);
   assert.equal((await render(DESK, "reader")).status, 403, "readers still cannot open TRACE Desk");
 
   assert.deepEqual(writeCounts(), before, "rendering the review queue and Desk writes nothing");

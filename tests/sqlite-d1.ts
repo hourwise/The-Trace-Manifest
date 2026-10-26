@@ -81,6 +81,8 @@ export class SQLiteD1 {
     applySourceIdentityV2 = applySourceIdentityDiagnostics,
     applyReviewerGovernance = true,
     applyEvidenceLibraryGovernance = applyReviewerGovernance,
+    /** false gives the pre-0077 (current Production) story_clusters shape. */
+    applyEditorialSourceIdentity = true,
   ) {
     this.sqlite.exec(readFileSync("db/schema.sql", "utf8"));
     this.sqlite.exec(readFileSync("db/migration-5e-publication.sql", "utf8"));
@@ -140,7 +142,9 @@ export class SQLiteD1 {
     if (applyReviewerGovernance && applyEvidenceLibraryGovernance) {
       this.sqlite.exec(readFileSync("db/migration-0076-evidence-library-governance.sql", "utf8"));
     }
-    this.sqlite.exec(readFileSync("db/migration-0077-editorial-source-identity.sql", "utf8"));
+    if (applyEditorialSourceIdentity) {
+      this.sqlite.exec(readFileSync("db/migration-0077-editorial-source-identity.sql", "utf8"));
+    }
     this.sqlite.exec(readFileSync("db/migration-0078-newsletter-subscriptions.sql", "utf8"));
     this.sqlite.exec(readFileSync("db/migration-0079-newsletter-issues.sql", "utf8"));
   }
