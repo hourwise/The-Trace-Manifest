@@ -2,6 +2,7 @@
 import AdminLayout from "../../layouts/AdminLayout.astro";
 import { auditNewsletterAction, newsletterCounts, newsletterSecret, newsletterSignupEnabled } from "../../lib/server/newsletter";
 import { emailFrom, processEmailOutbox, transportFromEnv } from "../../lib/server/email-outbox";
+import { dispatchedIssueRenderer } from "../../lib/server/newsletter-issues";
 
 export const prerender = false;
 // Publisher-only, like TRACE Desk: the page reads subscriber state and can run
@@ -25,7 +26,7 @@ if (Astro.request.method === "POST") {
     actionError = "Email delivery is not configured, so nothing was sent.";
   } else {
     try {
-      const result = await processEmailOutbox({ db: env.DB, transport: transport!, secret: secret!, from: from!, siteUrl: new URL(Astro.request.url).origin, limit: 10 });
+      const result = await processEmailOutbox({ db: env.DB, transport: transport!, secret: secret!, from: from!, siteUrl: new URL(Astro.request.url).origin, limit: 10, renderIssue: dispatchedIssueRenderer(env.DB, new URL(Astro.request.url).origin) });
       await auditNewsletterAction(env.DB, Astro.locals.operator, "process_email_outbox", "succeeded",
         `claimed:${result.claimed};sent:${result.sent};retried:${result.retried};failed:${result.failed};cancelled:${result.cancelled}`);
       actionMessage = `Processed ${result.claimed} queued email(s): ${result.sent} sent, ${result.retried} to retry, ${result.failed} failed, ${result.cancelled} cancelled.`;
@@ -48,7 +49,7 @@ Astro.response.headers.set("Cache-Control", "no-store");
 <AdminLayout title="Admin — Newsletter" description="TRACE Weekly subscriptions and email outbox.">
   <div class="wrap" style="max-width:820px;">
     <h1>TRACE Weekly</h1>
-    <p class="meta"><a href="/admin">Admin home</a></p>
+    <p class="meta"><a href="/admin">Admin home</a> · <a href="/admin/newsletter/issues">Prepare issues</a></p>
     {actionMessage && <p class="card" role="status">{actionMessage}</p>}
     {actionError && <p class="card" role="alert" style="color:var(--ev-disputed);">{actionError}</p>}
 

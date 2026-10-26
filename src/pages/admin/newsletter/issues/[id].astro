@@ -1,0 +1,125 @@
+---
+import AdminLayout from "../../../../layouts/AdminLayout.astro";
+import {
+  NewsletterIssueError, approveIssue, changedIssueStories, editIssue, getIssue, markIssueReady, queueIssueDispatch, renderIssueEmail,
+} from "../../../../lib/server/newsletter-issues";
+
+export const prerender = false;
+if (Astro.locals.operator?.role !== "publisher") return new Response("Forbidden", { status: 403, headers: { "Cache-Control": "no-store" } });
+
+const env = Astro.locals.runtime.env;
+const db = env.DB;
+const id = Astro.params.id ?? "";
+const dispatchEnabled = env.TRACE_NEWSLETTER_DISPATCH_ENABLED === "true";
+let actionMessage: string | null = null;
+let actionError: string | null = null;
+
+if (Astro.request.method === "POST") {
+  const form = await Astro.request.formData();
+  const action = String(form.get("_action") ?? "");
+  const expectedHash = String(form.get("expectedHash") ?? "");
+  const operator = Astro.locals.operator;
+  try {
+    if (action === "intro") {
+      await editIssue(db, operator, id, { expectedHash, intro: String(form.get("intro") ?? "") });
+      actionMessage = "Introduction saved. The issue is a draft and needs approval again.";
+    } else if (action === "exclude") {
+      await editIssue(db, operator, id, { expectedHash, excludeStoryId: Number(form.get("storyId")) });
+      actionMessage = "Story removed from this issue. It needs approval again.";
+    } else if (action === "approve") {
+      const outcome = await approveIssue(db, operator, id, expectedHash);
+      if (outcome.status === "approved") actionMessage = "Approved. This exact content is now locked; any edit returns it to draft.";
+      else actionError = `Not approved: stories ${outcome.storyIds.map((storyId) => `#${storyId}`).join(", ")} changed or are no longer public. Exclude them or generate a new draft.`;
+    } else if (action === "ready") {
+      const outcome = await markIssueReady(db, operator, id);
+      if (outcome.status === "ready") actionMessage = "Marked ready for manual dispatch.";
+      else actionError = `Not ready: stories ${outcome.storyIds.map((storyId) => `#${storyId}`).join(", ")} changed since approval. Generate a new draft.`;
+    } else if (action === "dispatch") {
+      const outcome = await queueIssueDispatch(db, operator, id, { dispatchEnabled });
+      if (outcome.status === "disabled") actionError = "Dispatch is disabled (TRACE_NEWSLETTER_DISPATCH_ENABLED is not set). Nothing was queued.";
+      else if (outcome.status === "queued") actionMessage = `Queued for ${outcome.recipients} confirmed subscriber(s). Sending happens from the outbox when delivery is enabled.`;
+      else actionError = `Not dispatched: stories ${outcome.storyIds.map((storyId) => `#${storyId}`).join(", ")} changed.`;
+    } else {
+      actionError = "Unknown action.";
+    }
+  } catch (error) {
+    actionError = error instanceof NewsletterIssueError ? error.message : "The action failed; nothing was changed.";
+  }
+}
+
+const issue = await getIssue(db, id).catch(() => null);
+if (!issue) return new Response("Not found", { status: 404, headers: { "Cache-Control": "no-store" } });
+const origin = new URL(Astro.request.url).origin;
+const preview = renderIssueEmail(issue, { siteUrl: origin, unsubscribeUrl: `${origin}/newsletter/unsubscribe?token=PREVIEW` });
+const changed = ["draft", "approved", "ready_for_dispatch"].includes(issue.status) ? await changedIssueStories(db, issue.stories).catch(() => []) : [];
+const editable = issue.status === "draft" || issue.status === "approved";
+Astro.response.headers.set("Cache-Control", "no-store");
+---
+
+<AdminLayout title={`Admin — TRACE Weekly ${issue.issueDate}`} description="Review and approve a TRACE Weekly issue.">
+  <div class="wrap" style="max-width:900px;">
+    <h1>TRACE Weekly {issue.issueDate} <span class="meta">v{issue.version}</span></h1>
+    <p class="meta"><a href="/admin/newsletter/issues">← Issues</a> · Status: <strong data-issue-status={issue.status}>{issue.status.replace(/_/g, " ")}</strong>{issue.approvedBy && <> · approved {issue.approvedAt}</>}</p>
+    {actionMessage && <p class="card" role="status">{actionMessage}</p>}
+    {actionError && <p class="card" role="alert" style="color:var(--ev-disputed);">{actionError}</p>}
+    {changed.length > 0 && <p class="card" role="alert" data-changed-stories style="color:var(--ev-disputed);">Stories {changed.map((storyId) => `#${storyId}`).join(", ")} changed or are no longer public since this draft. Exclude them or generate a new draft.</p>}
+
+    <section class="card" style="margin-top:1rem;">
+      <h2 style="font-size:1.1rem;">1. Stories ({issue.stories.length})</h2>
+      <ol data-issue-stories>
+        {issue.stories.map((story) => (
+          <li style="margin-bottom:0.5rem;">
+            <a href={`/stories/${story.slug}`}>{story.headline}</a> <span class="meta">({story.evidenceStatus.replace(/_/g, " ")}, {story.publishedAt.slice(0, 10)})</span>
+            {editable && issue.stories.length > 1 && (
+              <form method="POST" style="display:inline;margin-left:0.5rem;">
+                <input type="hidden" name="_action" value="exclude" />
+                <input type="hidden" name="expectedHash" value={issue.contentHash} />
+                <input type="hidden" name="storyId" value={String(story.id)} />
+                <button type="submit" class="btn btn-secondary" style="font-size:0.7rem;padding:0.1rem 0.4rem;">Exclude</button>
+              </form>
+            )}
+          </li>
+        ))}
+      </ol>
+    </section>
+
+    <section class="card" style="margin-top:1rem;">
+      <h2 style="font-size:1.1rem;">2. Introduction</h2>
+      {editable ? (
+        <form method="POST" style="display:grid;gap:0.5rem;">
+          <input type="hidden" name="_action" value="intro" />
+          <input type="hidden" name="expectedHash" value={issue.contentHash} />
+          <label for="issue-intro" class="meta">Plain text; blank lines separate paragraphs.</label>
+          <textarea id="issue-intro" name="intro" rows="5" maxlength="1200" style="width:100%;">{issue.intro}</textarea>
+          <div><button type="submit" class="btn btn-secondary">Save introduction</button></div>
+        </form>
+      ) : <p>{issue.intro}</p>}
+    </section>
+
+    <section class="card" style="margin-top:1rem;">
+      <h2 style="font-size:1.1rem;">3. Preview</h2>
+      <p class="meta" style="font-size:0.8rem;">Exactly what subscribers would receive (the unsubscribe link is a placeholder here).</p>
+      <iframe title="TRACE Weekly email preview" sandbox="" srcdoc={preview.html} style="width:100%;height:640px;border:1px solid var(--border);border-radius:var(--radius);background:#fff;" data-issue-preview></iframe>
+      <details style="margin-top:0.5rem;"><summary>Plain-text version</summary><pre style="white-space:pre-wrap;font-size:0.8rem;" data-issue-text>{preview.text}</pre></details>
+    </section>
+
+    <section class="card" style="margin-top:1rem;">
+      <h2 style="font-size:1.1rem;">4. Approve and dispatch</h2>
+      <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+        {issue.status === "draft" && (
+          <form method="POST"><input type="hidden" name="_action" value="approve" /><input type="hidden" name="expectedHash" value={issue.contentHash} />
+            <button type="submit" class="btn btn-primary">Approve this exact content</button></form>
+        )}
+        {issue.status === "approved" && (
+          <form method="POST"><input type="hidden" name="_action" value="ready" /><input type="hidden" name="expectedHash" value={issue.contentHash} />
+            <button type="submit" class="btn btn-primary">Mark ready for manual dispatch</button></form>
+        )}
+        {issue.status === "ready_for_dispatch" && (
+          <form method="POST"><input type="hidden" name="_action" value="dispatch" /><input type="hidden" name="expectedHash" value={issue.contentHash} />
+            <button type="submit" class="btn btn-primary" disabled={!dispatchEnabled} aria-describedby="dispatch-note">Queue for confirmed subscribers</button></form>
+        )}
+      </div>
+      <p id="dispatch-note" class="meta" style="font-size:0.8rem;">Dispatch {dispatchEnabled ? "is enabled" : "is disabled (TRACE_NEWSLETTER_DISPATCH_ENABLED)"}. Queuing happens once per approved issue; sending is done by the outbox, which is a separate, gated step.</p>
+    </section>
+  </div>
+</AdminLayout>
