@@ -82,7 +82,7 @@ const tokenFrom = (text: string, path: string) => decodeURIComponent(new RegExp(
   assert.equal(Number(one(db, "SELECT COUNT(*) AS n FROM email_outbox").n), 1);
 
   // Issue delivery carries List-Unsubscribe; following it unsubscribes and removes the address.
-  db.sqlite.prepare("INSERT INTO email_outbox (id, idempotency_key, kind, subscriber_id, issue_id) VALUES ('issue-1', 'issue:1', 'newsletter_issue', ?, 'issue-a')").run(subscriber.id as string);
+  db.sqlite.prepare("INSERT INTO email_outbox (id, idempotency_key, kind, subscriber_id, issue_id, next_attempt_at) VALUES ('issue-1', 'issue:1', 'newsletter_issue', ?, 'issue-a', '2026-10-26 09:00:00')").run(subscriber.id as string);
   const issueRun = await run(db, transport, later(40), {
     renderIssue: async (_issueId, unsubscribeUrl) => ({ subject: "TRACE Weekly", text: `Body\nUnsubscribe: ${unsubscribeUrl}`, html: `<p>Body</p><a href="${escapeHtml(unsubscribeUrl)}">Unsubscribe</a>` }),
   });
@@ -90,7 +90,7 @@ const tokenFrom = (text: string, path: string) => decodeURIComponent(new RegExp(
   const issue = transport.sent.at(-1)!;
   const unsubscribeToken = tokenFrom(issue.text, "/newsletter/unsubscribe");
   assert.match(issue.headers["List-Unsubscribe"], /^<https:\/\/thetracemanifest\.com\/newsletter\/unsubscribe\?token=/);
-  db.sqlite.prepare("INSERT INTO email_outbox (id, idempotency_key, kind, subscriber_id, issue_id) VALUES ('issue-2', 'issue:2', 'newsletter_issue', ?, 'issue-b')").run(subscriber.id as string);
+  db.sqlite.prepare("INSERT INTO email_outbox (id, idempotency_key, kind, subscriber_id, issue_id, next_attempt_at) VALUES ('issue-2', 'issue:2', 'newsletter_issue', ?, 'issue-b', '2026-10-26 09:00:00')").run(subscriber.id as string);
   assert.equal(await unsubscribeNewsletter(env(db, { TRACE_NEWSLETTER_SIGNUP_ENABLED: "false" }), unsubscribeToken, later(50)), "unsubscribed", "unsubscribe works even when signup is closed");
   const gone = one(db, "SELECT status, email, unsubscribe_token_hash FROM newsletter_subscribers");
   assert.deepEqual([gone.status, gone.email, gone.unsubscribe_token_hash], ["unsubscribed", null, null], "the address is removed");
@@ -225,6 +225,53 @@ const tokenFrom = (text: string, path: string) => decodeURIComponent(new RegExp(
   assert.equal(counts.subscribers.pending, 1);
   assert.equal(JSON.stringify(counts).includes("@"), false, "admin counts contain no addresses");
   db.close();
+}
+
+// Hardening (TRACE-RESTORE-02): tampered tokens, bounded cost per request, exact provider request.
+{
+  const db = new SQLiteD1();
+  const transport = new MockEmailTransport();
+  await requestNewsletterSignup(env(db), { email: "tamper@example.test", networkIdentity: "198.51.100.150" }, t0);
+  await run(db, transport, t0);
+  const token = tokenFrom(transport.sent[0].text, "/newsletter/confirm");
+  const flipped = token.slice(0, -1) + (token.endsWith("A") ? "B" : "A");
+  assert.equal(await confirmNewsletterSubscription(env(db), flipped, later(1)), "invalid", "a modified token fails");
+  assert.equal(await confirmNewsletterSubscription(env(db), `${token}x`, later(1)), "invalid", "an extended token fails");
+  assert.equal(await confirmNewsletterSubscription(env(db), token.slice(0, 20), later(1)), "invalid", "a truncated token fails");
+  assert.equal(one(db, "SELECT status FROM newsletter_subscribers").status, "pending", "failed attempts change nothing");
+  assert.equal(await unsubscribeNewsletter(env(db), flipped, later(1)), "invalid");
+
+  // D1 cost per public request is bounded: disabled, invalid and honeypot requests cost nothing;
+  // a valid one at most rate-limit upsert + lookup + one batch of two writes.
+  const cost = async (input: Parameters<typeof requestNewsletterSignup>[1], overrides: Record<string, string | undefined> = {}) => {
+    const before = db.statementLog.length;
+    await requestNewsletterSignup(env(db, overrides), input, later(500));
+    return db.statementLog.length - before;
+  };
+  assert.equal(await cost({ email: "x@example.test", networkIdentity: "198.51.100.151" }, { TRACE_NEWSLETTER_SIGNUP_ENABLED: "false" }), 0);
+  assert.equal(await cost({ email: "not-an-address", networkIdentity: "198.51.100.152" }), 0);
+  assert.equal(await cost({ email: "bot@example.test", networkIdentity: "198.51.100.153", honeypot: "spam" }), 0);
+  assert.ok(await cost({ email: "fresh@example.test", networkIdentity: "198.51.100.154" }) <= 4, "a new signup costs at most 4 statements");
+  assert.ok(await cost({ email: "fresh@example.test", networkIdentity: "198.51.100.155" }) <= 4, "a repeat signup costs at most 4 statements");
+  db.close();
+}
+{
+  // The Resend request carries exactly the message fields; the key is only in the header.
+  let body: Record<string, unknown> = {};
+  let headers: Record<string, string> = {};
+  const fakeFetch = (async (_url: string, init: RequestInit) => {
+    body = JSON.parse(String(init.body));
+    headers = init.headers as Record<string, string>;
+    return new Response(JSON.stringify({ id: "msg_1" }), { status: 200 });
+  }) as unknown as typeof fetch;
+  const apiKey = "re_test_" + "z".repeat(24);
+  await new ResendEmailTransport(apiKey, fakeFetch).send({ to: "x@example.test", from: FROM, subject: "S", text: "T", html: "<p>H</p>", headers: { "List-Unsubscribe": "<https://thetracemanifest.com/u>" }, idempotencyKey: "idem-1" });
+  assert.deepEqual(Object.keys(body).sort(), ["from", "headers", "html", "subject", "text", "to"]);
+  assert.deepEqual(body.to, ["x@example.test"]);
+  assert.deepEqual(body.headers, { "List-Unsubscribe": "<https://thetracemanifest.com/u>" });
+  assert.equal(JSON.stringify(body).includes(apiKey), false, "the API key never appears in the body");
+  assert.deepEqual(Object.keys(headers).sort(), ["Authorization", "Content-Type", "Idempotency-Key"]);
+  assert.equal(headers["Content-Type"], "application/json");
 }
 
 console.log("newsletter tests passed");
