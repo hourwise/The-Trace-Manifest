@@ -100,6 +100,19 @@ That is **local verification only.**
 
 Production is unchanged. Nothing was merged or deployed.
 
+**Preview Desk smoke of #11, 2026-10-26 (owner-approved, Preview D1 only).**
+
+| Check | Result |
+|---|---|
+| Build | #11's Access-gated branch preview, deployment `75fa5f2c` at `6b7010c`, reading Preview D1 |
+| Candidate | `74206c0c…`, manual URL for a Verge article whose canonical hash matches feed item 8, the sole primary member of draft cluster 7 |
+| Desk actions | `new → drafting → draft_ready → needs_review` (Desk has no shorter route), then **Promote to Story** once |
+| Notice shown | "This source already belongs to story cluster #7 (draft). The candidate was linked to it; no new cluster was created." |
+| Writes | Candidate state `new` → `published`. Audit rows 549–552: three `transition_candidate` rows and one `promote_candidate_to_cluster` with `reused_story_cluster:7`. Nothing else. |
+| Unchanged | 127 clusters (max id 90201), 238 members, 129 feed items, 21 candidates; cluster 7's row and membership unchanged; pending-review queue still the same 10 clusters (7–16); `/admin/review` lists #7 once |
+
+Result: Desk promotion reuses the ingestion cluster instead of creating a duplicate. Production is unchanged; nothing was merged or deployed.
+
 ## Worker deployment (#11)
 
 - **Configuration:** tracked `wrangler.worker.toml` declares `crons = []` (top level and `env.preview`), so STOP-BURN stays in force on deploy. The dry run on the current Worker matches bindings `DB` (Production D1) and `RAW_STORE`, with 4 secrets.
@@ -165,8 +178,8 @@ See `docs/audit/trace-p3-import-compatibility.md`:
 
 ## Recommended next operational decision
 
-Step 1 (0077 on Preview) is done; see the execution record. The next decision is **a Preview Desk smoke of #11's Access-gated preview build**, which binds Preview D1. It is one approved test promotion of a known URL: confirm the reuse notice, a single cluster, and an unchanged review queue. This is a Preview write and needs its own approval.
+Step 1 (0077 on Preview) and the Preview Desk smoke of #11 are done; see the execution record. The next decision is **step 2: 0077 on Production D1**, with a fresh bookmark and a quiet window.
 
 After that, in order:
-1. 0077 on Production, then the #11 merge and Worker deploy;
+1. the #11 merge and Worker deploy;
 2. the Codex P3 Preview fixture pilot. It needs #11/#12 and Preview 0077, and puts its first newly acquired, review-required candidates into the editorial review queue on Preview, with no publication.
