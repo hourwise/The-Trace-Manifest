@@ -1,0 +1,41 @@
+---
+import BaseLayout from "../../layouts/BaseLayout.astro";
+import { isWellFormedToken, unsubscribeNewsletter } from "../../lib/server/newsletter";
+
+export const prerender = false;
+
+// Unsubscribing always works, even when signup is closed. The email link opens
+// this page and a button press (POST) unsubscribes, so link scanners cannot.
+const env = Astro.locals.runtime.env;
+let outcome: Awaited<ReturnType<typeof unsubscribeNewsletter>> | null = null;
+let token = new URL(Astro.request.url).searchParams.get("token");
+
+if (Astro.request.method === "POST") {
+  const form = await Astro.request.formData();
+  token = (form.get("token") as string | null) ?? null;
+  try {
+    outcome = await unsubscribeNewsletter(env, token);
+  } catch {
+    outcome = "unavailable";
+  }
+  if (outcome === "unavailable") Astro.response.status = 503;
+}
+Astro.response.headers.set("Cache-Control", "no-store");
+Astro.response.headers.set("Referrer-Policy", "no-referrer");
+---
+
+<BaseLayout title="Unsubscribe from TRACE Weekly" description="Stop receiving TRACE Weekly.">
+  <div class="wrap" style="max-width:36rem;">
+    <h1>Unsubscribe</h1>
+    {outcome === "unsubscribed" && <p class="card" role="status" data-newsletter-state="unsubscribed">You are unsubscribed from TRACE Weekly, and your address has been removed from our sending list.</p>}
+    {outcome === "invalid" && <p class="card" role="status" data-newsletter-state="invalid">This link is not valid or has already been used. If it came from a TRACE Weekly email, that address is no longer subscribed.</p>}
+    {outcome === "unavailable" && <p class="card" role="alert" data-newsletter-state="unavailable">Unsubscribing is temporarily unavailable. Please try again later.</p>}
+    {outcome === null && (isWellFormedToken(token)
+      ? <form method="POST" class="card" data-newsletter-state="ready">
+          <input type="hidden" name="token" value={token} />
+          <p>Stop sending TRACE Weekly to this address.</p>
+          <button type="submit" class="btn btn-primary">Unsubscribe</button>
+        </form>
+      : <p class="card" role="alert" data-newsletter-state="invalid">This link is not valid.</p>)}
+  </div>
+</BaseLayout>

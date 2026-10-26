@@ -92,6 +92,10 @@ try {
   db.exec(readFileSync("db/migration-0074-assertion-reviewer-governance.sql", "utf8"));
   db.exec(readFileSync("db/migration-0075-claim-extraction-run-ledger.sql", "utf8"));
   db.exec(readFileSync("db/migration-0076-evidence-library-governance.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0078-newsletter-subscriptions.sql", "utf8"));
+  for (const table of ["newsletter_subscribers", "newsletter_signup_attempts", "email_outbox"]) {
+    if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(table)) throw new Error(`Missing table ${table}`);
+  }
 
   const requiredTables = [
     "ai_requests", "ai_budget_reservations", "ai_usage_ledger", "ai_quota_usage",

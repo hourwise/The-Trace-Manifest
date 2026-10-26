@@ -1,0 +1,92 @@
+---
+import BaseLayout from "../../layouts/BaseLayout.astro";
+import { NEWSLETTER_CONSENT_TEXT, NEWSLETTER_CONSENT_VERSION, newsletterSecret, newsletterSignupEnabled, requestNewsletterSignup } from "../../lib/server/newsletter";
+import { emailFrom, processEmailOutbox, transportFromEnv } from "../../lib/server/email-outbox";
+
+export const prerender = false;
+
+const env = Astro.locals.runtime.env;
+const open = newsletterSignupEnabled(env);
+let outcome: "accepted" | "invalid_email" | "rate_limited" | "unavailable" | null = null;
+
+if (Astro.request.method === "POST") {
+  if (!open) return new Response("TRACE Weekly signup is not open.", { status: 503, headers: { "Cache-Control": "no-store" } });
+  const form = await Astro.request.formData();
+  // Astro's origin check refuses cross-site form posts before this runs.
+  const production = env.TRACE_ENVIRONMENT === "production";
+  const network = Astro.request.headers.get("CF-Connecting-IP")?.trim() || (production ? "" : `${new URL(Astro.request.url).hostname}:development`);
+  try {
+    const result = await requestNewsletterSignup(env, {
+      email: form.get("email"),
+      networkIdentity: network,
+      honeypot: (form.get("website") as string | null) || null,
+    });
+    outcome = result.status === "disabled" ? "unavailable" : result.status;
+    // Send this one confirmation after responding, so the response looks the
+    // same whether or not the address was new.
+    const transport = transportFromEnv(env);
+    const from = emailFrom(env);
+    const secret = newsletterSecret(env);
+    if (result.status === "accepted" && result.queuedKey && transport && from && secret) {
+      Astro.locals.runtime.ctx.waitUntil(processEmailOutbox({
+        db: env.DB, transport, secret, from, siteUrl: new URL(Astro.request.url).origin, onlyKey: result.queuedKey, limit: 1,
+      }).catch(() => console.warn(JSON.stringify({ message: "Confirmation send deferred to the outbox" }))));
+    }
+  } catch {
+    outcome = "unavailable";
+  }
+  if (outcome === "rate_limited") Astro.response.status = 429;
+  else if (outcome === "invalid_email") Astro.response.status = 400;
+  else if (outcome === "unavailable") Astro.response.status = 503;
+}
+Astro.response.headers.set("Cache-Control", "no-store");
+---
+
+<BaseLayout title="TRACE Weekly" description="A free weekly email of stories The Trace Manifest has published, with sources and corrections.">
+  <div class="wrap" style="max-width:36rem;">
+    <h1>TRACE Weekly</h1>
+    <p class="lead">A free weekly email summarising the stories we have published, with links to each story, its sources and any corrections.</p>
+
+    {!open && (
+      <div class="card" data-newsletter-state="closed" style="margin-top:1.5rem;">
+        <p style="margin:0;">Email signup is not open yet. Until it is, follow the <a href="/briefing/daily">Daily Briefing</a> or the <a href="/rss/daily.xml">RSS feed</a>.</p>
+      </div>
+    )}
+
+    {open && outcome === "accepted" && (
+      <div class="card" role="status" data-newsletter-state="accepted" style="margin-top:1.5rem;border-left:3px solid var(--ev-confirmed);">
+        <p style="margin:0;"><strong>Check your inbox.</strong> If this address can receive TRACE Weekly, we have sent a link to confirm the subscription. Nothing is sent until you confirm.</p>
+      </div>
+    )}
+    {open && outcome && outcome !== "accepted" && (
+      <div class="card" role="alert" data-newsletter-state={outcome} style="margin-top:1.5rem;border-left:3px solid var(--ev-disputed);">
+        <p style="margin:0;">
+          {outcome === "invalid_email" && "Please enter a valid email address."}
+          {outcome === "rate_limited" && "Too many signup attempts from this network today. Please try again tomorrow."}
+          {outcome === "unavailable" && "Signup is temporarily unavailable. Please try again later."}
+        </p>
+      </div>
+    )}
+
+    {open && outcome !== "accepted" && (
+      <form method="POST" class="card newsletter-form" style="margin-top:1.5rem;" data-consent-version={NEWSLETTER_CONSENT_VERSION}>
+        <label for="newsletter-email">Email address</label>
+        <input id="newsletter-email" name="email" type="email" required maxlength="254" autocomplete="email" inputmode="email" aria-describedby="newsletter-consent" />
+        <div class="newsletter-honeypot" aria-hidden="true">
+          <label for="newsletter-website">Leave this empty</label>
+          <input id="newsletter-website" name="website" type="text" tabindex="-1" autocomplete="off" />
+        </div>
+        <p id="newsletter-consent" class="meta" style="font-size:0.85rem;">{NEWSLETTER_CONSENT_TEXT}</p>
+        <p class="meta" style="font-size:0.8rem;">Frequency: weekly. You will receive one confirmation email first.</p>
+        <button type="submit" class="btn btn-primary">Subscribe to TRACE Weekly</button>
+      </form>
+    )}
+  </div>
+</BaseLayout>
+
+<style>
+  .newsletter-form { display: grid; gap: 0.6rem; }
+  .newsletter-form label { font-weight: 600; font-size: 0.9rem; }
+  .newsletter-form input[type="email"] { width: 100%; padding: 0.6rem 0.7rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); }
+  .newsletter-honeypot { position: absolute; left: -10000px; width: 1px; height: 1px; overflow: hidden; }
+</style>
