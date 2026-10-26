@@ -83,6 +83,23 @@ That is **local verification only.**
 | Stop criteria | Preflight rows; any error; counts changed | Any error | Any error |
 | Recovery | **Interrupted after the `ALTER`:** re-run only the two `CREATE INDEX IF NOT EXISTS` statements (tested). **Otherwise:** the column is additive and unused by old code, so leave it. A whole-database Time Travel restore is a last resort that can erase unrelated writes, and needs its own approval. | Tables are unused while signup is off; leave them | Leave unused |
 
+### Execution record
+
+**Step 1: 0077 on Preview D1, applied 2026-10-26 (owner-approved, Preview only).**
+
+| Check | Result |
+|---|---|
+| File | `git show 6b7010c:db/migration-0077-editorial-source-identity.sql`; SHA-256 `9f596084…bbb` (matches) |
+| Target | `trace-manifest-db-preview`: `wrangler d1 info` id equals the committed id in `wrangler.toml` and `wrangler.worker.toml`; zero reads or writes in the preceding 24 h |
+| Preflight | No rows. The reverse index from 0069 already existed on Preview, so the third statement was a no-op. |
+| Bookmark | `000000d2-00000000-00005110-564688cff7d51ef30303c40b32a5b7d7` |
+| Before | 127 clusters (126 draft, 1 published), 238 members, 129 feed items, 21 candidates, max cluster id 90201 |
+| Forward | One `wrangler d1 execute --remote --file`: success, 1 attempt, 2 rows written (schema) |
+| Postflight | `primary_source_key TEXT` (nullable) exists, with 0 keyed rows; `idx_story_clusters_primary_source_key` is unique and partial; the reverse index is present; all counts identical to before; both lookups use covering indexes; the 3 FTS triggers are intact; `PRAGMA foreign_key_check` returns 0 rows |
+| Note | `PRAGMA quick_check` fails on D1 with `SQLITE_NOMEM` (code 7500): a platform limit, not part of this postflight. Use `foreign_key_check` and the explicit checks above. |
+
+Production is unchanged. Nothing was merged or deployed.
+
 ## Worker deployment (#11)
 
 - **Configuration:** tracked `wrangler.worker.toml` declares `crons = []` (top level and `env.preview`), so STOP-BURN stays in force on deploy. The dry run on the current Worker matches bindings `DB` (Production D1) and `RAW_STORE`, with 4 secrets.
@@ -148,6 +165,8 @@ See `docs/audit/trace-p3-import-compatibility.md`:
 
 ## Recommended next operational decision
 
-**Approve step 1: migration 0077 on Preview D1.** It is additive, locally verified in both orders, has a preflight and a tested recovery, and touches no Production resource. It unblocks, in order:
-1. 0077 on Production and the #11 merge and Worker deploy;
-2. the Codex P3 Preview fixture pilot, which needs #11/#12 and Preview 0077 and puts its first newly acquired, review-required candidates into the editorial review queue on Preview, with no publication.
+Step 1 (0077 on Preview) is done; see the execution record. The next decision is **a Preview Desk smoke of #11's Access-gated preview build**, which binds Preview D1. It is one approved test promotion of a known URL: confirm the reuse notice, a single cluster, and an unchanged review queue. This is a Preview write and needs its own approval.
+
+After that, in order:
+1. 0077 on Production, then the #11 merge and Worker deploy;
+2. the Codex P3 Preview fixture pilot. It needs #11/#12 and Preview 0077, and puts its first newly acquired, review-required candidates into the editorial review queue on Preview, with no publication.
