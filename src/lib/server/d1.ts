@@ -161,8 +161,53 @@ export async function getPublishedStories(db: D1Database, options: {
   return result.results.map(mapStory);
 }
 
-export async function getPublishedStoryBySlug(db: D1Database, slug: string): Promise<PublicStory | null> {
+/**
+ * A story that was published and later withdrawn or superseded. Its page stays
+ * public with a status banner (corrections policy), but it never appears in
+ * listings, feeds or the sitemap, which all use publicStoryEligibilitySql.
+ * Archived clusters that were never published have no slug or reviewer and
+ * stay unreachable.
+ */
+export function retiredPublicStorySql(alias = "sc"): string {
+  return `${alias}.publication_status IN ('withdrawn','superseded')
+    AND ${alias}.slug IS NOT NULL
+    AND ${alias}.published_at IS NOT NULL
+    AND ${alias}.reviewed_by IS NOT NULL
+    AND ${alias}.reviewed_at IS NOT NULL`;
+}
+
+/**
+ * The currently published story that a reviewed `supersedes` relationship
+ * names as replacing `storyId`. One indexed lookup (target_story_id,
+ * relationship); null when no such link exists.
+ */
+export async function getSupersedingStory(
+  db: D1Database,
+  storyId: number,
+): Promise<{ slug: string; headline: string } | null> {
+  if (!Number.isInteger(storyId) || storyId < 1) return null;
+  const row = await db.prepare(`
+    SELECT replacement.slug, replacement.title AS headline
+    FROM story_relationships relation
+    JOIN story_clusters replacement ON replacement.id = relation.source_story_id
+    WHERE relation.target_story_id = ? AND relation.relationship = 'supersedes'
+      AND relation.reviewed_at IS NOT NULL
+      AND ${publicStoryEligibilitySql("replacement")}
+    ORDER BY replacement.published_at DESC
+    LIMIT 1
+  `).bind(storyId).first<{ slug: string; headline: string }>();
+  return row ? { slug: row.slug, headline: row.headline } : null;
+}
+
+export async function getPublishedStoryBySlug(
+  db: D1Database,
+  slug: string,
+  options: { includeRetired?: boolean } = {},
+): Promise<PublicStory | null> {
   if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug) || slug.length > 100) return null;
+  const visible = options.includeRetired
+    ? `((${publicStoryEligibilitySql("sc")}) OR (${retiredPublicStorySql("sc")}))`
+    : publicStoryEligibilitySql("sc");
 
   const row = await db.prepare(`
     SELECT sc.id, sc.slug, sc.title, sc.summary, sc.editorial_analysis,
@@ -182,7 +227,7 @@ export async function getPublishedStoryBySlug(db: D1Database, slug: string): Pro
             WHERE scm.cluster_id = sc.id AND fi.ingestion_status = 'published'
             ORDER BY scm.is_primary DESC LIMIT 1) as primary_source_name
     FROM story_clusters sc
-    WHERE sc.slug = ? AND ${publicStoryEligibilitySql("sc")}
+    WHERE sc.slug = ? AND ${visible}
   `)
     .bind(slug)
     .first<Record<string, unknown>>();
@@ -305,11 +350,12 @@ export async function getPublishedSourcesForStory(db: D1Database, storyId: numbe
       AND fi.ingestion_status = 'published'
       AND EXISTS (
         SELECT 1 FROM story_clusters sc
-        WHERE sc.id = scm.cluster_id AND sc.publication_status = 'published'
+        WHERE sc.id = scm.cluster_id AND ((sc.publication_status = 'published'
           AND sc.published_at IS NOT NULL AND datetime(sc.published_at) <= datetime('now')
           AND sc.reviewed_by IS NOT NULL AND sc.reviewed_at IS NOT NULL
           AND sc.summary IS NOT NULL AND trim(sc.summary) <> ''
-          AND sc.evidence_status NOT IN ('unverified','outdated','superseded')
+          AND sc.evidence_status NOT IN ('unverified','outdated','superseded'))
+          OR (${retiredPublicStorySql("sc")}))
       )
     ORDER BY scm.is_primary DESC, s.tier ASC
   `)
@@ -336,9 +382,10 @@ export async function getCorrectionsForStory(db: D1Database, storyId: number): P
     WHERE cluster_id = ? AND published = 1
       AND EXISTS (
         SELECT 1 FROM story_clusters sc
-        WHERE sc.id = corrections.cluster_id AND sc.publication_status = 'published'
+        WHERE sc.id = corrections.cluster_id AND ((sc.publication_status = 'published'
           AND sc.published_at IS NOT NULL AND datetime(sc.published_at) <= datetime('now')
-          AND sc.reviewed_by IS NOT NULL AND sc.reviewed_at IS NOT NULL
+          AND sc.reviewed_by IS NOT NULL AND sc.reviewed_at IS NOT NULL)
+          OR (${retiredPublicStorySql("sc")}))
       )
     ORDER BY corrected_at DESC
   `)
