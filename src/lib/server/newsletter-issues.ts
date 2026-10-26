@@ -325,11 +325,11 @@ export async function queueIssueDispatch(
     `).bind(operator.email, at, at, issueId),
     audit(db, operator, "dispatch_newsletter_issue", issueId, issue.dispatchKey ?? ""),
     db.prepare(`
-      INSERT OR IGNORE INTO email_outbox (id, idempotency_key, kind, subscriber_id, issue_id)
-      SELECT lower(hex(randomblob(16))), ? || ':' || subscriber.id, 'newsletter_issue', subscriber.id, ?
+      INSERT OR IGNORE INTO email_outbox (id, idempotency_key, kind, subscriber_id, issue_id, next_attempt_at)
+      SELECT lower(hex(randomblob(16))), ? || ':' || subscriber.id, 'newsletter_issue', subscriber.id, ?, ?
       FROM newsletter_subscribers subscriber
       WHERE subscriber.status = 'confirmed' AND changes() = 1
-    `).bind(issue.dispatchKey, issueId),
+    `).bind(issue.dispatchKey, issueId, at),
   ]);
   if (Number(update?.meta?.changes ?? 0) === 0) throw new NewsletterIssueError("not_ready", "Only a ready issue can be dispatched, and only once.");
   return { status: "queued", recipients: Number(queued?.meta?.changes ?? 0) };

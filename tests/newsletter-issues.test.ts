@@ -113,9 +113,13 @@ const n = (db: SQLiteD1, sql: string) => Number((db.sqlite.prepare(sql).get() as
     INSERT INTO newsletter_subscribers (id, email_hash, email, status, consent_version, consented_at, unsubscribe_nonce, unsubscribe_token_hash) VALUES
       ('sub-1', 'h1', 'one@example.test', 'confirmed', 'v1', '2026-10-01 00:00:00', 'nonce-1', 'uh1'),
       ('sub-2', 'h2', 'two@example.test', 'confirmed', 'v1', '2026-10-01 00:00:00', 'nonce-2', 'uh2'),
-      ('sub-3', 'h3', 'pending@example.test', 'pending', 'v1', '2026-10-01 00:00:00', NULL, NULL);
+      ('sub-3', 'h3', 'pending@example.test', 'pending', 'v1', '2026-10-01 00:00:00', NULL, NULL),
+      ('sub-4', 'h4', 'four@example.test', 'confirmed', 'v1', '2026-10-01 00:00:00', 'nonce-4', 'uh4');
   `);
-  assert.deepEqual(await queueIssueDispatch(d1, PUBLISHER, issue.id, { dispatchEnabled: true }), { status: "queued", recipients: 2 });
+  // Unsubscribed after approval but before dispatch: never queued.
+  db.sqlite.exec("UPDATE newsletter_subscribers SET status = 'unsubscribed', email = NULL, unsubscribe_nonce = NULL, unsubscribe_token_hash = NULL WHERE id = 'sub-4'");
+  assert.deepEqual(await queueIssueDispatch(d1, PUBLISHER, issue.id, { dispatchEnabled: true, now: new Date("2026-10-26T07:00:00Z") }), { status: "queued", recipients: 2 });
+  assert.equal(n(db, "SELECT COUNT(*) AS n FROM email_outbox WHERE subscriber_id = 'sub-4'"), 0);
   await assert.rejects(queueIssueDispatch(d1, PUBLISHER, issue.id, { dispatchEnabled: true }), /only once/, "an issue is dispatched once");
   assert.equal(n(db, "SELECT COUNT(*) AS n FROM email_outbox WHERE kind = 'newsletter_issue'"), 2);
   assert.equal((await getIssue(d1, issue.id))!.status, "dispatched");

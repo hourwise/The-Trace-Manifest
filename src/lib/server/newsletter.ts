@@ -112,10 +112,11 @@ interface SubscriberRow {
   last_confirmation_requested_at: string | null;
 }
 
-const confirmationOutbox = (db: D1Database, subscriberId: string, sequence: number) => db.prepare(`
-  INSERT OR IGNORE INTO email_outbox (id, idempotency_key, kind, subscriber_id)
-  VALUES (?, ?, 'newsletter_confirmation', ?)
-`).bind(crypto.randomUUID(), `newsletter-confirmation:${subscriberId}:${sequence}`, subscriberId);
+// Due from the request time (not the database clock), so queuing is deterministic.
+const confirmationOutbox = (db: D1Database, subscriberId: string, sequence: number, due: string) => db.prepare(`
+  INSERT OR IGNORE INTO email_outbox (id, idempotency_key, kind, subscriber_id, next_attempt_at)
+  VALUES (?, ?, 'newsletter_confirmation', ?, ?)
+`).bind(crypto.randomUUID(), `newsletter-confirmation:${subscriberId}:${sequence}`, subscriberId, due);
 
 /**
  * Records a signup request. The answer is "accepted" for every well-formed,
@@ -162,9 +163,9 @@ export async function requestNewsletterSignup(
       `).bind(id, hash, email, NEWSLETTER_CONSENT_VERSION, stamp, stamp),
       // Queued only if this request created the row (a concurrent duplicate did not).
       env.DB.prepare(`
-        INSERT OR IGNORE INTO email_outbox (id, idempotency_key, kind, subscriber_id)
-        SELECT ?, ?, 'newsletter_confirmation', ? WHERE EXISTS (SELECT 1 FROM newsletter_subscribers WHERE id = ?)
-      `).bind(crypto.randomUUID(), `newsletter-confirmation:${id}:1`, id, id),
+        INSERT OR IGNORE INTO email_outbox (id, idempotency_key, kind, subscriber_id, next_attempt_at)
+        SELECT ?, ?, 'newsletter_confirmation', ?, ? WHERE EXISTS (SELECT 1 FROM newsletter_subscribers WHERE id = ?)
+      `).bind(crypto.randomUUID(), `newsletter-confirmation:${id}:1`, id, stamp, id),
     ]);
     return { status: "accepted", queuedKey: `newsletter-confirmation:${id}:1` };
   }
@@ -179,7 +180,7 @@ export async function requestNewsletterSignup(
           UPDATE newsletter_subscribers SET confirmation_requests = ?, last_confirmation_requested_at = ?, updated_at = ?
           WHERE id = ? AND status = 'pending' AND confirmation_requests = ?
         `).bind(sequence, stamp, stamp, existing.id, existing.confirmation_requests),
-        confirmationOutbox(env.DB, existing.id, sequence),
+        confirmationOutbox(env.DB, existing.id, sequence, stamp),
       ]);
       return { status: "accepted", queuedKey: `newsletter-confirmation:${existing.id}:${sequence}` };
     }
@@ -197,7 +198,7 @@ export async function requestNewsletterSignup(
             confirmation_requests = ?, last_confirmation_requested_at = ?, updated_at = ?
         WHERE id = ? AND status = 'unsubscribed'
       `).bind(email, NEWSLETTER_CONSENT_VERSION, stamp, sequence, stamp, stamp, existing.id),
-      confirmationOutbox(env.DB, existing.id, sequence),
+      confirmationOutbox(env.DB, existing.id, sequence, stamp),
     ]);
     return { status: "accepted", queuedKey: `newsletter-confirmation:${existing.id}:${sequence}` };
   }
