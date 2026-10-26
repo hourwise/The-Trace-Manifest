@@ -115,6 +115,16 @@ assert.equal((await updateStoryStatus(workerEnv, storyId, "withdrawn", "Publishe
 assert.equal(await getPublishedStoryBySlug(d1, slug), null, "listings and the published-only loader drop it");
 assert.equal((await getPublishedStoryBySlug(d1, slug, { includeRetired: true }))?.publicationStatus, "withdrawn", "its page stays public as withdrawn (#10)");
 assert.deepEqual(await selectWeeklyStories(d1, window), [], "a withdrawn story never enters a new issue");
+assert.equal((await getPublishedStories(d1, { limit: 50 })).some((story) => story.slug === slug), false, "feeds and listings exclude it");
+// Re-promoting the withdrawn source through the Desk is refused, not silently republished.
+const repromote = await promote(await candidate(RELEASE), RELEASE);
+assert.equal(repromote.kind, "conflict");
+assert.equal((repromote as { reason: string }).reason, "retired");
+assert.deepEqual(clustersOf(5001), [storyId], "no second cluster for the withdrawn source");
+// Clustering the same item again (for example after re-classification) does not resurrect it either.
+db.sqlite.prepare("UPDATE feed_items SET ingestion_status = 'classified', fetched_at = datetime('now') WHERE id = 5001").run();
+assert.equal((await runClustering(d1)).clusters, 0);
+assert.equal((await getPublishedStoryBySlug(d1, slug, { includeRetired: true }))?.publicationStatus, "withdrawn", "the record stays withdrawn");
 // Ingestion meeting the same URL again (with tracking parameters) finds the existing item, so the withdrawn source cannot return as a new story.
 assert.equal((await deduplicateURL(d1, await hashURL(RELEASE + "?utm_source=again")))?.id, 5001);
 

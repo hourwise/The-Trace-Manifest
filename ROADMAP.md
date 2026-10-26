@@ -2,24 +2,6 @@
 
 Status labels describe repository evidence, not assumed deployment state.
 
-## Status on 25 October 2026 (TRACE-RESTORE-01)
-
-Nothing below is live unless it says so. The release order and gates are in `docs/audit/trace-restore-01-release-plan.md`.
-
-| Area | Status | Next exit condition |
-|---|---|---|
-| Editorial integrity (PRs #7–#9) | **Live in Production.** Publisher-only Desk and Social writes, attributed and audited; one promotion per candidate; D1 trigger-counted changes handled by archive, publish and revision approval. | None. |
-| Withdrawn and superseded story pages | **PR #10, ready for review; not released.** Retired pages keep their URL with a "not current reporting" notice, historical evidence labels and `noindex`, and stay out of listings, feeds and the sitemap. | Merge (Pages), then verify story 381 publicly. |
-| Production promotion cleanup | **Paused.** 10 duplicate or mis-linked review clusters archived; story 381 withdrawn; stories 384–388 still published, pending PR #10. | Release #10, then run the separately approved withdrawals of 384–388 and the baseline verification. |
-| Cross-pipeline duplicate prevention (TRACE-EDITORIAL-DEDUPE-R1) | **PR #11, draft; release-gated.** One source identity for Desk and ingestion, unique `primary_source_key`, atomic clustering writes. | Apply migration 0077 (Preview, then Production), merge, deploy the Worker. **Required before automated news acquisition restarts.** |
-| Reviewer duplicate-source visibility | **PR #12, draft, stacked on #11.** Queue categories and conflict notes in Review; source relationships and safe promotion labels in Desk. | After #11 and 0077. |
-| Newsletter signup and email infrastructure | **PR #13, draft; disabled by default.** Consent, confirmation, unsubscribe, suppression, rate limits, and an outbox with mock and Resend adapters. The header no longer advertises a subscription that does not exist. | Owner approval of privacy text; provider account; verified sending domain (SPF, DKIM, DMARC); migration 0078; secrets; Preview test with a real confirmation. **Not operational until a real confirmation email is delivered.** |
-| Weekly newsletter preparation | **PR #14, draft, stacked on #13; dispatch disabled.** Deterministic drafts from published stories, publisher approval of exact content, once-only gated dispatch. No Cron, no AI. | After #13 and migration 0079; enable dispatch only after delivery is proven. |
-| Ask TRACE | Public Ask **off in Production** (API 503); editorial AI on. | Answer-eligible, reviewed evidence (KNOWLEDGE-10) and an authenticated evaluation pass before any public beta. |
-| Automated news acquisition and the local news collector | **Paused (STOP-BURN; Cron `[]`; scheduler 0072 not activated).** The local DeepSeek pilot is separately governed (Codex worktrees). | DEDUPE-R1 live (#11 with 0077 and the Worker); measured Preview D1 consumption; owner approval. |
-
-The table below is the historical baseline.
-
 | Area | Status on 14 July 2026 | Next exit condition |
 |---|---|---|
 | Foundation and product policy | Implemented in repository | Keep the canonical ADR 0001–0014 set and operating documents current. |
