@@ -1,0 +1,52 @@
+{
+  "schema": "trace-p3-identity-contract-v1",
+  "description": "Versioned contract between TRACE-EDITORIAL-DEDUPE-R1 and Codex TRACE-LOCAL-NEWS-P3. Changing these files or vectors requires coordinating a new P3 pin.",
+  "p3": {
+    "branch": "codex/trace-local-news-p3-import",
+    "commit": "e50825cf383040c7bd51edeee94384f51bfa62e3",
+    "editorial_commit": "7dfff69ff92a037fdce86ee105263397ffa81f10",
+    "review_commit": "331391a1aba49a493a388a2e99b9ce4cb349446c",
+    "policy": "trace-editorial-dedupe-r1/canonicalSourceUrl",
+    "bundle_schema": "trace-news-import-bundle-p3.1",
+    "payload_schema": "trace-editorial-news-candidates-p3.1"
+  },
+  "interface_files": {
+    "src/lib/server/source-identity.ts": "886752cd5b86300795d560c5a7218195ac294b94dee396ed4d79d183da98805b",
+    "src/lib/server/source-conflicts.ts": "557e44c3ca5e8b6bb3358097045e18a53eea5314e24bfb3d9b32b69e20210023",
+    "src/lib/server/admin-page-writes.ts": "3e8d2959f160d615da657ce864bbb97a1971a06a1c389217fef1b316f6727c91",
+    "workers/ingestion/cluster.ts": "7d32808b738c9b86758bc3dc42591095b84d4fb3d940228eedaf2547ad527bd6",
+    "workers/ingestion/dedup.ts": "cd128dcbaa508fd1f53c738eae20340a090f6c2edfaa2b9d279cd2f4fe3f896a"
+  },
+  "canonical_url_vectors": [
+    {
+      "input": "https://deepmind.google/blog/some-post/?utm_source=rss&utm_medium=feed",
+      "canonical": "https://deepmind.google/blog/some-post/",
+      "url_hash": "cc322eb0ba54f90d535797653081ee48496bad7c9acaa5cdde73ac0e9ad06f33"
+    },
+    {
+      "input": "https://machinelearning.apple.com/research/paper?ref=homepage",
+      "canonical": "https://machinelearning.apple.com/research/paper",
+      "url_hash": "2d7322bd12710857d86818f92b8ac5ff02897afa6ac34b3396cd409900828c36"
+    },
+    {
+      "input": "https://github.com/huggingface/transformers/releases/tag/v5.0.0",
+      "canonical": "https://github.com/huggingface/transformers/releases/tag/v5.0.0",
+      "url_hash": "152188dd686edd9e0af8e158e2058313189de86d9f4336ccdbfb2b54b729e083"
+    },
+    {
+      "input": "https://EXAMPLE.org/Path?b=2&a=1&fbclid=x",
+      "canonical": "https://example.org/Path?b=2&a=1",
+      "url_hash": "0f0a1d77c947a5b1b9551b8e94845d4caecc5280d1aa84c585ca4ad63722609a"
+    },
+    {
+      "input": "https://example.org/a/",
+      "canonical": "https://example.org/a/",
+      "url_hash": "351c82ac9a00a00e989aa02a03e5ffef28376fcf22ec14f53f56caadb3764dbc"
+    },
+    {
+      "input": "https://example.org/?gclid=abc",
+      "canonical": "https://example.org/",
+      "url_hash": "8198d1bac40a1033653a78e48800cefc9e6b974ff075c66e5548b5c1e145a2b0"
+    }
+  ]
+}

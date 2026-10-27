@@ -99,6 +99,12 @@ try {
   if (!clusterColumns.has("primary_source_key")) throw new Error("Missing story_clusters.primary_source_key");
   const sourceKeyIndex = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_story_clusters_primary_source_key'").get()?.sql ?? "";
   if (!/UNIQUE/i.test(sourceKeyIndex) || !/primary_source_key IS NOT NULL/i.test(sourceKeyIndex)) throw new Error("primary_source_key must have a unique partial index");
+  db.exec(readFileSync("db/migration-0078-newsletter-subscriptions.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0079-newsletter-issues.sql", "utf8"));
+  if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'newsletter_issues'").get()) throw new Error("Missing table newsletter_issues");
+  for (const table of ["newsletter_subscribers", "newsletter_signup_attempts", "email_outbox"]) {
+    if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(table)) throw new Error(`Missing table ${table}`);
+  }
 
   const requiredTables = [
     "ai_requests", "ai_budget_reservations", "ai_usage_ledger", "ai_quota_usage",

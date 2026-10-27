@@ -1,0 +1,43 @@
+---
+import BaseLayout from "../../layouts/BaseLayout.astro";
+import { confirmNewsletterSubscription, isWellFormedToken, newsletterSignupEnabled } from "../../lib/server/newsletter";
+
+export const prerender = false;
+
+// The email link opens this page; confirming takes a button press (POST), so
+// link scanners that fetch URLs cannot subscribe anyone.
+const env = Astro.locals.runtime.env;
+const open = newsletterSignupEnabled(env);
+let outcome: Awaited<ReturnType<typeof confirmNewsletterSubscription>> | null = null;
+let token = new URL(Astro.request.url).searchParams.get("token");
+
+if (Astro.request.method === "POST") {
+  const form = await Astro.request.formData();
+  token = (form.get("token") as string | null) ?? null;
+  try {
+    outcome = await confirmNewsletterSubscription(env, token);
+  } catch {
+    outcome = "invalid";
+  }
+  if (outcome !== "confirmed") Astro.response.status = outcome === "disabled" ? 503 : 400;
+}
+Astro.response.headers.set("Cache-Control", "no-store");
+Astro.response.headers.set("Referrer-Policy", "no-referrer");
+---
+
+<BaseLayout title="Confirm TRACE Weekly" description="Confirm your TRACE Weekly subscription.">
+  <div class="wrap" style="max-width:36rem;">
+    <h1>Confirm your subscription</h1>
+    {!open && <p class="card" data-newsletter-state="closed">TRACE Weekly signup is not open.</p>}
+    {open && outcome === "confirmed" && <p class="card" role="status" data-newsletter-state="confirmed">You are subscribed to TRACE Weekly. Every issue includes an unsubscribe link.</p>}
+    {open && outcome === "expired" && <p class="card" role="alert" data-newsletter-state="expired">This link has expired. <a href="/newsletter">Sign up again</a> to get a new one.</p>}
+    {open && outcome === "invalid" && <p class="card" role="alert" data-newsletter-state="invalid">This link is not valid or has already been used.</p>}
+    {open && outcome === null && (isWellFormedToken(token)
+      ? <form method="POST" class="card" data-newsletter-state="ready">
+          <input type="hidden" name="token" value={token} />
+          <p>Confirm that you want to receive TRACE Weekly by email.</p>
+          <button type="submit" class="btn btn-primary">Confirm subscription</button>
+        </form>
+      : <p class="card" role="alert" data-newsletter-state="invalid">This link is not valid.</p>)}
+  </div>
+</BaseLayout>
