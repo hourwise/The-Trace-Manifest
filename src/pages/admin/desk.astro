@@ -1,6 +1,7 @@
 ---
 import AdminLayout from "../../layouts/AdminLayout.astro";
 import { promoteCandidate, recordCandidate, transitionCandidate } from "../../lib/server/admin-page-writes";
+import { canonicalSourceUrl, sourceUrlHash } from "../../lib/server/source-identity";
 
 export const prerender = false;
 // TRACE Desk is publisher-only: the proxy refuses readers both reading and
@@ -68,16 +69,23 @@ if (Astro.request.method === "POST") {
         : candidate.intake_type === "social_url" ? "community_reported"
         : "vendor_reported";
 
-      const urlHash = candidate.submitted_url
-        ? Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(candidate.submitted_url))), (b) => b.toString(16).padStart(2,"0")).join("")
-        : null;
-      // The cluster, its source link, the candidate state and the audit row are written together.
-      const clusterId = await promoteCandidate(db, Astro.locals.operator, {
+      const urlHash = candidate.submitted_url ? await sourceUrlHash(candidate.submitted_url) : null;
+      // Aware of clusters ingestion created for the same source (TRACE-EDITORIAL-DEDUPE-R1).
+      const outcome = await promoteCandidate(db, Astro.locals.operator, {
         candidateId, submittedUrl: candidate.submitted_url, urlHash, headline, summary,
         topic: candidate.topic_slug ?? candidate.section_slug ?? "general", evidenceStatus,
       });
-      if (clusterId === null) throw new Error("The candidate was promoted or changed before this request was saved. Reload to see its current state.");
-      actionMessage = `Candidate promoted to story cluster #${clusterId} (evidence: ${evidenceStatus}). It needs editorial review before homepage placement.`;
+      if (outcome.kind === "not_promotable") throw new Error("The candidate was promoted or changed before this request was saved. Reload to see its current state.");
+      if (outcome.kind === "source_changed") throw new Error("This source was added to a story cluster while you were promoting it. Nothing was saved. Reload to see the existing cluster.");
+      if (outcome.kind === "conflict") {
+        const list = outcome.clusters.map((cluster) => `#${cluster.clusterId} (${cluster.publicationStatus})`).join(", ");
+        throw new Error(outcome.reason === "retired"
+          ? `This source belongs only to withdrawn or superseded stories (${list}). Nothing was promoted; decide in the Review Queue whether new coverage is warranted.`
+          : `This source already belongs to more than one current story cluster (${list}). Nothing was promoted; resolve the duplicates in the Review Queue first.`);
+      }
+      actionMessage = outcome.kind === "reused"
+        ? `This source already belongs to story cluster #${outcome.clusterId} (${outcome.publicationStatus}). The candidate was linked to it; no new cluster was created.`
+        : `Candidate promoted to story cluster #${outcome.clusterId} (evidence: ${evidenceStatus}). It needs editorial review before homepage placement.`;
     } catch (e: any) { actionError = e.message || "Promotion failed."; }
   } else {
     try {
@@ -96,16 +104,8 @@ if (Astro.request.method === "POST") {
           if (!["https:", "http:"].includes(parsed.protocol) || parsed.username || parsed.password) {
             throw new Error("URL must be a public HTTP/HTTPS address with no credentials.");
           }
-          // Normalize: remove tracking params, trailing slash consistency
-          const trackingParams = ["utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "ref", "source", "fbclid", "gclid"];
-          for (const param of trackingParams) {
-            parsed.searchParams.delete(param);
-          }
-          let normalized = parsed.toString();
-          if (normalized.endsWith("/") && !parsed.pathname.endsWith("/")) {
-            normalized = normalized.slice(0, -1);
-          }
-          url = normalized;
+          // The same canonical form ingestion uses for url_hash.
+          url = canonicalSourceUrl(parsed.toString());
         } catch (e: any) {
           throw new Error(e.message || "URL is not valid.");
         }
@@ -121,10 +121,7 @@ if (Astro.request.method === "POST") {
 
       // Check for duplicate URL
       if (url) {
-        const urlHash = Array.from(
-          new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(url))),
-          (b) => b.toString(16).padStart(2, "0")
-        ).join("");
+        const urlHash = await sourceUrlHash(url);
 
         // Check feed_items for already-ingested URL
         const existingItem = await db.prepare(

@@ -3,6 +3,11 @@
 // Uses topic + entity overlap + title keyword similarity
 
 import type { FeedItem } from "./types";
+import { loadSourceMemberships, primarySourceKey } from "../../src/lib/server/source-identity";
+
+/** Items considered per run; the rest wait for the next run (D1 read bound). */
+export const CLUSTERING_ITEM_LIMIT = 200;
+const ID_CHUNK = 90;
 
 // ============================================================
 // Types
@@ -107,25 +112,49 @@ function needsHumanReview(items: ClassifiedItem[]): boolean {
 // ============================================================
 // Main clustering function
 // ============================================================
+export interface ClusteringResult {
+  processed: number;
+  clusters: number;
+  /** Items already in a cluster (for example promoted from TRACE Desk): marked clustered, not re-clustered. */
+  alreadyClustered: number;
+  /** Groups not written because their primary source gained a cluster concurrently. */
+  identityConflicts: number;
+}
+
 export async function runClustering(
   db: D1Database
-): Promise<{ processed: number; clusters: number }> {
-  // Fetch classified items with source info, ordered by topic then time
+): Promise<ClusteringResult> {
+  // Fetch classified items with source info, oldest first, bounded per run
   const { results } = await db.prepare(
     `SELECT fi.*, s.tier as source_tier, s.treatment as source_treatment
      FROM feed_items fi
      JOIN sources s ON fi.source_id = s.id
      WHERE fi.ingestion_status = 'classified'
      AND fi.fetched_at >= datetime('now', '-3 days')
-     ORDER BY fi.fetched_at ASC`
-  ).all<ClassifiedItem & { source_tier: string; source_treatment: string }>();
+     ORDER BY fi.fetched_at ASC
+     LIMIT ?`
+  ).bind(CLUSTERING_ITEM_LIMIT).all<ClassifiedItem & { source_tier: string; source_treatment: string }>();
 
   if (!results || results.length === 0) {
-    return { processed: 0, clusters: 0 };
+    return { processed: 0, clusters: 0, alreadyClustered: 0, identityConflicts: 0 };
+  }
+
+  // Stage 0 (TRACE-EDITORIAL-DEDUPE-R1): an item that already belongs to a
+  // cluster is the same source item, whichever pipeline linked it. It is never
+  // clustered again (that created the promotion/ingestion duplicate pairs);
+  // its status is repaired to 'clustered' instead.
+  const memberships = await loadSourceMemberships(db, results.map((row) => row.id));
+  const linkedIds = results.filter((row) => memberships.has(row.id)).map((row) => row.id);
+  for (let start = 0; start < linkedIds.length; start += ID_CHUNK) {
+    const chunk = linkedIds.slice(start, start + ID_CHUNK);
+    await db.prepare(
+      `UPDATE feed_items SET ingestion_status = 'clustered'
+       WHERE id IN (${chunk.map(() => "?").join(", ")}) AND ingestion_status = 'classified'`
+    ).bind(...chunk).run();
   }
 
   // Parse classification metadata
-  const items: ClassifiedItem[] = results.map((row) => {
+  const items: ClassifiedItem[] = results.filter((row) => !memberships.has(row.id)).map((row) => {
     let classification: ClassifiedItem["classification"];
     try {
       if (row.raw_metadata) {
@@ -221,8 +250,11 @@ export async function runClustering(
     }
   }
 
-  // Stage 3: Write clusters to DB
+  // Stage 3: Write clusters to DB. Each cluster is one atomic batch: a failure
+  // part-way used to leave an empty cluster with its items still 'classified',
+  // so the next run clustered them again (Production clusters 2146/2150).
   let clustersCreated = 0;
+  let identityConflicts = 0;
 
   for (const group of clusters) {
     if (group.items.length === 0) continue;
@@ -236,42 +268,62 @@ export async function runClustering(
     const primaryItem =
       group.items.find((i) => i.source_tier === "A") ??
       group.items[0];
+    // The unique primary_source_key fails this batch if a promotion seeded a
+    // cluster from the same primary source since the membership read.
+    const sourceKey = primarySourceKey(primaryItem.url_hash);
 
-    // Insert cluster
-    const { meta: clusterMeta } = await db.prepare(
-      `INSERT INTO story_clusters
-       (title, canonical_url, topic, source_class, evidence_status, confidence_score, published_at, needs_human_review)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-    ).bind(
-      clusterTitle,
-      primaryItem.url,
-      group.primaryTopic,
-      getSourceClass(group.items),
-      evidenceStatus,
-      confidence,
-      primaryItem.published_at ?? primaryItem.fetched_at,
-      requiresReview ? 1 : 0
-    ).run();
-
-    const clusterId = clusterMeta.last_row_id;
-
-    // Insert members
-    for (const item of group.items) {
-      await db.prepare(
+    const statements: D1PreparedStatement[] = [
+      db.prepare(
+        `INSERT INTO story_clusters
+         (title, canonical_url, topic, source_class, evidence_status, confidence_score, published_at, needs_human_review, primary_source_key)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(
+        clusterTitle,
+        primaryItem.url,
+        group.primaryTopic,
+        getSourceClass(group.items),
+        evidenceStatus,
+        confidence,
+        primaryItem.published_at ?? primaryItem.fetched_at,
+        requiresReview ? 1 : 0,
+        sourceKey,
+      ),
+      // Members, each skipped if another cluster took the item meanwhile.
+      ...group.items.map((item) => db.prepare(
         `INSERT INTO story_cluster_members (cluster_id, feed_item_id, is_primary)
-         VALUES (?, ?, ?)`
-      ).bind(clusterId, item.id, item.id === primaryItem.id ? 1 : 0).run();
-
-      // Update item status
-      await db.prepare(
-        `UPDATE feed_items SET ingestion_status = 'clustered' WHERE id = ?`
-      ).bind(item.id).run();
+         SELECT cluster.id, ?, ? FROM story_clusters cluster
+         WHERE cluster.primary_source_key = ?
+           AND NOT EXISTS (SELECT 1 FROM story_cluster_members existing WHERE existing.feed_item_id = ?)`
+      ).bind(item.id, item.id === primaryItem.id ? 1 : 0, sourceKey, item.id)),
+    ];
+    // Status follows membership, so an item linked elsewhere is also settled.
+    const groupIds = group.items.map((item) => item.id);
+    for (let start = 0; start < groupIds.length; start += ID_CHUNK) {
+      const chunk = groupIds.slice(start, start + ID_CHUNK);
+      statements.push(db.prepare(
+        `UPDATE feed_items SET ingestion_status = 'clustered'
+         WHERE id IN (${chunk.map(() => "?").join(", ")}) AND ingestion_status = 'classified'
+           AND EXISTS (SELECT 1 FROM story_cluster_members member WHERE member.feed_item_id = feed_items.id)`
+      ).bind(...chunk));
     }
+    // Never leave an empty cluster behind if every member was taken meanwhile.
+    statements.push(db.prepare(
+      `DELETE FROM story_clusters WHERE primary_source_key = ?
+         AND NOT EXISTS (SELECT 1 FROM story_cluster_members member WHERE member.cluster_id = story_clusters.id)`
+    ).bind(sourceKey));
 
-    clustersCreated++;
+    try {
+      const written = await db.batch(statements);
+      // D1 counts trigger-written rows, so "changed" means "> 0".
+      if (Number(written[written.length - 1]?.meta?.changes ?? 0) === 0) clustersCreated++;
+    } catch (error) {
+      if (!/UNIQUE constraint failed: story_clusters\.primary_source_key/.test(String(error))) throw error;
+      // Rolled back whole; the items stay 'classified' and the next run's Stage 0 settles them.
+      identityConflicts++;
+    }
   }
 
-  return { processed: items.length, clusters: clustersCreated };
+  return { processed: items.length, clusters: clustersCreated, alreadyClustered: linkedIds.length, identityConflicts };
 }
 
 // ============================================================
