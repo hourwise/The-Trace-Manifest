@@ -1,7 +1,8 @@
 ---
 import AdminLayout from "../../layouts/AdminLayout.astro";
 import { promoteCandidate, recordCandidate, transitionCandidate } from "../../lib/server/admin-page-writes";
-import { canonicalSourceUrl, sourceUrlHash } from "../../lib/server/source-identity";
+import { canonicalSourceUrl, sourceUrlHash, type SourceRelationship } from "../../lib/server/source-identity";
+import { loadCandidateSourceRelationships } from "../../lib/server/source-conflicts";
 
 export const prerender = false;
 // TRACE Desk is publisher-only: the proxy refuses readers both reading and
@@ -200,6 +201,22 @@ try {
   candidates = result.results ?? [];
 } catch { loadError = "TRACE Desk is unavailable."; }
 
+// How each open candidate's source relates to existing clusters, by the same
+// rules promotion applies (TRACE-EDITORIAL-DEDUPE-R1). Two bounded, indexed
+// statements for the 50 listed candidates; a failure only hides the notices.
+const OPEN_STATES = new Set(["new", "drafting", "draft_ready", "needs_review"]);
+let sourceRelationships = new Map<string, SourceRelationship>();
+try {
+  sourceRelationships = await loadCandidateSourceRelationships(
+    Astro.locals.runtime.env.DB,
+    candidates.filter((c) => OPEN_STATES.has(c.state)).map((c) => ({ id: c.id, submittedUrl: c.submitted_url })),
+  );
+} catch {
+  sourceRelationships = new Map();
+}
+const clusterList = (clusters: ReadonlyArray<{ clusterId: number; publicationStatus: string }>) =>
+  clusters.map((cluster) => `#${cluster.clusterId} (${cluster.publicationStatus})`).join(", ");
+
 const STATE_LABELS: Record<string, string> = { new:"New", drafting:"Drafting", draft_ready:"Draft ready", needs_review:"Needs review", published:"Published", rejected:"Rejected", archived:"Archived" };
 ---
 
@@ -251,6 +268,8 @@ const STATE_LABELS: Record<string, string> = { new:"New", drafting:"Drafting", d
           const nextStates = TRANSITIONS[c.state] ?? [];
           // A published candidate already has its story cluster; promoting again would duplicate it.
           const isPromotable = c.state === "needs_review";
+          const relationship = sourceRelationships.get(c.id);
+          const promotionRefused = relationship?.kind === "retired" || relationship?.kind === "ambiguous";
           return (
             <div class="card" style="padding:0.75rem 1rem;">
               <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;flex-wrap:wrap;">
@@ -262,7 +281,14 @@ const STATE_LABELS: Record<string, string> = { new:"New", drafting:"Drafting", d
                   </div>
                   {c.submitted_url ? <a href={c.submitted_url} target="_blank" rel="noreferrer" style="font-size:0.85rem;word-break:break-all;">{c.submitted_url}</a> : null}
                   <p style="margin:0.35rem 0;font-size:0.85rem;">{c.lead_text?.slice(0, 300)}{(c.lead_text?.length ?? 0) > 300 ? "…" : ""}</p>
-                  <p class="meta" style="font-size:0.7rem;">{c.section_slug || "Unclassified"} · {c.created_at ? new Date(c.created_at + "Z").toLocaleString("en-GB") : "—"}</p>
+                  <p class="meta" style="font-size:0.7rem;">{c.section_slug || "Unclassified"} · {c.created_at ? new Date(c.created_at + "Z").toLocaleString("en-GB") : "—"} · Desk submission</p>
+                  {relationship && relationship.kind !== "new" && (
+                    <p class="desk-source-notice" role="note" id={`source-${c.id}`} data-source-relationship={relationship.kind}>
+                      {relationship.kind === "exact" && <>Source already in story cluster #{relationship.cluster.clusterId} “{relationship.cluster.title}” ({relationship.cluster.publicationStatus}). Promoting links this candidate to it; no new cluster is created. <a href={`/admin/review?review=${relationship.cluster.clusterId}`}>Open in review</a></>}
+                      {relationship.kind === "retired" && <>Source appears only in withdrawn or superseded stories ({clusterList(relationship.retired)}). Promotion is refused; decide in the Review Queue whether new coverage is warranted.</>}
+                      {relationship.kind === "ambiguous" && <>Source is already in several current clusters ({clusterList(relationship.clusters)}). Promotion is refused until the duplicates are resolved in the Review Queue.</>}
+                    </p>
+                  )}
                 </div>
                 <div style="display:flex;flex-direction:column;gap:0.3rem;min-width:100px;">
                   {nextStates.map((ns) => (
@@ -279,7 +305,10 @@ const STATE_LABELS: Record<string, string> = { new:"New", drafting:"Drafting", d
                     <form method="POST" style="margin:0;">
                       <input type="hidden" name="_action" value="promote" />
                       <input type="hidden" name="candidate_id" value={String(c.id)} />
-                      <button type="submit" class="btn btn-primary" style="font-size:0.65rem;padding:0.15rem 0.4rem;width:100%;">↑ Promote to Story</button>
+                      <button type="submit" class="btn btn-primary" style="font-size:0.65rem;padding:0.15rem 0.4rem;width:100%;"
+                        disabled={promotionRefused} aria-describedby={relationship && relationship.kind !== "new" ? `source-${c.id}` : undefined}>
+                        {relationship?.kind === "exact" ? "↑ Link to existing story" : "↑ Promote to Story"}
+                      </button>
                     </form>
                   )}
                 </div>
@@ -334,6 +363,8 @@ const STATE_LABELS: Record<string, string> = { new:"New", drafting:"Drafting", d
 </script>
 
 <style>
+  .desk-source-notice { margin: 0.35rem 0; padding: 0.35rem 0.55rem; font-size: 0.78rem; border-left: 3px solid var(--ev-disputed); background: color-mix(in oklch, var(--ev-disputed) 6%, transparent); overflow-wrap: anywhere; }
+  .desk-source-notice[data-source-relationship="exact"] { border-left-color: var(--accent); background: color-mix(in oklch, var(--accent) 6%, transparent); }
   .desk-form label { display: grid; gap: 0.35rem; font-size: 0.875rem; font-weight: 600; }
   .desk-form input, .desk-form select, .desk-form textarea { width: 100%; padding: 0.6rem 0.7rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); }
   .desk-form textarea { min-height: 8rem; resize: vertical; }

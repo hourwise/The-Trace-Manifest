@@ -3,7 +3,8 @@ import AdminLayout from "../../layouts/AdminLayout.astro";
 import EvidenceBadge from "../../components/EvidenceBadge.astro";
 import { listRecentlyReviewedClusters, listReviewQueueClusters } from "../../lib/server/review-queue";
 import type { ReviewQueueCluster } from "../../lib/review-queue-contract";
-import { pendingReviewGuidance } from "../../lib/admin/review-selection";
+import { pendingReviewGuidance, reviewQueueCategories, sourceConflictText, type ReviewQueueCategory } from "../../lib/admin/review-selection";
+import { loadClusterSourceConflicts, type ClusterSourceConflict } from "../../lib/server/source-conflicts";
 
 export const prerender = false;
 const editorialAIEnabled = Astro.locals.runtime.env.TRACE_AI_EDITORIAL_ENABLED === "true";
@@ -37,6 +38,24 @@ try {
   ]);
 } catch {
   reviewLoadError = "Review data is unavailable. Verify the D1 binding and publication migration.";
+}
+
+// Duplicate-source warnings for the (at most 50) pending cards: one bounded,
+// indexed statement. A failure only hides the warnings.
+let sourceConflicts = new Map<number, ClusterSourceConflict[]>();
+try {
+  if (pendingReviews.length > 0) sourceConflicts = await loadClusterSourceConflicts(Astro.locals.runtime.env.DB, pendingReviews.map((item) => item.id));
+} catch {
+  sourceConflicts = new Map();
+}
+const pendingIds = new Set(pendingReviews.map((item) => item.id));
+const categoryCounts = new Map<ReviewQueueCategory, { label: string; count: number }>();
+for (const item of pendingReviews) {
+  for (const category of reviewQueueCategories(item, sourceConflicts.get(item.id) ?? [])) {
+    const entry = categoryCounts.get(category.key) ?? { label: category.label, count: 0 };
+    entry.count += 1;
+    categoryCounts.set(category.key, entry);
+  }
 }
 ---
 
@@ -188,13 +207,39 @@ try {
       <p id="pending-review-notice" class="meta" role="alert" style="color:var(--ev-disputed);" hidden></p>
       {reviewLoadError ? <div class="card"><p class="meta" role="alert" style="color:var(--ev-disputed);">{reviewLoadError}</p></div> : pendingReviews.length === 0 ?
         <div class="card" style="text-align:center;padding:2rem;"><p class="meta">No items currently pending review.</p></div> :
+        <>
+        {categoryCounts.size > 0 && (
+          <p class="meta pending-review-summary" data-queue-summary>
+            {[...categoryCounts.values()].map((entry) => `${entry.label}: ${entry.count}`).join(" · ")}
+            {pendingReviews.length === 50 && " (first 50 items)"}
+          </p>
+        )}
         <div style="display:flex;flex-direction:column;gap:0.65rem;">{pendingReviews.map((item) => {
-          const guidance = pendingReviewGuidance(item);
+          const conflicts = sourceConflicts.get(item.id) ?? [];
+          const guidance = pendingReviewGuidance(item, conflicts);
+          const categories = reviewQueueCategories(item, conflicts);
           return (
-            <article class="card pending-review-card" id={`pending-${item.id}`} data-pending-cluster-id={String(item.id)} data-pending-title={item.title} data-pending-evidence={item.evidence_status} data-publication-blocked={String(guidance.publicationBlocked)}>
+            <article class="card pending-review-card" id={`pending-${item.id}`} data-pending-cluster-id={String(item.id)} data-pending-title={item.title} data-pending-evidence={item.evidence_status} data-publication-blocked={String(guidance.publicationBlocked)} data-source-conflicts={String(conflicts.length)}>
               <div class="pending-review-head"><strong>#{item.id} {item.title}</strong><EvidenceBadge status={item.evidence_status} size="sm" /></div>
               <p class="meta" style="margin:0.25rem 0;">{item.topic ?? "Uncategorised"} · {item.source_count} source{item.source_count === 1 ? "" : "s"} · {item.publication_status}</p>
+              {categories.length > 0 && <ul class="pending-review-categories" aria-label="Queue categories">{categories.map((category) => <li data-category={category.key}>{category.label}</li>)}</ul>}
               {guidance.reasons.length > 0 && <ul class="pending-review-reasons" aria-label="Why this needs review">{guidance.reasons.map((reason) => <li>{reason}</li>)}</ul>}
+              {conflicts.length > 0 && (
+                <div class="pending-source-conflicts" role="note" aria-label={`Source conflicts for #${item.id}`}>
+                  <ul>
+                    {conflicts.map((conflict) => (
+                      <li data-conflict-cluster={String(conflict.clusterId)} data-conflict-status={conflict.publicationStatus}>
+                        {sourceConflictText(conflict)}{" "}
+                        {pendingIds.has(conflict.clusterId)
+                          ? <a href={`/admin/review?review=${conflict.clusterId}`}>Open #{conflict.clusterId} in review</a>
+                          : conflict.slug && ["published", "withdrawn", "superseded"].includes(conflict.publicationStatus)
+                            ? <a href={`/stories/${conflict.slug}`}>View public page</a>
+                            : <span class="meta">Not in the pending queue.</span>}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               <p class="meta" style="margin:0.35rem 0;font-size:0.8rem;"><strong>Next:</strong> {guidance.nextAction}</p>
               <div class="pending-review-actions">
                 <button type="button" class="btn btn-primary" data-review-open={String(item.id)} style="font-size:0.8rem;">{isPublisher ? "Open review" : "Inspect evidence and history"}</button>
@@ -202,7 +247,8 @@ try {
               </div>
             </article>
           );
-        })}</div>}
+        })}</div>
+        </>}
     </section>
 
     <!-- Evidence state reference -->
@@ -1888,6 +1934,13 @@ Content-Type: application/json
   .pending-review-head { display: flex; justify-content: space-between; gap: 1rem; align-items: flex-start; }
   .pending-review-reasons { display: flex; flex-wrap: wrap; gap: 0.35rem; list-style: none; margin: 0.35rem 0; padding: 0; }
   .pending-review-reasons li { font-size: 0.72rem; padding: 0.1rem 0.45rem; border: 1px solid var(--border); border-radius: var(--radius); }
+  .pending-review-categories { display: flex; flex-wrap: wrap; gap: 0.35rem; list-style: none; margin: 0.35rem 0 0; padding: 0; }
+  .pending-review-categories li { font-size: 0.72rem; font-weight: 600; padding: 0.1rem 0.45rem; border-radius: var(--radius); background: var(--surface-2); }
+  .pending-review-categories li[data-category="duplicate-source"], .pending-review-categories li[data-category="published-overlap"] { border: 1px solid var(--ev-disputed); }
+  .pending-source-conflicts { margin: 0.4rem 0; padding: 0.4rem 0.6rem; border-left: 3px solid var(--ev-disputed); background: color-mix(in oklch, var(--ev-disputed) 6%, transparent); font-size: 0.8rem; }
+  .pending-source-conflicts ul { margin: 0; padding-left: 1rem; }
+  .pending-source-conflicts li { overflow-wrap: anywhere; }
+  .pending-review-summary { font-size: 0.8rem; margin: 0 0 0.6rem; }
   @media (max-width: 640px) {
     .pending-review-head { flex-direction: column; gap: 0.35rem; }
     .pending-review-actions .btn, .review-mode-actions .btn { width: 100%; }

@@ -241,7 +241,7 @@ function pageStructure(): void {
   // Pending Review is actionable for both roles, with role-appropriate wording.
   assert.match(markup, /data-review-open=\{String\(item\.id\)\}/, "every pending card has an open action");
   assert.match(markup, /\{isPublisher \? "Open review" : "Inspect evidence and history"\}/);
-  assert.match(markup, /pendingReviewGuidance\(item\)/, "cards show reasons and the next action");
+  assert.match(markup, /pendingReviewGuidance\(item, conflicts\)/, "cards show reasons, source conflicts and the next action");
   assert.match(markup, /id="review-mode-banner"[^>]*hidden/, "review mode starts hidden");
   assert.match(markup, /id="publish-form-card"/);
 
