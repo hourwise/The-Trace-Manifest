@@ -163,6 +163,21 @@ Rollback, if needed: `npx wrangler rollback d0479d92-8d8c-4f74-8869-4f1a5d747342
 
 Ingestion clustering dedupe is now deployed but dormant: STOP-BURN is in force and Cron is `[]`.
 
+**Step 5: #12 retargeted and merged, 2026-10-27 (owner-approved; no Worker deploy, no migration).**
+
+| Check | Result |
+|---|---|
+| Sync | An ordinary merge of `main` (`f223704`) into #12, giving `4ee5050`; the diff against `main` is still #12's 9 files (no Worker, migration or wrangler changes). Local `npm run ci` passes. |
+| PR | Base changed to `main`; CI green on `4ee5050` (validate, secret-scan, Pages); merge state clean |
+| Merge | Marked ready, then merged with a merge commit pinned to the head: **`4cc5391f3698af614025ba6f0170c2a08fe41215`** |
+| Pages | Production deployment **`60dd0117`** (`4cc5391`) succeeded at 21:57 UTC; rollback target `3e5078a0` (`f223704`) |
+| Public (anonymous) | `/`, `/feed`, `/rss/daily.xml`, a published story and withdrawn story 381 return 200. Anonymous `/admin/review`, `/admin/desk` and `/api/admin/clusters` redirect to Access. |
+| `/admin/review` (publisher, GET) | 50 pending cards with #12's markup, starting at #2741; categories `needs-review` 50 and `blocked-evidence` 31; 0 source-conflict notes. A read-only query confirms no pending cluster on Production shares a source item with any other cluster, so 0 is correct. No console errors. |
+| `/admin/desk` (publisher, GET) | 12 `exact` source notices (for example "Source already in story cluster #2749 … no new cluster is created"); no `retired` or `ambiguous` candidates; no console errors |
+| Reader role | Not exercised live (no reader session); covered by the render tests and the server-side role check from #7 |
+| Database | Identical before and after the merge and all page loads (2930 audit rows; pending review 1769) |
+| Worker | Unchanged: `b09096c6`; schedules `[]` on both Workers |
+
 ## Worker deployment (#11)
 
 - **Configuration:** tracked `wrangler.worker.toml` declares `crons = []` (top level and `env.preview`), so STOP-BURN stays in force on deploy. The dry run on the current Worker matches bindings `DB` (Production D1) and `RAW_STORE`, with 4 secrets.
@@ -228,8 +243,17 @@ See `docs/audit/trace-p3-import-compatibility.md`:
 
 ## Recommended next operational decision
 
-Steps 1–4 are done: 0077 on Preview and Production, the Preview Desk smoke, the #11 merge (Pages `3e5078a0`) and the Worker deploy (`b09096c6`); see the execution record. The next decision is **step 5: retarget #12 to `main`**, run CI, and merge it.
+The editorial stream (steps 1–5) is complete. It covered:
+- 0077 on Preview and Production;
+- the Preview Desk smoke;
+- the #11 merge (Pages `3e5078a0`) and Worker deploy (`b09096c6`);
+- the #12 merge (Pages `60dd0117`).
 
-After that, in order:
-1. the newsletter stream (#13, #14) whenever the owner chooses; it is independent;
-2. the Codex P3 Preview fixture pilot. It needs #11/#12 and Preview 0077, and puts its first newly acquired, review-required candidates into the editorial review queue on Preview, with no publication.
+See the execution record.
+
+Towards a real, newly acquired source reaching the review queue, the next decision is **the Codex P3 Preview fixture pilot prerequisites**. Each is separately owned and approved:
+1. Codex re-pins P3 to the merged commits (`f223704` and `4cc5391`). The interface files are unchanged, so `p3-import-contract` should still pass.
+2. A small Desk `held → needs_review | rejected` transition (TRACE change, its own PR).
+3. The sidecar schema as its own numbered migration on Preview only.
+
+After that, the one-package pilot runs on Preview, with no publication. The newsletter stream (#13 and #14) is independent and can go whenever the owner chooses.
