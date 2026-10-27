@@ -10,7 +10,7 @@
 |---|---|
 | `main` | `5a8905966907a242520d56576e3e28c4215317e6` |
 | Production Pages | `96624494` (`5a89059`); rollback `d98f8a84` |
-| Production Worker | `d0479d92-8d8c-4f74-8869-4f1a5d747342` (tag `c41b6b1`); rollback `44a2d49d` |
+| Production Worker | `d0479d92-8d8c-4f74-8869-4f1a5d747342` (tag `c41b6b1`) at preparation; `b09096c6` (tag `f223704`) since step 4 |
 | Preview Worker | `d8e4d10c-209f-45b5-9d0f-d30c46a0d4a3` |
 | Cron | `[]` on both Workers (read-only API check); tracked `wrangler.worker.toml` declares `crons = []` for the top level and `env.preview` |
 | Public Ask / editorial AI | Off (`TRACE_AI_PUBLIC_ENABLED = "false"`, both environments) / on |
@@ -144,6 +144,25 @@ The deployed code ignores the new column until #11 merges. Nothing was merged or
 
 From now on, a new Desk promotion on Production writes `primary_source_key`, or reuses an existing cluster. Desk dedupe was verified on Preview (see above). Ingestion clustering dedupe arrives with the Worker deploy (step 4), which is not yet approved.
 
+**Step 4: Production Worker deployed from #11's merge, 2026-10-27 (owner-approved).**
+
+| Check | Result |
+|---|---|
+| Source | Clean detached worktree at `f2237041150634b061affea9acec87084e400ea6`, `npm ci`, working tree clean |
+| Config | `wrangler.worker.toml`: top level and `env.preview` both `crons = []`; the top level binds Production D1 `trace-manifest-db` and R2 `trace-manifest-raw` |
+| Before | `d0479d92-8d8c-4f74-8869-4f1a5d747342` (tag `c41b6b1`, 100%): **rollback target** |
+| Dry run | Bindings `DB` (trace-manifest-db) and `RAW_STORE` (trace-manifest-raw) only |
+| Command | `npx wrangler deploy --config wrangler.worker.toml --env="" --strict --tag f223704` |
+| After | **`b09096c6-07f1-43d6-a92c-a6b1ce20db42`** (tag `f223704`), deployment `2033e5af`, 100% |
+| Version check | Handlers `scheduled`, `queue`, `fetch`; compatibility date 2026-07-12 with `nodejs_compat`; `DB` bound to the Production D1 id; `RAW_STORE`; secrets `ADMIN_API_TOKEN`, `GITHUB_TOKEN`, `TRACE_AI_SCHEDULED_ENABLED`, `TRACE_INTERNAL_SERVICE_SECRET` |
+| Schedules | `[]` on Production (and Preview, still `d8e4d10c`) |
+| Signed admin read | `GET /api/admin/jobs` from the publisher's Access session returned the Worker's JSON. The Worker audited it as rows 2929 (`allowed`) and 2930 (`succeeded`). |
+| Database | Unchanged apart from those two audit rows: 2755 clusters, 3819 members, 3768 candidates, 0 keyed; pending review 1769. The last ingestion job is still 2026-09-06 (none ran). |
+
+Rollback, if needed: `npx wrangler rollback d0479d92-8d8c-4f74-8869-4f1a5d747342 --config wrangler.worker.toml --env=""`, after its own approval. The 0077 column stays, and is harmless to the old code.
+
+Ingestion clustering dedupe is now deployed but dormant: STOP-BURN is in force and Cron is `[]`.
+
 ## Worker deployment (#11)
 
 - **Configuration:** tracked `wrangler.worker.toml` declares `crons = []` (top level and `env.preview`), so STOP-BURN stays in force on deploy. The dry run on the current Worker matches bindings `DB` (Production D1) and `RAW_STORE`, with 4 secrets.
@@ -209,8 +228,8 @@ See `docs/audit/trace-p3-import-compatibility.md`:
 
 ## Recommended next operational decision
 
-Steps 1–3 are done: 0077 on Preview and Production, the Preview Desk smoke, and the #11 merge (Pages `3e5078a0`); see the execution record. The next decision is **step 4: the #11 Production Worker deploy** from `f223704` (`crons = []`; rollback `d0479d92`).
+Steps 1–4 are done: 0077 on Preview and Production, the Preview Desk smoke, the #11 merge (Pages `3e5078a0`) and the Worker deploy (`b09096c6`); see the execution record. The next decision is **step 5: retarget #12 to `main`**, run CI, and merge it.
 
 After that, in order:
-1. step 5, retarget #12 to `main`, CI, merge;
+1. the newsletter stream (#13, #14) whenever the owner chooses; it is independent;
 2. the Codex P3 Preview fixture pilot. It needs #11/#12 and Preview 0077, and puts its first newly acquired, review-required candidates into the editorial review queue on Preview, with no publication.
