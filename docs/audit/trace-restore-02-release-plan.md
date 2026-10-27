@@ -75,7 +75,7 @@ That is **local verification only.**
 |---|---|---|---|
 | File | `db/migration-0077-editorial-source-identity.sql` (PR #11) | `db/migration-0078-newsletter-subscriptions.sql` (PR #13) | `db/migration-0079-newsletter-issues.sql` (PR #14) |
 | SHA-256 (LF, Git blob) | `9f59608442521d0789dc8ab93e9cd5f9e65df3555efb2604e681c857b6310bbb` | `57f990622190f3463df2f9aacd7cfc5d7867cc095f3dcf5f8d1fedd10d968799` | `ca75e5580025a1db35a112a27f356ff49659edfe49821e6494b2baeb79a17bed` |
-| Changes | Adds `story_clusters.primary_source_key`; adds `UNIQUE INDEX idx_story_clusters_primary_source_key … WHERE primary_source_key IS NOT NULL`; adds `idx_story_cluster_members_feed_item_primary_cluster` (no-op where 0069 exists) | Adds tables `newsletter_subscribers`, `newsletter_signup_attempts`, `email_outbox`, and 3 indexes | Adds table `newsletter_issues`, and 1 index |
+| Changes | Adds `story_clusters.primary_source_key`; adds `UNIQUE INDEX idx_story_clusters_primary_source_key … WHERE primary_source_key IS NOT NULL`; adds `idx_story_cluster_members_feed_item_primary_cluster` (no-op where 0069 exists; it already existed on both Preview and Production) | Adds tables `newsletter_subscribers`, `newsletter_signup_attempts`, `email_outbox`, and 3 indexes | Adds table `newsletter_issues`, and 1 index |
 | Preflight (must return no rows) | `SELECT 'column', name FROM pragma_table_info('story_clusters') WHERE name='primary_source_key' UNION ALL SELECT 'index', name FROM sqlite_master WHERE type='index' AND name='idx_story_clusters_primary_source_key'` | `SELECT name FROM sqlite_master WHERE type='table' AND name IN ('newsletter_subscribers','newsletter_signup_attempts','email_outbox')` | `SELECT name FROM sqlite_master WHERE name='newsletter_issues'` |
 | Backup | `wrangler d1 time-travel info <db> [--env production]`: record the bookmark, plus `SELECT COUNT(*)` of `story_clusters` and `story_cluster_members` | Bookmark | Bookmark |
 | Forward | `npx wrangler d1 execute <db> [--env production] --remote --file <file>` | Same | Same |
@@ -112,6 +112,22 @@ Production is unchanged. Nothing was merged or deployed.
 | Unchanged | 127 clusters (max id 90201), 238 members, 129 feed items, 21 candidates; cluster 7's row and membership unchanged; pending-review queue still the same 10 clusters (7–16); `/admin/review` lists #7 once |
 
 Result: Desk promotion reuses the ingestion cluster instead of creating a duplicate. Production is unchanged; nothing was merged or deployed.
+
+**Step 2: 0077 on Production D1, applied 2026-10-27 (owner-approved, Production D1 only).**
+
+| Check | Result |
+|---|---|
+| File | Same file as on Preview; SHA-256 `9f596084…bbb` re-checked immediately before applying |
+| Target | `trace-manifest-db` (`--env production`): `wrangler d1 info` id equals the committed id in `wrangler.toml` `env.production` and `wrangler.worker.toml`. Quiet: 12 write queries in 24 h, Cron `[]`, last audit row 2026-10-26 07:00 |
+| Preflight | No rows |
+| Correction | The reverse membership index **already existed on Production**, identical to 0077's definition (from 0069's `090164a`). This plan and the migration's own comment had said Production lacked it. The third statement was therefore a no-op. The migration file is unchanged, because it is applied and hash-pinned. |
+| Bookmark | `00004008-00000000-00005111-f9e7a3d430af21da185f3a5e2dc3eacd` |
+| Before | 2755 clusters (2620 draft, 27 review, 92 published, 16 withdrawn), 3819 members, 6765 feed items, 3768 candidates, 2928 audit rows (max id 2928) |
+| Forward | One `wrangler d1 execute --env production --remote --file`: success, 1 attempt, 25 ms, 2 rows written (schema) |
+| Postflight | `primary_source_key TEXT` (nullable), with 0 keyed rows; `idx_story_clusters_primary_source_key` is unique and partial; both lookups use covering indexes; the 3 FTS triggers are intact; `foreign_key_check` returns 0 rows; every count above, including the audit log, is identical |
+| Public smoke (read-only) | `/`, `/feed`, a published story page and `/rss/daily.xml` all return 200 |
+
+The deployed code ignores the new column until #11 merges. Nothing was merged or deployed.
 
 ## Worker deployment (#11)
 
@@ -178,8 +194,8 @@ See `docs/audit/trace-p3-import-compatibility.md`:
 
 ## Recommended next operational decision
 
-Step 1 (0077 on Preview) and the Preview Desk smoke of #11 are done; see the execution record. The next decision is **step 2: 0077 on Production D1**, with a fresh bookmark and a quiet window.
+Steps 1 and 2 (0077 on Preview and Production) and the Preview Desk smoke of #11 are done; see the execution record. The next decision is **step 3: merge #11**. That deploys Production Pages, and Desk promotion then writes `primary_source_key`.
 
 After that, in order:
-1. the #11 merge and Worker deploy;
+1. step 4, the #11 Production Worker deploy (`crons = []`, rollback `d0479d92`);
 2. the Codex P3 Preview fixture pilot. It needs #11/#12 and Preview 0077, and puts its first newly acquired, review-required candidates into the editorial review queue on Preview, with no publication.
