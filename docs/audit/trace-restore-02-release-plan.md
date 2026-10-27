@@ -129,6 +129,21 @@ Result: Desk promotion reuses the ingestion cluster instead of creating a duplic
 
 The deployed code ignores the new column until #11 merges. Nothing was merged or deployed.
 
+**Step 3: #11 merged, 2026-10-27 (owner-approved; no Worker deploy).**
+
+| Check | Result |
+|---|---|
+| Pre-merge | `main` `5a89059` was an ancestor of the #11 head `6b7010c`; CI green (validate, secret-scan, Pages); merge state clean; the diff touches no wrangler or Cron configuration |
+| Merge | Marked ready, then merged with a merge commit pinned to the head SHA: **`f2237041150634b061affea9acec87084e400ea6`** |
+| Pages | Production deployment **`3e5078a0`** (`f223704`) succeeded at 21:32 UTC; rollback target `96624494` (`5a89059`) |
+| Public (anonymous) | `/`, `/feed`, `/rss/daily.xml` and a published story return 200; withdrawn story 381 returns 200 with its withdrawn notice and `noindex` |
+| Access | Anonymous `/admin`, `/admin/desk`, `/admin/review` and `/api/admin/candidates` redirect (302) to Cloudflare Access, as does an anonymous POST to `/admin/desk` |
+| Admin (publisher session, GET only) | Desk renders the candidate queue; the Review Queue renders with #2741 first and no console errors |
+| Database | Identical before and after the merge and the page loads: 2755 clusters, 3819 members, 3768 candidates, 0 keyed, 2928 audit rows; pending review 1769 (ids 294–2741, same id sum); publishable 2335 |
+| Worker | Unchanged: Production `d0479d92`, Preview `d8e4d10c`; schedules `[]` on both |
+
+From now on, a new Desk promotion on Production writes `primary_source_key`, or reuses an existing cluster. Desk dedupe was verified on Preview (see above). Ingestion clustering dedupe arrives with the Worker deploy (step 4), which is not yet approved.
+
 ## Worker deployment (#11)
 
 - **Configuration:** tracked `wrangler.worker.toml` declares `crons = []` (top level and `env.preview`), so STOP-BURN stays in force on deploy. The dry run on the current Worker matches bindings `DB` (Production D1) and `RAW_STORE`, with 4 secrets.
@@ -194,8 +209,8 @@ See `docs/audit/trace-p3-import-compatibility.md`:
 
 ## Recommended next operational decision
 
-Steps 1 and 2 (0077 on Preview and Production) and the Preview Desk smoke of #11 are done; see the execution record. The next decision is **step 3: merge #11**. That deploys Production Pages, and Desk promotion then writes `primary_source_key`.
+Steps 1–3 are done: 0077 on Preview and Production, the Preview Desk smoke, and the #11 merge (Pages `3e5078a0`); see the execution record. The next decision is **step 4: the #11 Production Worker deploy** from `f223704` (`crons = []`; rollback `d0479d92`).
 
 After that, in order:
-1. step 4, the #11 Production Worker deploy (`crons = []`, rollback `d0479d92`);
+1. step 5, retarget #12 to `main`, CI, merge;
 2. the Codex P3 Preview fixture pilot. It needs #11/#12 and Preview 0077, and puts its first newly acquired, review-required candidates into the editorial review queue on Preview, with no publication.
