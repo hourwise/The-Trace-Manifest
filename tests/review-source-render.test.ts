@@ -60,6 +60,7 @@ if (!existsSync(REVIEW) || !existsSync(DESK)) throw new Error("Run npm run build
     ["c-ambiguous", "https://review-lab.example/ambiguous", "needs_review"],
     ["c-done", "https://review-lab.example/solo", "published"],
     ["c-retired", "https://review-lab.example/retired-only", "needs_review"],
+    ["c-held", "https://review-lab.example/solo", "held"],
   ] as const) {
     db.sqlite.prepare("INSERT INTO editorial_candidates (id, intake_type, submitted_url, lead_text, source_hash, state, created_by) VALUES (?, 'manual_url', ?, 'Lead text for the candidate', ?, ?, 'publisher@example.test')")
       .run(id, url, `${id}-hash`, state);
@@ -117,6 +118,15 @@ if (!existsSync(REVIEW) || !existsSync(DESK)) throw new Error("Run npm run build
   // Retired-only source: refused promotion is explained and the button is disabled.
   assert.match(desk.html, /id="source-c-retired" data-source-relationship="retired"[^>]*>\s*Source appears only in withdrawn or superseded stories \(#720 \(withdrawn\)\)/);
   assert.match(desk.html, /<button[^>]*disabled[^>]*aria-describedby="source-c-retired"/);
+  // Held at intake: labelled, explained, with its source notice; release or reject only, never promote directly.
+  const heldForm = (state: string) => new RegExp(`name="candidate_id" value="c-held"\\s*/?>\\s*<input type="hidden" name="state" value="${state}"`);
+  assert.match(desk.html, />Held<\/span>/);
+  assert.match(desk.html, /id="held-c-held">\s*Held at intake for an editor's decision\./);
+  assert.match(desk.html, /id="source-c-held" data-source-relationship="exact"[^>]*>\s*Source already in story cluster #717/);
+  assert.match(desk.html, heldForm("needs_review"));
+  assert.match(desk.html, heldForm("rejected"));
+  assert.doesNotMatch(desk.html, heldForm("published"));
+  assert.doesNotMatch(desk.html, /name="_action" value="promote"\s*\/?>\s*<input type="hidden" name="candidate_id" value="c-held"/, "a held candidate is released before it can be promoted");
   assert.equal((await render(DESK, "reader")).status, 403, "readers still cannot open TRACE Desk");
 
   assert.deepEqual(writeCounts(), before, "rendering the review queue and Desk writes nothing");
