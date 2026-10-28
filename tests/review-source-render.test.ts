@@ -69,14 +69,14 @@ if (!existsSync(REVIEW) || !existsSync(DESK)) throw new Error("Run npm run build
   const writeCounts = () => ["story_clusters", "story_cluster_members", "editorial_candidates", "admin_audit_log", "feed_items"]
     .map((table) => Number((db.sqlite.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n));
   const before = writeCounts();
-  const render = async (path: string, role: "publisher" | "reader") => {
+  const render = async (path: string, role: "publisher" | "reader", query = "") => {
     const page = await (await import(pathToFileURL(path).href)).page();
     const response = await container.renderToResponse(page.default, {
       locals: {
         operator: { email: `${role}@example.test`, role, subject: role, expiresAt: Math.floor(Date.now() / 1000) + 600 },
         runtime: { env: { DB: db.asD1(), TRACE_AI_EDITORIAL_ENABLED: "false" } },
       } as unknown as App.Locals,
-      request: new Request(`https://thetracemanifest.com${path.includes("desk") ? "/admin/desk" : "/admin/review"}`),
+      request: new Request(`https://thetracemanifest.com${path.includes("desk") ? "/admin/desk" : "/admin/review"}${query}`),
     });
     // Scoped-style attributes are build noise for these assertions.
     return { status: response.status, html: response.status === 200 ? (await response.text()).replace(/ data-astro-cid-[a-z0-9]+/g, "") : "" };
@@ -114,7 +114,6 @@ if (!existsSync(REVIEW) || !existsSync(DESK)) throw new Error("Run npm run build
   assert.match(desk.html, /Link to existing story/);
   assert.match(desk.html, /data-source-relationship="ambiguous"/);
   assert.match(desk.html, /<button[^>]*disabled[^>]*aria-describedby="source-c-ambiguous"/, "an ambiguous source cannot be promoted from the Desk");
-  assert.doesNotMatch(desk.html, /id="source-c-done"/, "closed candidates carry no notice");
   // Retired-only source: refused promotion is explained and the button is disabled.
   assert.match(desk.html, /id="source-c-retired" data-source-relationship="retired"[^>]*>\s*Source appears only in withdrawn or superseded stories \(#720 \(withdrawn\)\)/);
   assert.match(desk.html, /<button[^>]*disabled[^>]*aria-describedby="source-c-retired"/);
@@ -127,6 +126,22 @@ if (!existsSync(REVIEW) || !existsSync(DESK)) throw new Error("Run npm run build
   assert.match(desk.html, heldForm("rejected"));
   assert.doesNotMatch(desk.html, heldForm("published"));
   assert.doesNotMatch(desk.html, /name="_action" value="promote"\s*\/?>\s*<input type="hidden" name="candidate_id" value="c-held"/, "a held candidate is released before it can be promoted");
+  // Queue filter: the default lists work waiting on an editor, held first, with a count on every filter.
+  const deskIds = (html: string) => [...html.matchAll(/name="candidate_id" value="([^"]+)"/g)].map((m) => m[1]).filter((id, i, ids) => ids.indexOf(id) === i);
+  assert.match(desk.html, /<nav class="desk-filters" aria-label="Candidate queue filters">/);
+  assert.match(desk.html, /<a href="\?filter=decide" data-desk-filter="decide" aria-current="page" class="active">\s*Needs a decision <span class="count">4<\/span>/);
+  assert.match(desk.html, /data-desk-filter="held"[^>]*>\s*Held <span class="count">1<\/span>/);
+  assert.match(desk.html, /data-desk-filter="published"[^>]*>\s*Published <span class="count">1<\/span>/);
+  assert.match(desk.html, /data-desk-filter="all"[^>]*>\s*All <span class="count">5<\/span>/);
+  assert.equal(deskIds(desk.html)[0], "c-held", "held candidates lead the default view");
+  assert.ok(!deskIds(desk.html).includes("c-done"), "the default view leaves out decided candidates");
+  assert.doesNotMatch(desk.html, /class="desk-pages"/, "no paging links when everything fits");
+  const published = await render(DESK, "publisher", "?filter=published");
+  assert.deepEqual(deskIds(published.html), ["c-done"]);
+  assert.match(published.html, /data-desk-filter="published" aria-current="page"/);
+  assert.doesNotMatch(published.html, /id="source-c-done"/, "closed candidates carry no notice");
+  assert.match((await render(DESK, "publisher", "?filter=rejected")).html, /No Rejected candidates\./);
+  assert.match((await render(DESK, "publisher", "?filter=bogus")).html, /data-desk-filter="decide" aria-current="page"/, "an unknown filter falls back to the default");
   assert.equal((await render(DESK, "reader")).status, 403, "readers still cannot open TRACE Desk");
 
   assert.deepEqual(writeCounts(), before, "rendering the review queue and Desk writes nothing");

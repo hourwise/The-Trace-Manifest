@@ -4,6 +4,7 @@ import { promoteCandidate, recordCandidate, transitionCandidate } from "../../li
 import { canonicalSourceUrl, sourceUrlHash, type SourceRelationship } from "../../lib/server/source-identity";
 import { loadCandidateSourceRelationships } from "../../lib/server/source-conflicts";
 import { DESK_OPEN_STATES, DESK_STATE_LABELS, DESK_TARGET_STATES, DESK_TRANSITIONS, deskTransitionAllowed } from "../../lib/admin/desk-transitions";
+import { DESK_QUEUE_FILTERS, DESK_QUEUE_FILTER_LABELS, loadDeskQueue, parseDeskQueueFilter, type DeskCandidateRow, type DeskQueuePage } from "../../lib/server/desk-queue";
 
 export const prerender = false;
 // TRACE Desk is publisher-only: the proxy refuses readers both reading and
@@ -12,15 +13,11 @@ export const prerender = false;
 if (Astro.locals.operator?.role !== "publisher") return new Response("Forbidden", { status: 403, headers: { "Cache-Control": "no-store" } });
 const editorialAIEnabled = Astro.locals.runtime.env.TRACE_AI_EDITORIAL_ENABLED === "true";
 
-interface CandidateRow {
-  id: string; intake_type: string; submitted_url: string | null;
-  lead_text: string | null; state: string; section_slug: string | null;
-  topic_slug: string | null; urgency: string; development_status: string | null;
-  source_language: string | null; created_by: string; created_at: string;
-  updated_at: string;
-}
+type CandidateRow = DeskCandidateRow;
 
 let candidates: CandidateRow[] = [];
+let queue: DeskQueuePage | null = null;
+const queueFilter = parseDeskQueueFilter(Astro.url.searchParams.get("filter"));
 let loadError: string | null = null;
 let actionMessage: string | null = null;
 let actionError: string | null = null;
@@ -182,14 +179,18 @@ if (Astro.request.method === "POST") {
   }
 }
 
+// One filter at a time; the default lists held, then needs_review candidates,
+// so work waiting on an editor is never pushed off the page by newer intake.
 try {
-  const db = Astro.locals.runtime.env.DB;
-  const result = await db.prepare(`
-    SELECT id, intake_type, submitted_url, lead_text, state, section_slug, topic_slug, urgency, development_status, source_language, created_by, created_at, updated_at
-    FROM editorial_candidates ORDER BY created_at DESC LIMIT 50
-  `).all<CandidateRow>();
-  candidates = result.results ?? [];
+  queue = await loadDeskQueue(Astro.locals.runtime.env.DB, {
+    filter: queueFilter,
+    cursor: Astro.url.searchParams.get("cursor"),
+  });
+  candidates = queue.items;
 } catch { loadError = "TRACE Desk is unavailable."; }
+const emptyQueueMessage = queueFilter === "decide"
+  ? "Nothing needs a decision: no held or Needs review candidates. Candidates still in progress are under their own filters."
+  : queueFilter === "all" ? "No candidates yet." : `No ${DESK_QUEUE_FILTER_LABELS[queueFilter]} candidates.`;
 
 // How each open candidate's source relates to existing clusters, by the same
 // rules promotion applies (TRACE-EDITORIAL-DEDUPE-R1). Two bounded, indexed
@@ -248,8 +249,17 @@ const clusterList = (clusters: ReadonlyArray<{ clusterId: number; publicationSta
 
     <section class="card" style="margin-top:2rem;">
       <h2 style="font-size:1.25rem;">Candidate Queue</h2>
+      {queue && (
+        <nav class="desk-filters" aria-label="Candidate queue filters">
+          {DESK_QUEUE_FILTERS.map((key) => (
+            <a href={`?filter=${key}`} data-desk-filter={key} aria-current={key === queue!.filter ? "page" : undefined} class={key === queue!.filter ? "active" : ""}>
+              {DESK_QUEUE_FILTER_LABELS[key]} <span class="count">{queue!.counts[key]}</span>
+            </a>
+          ))}
+        </nav>
+      )}
       {loadError ? <p class="meta" style="color:var(--ev-disputed);">{loadError}</p> :
-       candidates.length === 0 ? <p class="meta">No candidates yet.</p> :
+       candidates.length === 0 ? <p class="meta">{emptyQueueMessage}</p> :
        <div style="display:grid;gap:0.75rem;">
         {candidates.map((c) => {
           const nextStates = DESK_TRANSITIONS[c.state] ?? [];
@@ -308,6 +318,12 @@ const clusterList = (clusters: ReadonlyArray<{ clusterId: number; publicationSta
         })}
        </div>
       }
+      {queue && (queue.continued || queue.nextCursor) && (
+        <nav class="desk-pages" aria-label="Candidate queue pages">
+          {queue.continued && <a href={`?filter=${queue.filter}`}>&larr; First page</a>}
+          {queue.nextCursor && <a href={`?filter=${queue.filter}&cursor=${queue.nextCursor}`}>Next page &rarr;</a>}
+        </nav>
+      )}
     </section>
   </div>
 </AdminLayout>
@@ -355,6 +371,11 @@ const clusterList = (clusters: ReadonlyArray<{ clusterId: number; publicationSta
 <style>
   .desk-source-notice { margin: 0.35rem 0; padding: 0.35rem 0.55rem; font-size: 0.78rem; border-left: 3px solid var(--ev-disputed); background: color-mix(in oklch, var(--ev-disputed) 6%, transparent); overflow-wrap: anywhere; }
   .desk-source-notice[data-source-relationship="exact"] { border-left-color: var(--accent); background: color-mix(in oklch, var(--accent) 6%, transparent); }
+  .desk-filters { display: flex; gap: 0.5rem; flex-wrap: wrap; margin: 0.75rem 0 1rem; }
+  .desk-filters a { padding: 0.35rem 0.7rem; border: 1px solid var(--border); border-radius: var(--radius); text-decoration: none; font-size: 0.8rem; white-space: nowrap; }
+  .desk-filters a.active { border-color: var(--accent); font-weight: 600; }
+  .desk-filters .count { opacity: 0.7; }
+  .desk-pages { display: flex; gap: 1rem; flex-wrap: wrap; justify-content: space-between; margin-top: 1rem; font-size: 0.85rem; }
   .desk-form label { display: grid; gap: 0.35rem; font-size: 0.875rem; font-weight: 600; }
   .desk-form input, .desk-form select, .desk-form textarea { width: 100%; padding: 0.6rem 0.7rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); }
   .desk-form textarea { min-height: 8rem; resize: vertical; }
