@@ -178,6 +178,18 @@ Ingestion clustering dedupe is now deployed but dormant: STOP-BURN is in force a
 | Database | Identical before and after the merge and all page loads (2930 audit rows; pending review 1769) |
 | Worker | Unchanged: `b09096c6`; schedules `[]` on both Workers |
 
+**Step 6: #18 (Desk `held` transition) merged, 2026-10-28 (owner-approved; no Worker deploy, no migration).**
+
+| Check | Result |
+|---|---|
+| PR | CI green on `6cd070d` (validate, secret-scan, Pages); merge state clean; `main` still `4cc5391` |
+| Merge | Marked ready, then merged with a merge commit pinned to the head: **`5589c9a1b68bbd69e5077d3dabc1042bbe4c6b83`** |
+| Pages | Production deployment **`611548a0`** (`5589c9a`) succeeded at 16:41 UTC; rollback target `60dd0117` (`4cc5391`) |
+| Public (anonymous) | `/`, `/feed`, `/rss/daily.xml` and a published story return 200. Anonymous `/admin/desk`, `/admin/review` and `/api/admin/candidates` redirect to Access. |
+| `/admin/desk` (publisher, GET) | Loads; only `New` candidates on the first page, offering Drafting and Reject; 0 held notes, as expected with 0 held candidates on Production |
+| Database | Identical before and after the merge and the page load (2930 audit rows; pending review 1769; candidates 3751 new, 1 drafting, 15 published, 1 archived, 0 held) |
+| Worker | Unchanged: `b09096c6`; schedules `[]` on both Workers |
+
 ## Worker deployment (#11)
 
 - **Configuration:** tracked `wrangler.worker.toml` declares `crons = []` (top level and `env.preview`), so STOP-BURN stays in force on deploy. The dry run on the current Worker matches bindings `DB` (Production D1) and `RAW_STORE`, with 4 secrets.
@@ -236,24 +248,25 @@ See `docs/audit/trace-p3-import-compatibility.md`:
   - the ICO fee;
   - a real confirmation test.
 - **P3 hosted import:**
-  - the gaps above (candidate identity alignment and a Desk `held` transition);
+  - the gaps above (candidate identity alignment; the Desk `held` transition shipped in #18);
   - a numbered sidecar migration;
   - an authenticated route.
 - **Reader browser QA** for #7 was deferred by the owner; reader rendering is covered by the render tests.
 
 ## Recommended next operational decision
 
-The editorial stream (steps 1–5) is complete. It covered:
+The editorial stream (steps 1–6) is complete. It covered:
 - 0077 on Preview and Production;
 - the Preview Desk smoke;
 - the #11 merge (Pages `3e5078a0`) and Worker deploy (`b09096c6`);
-- the #12 merge (Pages `60dd0117`).
+- the #12 merge (Pages `60dd0117`);
+- the #18 Desk `held` transition (Pages `611548a0`).
 
 See the execution record.
 
 Towards a real, newly acquired source reaching the review queue, the next decision is **the Codex P3 Preview fixture pilot prerequisites**. Each is separately owned and approved:
-1. Codex re-pins P3 to the merged commits (`f223704` and `4cc5391`). The interface files are unchanged, so `p3-import-contract` should still pass.
-2. A small Desk `held → needs_review | rejected` transition (TRACE change, its own PR).
+1. Codex re-pins P3 to the merged commits (`f223704`, `4cc5391` and `5589c9a`). The interface files are unchanged, so `p3-import-contract` should still pass.
+2. ~~A small Desk `held → needs_review | rejected` transition~~: done in #18 (step 6).
 3. The sidecar schema as its own numbered migration on Preview only.
 
 After that, the one-package pilot runs on Preview, with no publication. The newsletter stream (#13 and #14) is independent and can go whenever the owner chooses.
