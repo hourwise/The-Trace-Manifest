@@ -1,0 +1,285 @@
+# TRACE-RESTORE-02: consolidated implementation and release-readiness plan
+
+**Prepared:** 2026-10-26, against `main` at `5a89059` (PR #10 merged; Production Pages `96624494`).
+**Supersedes:** `docs/audit/trace-restore-01-release-plan.md` (held on PR #15 until now).
+**Approvals:** nothing below is approved. Every merge, migration, deploy, flag change, import and email needs explicit owner approval at its own step. Local test success does not authorise any remote change.
+
+## Current state (verified 2026-10-26)
+
+| Item | Value |
+|---|---|
+| `main` | `5a8905966907a242520d56576e3e28c4215317e6` |
+| Production Pages | `96624494` (`5a89059`); rollback `d98f8a84` |
+| Production Worker | `d0479d92-8d8c-4f74-8869-4f1a5d747342` (tag `c41b6b1`) at preparation; `b09096c6` (tag `f223704`) since step 4 |
+| Preview Worker | `d8e4d10c-209f-45b5-9d0f-d30c46a0d4a3` |
+| Cron | `[]` on both Workers (read-only API check); tracked `wrangler.worker.toml` declares `crons = []` for the top level and `env.preview` |
+| Public Ask / editorial AI | Off (`TRACE_AI_PUBLIC_ENABLED = "false"`, both environments) / on |
+| Production cleanup | Complete (PR #16 records it): 10 archived, 6 withdrawn; pending 1779 → 1769, published 98 → 92, other counts unchanged |
+
+## Pull requests
+
+| PR | Head | Base | State | Purpose |
+|---|---|---|---|---|
+| #11 | `6b7010c` | `main` | Draft, mergeable, CI green | TRACE-EDITORIAL-DEDUPE-R1, migration 0077 |
+| #12 | `761b773` | #11's branch | Draft, stacked | Reviewer duplicate-source visibility |
+| #13 | `bb93ced` | `main` | Draft, mergeable, CI green | TRACE Weekly signup and outbox, migration 0078 (off) |
+| #14 | `3983843` | #13's branch | Draft, stacked | TRACE Weekly drafts and approval, migration 0079 (dispatch off) |
+| #15 | `4385cd9` | `main` | Draft, **not for merge as is** | Combined tree plus integration tests |
+| #16 | `d100105` | `main` | Ready, docs only | Production cleanup record |
+| This PR | — | `main` | Draft, docs only | Release plan, P3 compatibility, roadmap |
+
+**What changed in TRACE-RESTORE-02:**
+- **Conflicts with `main` (caused by #10) resolved** in #11 (`package.json`) and #13 (`package.json` and `BaseLayout.astro`), by ordinary merges. No commits were rewritten.
+- **#12 and #14 synchronised** with their repaired parents; each diff still shows only its own work.
+- **One real defect fixed** in #13 and #14: outbox rows were due from the database clock rather than the request or dispatch time.
+- **New verification:**
+  - migration tests for 0077, 0078, 0079 and all three together;
+  - newsletter hardening (tampered tokens, per-request statement bounds, exact Resend request);
+  - review UX for retired-only and ambiguous sources and keyboard-native controls;
+  - dedupe cost per run and published-source reuse;
+  - the Codex P3 contract.
+
+## Release order
+
+The order follows the code. Merging to `main` deploys Production Pages immediately, so any column or table that merged code **writes or reads unconditionally** must exist first. Disabled-by-default features may merge before their migrations.
+
+| # | Step | Pages deploy | Worker deploy | Migration | Feature after the step | Owner approves | Smoke checks | Stop if | Recovery |
+|---|---|---|---|---|---|---|---|---|---|
+| 0 | Review and merge **#16** (docs) | Yes (no functional change) | No | No | — | Merge | Site 200s | Pages build fails | Previous Pages deployment |
+| 1 | **0077 on Preview D1** | No | No | **0077** | Unused until code ships | The Preview migration | Postflight below | Preflight returns rows; any error | Re-run the two idempotent `CREATE INDEX` statements; otherwise leave unused (additive) |
+| 2 | **0077 on Production D1** | No | No | **0077** | Unused until code ships | The Production migration (after step 1) | Postflight below | Same | Same; Time Travel only as a last resort (it rewinds unrelated writes) |
+| 3 | **Merge #11** | **Yes:** Desk promotion now writes `primary_source_key` | No (yet) | Needs step 2 | Desk dedupe live | Merge | Desk loads; promoting a known URL on Preview shows the reuse notice (QA candidate); review queue unchanged; Access and 401 checks | 5xx on `/admin/desk`; promotion errors | Previous Pages deployment; the column stays harmless |
+| 4 | **Production Worker deploy** from #11's merge commit | No | **Yes** | Needs step 2 | Clustering dedupe live (dormant: STOP-BURN) | The Worker deploy | Version tag = merge SHA; bindings (DB id, RAW_STORE); 4 secrets present; Cron `[]` | Cron not `[]`; a binding or secret missing | Roll back to `d0479d92` |
+| 5 | Retarget **#12** to `main`, CI, merge | Yes | No | Uses 0077's index | Reviewer conflict view live | Merge | `/admin/review` publisher and reader; categories render; GET writes nothing; Desk notices | 5xx; any write on GET | Previous Pages deployment |
+| 6 | **Merge #13** | Yes | No | **None needed while off** | Signup **off**; header shows **Daily Briefing** | Merge | Header and homepage honest; `/newsletter` closed; `/admin/newsletter` reports the migration as not applied | A Subscribe button appears; a form appears | Previous Pages deployment |
+| 7 | Retarget **#14** to `main`, CI, merge | Yes | No | None needed while unused | Issue pages exist; dispatch off | Merge | `/admin/newsletter/issues` publisher-only; reader 403 | Reader access | Previous Pages deployment |
+| 8 | Reduce **#15** to tests, CI, merge | Yes (tests only) | No | No | — | Merge | CI green | CI fails | Revert the PR |
+| 9 | **Newsletter activation** | — | No | **0078, then 0079** | See the activation sequence | Each step separately | See below | Any failed confirmation or unsubscribe | Turn the flags off; addresses stay suppressed |
+
+The editorial stream (steps 1–5) and the newsletter stream (steps 6–7) are independent; either may go first. Within each stream the order above is required.
+
+## Migration release checks
+
+All three are additive and forward-only. Each was verified locally:
+- on a schema shaped like Production before it (through 0076, without 0069 or 0072);
+- in both release orders;
+- with and without 0069 (`tests/migration-0077.test.ts`, `migration-0078.test.ts`, `migration-0079.test.ts`, `migrations-0077-0079.test.ts`).
+
+That is **local verification only.**
+- **A Preview migration** needs its own approval and the Preview database identity check.
+- **A Production migration** needs its own approval after a successful Preview run, a fresh Time Travel bookmark, and a quiet window.
+
+**Target identity.** For Preview, `trace-manifest-db-preview`, whose id must equal `wrangler d1 info trace-manifest-db-preview`. For Production, `trace-manifest-db` (`--env production`), whose id must equal `wrangler d1 info trace-manifest-db --env production`. Refuse any mismatch.
+
+| | 0077 editorial source identity | 0078 newsletter subscriptions | 0079 newsletter issues |
+|---|---|---|---|
+| File | `db/migration-0077-editorial-source-identity.sql` (PR #11) | `db/migration-0078-newsletter-subscriptions.sql` (PR #13) | `db/migration-0079-newsletter-issues.sql` (PR #14) |
+| SHA-256 (LF, Git blob) | `9f59608442521d0789dc8ab93e9cd5f9e65df3555efb2604e681c857b6310bbb` | `57f990622190f3463df2f9aacd7cfc5d7867cc095f3dcf5f8d1fedd10d968799` | `ca75e5580025a1db35a112a27f356ff49659edfe49821e6494b2baeb79a17bed` |
+| Changes | Adds `story_clusters.primary_source_key`; adds `UNIQUE INDEX idx_story_clusters_primary_source_key … WHERE primary_source_key IS NOT NULL`; adds `idx_story_cluster_members_feed_item_primary_cluster` (no-op where 0069 exists; it already existed on both Preview and Production) | Adds tables `newsletter_subscribers`, `newsletter_signup_attempts`, `email_outbox`, and 3 indexes | Adds table `newsletter_issues`, and 1 index |
+| Preflight (must return no rows) | `SELECT 'column', name FROM pragma_table_info('story_clusters') WHERE name='primary_source_key' UNION ALL SELECT 'index', name FROM sqlite_master WHERE type='index' AND name='idx_story_clusters_primary_source_key'` | `SELECT name FROM sqlite_master WHERE type='table' AND name IN ('newsletter_subscribers','newsletter_signup_attempts','email_outbox')` | `SELECT name FROM sqlite_master WHERE name='newsletter_issues'` |
+| Backup | `wrangler d1 time-travel info <db> [--env production]`: record the bookmark, plus `SELECT COUNT(*)` of `story_clusters` and `story_cluster_members` | Bookmark | Bookmark |
+| Forward | `npx wrangler d1 execute <db> [--env production] --remote --file <file>` | Same | Same |
+| Postflight | The column exists; `sqlite_master` shows the unique partial index **and** the reverse index; cluster and member counts unchanged; `EXPLAIN QUERY PLAN SELECT cluster_id FROM story_cluster_members WHERE feed_item_id IN (1,2)` uses the reverse index | The 3 tables and their indexes exist; all row counts 0 | The table and index exist; row count 0 |
+| Stop criteria | Preflight rows; any error; counts changed | Any error | Any error |
+| Recovery | **Interrupted after the `ALTER`:** re-run only the two `CREATE INDEX IF NOT EXISTS` statements (tested). **Otherwise:** the column is additive and unused by old code, so leave it. A whole-database Time Travel restore is a last resort that can erase unrelated writes, and needs its own approval. | Tables are unused while signup is off; leave them | Leave unused |
+
+### Execution record
+
+**Step 1: 0077 on Preview D1, applied 2026-10-26 (owner-approved, Preview only).**
+
+| Check | Result |
+|---|---|
+| File | `git show 6b7010c:db/migration-0077-editorial-source-identity.sql`; SHA-256 `9f596084…bbb` (matches) |
+| Target | `trace-manifest-db-preview`: `wrangler d1 info` id equals the committed id in `wrangler.toml` and `wrangler.worker.toml`; zero reads or writes in the preceding 24 h |
+| Preflight | No rows. The reverse index from 0069 already existed on Preview, so the third statement was a no-op. |
+| Bookmark | `000000d2-00000000-00005110-564688cff7d51ef30303c40b32a5b7d7` |
+| Before | 127 clusters (126 draft, 1 published), 238 members, 129 feed items, 21 candidates, max cluster id 90201 |
+| Forward | One `wrangler d1 execute --remote --file`: success, 1 attempt, 2 rows written (schema) |
+| Postflight | `primary_source_key TEXT` (nullable) exists, with 0 keyed rows; `idx_story_clusters_primary_source_key` is unique and partial; the reverse index is present; all counts identical to before; both lookups use covering indexes; the 3 FTS triggers are intact; `PRAGMA foreign_key_check` returns 0 rows |
+| Note | `PRAGMA quick_check` fails on D1 with `SQLITE_NOMEM` (code 7500): a platform limit, not part of this postflight. Use `foreign_key_check` and the explicit checks above. |
+
+Production is unchanged. Nothing was merged or deployed.
+
+**Preview Desk smoke of #11, 2026-10-26 (owner-approved, Preview D1 only).**
+
+| Check | Result |
+|---|---|
+| Build | #11's Access-gated branch preview, deployment `75fa5f2c` at `6b7010c`, reading Preview D1 |
+| Candidate | `74206c0c…`, manual URL for a Verge article whose canonical hash matches feed item 8, the sole primary member of draft cluster 7 |
+| Desk actions | `new → drafting → draft_ready → needs_review` (Desk has no shorter route), then **Promote to Story** once |
+| Notice shown | "This source already belongs to story cluster #7 (draft). The candidate was linked to it; no new cluster was created." |
+| Writes | Candidate state `new` → `published`. Audit rows 549–552: three `transition_candidate` rows and one `promote_candidate_to_cluster` with `reused_story_cluster:7`. Nothing else. |
+| Unchanged | 127 clusters (max id 90201), 238 members, 129 feed items, 21 candidates; cluster 7's row and membership unchanged; pending-review queue still the same 10 clusters (7–16); `/admin/review` lists #7 once |
+
+Result: Desk promotion reuses the ingestion cluster instead of creating a duplicate. Production is unchanged; nothing was merged or deployed.
+
+**Step 2: 0077 on Production D1, applied 2026-10-27 (owner-approved, Production D1 only).**
+
+| Check | Result |
+|---|---|
+| File | Same file as on Preview; SHA-256 `9f596084…bbb` re-checked immediately before applying |
+| Target | `trace-manifest-db` (`--env production`): `wrangler d1 info` id equals the committed id in `wrangler.toml` `env.production` and `wrangler.worker.toml`. Quiet: 12 write queries in 24 h, Cron `[]`, last audit row 2026-10-26 07:00 |
+| Preflight | No rows |
+| Correction | The reverse membership index **already existed on Production**, identical to 0077's definition (from 0069's `090164a`). This plan and the migration's own comment had said Production lacked it. The third statement was therefore a no-op. The migration file is unchanged, because it is applied and hash-pinned. |
+| Bookmark | `00004008-00000000-00005111-f9e7a3d430af21da185f3a5e2dc3eacd` |
+| Before | 2755 clusters (2620 draft, 27 review, 92 published, 16 withdrawn), 3819 members, 6765 feed items, 3768 candidates, 2928 audit rows (max id 2928) |
+| Forward | One `wrangler d1 execute --env production --remote --file`: success, 1 attempt, 25 ms, 2 rows written (schema) |
+| Postflight | `primary_source_key TEXT` (nullable), with 0 keyed rows; `idx_story_clusters_primary_source_key` is unique and partial; both lookups use covering indexes; the 3 FTS triggers are intact; `foreign_key_check` returns 0 rows; every count above, including the audit log, is identical |
+| Public smoke (read-only) | `/`, `/feed`, a published story page and `/rss/daily.xml` all return 200 |
+
+The deployed code ignores the new column until #11 merges. Nothing was merged or deployed.
+
+**Step 3: #11 merged, 2026-10-27 (owner-approved; no Worker deploy).**
+
+| Check | Result |
+|---|---|
+| Pre-merge | `main` `5a89059` was an ancestor of the #11 head `6b7010c`; CI green (validate, secret-scan, Pages); merge state clean; the diff touches no wrangler or Cron configuration |
+| Merge | Marked ready, then merged with a merge commit pinned to the head SHA: **`f2237041150634b061affea9acec87084e400ea6`** |
+| Pages | Production deployment **`3e5078a0`** (`f223704`) succeeded at 21:32 UTC; rollback target `96624494` (`5a89059`) |
+| Public (anonymous) | `/`, `/feed`, `/rss/daily.xml` and a published story return 200; withdrawn story 381 returns 200 with its withdrawn notice and `noindex` |
+| Access | Anonymous `/admin`, `/admin/desk`, `/admin/review` and `/api/admin/candidates` redirect (302) to Cloudflare Access, as does an anonymous POST to `/admin/desk` |
+| Admin (publisher session, GET only) | Desk renders the candidate queue; the Review Queue renders with #2741 first and no console errors |
+| Database | Identical before and after the merge and the page loads: 2755 clusters, 3819 members, 3768 candidates, 0 keyed, 2928 audit rows; pending review 1769 (ids 294–2741, same id sum); publishable 2335 |
+| Worker | Unchanged: Production `d0479d92`, Preview `d8e4d10c`; schedules `[]` on both |
+
+From now on, a new Desk promotion on Production writes `primary_source_key`, or reuses an existing cluster. Desk dedupe was verified on Preview (see above). Ingestion clustering dedupe arrives with the Worker deploy (step 4), which is not yet approved.
+
+**Step 4: Production Worker deployed from #11's merge, 2026-10-27 (owner-approved).**
+
+| Check | Result |
+|---|---|
+| Source | Clean detached worktree at `f2237041150634b061affea9acec87084e400ea6`, `npm ci`, working tree clean |
+| Config | `wrangler.worker.toml`: top level and `env.preview` both `crons = []`; the top level binds Production D1 `trace-manifest-db` and R2 `trace-manifest-raw` |
+| Before | `d0479d92-8d8c-4f74-8869-4f1a5d747342` (tag `c41b6b1`, 100%): **rollback target** |
+| Dry run | Bindings `DB` (trace-manifest-db) and `RAW_STORE` (trace-manifest-raw) only |
+| Command | `npx wrangler deploy --config wrangler.worker.toml --env="" --strict --tag f223704` |
+| After | **`b09096c6-07f1-43d6-a92c-a6b1ce20db42`** (tag `f223704`), deployment `2033e5af`, 100% |
+| Version check | Handlers `scheduled`, `queue`, `fetch`; compatibility date 2026-07-12 with `nodejs_compat`; `DB` bound to the Production D1 id; `RAW_STORE`; secrets `ADMIN_API_TOKEN`, `GITHUB_TOKEN`, `TRACE_AI_SCHEDULED_ENABLED`, `TRACE_INTERNAL_SERVICE_SECRET` |
+| Schedules | `[]` on Production (and Preview, still `d8e4d10c`) |
+| Signed admin read | `GET /api/admin/jobs` from the publisher's Access session returned the Worker's JSON. The Worker audited it as rows 2929 (`allowed`) and 2930 (`succeeded`). |
+| Database | Unchanged apart from those two audit rows: 2755 clusters, 3819 members, 3768 candidates, 0 keyed; pending review 1769. The last ingestion job is still 2026-09-06 (none ran). |
+
+Rollback, if needed: `npx wrangler rollback d0479d92-8d8c-4f74-8869-4f1a5d747342 --config wrangler.worker.toml --env=""`, after its own approval. The 0077 column stays, and is harmless to the old code.
+
+Ingestion clustering dedupe is now deployed but dormant: STOP-BURN is in force and Cron is `[]`.
+
+**Step 5: #12 retargeted and merged, 2026-10-27 (owner-approved; no Worker deploy, no migration).**
+
+| Check | Result |
+|---|---|
+| Sync | An ordinary merge of `main` (`f223704`) into #12, giving `4ee5050`; the diff against `main` is still #12's 9 files (no Worker, migration or wrangler changes). Local `npm run ci` passes. |
+| PR | Base changed to `main`; CI green on `4ee5050` (validate, secret-scan, Pages); merge state clean |
+| Merge | Marked ready, then merged with a merge commit pinned to the head: **`4cc5391f3698af614025ba6f0170c2a08fe41215`** |
+| Pages | Production deployment **`60dd0117`** (`4cc5391`) succeeded at 21:57 UTC; rollback target `3e5078a0` (`f223704`) |
+| Public (anonymous) | `/`, `/feed`, `/rss/daily.xml`, a published story and withdrawn story 381 return 200. Anonymous `/admin/review`, `/admin/desk` and `/api/admin/clusters` redirect to Access. |
+| `/admin/review` (publisher, GET) | 50 pending cards with #12's markup, starting at #2741; categories `needs-review` 50 and `blocked-evidence` 31; 0 source-conflict notes. A read-only query confirms no pending cluster on Production shares a source item with any other cluster, so 0 is correct. No console errors. |
+| `/admin/desk` (publisher, GET) | 12 `exact` source notices (for example "Source already in story cluster #2749 … no new cluster is created"); no `retired` or `ambiguous` candidates; no console errors |
+| Reader role | Not exercised live (no reader session); covered by the render tests and the server-side role check from #7 |
+| Database | Identical before and after the merge and all page loads (2930 audit rows; pending review 1769) |
+| Worker | Unchanged: `b09096c6`; schedules `[]` on both Workers |
+
+**Step 6: #18 (Desk `held` transition) merged, 2026-10-28 (owner-approved; no Worker deploy, no migration).**
+
+| Check | Result |
+|---|---|
+| PR | CI green on `6cd070d` (validate, secret-scan, Pages); merge state clean; `main` still `4cc5391` |
+| Merge | Marked ready, then merged with a merge commit pinned to the head: **`5589c9a1b68bbd69e5077d3dabc1042bbe4c6b83`** |
+| Pages | Production deployment **`611548a0`** (`5589c9a`) succeeded at 16:41 UTC; rollback target `60dd0117` (`4cc5391`) |
+| Public (anonymous) | `/`, `/feed`, `/rss/daily.xml` and a published story return 200. Anonymous `/admin/desk`, `/admin/review` and `/api/admin/candidates` redirect to Access. |
+| `/admin/desk` (publisher, GET) | Loads; only `New` candidates on the first page, offering Drafting and Reject; 0 held notes, as expected with 0 held candidates on Production |
+| Database | Identical before and after the merge and the page load (2930 audit rows; pending review 1769; candidates 3751 new, 1 drafting, 15 published, 1 archived, 0 held) |
+| Worker | Unchanged: `b09096c6`; schedules `[]` on both Workers |
+
+**Step 7: #19 (Desk queue filters) merged, 2026-10-28 (owner-approved; no Worker deploy, no migration).**
+
+| Check | Result |
+|---|---|
+| PR | CI green on `05b3ac0` (validate, secret-scan, Pages); merge state clean; `main` still `5589c9a` |
+| Merge | Marked ready, then merged with a merge commit pinned to the head: **`9da92ece6d51d1bfeed9b7eb1289f891a548421c`** |
+| Pages | Production deployment **`a98c3f18`** (`9da92ec`) succeeded at 21:21 UTC; rollback target `611548a0` (`5589c9a`) |
+| Public (anonymous) | `/`, `/feed`, `/rss/daily.xml` and a published story return 200. Anonymous `/admin/desk`, `/admin/desk?filter=new`, `/admin/review` and `/api/admin/candidates` redirect to Access. |
+| `/admin/desk` (publisher, GET) | Opens on Needs a decision, which shows its empty message (0 held, 0 Needs review). Filter counts match the database: All 3768, New 3751, Drafting 1, Published 15, Archived 1, others 0. New pages 50 + 50 + 50 with 150 unique candidates and First/Next links; Published lists 15 with no paging; All lists 50 with Next; an unknown filter falls back to Needs a decision. No console errors. |
+| Database | Identical before and after the merge and all page loads (2930 audit rows; pending review 1769; candidate states unchanged) |
+| Worker | Unchanged: `b09096c6`; schedules `[]` on both Workers |
+
+## Worker deployment (#11)
+
+- **Configuration:** tracked `wrangler.worker.toml` declares `crons = []` (top level and `env.preview`), so STOP-BURN stays in force on deploy. The dry run on the current Worker matches bindings `DB` (Production D1) and `RAW_STORE`, with 4 secrets.
+- **Command:**
+  - from a clean checkout of the merge commit: `npx wrangler deploy --config wrangler.worker.toml --env="" --strict --tag <merge-sha>`;
+  - `--env=""` targets Production explicitly.
+- **Check after deploying:**
+  - `wrangler versions view <id>`: the tag, handlers, the D1 binding id, `RAW_STORE`, and the secrets `ADMIN_API_TOKEN`, `GITHUB_TOKEN`, `TRACE_AI_SCHEDULED_ENABLED`, `TRACE_INTERNAL_SERVICE_SECRET`;
+  - the Cloudflare schedules API shows `[]`;
+  - a signed admin read through the proxy returns 200.
+- **Currently deployed:** `d0479d92` (read-only API, 2026-10-26). The operator must re-confirm it immediately before deploying and record it as the rollback target.
+
+## Newsletter activation sequence (later; each step separately approved)
+
+1. Approved privacy notice and consent wording (`docs/audit/trace-newsletter-privacy-review.md`, items 1–3).
+2. Migration 0078: Preview first, then Production.
+3. Email provider account and API key (owner-created), with a processor agreement.
+4. Verified sending domain: SPF, DKIM and DMARC records exactly as the provider shows.
+5. Pages secrets `TRACE_NEWSLETTER_SECRET` and `TRACE_EMAIL_API_KEY`; variables `TRACE_EMAIL_PROVIDER`, `TRACE_EMAIL_FROM`. Never committed.
+6. **Preview smoke:**
+   - turn on `TRACE_EMAIL_DELIVERY_ENABLED` and `TRACE_NEWSLETTER_SIGNUP_ENABLED` on Preview only;
+   - sign up an owner address; receive and confirm; unsubscribe; re-subscribe;
+   - check the outbox and admin counts.
+7. Owner approval of Production activation; the same smoke with an owner address.
+8. Migration 0079 and the issue workflow on Preview, then Production; generate, approve and mark ready a draft. **Dispatch stays off.**
+9. An approved test issue to owner addresses only (`TRACE_NEWSLETTER_DISPATCH_ENABLED` on Preview), with delivery verified.
+10. **Explicit approval before the first real issue to subscribers.**
+
+No subscriber is collected and no email is sent before the step that allows it.
+
+## Production cleanup record (#16)
+
+PR #16's document agrees with the executed cleanup:
+- 10 review clusters archived; 353's misleading `failed` audit row (2896) preserved;
+- stories 381 and 384–388 withdrawn (audit 2917–2928), with public withdrawal pages under #10 (Pages `96624494`);
+- pending review 1779 → 1769, published 98 → 92, other counts unchanged.
+
+The 11 mis-linked Desk candidates (still `published`) and the ingestion drafts holding the intended stories are a **separate editorial reconciliation task**; nothing here deletes or re-promotes them.
+
+## Codex P3 news import
+
+See `docs/audit/trace-p3-import-compatibility.md`:
+- **Contract intact:** the identity contract is unchanged, and pinned in a versioned fixture.
+- **Four integration gaps:** two candidate identities; no Desk action for `held`; imported rows entering clustering; the sidecar schema needing its own migration.
+- **Next interface:** the smallest safe hosted interface, a publisher-only signed proxy route.
+- **Preview pilot handoff:** reconciled with Codex's proposal, without widening its scope.
+
+## Blockers and external prerequisites
+
+- **Owner approvals:** every merge; migrations 0077–0079 (Preview, then Production); the #11 Worker deploy; any Preview import pilot.
+- **Newsletter:**
+  - privacy notice and sender identity;
+  - approved consent wording;
+  - a provider account and processor agreement;
+  - a verified sending domain;
+  - the ICO fee;
+  - a real confirmation test.
+- **P3 hosted import:**
+  - the gaps above (candidate identity alignment; the Desk `held` transition shipped in #18);
+  - a numbered sidecar migration;
+  - an authenticated route.
+- **Reader browser QA** for #7 was deferred by the owner; reader rendering is covered by the render tests.
+
+## Recommended next operational decision
+
+The editorial stream (steps 1–7) is complete. It covered:
+- 0077 on Preview and Production;
+- the Preview Desk smoke;
+- the #11 merge (Pages `3e5078a0`) and Worker deploy (`b09096c6`);
+- the #12 merge (Pages `60dd0117`);
+- the #18 Desk `held` transition (Pages `611548a0`);
+- the #19 Desk queue filters (Pages `a98c3f18`), so held candidates stay in view.
+
+See the execution record.
+
+Towards a real, newly acquired source reaching the review queue, the next decision is **the Codex P3 Preview fixture pilot prerequisites**. Each is separately owned and approved:
+1. Codex re-pins P3 to the merged commits (`f223704`, `4cc5391`, `5589c9a` and `9da92ec`). The interface files are unchanged, so `p3-import-contract` should still pass.
+2. ~~A small Desk `held → needs_review | rejected` transition~~: done in #18 (step 6).
+3. The sidecar schema as its own numbered migration on Preview only.
+
+After that, the one-package pilot runs on Preview, with no publication. The newsletter stream (#13 and #14) is independent and can go whenever the owner chooses.

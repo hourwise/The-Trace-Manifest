@@ -33,3 +33,19 @@ Status labels describe repository evidence, not assumed deployment state.
 8. Enable a tightly bounded public beta only after explicit launch approval.
 
 No future phase is considered complete merely because a page, schema, or placeholder exists.
+
+## Status on 26 October 2026 (TRACE-RESTORE-02)
+
+Repository evidence only; nothing below is merged, migrated or deployed.
+
+| Work | Pull request | Status | Next exit condition |
+|---|---|---|---|
+| Cross-pipeline source identity (TRACE-EDITORIAL-DEDUPE-R1) | #11 | Implemented and tested on a branch; migration 0077 locally verified | Approved 0077 on Preview, then Production, before merge; Worker deploy with `crons = []` |
+| Reviewer duplicate-source visibility | #12 | Implemented and tested; stacked on #11 | Retarget to `main` after #11 merges |
+| TRACE Weekly signup and outbox | #13 | Implemented behind disabled flags; migration 0078 locally verified | Privacy notice, sender identity and provider setup before any activation |
+| TRACE Weekly drafts and approval | #14 | Implemented; dispatch off; migration 0079 locally verified | Retarget to `main` after #13 merges |
+| Integration tests | #15 | Combined tree passes full CI | Reduce to tests only after #11–#14 merge |
+| Production cleanup record | #16 | Cleanup executed and recorded | Docs review |
+| Codex P3 local news import | (Codex) | Identity contract compatible; four integration gaps recorded | See `docs/audit/trace-p3-import-compatibility.md` |
+
+Release order, migration checks and activation gates: `docs/audit/trace-restore-02-release-plan.md`. Cron stays `[]`; public AI stays off; the newsletter stays off.
