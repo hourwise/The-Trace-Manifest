@@ -179,7 +179,7 @@ const candidateInput = {
 
   // Desk offers and accepts promotion only from needs_review.
   const desk = read("src/pages/admin/desk.astro");
-  assert.match(desk, /const isPromotable = c\.state === "needs_review";/);
+  assert.match(desk, /const isPromotable = c\.state === "needs_review" && \(!governedImport \|\| governedOwner\?\.review_state === "needs_review"\);/);
   assert.match(frontmatter(desk), /SELECT \* FROM editorial_candidates WHERE id=\? AND state='needs_review'/);
   assert.match(frontmatter(desk), /if \(outcome\.kind === "not_promotable"\) throw new Error/);
 }

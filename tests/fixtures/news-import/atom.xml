@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SYNTHETIC OFFLINE FIXTURE. These are fictional stories, not TRACE facts. -->
+<feed xmlns="http://www.w3.org/2005/Atom"><title>Fictional Beta News</title><id>https://beta.trace.test/atom.xml</id>
+<entry><id>beta-1</id><title>Fictional runtime adds an experimental backend</title><link rel="alternate" href="https://alpha.trace.test/stories/one?ref=beta"/><published>2026-10-25T10:00:00Z</published><updated>2026-10-25T11:00:00Z</updated><summary type="html">A synthetic second-source mention; editorial independence remains unverified.</summary></entry>
+<entry><id>beta-2</id><title>Fictional research update</title><link href="https://beta.trace.test/posts/research"/><link rel="canonical" href="https://beta.trace.test/research/author-declaration"/><link rel="related" href="https://beta.trace.test/research/follow-up"/><published>2026-10-24T09:00:00Z</published><summary>Fictional research coverage is a news candidate, not an admitted compatibility fact.</summary></entry>
+</feed>

@@ -1,4 +1,6 @@
 import type { OperatorIdentity } from "../../security/access-auth";
+import {candidateUrlIdentity,hasCandidateIdentityIndex} from './candidate-identity';
+import { releasedNewsSource } from "./news-import/service";
 import {
   classifySourceRelationship, findFeedItemByUrlHash, loadSourceMemberships, primarySourceKey, type SourceMembership,
 } from "./source-identity";
@@ -66,11 +68,13 @@ export interface CandidateInput {
 export async function recordCandidate(db: D1Database, actor: PageOperator | undefined, input: CandidateInput): Promise<string> {
   const operator = requirePublisher(actor);
   const candidateId = crypto.randomUUID();
+  const indexed = await hasCandidateIdentityIndex(db);
+  const identity = indexed ? await candidateUrlIdentity(input.submittedUrl) : null;
   await db.batch([
     db.prepare(`
-      INSERT INTO editorial_candidates (id, intake_type, submitted_url, lead_text, source_hash, state, section_slug, urgency, source_language, created_by)
-      VALUES (?, ?, ?, ?, ?, 'new', ?, ?, ?, ?)
-    `).bind(candidateId, input.intakeType, input.submittedUrl, input.leadText, input.sourceHash, input.section, input.urgency, input.sourceLanguage, operator.email),
+      INSERT INTO editorial_candidates (id, intake_type, submitted_url, lead_text, source_hash, state, section_slug, urgency, source_language, created_by${indexed?',source_url_hash,source_url_identity_issue':''})
+      VALUES (?, ?, ?, ?, ?, 'new', ?, ?, ?, ?${indexed?',?,?':''})
+    `).bind(candidateId, input.intakeType, input.submittedUrl, input.leadText, input.sourceHash, input.section, input.urgency, input.sourceLanguage, operator.email,...(identity?[identity.hash,identity.issue]:[])),
     auditStatement(db, operator, { action: "submit_candidate", targetType: "candidate", targetId: candidateId, detailCode: `intake:${input.intakeType}` }),
   ]);
   return candidateId;
@@ -81,6 +85,7 @@ export async function transitionCandidate(
   db: D1Database, actor: PageOperator | undefined, candidateId: string, fromState: string, toState: string,
 ): Promise<boolean> {
   const operator = requirePublisher(actor);
+  const importGuard = await pendingImportGuard(db, candidateId, true);
   const [update] = await db.batch([
     db.prepare("UPDATE editorial_candidates SET state=?, updated_at=datetime('now') WHERE id=? AND state=?")
       .bind(toState, candidateId, fromState),
@@ -88,8 +93,22 @@ export async function transitionCandidate(
       action: "transition_candidate", targetType: "candidate", targetId: candidateId,
       detailCode: `${fromState}->${toState}`, onlyIfChanged: true,
     }),
+    ...importGuard,
   ]);
   return Number(update?.meta?.changes ?? 0) > 0;
+}
+
+/** Run inside the SAME atomic batch as the write and its audit. Protects reused
+ * UUID candidates too; neither a feature flag nor an ID prefix is authority.
+ * Pre-0080 installations retain the existing Desk contract. */
+async function pendingImportGuard(db: D1Database, candidateId: string, allOwned=false): Promise<D1PreparedStatement[]> {
+  const installed = await db.prepare("SELECT 1 AS installed FROM sqlite_master WHERE type='table' AND name='news_import_proposals'").first();
+  if (!installed) return [];
+  if(allOwned&&await db.prepare("SELECT 1 FROM news_import_versions WHERE candidate_id=? LIMIT 1").bind(candidateId).first())throw new AdminPageWriteError("Use the imported-source review controls with a reason and current revision. Reopening rejected imports is not authorised.");
+  return [db.prepare(`SELECT json(CASE WHEN NOT EXISTS (
+    SELECT 1 FROM news_import_versions v JOIN news_import_proposals p ON p.version_id=v.version_id
+    WHERE v.candidate_id=? AND ${allOwned?"1=1":"p.review_state<>'needs_review'"}
+  ) THEN '{}' ELSE 'use_governed_news_resolution' END)`).bind(candidateId)];
 }
 
 export interface PromotionInput {
@@ -147,6 +166,7 @@ async function promotionFailure(db: D1Database, candidateId: string): Promise<Pr
 }
 
 async function reuseSourceCluster(db: D1Database, operator: PageOperator, candidateId: string, cluster: SourceMembership): Promise<PromotionOutcome> {
+  const importGuard = await pendingImportGuard(db, candidateId);
   const [update] = await db.batch([
     // Guarded on the membership still being current, so a cluster withdrawn
     // since the check is never adopted.
@@ -162,12 +182,17 @@ async function reuseSourceCluster(db: D1Database, operator: PageOperator, candid
       action: "promote_candidate_to_cluster", targetType: "candidate", targetId: candidateId,
       detailCode: `${REUSED_CLUSTER_PREFIX}${cluster.clusterId}`, onlyIfChanged: true,
     }),
+    ...importGuard,
   ]);
   if (Number(update?.meta?.changes ?? 0) === 0) return promotionFailure(db, candidateId);
   return { kind: "reused", clusterId: cluster.clusterId, title: cluster.title, publicationStatus: cluster.publicationStatus };
 }
 
 async function createPromotedCluster(db: D1Database, operator: PageOperator, input: PromotionInput, urlHash: string | null): Promise<PromotionOutcome> {
+  // P4's reviewed feed source must survive the normal Desk promotion path.
+  // Ordinary manual intake retains its existing source policy.
+  const imported = input.candidateId.startsWith("local-news-p4:") ? await releasedNewsSource(db,input.candidateId) : null;
+  const sourceId = imported?.sourceId ?? 1;
   const requestId = crypto.randomUUID();
   const statements: D1PreparedStatement[] = [
     // When the candidate has a source, the state change is also guarded on no
@@ -196,9 +221,9 @@ async function createPromotedCluster(db: D1Database, operator: PageOperator, inp
     statements.push(
       db.prepare(`
         INSERT OR IGNORE INTO feed_items (url, url_hash, title, summary, content_excerpt, source_id, ingestion_status, fetched_at, published_at)
-        SELECT ?, ?, ?, ?, ?, ?, 'raw', datetime('now'), datetime('now')
+        SELECT ?, ?, ?, ?, ?, ?, 'raw', ${imported ? "?, ?" : "datetime('now'), datetime('now')"}
         WHERE ${promoted}
-      `).bind(input.submittedUrl, urlHash, input.headline, input.summary, input.summary.slice(0, 1000), 1, auditEventId(requestId)),
+      `).bind(input.submittedUrl, urlHash, imported?.title ?? input.headline, imported?.excerpt ?? input.summary, imported?.excerpt ?? input.summary.slice(0, 1000), sourceId, ...(imported ? [imported.retrievedAt,imported.publishedAt] : []), auditEventId(requestId)),
       // The feed item is found by hash, so an already-ingested URL links too.
       db.prepare(`
         INSERT OR IGNORE INTO story_cluster_members (cluster_id, feed_item_id, is_primary)
@@ -208,6 +233,7 @@ async function createPromotedCluster(db: D1Database, operator: PageOperator, inp
       `).bind(PROMOTED_CLUSTER_PREFIX.length + 1, urlHash, auditEventId(requestId)),
     );
   }
+  statements.push(...await pendingImportGuard(db, input.candidateId));
   let results: D1Result[];
   try {
     results = await db.batch(statements);

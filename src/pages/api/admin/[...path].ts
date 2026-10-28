@@ -2,6 +2,7 @@ import type { APIRoute } from "astro";
 import { authenticateAccessRequest, type OperatorRole } from "../../../security/access-auth";
 import { sameOriginRequest } from "../../../security/origin-policy";
 import { signInternalRequest } from "../../../security/internal-signature";
+import { newsEnabled, MAX_NEWS_BODY_BYTES } from "../../../lib/server/news-import/worker";
 
 export const prerender = false;
 
@@ -11,7 +12,7 @@ const READ_ROUTES = new Set([
   "sources", "sources/health", "jobs", "cron-runs", "corrections",
   "published-stories", "clusters", "cluster-sources", "cluster-evidence",
   "assertion-governance-history", "candidates", "social-signals", "related-items",
-  "extraction-runs", "extraction-run",
+  "extraction-runs", "extraction-run", "news-import",
 ]);
 const PUBLISH_ROUTES = new Set([
   "ingest", "classify", "dedup", "cluster", "extract-claims", "detect-conflicts",
@@ -26,7 +27,7 @@ const PUBLISH_ROUTES = new Set([
   "assertion-reviewer-decision",
   "knowledge/backfill/snapshot", "knowledge/backfill/plan", "knowledge/backfill/approve",
   "knowledge/backfill/execute", "knowledge/backfill/retry", "knowledge/backfill/recover",
-  "candidates", "social-signals", "related-items",
+  "candidates", "social-signals", "related-items", "news-import",
 ]);
 const READ_ROUTES_WITH_BACKFILL = new Set(["knowledge/backfill/status"]);
 
@@ -37,6 +38,7 @@ interface ProxyEnvironment {
   TRACE_ADMIN_READERS?: string;
   TRACE_ADMIN_PUBLISHERS?: string;
   TRACE_ENVIRONMENT?: string;
+  TRACE_NEWS_IMPORT_ENABLED?: string;
   TRACE_ALLOWED_ORIGINS?: string;
   TRACE_INGESTION_WORKER_URL?: string;
   TRACE_INTERNAL_SERVICE_SECRET?: string;
@@ -137,8 +139,11 @@ export async function handleAdminProxyRequest(
   path: string,
   env: ProxyEnvironment,
 ): Promise<Response> {
+  if (path === "news-import" && env.TRACE_ENVIRONMENT !== "preview") return Response.json({error:"news_import_disabled"},{status:503});
   const identity = await authenticateAccessRequest(request, env);
   if (!identity) return Response.json({ error: "Unauthorized" }, { status: 401 });
+  if (path === "news-import" && identity.role !== "publisher") return Response.json({error:"Forbidden"},{status:403});
+  if (path === "news-import" && request.method === "POST" && !sameOriginRequest(request,env)) return Response.json({error:"Origin rejected"},{status:403});
 
   const normalisedPath = normaliseAdminPath(path);
 
@@ -161,12 +166,17 @@ export async function handleAdminProxyRequest(
     return Response.json({ error: "Admin service is not configured." }, { status: 503 });
   }
 
-  const maximumBodyBytes = normalisedPath === "knowledge/backfill/snapshot"
+  const maximumBodyBytes = normalisedPath === "news-import" ? MAX_NEWS_BODY_BYTES : normalisedPath === "knowledge/backfill/snapshot"
     ? MAX_INVENTORY_SNAPSHOT_BODY_BYTES
     : MAX_BODY_BYTES;
   const body = await boundedBody(request, maximumBodyBytes);
   if (body === null) return Response.json({ error: "Request body is too large." }, { status: 413 });
 
+  if (normalisedPath === "news-import" && request.method === "POST" && !newsEnabled(env)) {
+    let operation: unknown;
+    try { operation = JSON.parse(body).operation; } catch { /* refused below */ }
+    if (operation !== "resolve") return Response.json({error:"news_import_disabled"},{status:503});
+  }
   const incoming = new URL(request.url);
   const pathAndQuery = buildWorkerAdminPath(normalisedPath, incoming.search);
   if (!pathAndQuery) return Response.json({ error: "Malformed admin path." }, { status: 404 });

@@ -44,3 +44,6 @@ if (endpointSource.includes("api.deepseek.com")) {
 }
 
 console.log("Verified Cloudflare API routing and TRACE gateway boundary.");
+
+// Pages has no nodejs_compat. The import service must remain tree-shaken here.
+if(/(?:from\s*|import\s*\(\s*|require\s*\(\s*)["']node:/.test(workerSource))throw new Error('Pages bundle contains a Node-only import without nodejs_compat');

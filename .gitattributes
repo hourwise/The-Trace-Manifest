@@ -1,0 +1,4 @@
+docs/audit/local-news-p4-r1-preview-proposal.json text eol=lf
+docs/audit/local-news-p4-r2-preview-proposal.json text eol=lf
+tests/fixtures/news-import/*.xml text eol=lf
+tools/news-import/parser-source/*.ts text eol=lf

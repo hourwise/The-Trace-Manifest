@@ -1,9 +1,11 @@
 ---
 import AdminLayout from "../../layouts/AdminLayout.astro";
+import ImportedNewsProposals from "../../components/admin/ImportedNewsProposals.astro";
 import { promoteCandidate, recordCandidate, transitionCandidate } from "../../lib/server/admin-page-writes";
 import { canonicalSourceUrl, sourceUrlHash, type SourceRelationship } from "../../lib/server/source-identity";
 import { loadCandidateSourceRelationships } from "../../lib/server/source-conflicts";
 import { DESK_OPEN_STATES, DESK_STATE_LABELS, DESK_TARGET_STATES, DESK_TRANSITIONS, deskTransitionAllowed } from "../../lib/admin/desk-transitions";
+import { listNewsProposals,listNewsProposalPage,governedNewsOwners } from "../../lib/server/news-import/service";
 import { DESK_QUEUE_FILTERS, DESK_QUEUE_FILTER_LABELS, loadDeskQueue, parseDeskQueueFilter, type DeskCandidateRow, type DeskQueuePage } from "../../lib/server/desk-queue";
 
 export const prerender = false;
@@ -31,7 +33,7 @@ if (Astro.request.method === "POST") {
     const candidateId = (formData.get("candidate_id") as string)?.trim() ?? "";
     const newState = (formData.get("state") as string) ?? "";
     try {
-      if (!candidateId || !/^[a-f0-9-]{36}$/i.test(candidateId)) throw new Error(`Invalid candidate ID: ${candidateId || "empty"}`);
+      if (!candidateId || (!/^[a-f0-9-]{36}$/i.test(candidateId) && !/^local-news-p4:[a-f0-9]{64}$/.test(candidateId))) throw new Error(`Invalid candidate ID: ${candidateId || "empty"}`);
       if (!(DESK_TARGET_STATES as readonly string[]).includes(newState)) throw new Error(`Invalid state: "${newState}"`);
       const current = await db.prepare("SELECT state FROM editorial_candidates WHERE id=?").bind(candidateId).first<{state:string}>();
       if (!current) throw new Error("Candidate not found.");
@@ -206,6 +208,17 @@ try {
 }
 const clusterList = (clusters: ReadonlyArray<{ clusterId: number; publicationStatus: string }>) =>
   clusters.map((cluster) => `#${cluster.clusterId} (${cluster.publicationStatus})`).join(", ");
+
+let importedProposals: Awaited<ReturnType<typeof listNewsProposals>> = [];
+let importError: string | null = null;
+let newsNext:string|null=null;const newsView=Astro.url.searchParams.get('news_view')??'held';
+const newsHref=(after:string|null,state=newsView)=>{const url=new URL(Astro.url);url.searchParams.delete('news_version');url.searchParams.set('news_view',state);if(after)url.searchParams.set('news_after',after);else url.searchParams.delete('news_after');return url.pathname+url.search;};
+
+if (Astro.locals.runtime.env.TRACE_ENVIRONMENT === "preview") {
+  try { const page=await listNewsProposalPage(Astro.locals.runtime.env.DB,{email:Astro.locals.operator.email,role:"publisher",requestId:"desk-read"},{state:newsView,after:Astro.url.searchParams.get("news_after")??"",focus:Astro.url.searchParams.get("news_version")??undefined});importedProposals=page.items;newsNext=page.nextCursor; }
+  catch { importError = "Imported source proposals are unavailable. No review state was changed."; }
+}
+const governedOwners=await governedNewsOwners(Astro.locals.runtime.env.DB,candidates.map(c=>c.id));
 ---
 
 <AdminLayout title="TRACE Desk" description="Governed editorial intake for The Trace Manifest.">
@@ -247,6 +260,8 @@ const clusterList = (clusters: ReadonlyArray<{ clusterId: number; publicationSta
       </form>
     </section>
 
+    {Astro.locals.runtime.env.TRACE_ENVIRONMENT === "preview" && <ImportedNewsProposals nextHref={newsNext?newsHref(newsNext):null} startHref={newsHref(null)} reviewLinks={["held","needs_review","rejected"].map(state=>({state,href:newsHref(null,state)}))} items={importedProposals} error={importError} />}
+
     <section class="card" style="margin-top:2rem;">
       <h2 style="font-size:1.25rem;">Candidate Queue</h2>
       {queue && (
@@ -262,13 +277,15 @@ const clusterList = (clusters: ReadonlyArray<{ clusterId: number; publicationSta
        candidates.length === 0 ? <p class="meta">{emptyQueueMessage}</p> :
        <div style="display:grid;gap:0.75rem;">
         {candidates.map((c) => {
-          const nextStates = DESK_TRANSITIONS[c.state] ?? [];
+          const governedOwner = governedOwners.get(c.id);
+          const governedImport = !!governedOwner;
+          const nextStates = governedImport ? [] : DESK_TRANSITIONS[c.state] ?? [];
           // A published candidate already has its story cluster; promoting again would duplicate it.
-          const isPromotable = c.state === "needs_review";
+          const isPromotable = c.state === "needs_review" && (!governedImport || governedOwner?.review_state === "needs_review");
           const relationship = sourceRelationships.get(c.id);
           const promotionRefused = relationship?.kind === "retired" || relationship?.kind === "ambiguous";
           return (
-            <div class="card" style="padding:0.75rem 1rem;">
+            <div class="card" data-candidate-id={c.id} style="padding:0.75rem 1rem;">
               <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;flex-wrap:wrap;">
                 <div style="flex:1;min-width:0;">
                   <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;margin-bottom:0.35rem;">
@@ -279,9 +296,10 @@ const clusterList = (clusters: ReadonlyArray<{ clusterId: number; publicationSta
                   {c.submitted_url ? <a href={c.submitted_url} target="_blank" rel="noreferrer" style="font-size:0.85rem;word-break:break-all;">{c.submitted_url}</a> : null}
                   <p style="margin:0.35rem 0;font-size:0.85rem;">{c.lead_text?.slice(0, 300)}{(c.lead_text?.length ?? 0) > 300 ? "…" : ""}</p>
                   <p class="meta" style="font-size:0.7rem;">{c.section_slug || "Unclassified"} · {c.created_at ? new Date(c.created_at + "Z").toLocaleString("en-GB") : "—"} · Desk submission</p>
-                  {c.state === "held" && (
+                  {c.state === "held" && !governedImport && (
                     <p class="meta desk-held-note" id={`held-${c.id}`}>Held at intake for an editor's decision. Release it to Needs review to promote it or link it to its existing story, or reject it.</p>
                   )}
+                  {governedImport && <p class="meta">Resolve this imported proposal using the source controls above; a reason and revision are required. <a href={`?${new URLSearchParams({filter:queueFilter,news_version:governedOwner!.version_id})}`}>Review this imported version</a></p>}
                   {relationship && relationship.kind !== "new" && (
                     <p class="desk-source-notice" role="note" id={`source-${c.id}`} data-source-relationship={relationship.kind}>
                       {relationship.kind === "exact" && <>Source already in story cluster #{relationship.cluster.clusterId} “{relationship.cluster.title}” ({relationship.cluster.publicationStatus}). Promoting links this candidate to it; no new cluster is created. <a href={`/admin/review?review=${relationship.cluster.clusterId}`}>Open in review</a></>}
