@@ -190,6 +190,18 @@ Ingestion clustering dedupe is now deployed but dormant: STOP-BURN is in force a
 | Database | Identical before and after the merge and the page load (2930 audit rows; pending review 1769; candidates 3751 new, 1 drafting, 15 published, 1 archived, 0 held) |
 | Worker | Unchanged: `b09096c6`; schedules `[]` on both Workers |
 
+**Step 7: #19 (Desk queue filters) merged, 2026-10-28 (owner-approved; no Worker deploy, no migration).**
+
+| Check | Result |
+|---|---|
+| PR | CI green on `05b3ac0` (validate, secret-scan, Pages); merge state clean; `main` still `5589c9a` |
+| Merge | Marked ready, then merged with a merge commit pinned to the head: **`9da92ece6d51d1bfeed9b7eb1289f891a548421c`** |
+| Pages | Production deployment **`a98c3f18`** (`9da92ec`) succeeded at 21:21 UTC; rollback target `611548a0` (`5589c9a`) |
+| Public (anonymous) | `/`, `/feed`, `/rss/daily.xml` and a published story return 200. Anonymous `/admin/desk`, `/admin/desk?filter=new`, `/admin/review` and `/api/admin/candidates` redirect to Access. |
+| `/admin/desk` (publisher, GET) | Opens on Needs a decision, which shows its empty message (0 held, 0 Needs review). Filter counts match the database: All 3768, New 3751, Drafting 1, Published 15, Archived 1, others 0. New pages 50 + 50 + 50 with 150 unique candidates and First/Next links; Published lists 15 with no paging; All lists 50 with Next; an unknown filter falls back to Needs a decision. No console errors. |
+| Database | Identical before and after the merge and all page loads (2930 audit rows; pending review 1769; candidate states unchanged) |
+| Worker | Unchanged: `b09096c6`; schedules `[]` on both Workers |
+
 ## Worker deployment (#11)
 
 - **Configuration:** tracked `wrangler.worker.toml` declares `crons = []` (top level and `env.preview`), so STOP-BURN stays in force on deploy. The dry run on the current Worker matches bindings `DB` (Production D1) and `RAW_STORE`, with 4 secrets.
@@ -255,17 +267,18 @@ See `docs/audit/trace-p3-import-compatibility.md`:
 
 ## Recommended next operational decision
 
-The editorial stream (steps 1–6) is complete. It covered:
+The editorial stream (steps 1–7) is complete. It covered:
 - 0077 on Preview and Production;
 - the Preview Desk smoke;
 - the #11 merge (Pages `3e5078a0`) and Worker deploy (`b09096c6`);
 - the #12 merge (Pages `60dd0117`);
-- the #18 Desk `held` transition (Pages `611548a0`).
+- the #18 Desk `held` transition (Pages `611548a0`);
+- the #19 Desk queue filters (Pages `a98c3f18`), so held candidates stay in view.
 
 See the execution record.
 
 Towards a real, newly acquired source reaching the review queue, the next decision is **the Codex P3 Preview fixture pilot prerequisites**. Each is separately owned and approved:
-1. Codex re-pins P3 to the merged commits (`f223704`, `4cc5391` and `5589c9a`). The interface files are unchanged, so `p3-import-contract` should still pass.
+1. Codex re-pins P3 to the merged commits (`f223704`, `4cc5391`, `5589c9a` and `9da92ec`). The interface files are unchanged, so `p3-import-contract` should still pass.
 2. ~~A small Desk `held → needs_review | rejected` transition~~: done in #18 (step 6).
 3. The sidecar schema as its own numbered migration on Preview only.
 
