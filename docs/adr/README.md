@@ -21,6 +21,11 @@
 | [0017](0017-trace-knowledge-builder-question-gap-queue-and-knowledge-document-lifecycle.md) | Accepted | Knowledge Builder, question gaps, approval, expiry, and knowledge-to-guide lifecycle. |
 | [0018](0018-multilingual-source-ingestion-translation-provenance-and-bilingual-publication.md) | Accepted | Multilingual source ingestion, translation provenance, and later bilingual publication. |
 | [0019](ADR%200019%20TRACE%20Open%20Model%20Execution.md) | Accepted | Open Model Execution Intelligence, shared Knowledge Continuity evidence, and Cloudflare-native data architecture. |
+| [0021](0021-deterministic-first-knowledge-acquisition-and-model-tiering.md) | Proposed | Deterministic-first primary-source acquisition and extraction; models never ingest; per-task model tiers with no fallback chain. |
+| [0022](0022-model-runtime-hardware-catalogue-and-deterministic-estimators.md) | Proposed | Catalogue citation rule, file-header authority, and deterministic fit and decode-ceiling estimators (extends ADR 0019). |
+| [0023](0023-story-inbox-pre-run-drafts-and-one-tap-human-publication.md) | Proposed | Story inbox: deterministic clustering and ranking, capped pre-run drafts, validators, timers, one-tap human publication. |
+| [0024](0024-policy-based-system-admission-pinned-freshness-revocation-and-sampling-audit.md) | Proposed | System admission for machine-checkable facts, batched acceptance, pinned freshness, revocation and restoration as a precondition, and sampling audit. |
+| [0009 Amendment 2](0009-amendment-02-social-post-text-extraction-and-community-reports.md) | Proposed | Bounded social-post excerpts, quoted-span extraction, one-tap linked-source candidates, pending community reports. |
 
 ADR status describes the decision, not proof that production deployment or acceptance tests have completed.
 
