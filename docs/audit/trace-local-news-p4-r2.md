@@ -121,6 +121,8 @@ Branch: `codex/trace-local-news-p4-r2-remediation`.
 
 Accepted merged application: `9da92ece6d51d1bfeed9b7eb1289f891a548421c`, including PR #19 head `05b3ac07ecfa22ce9ad1052edd54020639b31ddc`. Integration onto the frozen R1 worktree made local PR #19 commit `cf3faeb5d86ee9877d599875f827679500cd5f52`. The sole `desk.astro` conflict was adjacent imports: both PR #19 queue/filter imports and P4 governance imports were retained. No second generic Desk state machine or filter was created.
 
+Reference precision: local `origin/main` resolves to the supplied accepted merge `9da92ec`; the separate local branch named `main` remains stale at `9cbad4f0d54badb3e003900fc3fe5d78ad7fee03` (24 October). It was not moved. The release parent and all inventory comparisons use the exact accepted `9da92ec` object, not the stale branch name. No claim of a fresh remote fetch is made.
+
 Preparation implementation commit: `e0b82eeae870238dd0a553470e760c89712eb98f`, preserved on `codex/trace-local-news-p4-r2-preparation-history`. To produce the focused review ancestry without merging or changing old branches, an identical tested tree was committed with accepted main as its single parent. No reset was used.
 
 Focused implementation commit: **`4e458905c41e89a685cfaa0bb2fcb28b489999b6`**; parent `9da92ece6d51d1bfeed9b7eb1289f891a548421c`; tested tree `44b0ea09601841248486bcf11397f9dd99ff8897`. Subsequent report/inventory commits contain documentation only. The exact final tip is returned in the handoff and recorded in the D: release receipt.
