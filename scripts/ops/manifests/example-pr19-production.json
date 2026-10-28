@@ -1,0 +1,29 @@
+{
+  "schema": "trace-release-manifest-v1",
+  "release_id": "pr-19-desk-queue-filters",
+  "target": "production",
+  "expected_commit": "9da92ece6d51d1bfeed9b7eb1289f891a548421c",
+  "approval_reference": "Owner approval 2026-10-28: merge #19 (merge commit), wait for the Production Pages deploy, read-only smoke checks; no Worker deploy, no migration",
+  "profile": "production",
+  "notes": "Worked example reproducing the manual step 7 checks. Pages-only release: the Worker must still be the version deployed for #11.",
+  "pages": { "project": "the-trace-manifest", "expected_deployment_id": "a98c3f18" },
+  "worker": {
+    "name": "trace-manifest-ingestion",
+    "expected_version_id": "b09096c6-07f1-43d6-a92c-a6b1ce20db42",
+    "expected_bindings": [
+      { "name": "DB", "type": "d1" },
+      { "name": "RAW_STORE", "type": "r2_bucket" }
+    ]
+  },
+  "cron": { "expected": [] },
+  "database": {
+    "approved_changes": "none",
+    "snapshot_required": true,
+    "audit_delta_allow": {
+      "target_type": "admin_route",
+      "actions": ["/admin/clusters", "/admin/candidates", "/admin/sources", "/admin/jobs", "/admin/cron-runs"],
+      "outcomes": ["allowed", "succeeded"]
+    },
+    "notes": "No database change is approved. Audit rows from signed admin reads are tolerated only when the audit delta shows nothing else."
+  }
+}

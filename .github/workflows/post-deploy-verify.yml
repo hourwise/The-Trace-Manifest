@@ -1,0 +1,78 @@
+# TRACE-OPS-01: automatic, read-only post-deployment verification.
+#
+# Runs after a push to main (and on manual dispatch, once this file is on
+# main). It waits a bounded time for Cloudflare's "Cloudflare Pages" check run
+# on the commit, then makes anonymous GETs to the public site:
+#   - at most 21 GitHub API reads (20 check-run polls + 1 branch read), and
+#   - at most 19 GETs to thetracemanifest.com (5 public routes with up to
+#     2 retries each, 4 admin routes once each; redirects never followed).
+# It uses no Cloudflare credentials, sends no POST, and never deploys,
+# migrates, rolls back, enables Cron, runs ingestion or imports, or emails.
+# Worker version, bindings and Cron need Cloudflare API access and are
+# reported NOT_VERIFIED here; run the manual mode for those.
+name: Post-deploy verification (read-only)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: Full 40-character commit SHA on main to verify
+        required: true
+
+permissions:
+  contents: read
+  checks: read
+
+concurrency:
+  group: post-deploy-verify-${{ github.event.inputs.commit || github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Verify deployment, public routes and Access protection
+        id: verify
+        env:
+          COMMIT: ${{ github.event.inputs.commit || github.sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          if ! printf '%s' "$COMMIT" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "::error::commit must be a full 40-character lowercase SHA"
+            exit 3
+          fi
+          node scripts/ops/release-verify.mjs \
+            --manifest scripts/ops/manifests/post-merge-production.json \
+            --commit "$COMMIT" --github --out-dir ops-receipts
+          code=$?
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          cat ops-receipts/*.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || echo "No report was produced (exit $code)." >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+      - name: Keep the receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-verification-${{ github.event.inputs.commit || github.sha }}
+          path: ops-receipts/
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Result
+        env:
+          CODE: ${{ steps.verify.outputs.code }}
+        run: |
+          case "$CODE" in
+            0) echo "Release verification passed." ;;
+            1) echo "::error::Regression detected: a security or availability check failed. See the job summary."; exit 1 ;;
+            2) echo "::error::Not verified: a mandatory check (for example the deployment) could not be established. This is not a pass."; exit 1 ;;
+            *) echo "::error::Verification could not run (exit $CODE)."; exit 1 ;;
+          esac

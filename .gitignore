@@ -18,3 +18,6 @@ dist/
 # OS
 .DS_Store
 Thumbs.db
+
+# TRACE-OPS-01 verification receipts (keep them as evidence elsewhere)
+ops-receipts/

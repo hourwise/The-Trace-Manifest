@@ -1,0 +1,95 @@
+{
+  "schema": "trace-migration-execution-manifest-v1",
+  "approval": null,
+  "approved_by": null,
+  "approved_at": null,
+  "execution_window_utc": null,
+  "environment": "preview",
+  "database": {
+    "name": "trace-manifest-db-preview",
+    "uuid": "f312f662-2252-4005-8103-1a40d546e16b"
+  },
+  "migration": {
+    "file": "db/migration-0078-newsletter-subscriptions.sql",
+    "sha256": "57f990622190f3463df2f9aacd7cfc5d7867cc095f3dcf5f8d1fedd10d968799",
+    "number": "0078"
+  },
+  "preflight_verdict": "PASS",
+  "preflight_receipt_sha256": "417b0a3eb7804c715b86bea341df4fded285098a8da29abde0152fad18fe311e",
+  "plan": [
+    {
+      "step": 1,
+      "title": "Verify the target database identity",
+      "commands": [
+        "npx wrangler d1 info trace-manifest-db-preview"
+      ],
+      "expect": "database_id equals f312f662-2252-4005-8103-1a40d546e16b; otherwise STOP"
+    },
+    {
+      "step": 2,
+      "title": "Confirm the migration is not already applied",
+      "commands": [
+        "npx wrangler d1 execute trace-manifest-db-preview --remote --json --command \"SELECT 'table' AS kind, name FROM sqlite_master WHERE type='table' AND name IN ('email_outbox', 'newsletter_signup_attempts', 'newsletter_subscribers') UNION ALL SELECT 'index' AS kind, name FROM sqlite_master WHERE type='index' AND name IN ('idx_email_outbox_due', 'idx_email_outbox_subscriber', 'idx_newsletter_subscribers_status');\""
+      ],
+      "expect": "no rows; any row means it is (partly) applied: STOP and inspect"
+    },
+    {
+      "step": 3,
+      "title": "Record a Time Travel bookmark",
+      "commands": [
+        "npx wrangler d1 time-travel info trace-manifest-db-preview --json"
+      ],
+      "expect": "record the bookmark in the receipt; it is for a separately approved last-resort restore only"
+    },
+    {
+      "step": 4,
+      "title": "Record baseline counts and the release snapshot",
+      "commands": [
+        "npx wrangler d1 execute trace-manifest-db-preview --remote --json --command \"SELECT (SELECT COUNT(*) FROM story_clusters) AS story_clusters, (SELECT COUNT(*) FROM story_cluster_members) AS story_cluster_members, (SELECT COUNT(*) FROM feed_items) AS feed_items, (SELECT COUNT(*) FROM editorial_candidates) AS editorial_candidates, (SELECT COUNT(*) FROM admin_audit_log) AS admin_audit_log;\"",
+        "npx wrangler d1 execute trace-manifest-db-preview --remote --json --file scripts/ops/release-snapshot.sql"
+      ],
+      "expect": "save both outputs as before-files"
+    },
+    {
+      "step": 5,
+      "title": "Apply the migration (only with the owner's approval of this exact manifest)",
+      "commands": [
+        "sha256sum db/migration-0078-newsletter-subscriptions.sql",
+        "npx wrangler d1 execute trace-manifest-db-preview --remote --file db/migration-0078-newsletter-subscriptions.sql"
+      ],
+      "expect": "sha256 57f990622190f3463df2f9aacd7cfc5d7867cc095f3dcf5f8d1fedd10d968799 before applying; any error: STOP and use the recovery notes",
+      "recovery": [
+        "a full re-run completes the migration"
+      ]
+    },
+    {
+      "step": 6,
+      "title": "Check the resulting schema",
+      "commands": [
+        "npx wrangler d1 execute trace-manifest-db-preview --remote --json --command \"SELECT 'table' AS kind, name FROM sqlite_master WHERE type='table' AND name IN ('email_outbox', 'newsletter_signup_attempts', 'newsletter_subscribers') UNION ALL SELECT 'index' AS kind, name FROM sqlite_master WHERE type='index' AND name IN ('idx_email_outbox_due', 'idx_email_outbox_subscriber', 'idx_newsletter_subscribers_status');\"",
+        "npx wrangler d1 execute trace-manifest-db-preview --remote --json --command \"SELECT 1 FROM newsletter_subscribers UNION ALL SELECT 1 FROM email_outbox UNION ALL SELECT 1 FROM newsletter_signup_attempts LIMIT 1\""
+      ],
+      "expect": "6 object rows; postflight queries as declared"
+    },
+    {
+      "step": 7,
+      "title": "Verify data preservation",
+      "commands": [
+        "npx wrangler d1 execute trace-manifest-db-preview --remote --json --command \"SELECT (SELECT COUNT(*) FROM story_clusters) AS story_clusters, (SELECT COUNT(*) FROM story_cluster_members) AS story_cluster_members, (SELECT COUNT(*) FROM feed_items) AS feed_items, (SELECT COUNT(*) FROM editorial_candidates) AS editorial_candidates, (SELECT COUNT(*) FROM admin_audit_log) AS admin_audit_log;\"",
+        "npx wrangler d1 execute trace-manifest-db-preview --remote --json --command \"PRAGMA foreign_key_check;\"",
+        "npx wrangler d1 execute trace-manifest-db-preview --remote --json --file scripts/ops/release-snapshot.sql"
+      ],
+      "expect": "counts identical to step 4; no foreign-key rows (PRAGMA quick_check fails with SQLITE_NOMEM on D1; do not use it); compare snapshots with release-verify.mjs"
+    },
+    {
+      "step": 8,
+      "title": "Record the postflight receipt",
+      "commands": [
+        "node scripts/ops/release-verify.mjs --manifest <release manifest> --offline --before before.json --after after.json"
+      ],
+      "expect": "attach outputs, bookmark and approval to the execution manifest"
+    }
+  ],
+  "last_resort": "A whole-database Time Travel restore (wrangler d1 time-travel restore) can erase unrelated writes made after the bookmark. It is never part of this plan and needs its own owner approval.",
+  "note": "This file is a plan. Nothing in TRACE-OPS-01 executes it."
+}

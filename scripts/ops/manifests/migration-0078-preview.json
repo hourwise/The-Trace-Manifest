@@ -1,0 +1,16 @@
+{
+  "schema": "trace-migration-preflight-v1",
+  "notes": "Newsletter subscriptions (PR #13). SHA-256 is the Git blob on claude/trace-newsletter-signup, as recorded in the TRACE-RESTORE-02 release plan. Preview first; Production needs its own manifest and approval.",
+  "environment": "preview",
+  "database": { "name": "trace-manifest-db-preview", "uuid": "f312f662-2252-4005-8103-1a40d546e16b" },
+  "migration": { "file": "db/migration-0078-newsletter-subscriptions.sql", "sha256": "57f990622190f3463df2f9aacd7cfc5d7867cc095f3dcf5f8d1fedd10d968799" },
+  "prerequisites": [{ "file": "db/migration-0077-editorial-source-identity.sql" }],
+  "expected": {
+    "tables": ["email_outbox", "newsletter_signup_attempts", "newsletter_subscribers"],
+    "indexes": ["idx_email_outbox_due", "idx_email_outbox_subscriber", "idx_newsletter_subscribers_status"]
+  },
+  "postflight": [
+    { "id": "no-subscribers", "sql": "SELECT 1 FROM newsletter_subscribers UNION ALL SELECT 1 FROM email_outbox UNION ALL SELECT 1 FROM newsletter_signup_attempts LIMIT 1", "expect": "no_rows" }
+  ],
+  "approval": null
+}

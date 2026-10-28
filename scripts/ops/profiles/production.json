@@ -1,0 +1,38 @@
+{
+  "schema": "trace-site-profile-v1",
+  "target": "production",
+  "notes": "Anonymous checks of the public Production site. GET only; redirects are recorded, never followed.",
+  "repo": "hourwise/The-Trace-Manifest",
+  "branch": "main",
+  "site_host": "thetracemanifest.com",
+  "allow_hosts": ["thetracemanifest.com"],
+  "access": { "application_host": "thetracemanifest.com" },
+  "pages_project": "the-trace-manifest",
+  "workers": [
+    { "label": "production", "name": "trace-manifest-ingestion" },
+    { "label": "preview", "name": "trace-manifest-ingestion-preview" }
+  ],
+  "limits": {
+    "timeout_ms": 10000,
+    "max_response_bytes": 1500000,
+    "public_retries": 2,
+    "max_site_requests": 20,
+    "max_github_requests": 22,
+    "max_cloudflare_requests": 8,
+    "deployment_poll_attempts": 20,
+    "deployment_poll_interval_ms": 30000
+  },
+  "public_routes": [
+    { "id": "public.home", "path": "/", "expect": { "status": 200, "content_type": "text/html", "contains": ["— The Trace Manifest</title>", "<h1"], "not_contains": ["<meta name=\"robots\" content=\"noindex\">"] } },
+    { "id": "public.feed", "path": "/feed", "expect": { "status": 200, "content_type": "text/html", "contains": ["Intelligence Feed</h1>", "— The Trace Manifest</title>"], "not_contains": ["<meta name=\"robots\" content=\"noindex\">"] } },
+    { "id": "public.rss", "path": "/rss/daily.xml", "expect": { "status": 200, "content_type": "xml", "contains": ["<rss", "<channel>"] } },
+    { "id": "public.story.published", "path": "/stories/google-announces-fairwind-program-for-government-cyber-defense-tools", "expect": { "status": 200, "content_type": "text/html", "contains": ["— The Trace Manifest</title>", "<h1"], "not_contains": ["data-retired-notice", "<meta name=\"robots\" content=\"noindex\">"] } },
+    { "id": "public.story.withdrawn", "path": "/stories/hugging-face-hub-migrates-from-git-lfs-to-xet-storage", "expect": { "status": 200, "content_type": "text/html", "contains": ["data-retired-notice=\"withdrawn\"", "<meta name=\"robots\" content=\"noindex\">"] } }
+  ],
+  "admin_routes": [
+    { "id": "access.admin", "path": "/admin" },
+    { "id": "access.admin_desk", "path": "/admin/desk" },
+    { "id": "access.admin_review", "path": "/admin/review" },
+    { "id": "access.api_admin", "path": "/api/admin/candidates" }
+  ]
+}
