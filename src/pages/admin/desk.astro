@@ -3,6 +3,7 @@ import AdminLayout from "../../layouts/AdminLayout.astro";
 import { promoteCandidate, recordCandidate, transitionCandidate } from "../../lib/server/admin-page-writes";
 import { canonicalSourceUrl, sourceUrlHash, type SourceRelationship } from "../../lib/server/source-identity";
 import { loadCandidateSourceRelationships } from "../../lib/server/source-conflicts";
+import { DESK_OPEN_STATES, DESK_STATE_LABELS, DESK_TARGET_STATES, DESK_TRANSITIONS, deskTransitionAllowed } from "../../lib/admin/desk-transitions";
 
 export const prerender = false;
 // TRACE Desk is publisher-only: the proxy refuses readers both reading and
@@ -24,17 +25,6 @@ let loadError: string | null = null;
 let actionMessage: string | null = null;
 let actionError: string | null = null;
 
-const VALID_STATES = ["new","drafting","draft_ready","needs_review","published","rejected","archived"] as const;
-const TRANSITIONS: Record<string, string[]> = {
-  new: ["drafting","rejected"],
-  drafting: ["draft_ready","rejected"],
-  draft_ready: ["needs_review","drafting","rejected"],
-  needs_review: ["draft_ready","rejected"],  // "published" only via Promote button
-  published: ["draft_ready","archived"],
-  rejected: ["new"],
-  archived: [],
-};
-
 if (Astro.request.method === "POST") {
   const formData = await Astro.request.formData();
   const action = (formData.get("_action") as string) ?? "submit";
@@ -45,10 +35,10 @@ if (Astro.request.method === "POST") {
     const newState = (formData.get("state") as string) ?? "";
     try {
       if (!candidateId || !/^[a-f0-9-]{36}$/i.test(candidateId)) throw new Error(`Invalid candidate ID: ${candidateId || "empty"}`);
-      if (!VALID_STATES.includes(newState as any)) throw new Error(`Invalid state: "${newState}"`);
+      if (!(DESK_TARGET_STATES as readonly string[]).includes(newState)) throw new Error(`Invalid state: "${newState}"`);
       const current = await db.prepare("SELECT state FROM editorial_candidates WHERE id=?").bind(candidateId).first<{state:string}>();
       if (!current) throw new Error("Candidate not found.");
-      if (!TRANSITIONS[current.state]?.includes(newState)) throw new Error(`Cannot move from ${current.state} to ${newState}.`);
+      if (!deskTransitionAllowed(current.state, newState)) throw new Error(`Cannot move from ${current.state} to ${newState}.`);
       if (!await transitionCandidate(db, Astro.locals.operator, candidateId, current.state, newState)) {
         throw new Error("The candidate changed before this update was saved. Reload and try again.");
       }
@@ -204,20 +194,17 @@ try {
 // How each open candidate's source relates to existing clusters, by the same
 // rules promotion applies (TRACE-EDITORIAL-DEDUPE-R1). Two bounded, indexed
 // statements for the 50 listed candidates; a failure only hides the notices.
-const OPEN_STATES = new Set(["new", "drafting", "draft_ready", "needs_review"]);
 let sourceRelationships = new Map<string, SourceRelationship>();
 try {
   sourceRelationships = await loadCandidateSourceRelationships(
     Astro.locals.runtime.env.DB,
-    candidates.filter((c) => OPEN_STATES.has(c.state)).map((c) => ({ id: c.id, submittedUrl: c.submitted_url })),
+    candidates.filter((c) => DESK_OPEN_STATES.has(c.state)).map((c) => ({ id: c.id, submittedUrl: c.submitted_url })),
   );
 } catch {
   sourceRelationships = new Map();
 }
 const clusterList = (clusters: ReadonlyArray<{ clusterId: number; publicationStatus: string }>) =>
   clusters.map((cluster) => `#${cluster.clusterId} (${cluster.publicationStatus})`).join(", ");
-
-const STATE_LABELS: Record<string, string> = { new:"New", drafting:"Drafting", draft_ready:"Draft ready", needs_review:"Needs review", published:"Published", rejected:"Rejected", archived:"Archived" };
 ---
 
 <AdminLayout title="TRACE Desk" description="Governed editorial intake for The Trace Manifest.">
@@ -265,7 +252,7 @@ const STATE_LABELS: Record<string, string> = { new:"New", drafting:"Drafting", d
        candidates.length === 0 ? <p class="meta">No candidates yet.</p> :
        <div style="display:grid;gap:0.75rem;">
         {candidates.map((c) => {
-          const nextStates = TRANSITIONS[c.state] ?? [];
+          const nextStates = DESK_TRANSITIONS[c.state] ?? [];
           // A published candidate already has its story cluster; promoting again would duplicate it.
           const isPromotable = c.state === "needs_review";
           const relationship = sourceRelationships.get(c.id);
@@ -276,12 +263,15 @@ const STATE_LABELS: Record<string, string> = { new:"New", drafting:"Drafting", d
                 <div style="flex:1;min-width:0;">
                   <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;margin-bottom:0.35rem;">
                     <span class="badge badge-sm">{c.intake_type?.replace(/_/g, " ")}</span>
-                    <span class="badge badge-sm" style="background:var(--surface-1);">{STATE_LABELS[c.state] ?? c.state}</span>
+                    <span class="badge badge-sm" style="background:var(--surface-1);">{DESK_STATE_LABELS[c.state] ?? c.state}</span>
                     {c.urgency !== "normal" && <span class="badge badge-sm" style="background:var(--surface-1);">{c.urgency}</span>}
                   </div>
                   {c.submitted_url ? <a href={c.submitted_url} target="_blank" rel="noreferrer" style="font-size:0.85rem;word-break:break-all;">{c.submitted_url}</a> : null}
                   <p style="margin:0.35rem 0;font-size:0.85rem;">{c.lead_text?.slice(0, 300)}{(c.lead_text?.length ?? 0) > 300 ? "…" : ""}</p>
                   <p class="meta" style="font-size:0.7rem;">{c.section_slug || "Unclassified"} · {c.created_at ? new Date(c.created_at + "Z").toLocaleString("en-GB") : "—"} · Desk submission</p>
+                  {c.state === "held" && (
+                    <p class="meta desk-held-note" id={`held-${c.id}`}>Held at intake for an editor's decision. Release it to Needs review to promote it or link it to its existing story, or reject it.</p>
+                  )}
                   {relationship && relationship.kind !== "new" && (
                     <p class="desk-source-notice" role="note" id={`source-${c.id}`} data-source-relationship={relationship.kind}>
                       {relationship.kind === "exact" && <>Source already in story cluster #{relationship.cluster.clusterId} “{relationship.cluster.title}” ({relationship.cluster.publicationStatus}). Promoting links this candidate to it; no new cluster is created. <a href={`/admin/review?review=${relationship.cluster.clusterId}`}>Open in review</a></>}
@@ -297,7 +287,7 @@ const STATE_LABELS: Record<string, string> = { new:"New", drafting:"Drafting", d
                       <input type="hidden" name="candidate_id" value={String(c.id)} />
                       <input type="hidden" name="state" value={ns} />
                       <button type="submit" class="btn btn-secondary" style="font-size:0.65rem;padding:0.15rem 0.4rem;width:100%;">
-                        {ns === "published" ? "✓ Publish" : ns === "rejected" ? "✗ Reject" : `→ ${STATE_LABELS[ns] ?? ns}`}
+                        {ns === "published" ? "✓ Publish" : ns === "rejected" ? "✗ Reject" : `→ ${DESK_STATE_LABELS[ns] ?? ns}`}
                       </button>
                     </form>
                   ))}
