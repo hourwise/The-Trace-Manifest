@@ -56,7 +56,7 @@
 
 ## Changed files relative to `e16bcba`
 
-There are 15 files, all new. No existing file was modified.
+There are 16 files, all new. No existing file was modified.
 
 | Path | Purpose |
 |---|---|
