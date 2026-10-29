@@ -1,0 +1,155 @@
+{
+ "schema": "trace-n4-ops-approval-package.1",
+ "status": "AWAITING_OWNER_APPROVAL",
+ "owner_approval": null,
+ "approved_at_utc": null,
+ "notice": "Preparation only. This package is not an owner approval, does not configure any Worker variable and sends no request. The ability to set Worker variables is not evidence that approval occurred.",
+ "approval_ref": "N4-EXAMPLE-P01",
+ "plan": {
+  "sha256": "9f6ff054b7537408e06634d853f7ed049476d1bdfcc0d065769846ed568a3ec9",
+  "implementation_sha256": "8e12fbf90c0e745f257a0acdf22599d1cffc98c611dc7451aab2b8dc97dbc7de",
+  "migration_sha256": "3d6d09275d5188281a63a2f944f02b022d14685cabe1efaf253d969be7c9d9be",
+  "source_commit": "a447c2fd3c18b3cd39dbc5472e3c4d3ee9a28253"
+ },
+ "target": {
+  "sha256": "e245aa0ebfaa6b53dbf1eae30be96f57274cda38a2fabef944cd6174764263e5",
+  "environment": "preview",
+  "database_name": "trace-manifest-db-preview",
+  "database_id": "f312f662-2252-4005-8103-1a40d546e16b",
+  "target_attestation_sha256": "ee3cab28cfd96c18709864d2aab6a24f6a4d34f5340c17746c71eccff0af91bb",
+  "implementation_sha256": "8e12fbf90c0e745f257a0acdf22599d1cffc98c611dc7451aab2b8dc97dbc7de",
+  "migration_sha256": "3d6d09275d5188281a63a2f944f02b022d14685cabe1efaf253d969be7c9d9be",
+  "verified_at_utc": "2026-11-02T08:30:00.000Z"
+ },
+ "publisher_email": "publisher@example.test",
+ "window": {
+  "from_utc": "2026-11-02T10:00:00.000Z",
+  "until_utc": "2026-11-02T10:45:00.000Z",
+  "duration_ms": 2700000,
+  "closing_margin_ms": 15000
+ },
+ "evidence_policy": {
+  "max_evidence_age_minutes": 240,
+  "oldest_capture_utc": "2026-11-02T09:00:00.000Z",
+  "newest_capture_utc": "2026-11-02T09:01:00.000Z"
+ },
+ "slots": [
+  {
+   "index": 0,
+   "request_id": "fc7afe59-7bab-f43b-78d7-83ffb93203fc",
+   "capture_sha256": "86e576aa42412f0f310cfc42ea1a95703de044071627e69ba6a5eda0b60b2a3b",
+   "captured_at_utc": "2026-11-02T09:00:00.000Z",
+   "after": "",
+   "limit": 3,
+   "selection_sha256": "3ab6d61f5ab5136334ae1ad342240cd15099130d1bb80aa08de38a183c4801dd",
+   "has_more": true,
+   "next_cursor": "cand-0003-bad",
+   "known_pending_lower_bound": 51,
+   "maximum_row_changes": 5,
+   "maximum_write_units": 23,
+   "rows": [
+    {
+     "id": "cand-0001",
+     "url_fingerprint": "e979ff055aae90c6d57c6660e89ab511a4bd9b7910a3e37cd93833560347f28b",
+     "canonical_hash": "cd0012a44f45f5cfb8c6494b31c5ba4f5930a0885052656b8e12a5f48c1d157f",
+     "issue": null
+    },
+    {
+     "id": "cand-0002",
+     "url_fingerprint": "ba836057d32375dfda15df3dc03b9b7e60384993f382e12b0808d65778bba060",
+     "canonical_hash": "8ca0c23397a712c7bb5c41874cc023166af6acf1f4c69681439f076b9e74acf6",
+     "issue": null
+    },
+    {
+     "id": "cand-0003-bad",
+     "url_fingerprint": "c5cc58d8b72992ef4dfa4468b779212735cd4f25f42dc036892372ab5453ed41",
+     "canonical_hash": null,
+     "issue": "invalid_url"
+    }
+   ]
+  },
+  {
+   "index": 1,
+   "request_id": "8c81dac8-191a-36e0-a616-59bd985c95d0",
+   "capture_sha256": "befaf9a24cc5535b1b377ca56c51a02b5c5814d43d2f1f60d6f9ff540e9e5d41",
+   "captured_at_utc": "2026-11-02T09:01:00.000Z",
+   "after": "cand-0003-bad",
+   "limit": 3,
+   "selection_sha256": "b584972242230bc1159386c2a51fbc3dc62ac717f01288c918d72fbf915f1cfa",
+   "has_more": true,
+   "next_cursor": "cand-0006",
+   "known_pending_lower_bound": 51,
+   "maximum_row_changes": 5,
+   "maximum_write_units": 23,
+   "rows": [
+    {
+     "id": "cand-0004",
+     "url_fingerprint": "5cda8e397cafc8ada550a05d62505416ba9c9c3fc712c1adb46f2d0a52a326db",
+     "canonical_hash": "4f084bee103404e4bee2eafb16b95d3fb32c8e8aeeb66b6fc226905b506fc36d",
+     "issue": null
+    },
+    {
+     "id": "cand-0005",
+     "url_fingerprint": "663a9a6b455277f13939bffeab0c04aa8b7401a9e4d8c66feb42d32d30d38cb2",
+     "canonical_hash": "ae0e2c01f22ceaf0f600149ba3fba98d037c8db24286ba0e21b5d90c7ac9a64d",
+     "issue": null
+    },
+    {
+     "id": "cand-0006",
+     "url_fingerprint": "952ba4a872e0b0bcc0b1f857599baadb6467be2ee77b0c848bdf2a4dbba99429",
+     "canonical_hash": "0934c5c62598efcc0d3cb1a43b296d6c489aaba4d30b0e798d1b9ace870b9ede",
+     "issue": null
+    }
+   ]
+  }
+ ],
+ "totals": {
+  "slots": 2,
+  "rows": 6,
+  "maximum_row_changes": 10,
+  "maximum_write_units": 46
+ },
+ "prior": null,
+ "chain": {
+  "approval_refs": [
+   "N4-EXAMPLE-P01"
+  ],
+  "request_ids": [
+   "fc7afe59-7bab-f43b-78d7-83ffb93203fc",
+   "8c81dac8-191a-36e0-a616-59bd985c95d0"
+  ]
+ },
+ "profile_without_approval": {
+  "schema": "trace-preview-identity-n4.1",
+  "approval_ref": "N4-EXAMPLE-P01",
+  "owner_approval": null,
+  "environment": "preview",
+  "database_id": "f312f662-2252-4005-8103-1a40d546e16b",
+  "target_attestation_sha256": "ee3cab28cfd96c18709864d2aab6a24f6a4d34f5340c17746c71eccff0af91bb",
+  "implementation_sha256": "8e12fbf90c0e745f257a0acdf22599d1cffc98c611dc7451aab2b8dc97dbc7de",
+  "migration_sha256": "3d6d09275d5188281a63a2f944f02b022d14685cabe1efaf253d969be7c9d9be",
+  "publisher_email": "publisher@example.test",
+  "from_utc": "2026-11-02T10:00:00.000Z",
+  "until_utc": "2026-11-02T10:45:00.000Z",
+  "requests": [
+   {
+    "request_id": "fc7afe59-7bab-f43b-78d7-83ffb93203fc",
+    "after": "",
+    "limit": 3,
+    "selection_sha256": "3ab6d61f5ab5136334ae1ad342240cd15099130d1bb80aa08de38a183c4801dd",
+    "maximum_row_changes": 5,
+    "maximum_write_units": 23
+   },
+   {
+    "request_id": "8c81dac8-191a-36e0-a616-59bd985c95d0",
+    "after": "cand-0003-bad",
+    "limit": 3,
+    "selection_sha256": "b584972242230bc1159386c2a51fbc3dc62ac717f01288c918d72fbf915f1cfa",
+    "maximum_row_changes": 5,
+    "maximum_write_units": 23
+   }
+  ]
+ },
+ "deployable_profile_sha256_if_approved": "7dcdc4a3b282b51c0ff48ce15c21ea5afcef523349099948bd010d85edbdb577",
+ "deployable_profile_bytes_if_approved": 1021
+}

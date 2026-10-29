@@ -1,0 +1,152 @@
+{
+ "schema": "trace-n4-ops-reconciliation.1",
+ "disposition": "PASS",
+ "stop_continuable": false,
+ "approval_ref": "N4-EXAMPLE-P01",
+ "package_sha256": "cb36bc7a9c344058ae497b51bfb579c090a86f448564838c51cfe8c048fc0685",
+ "approval_record_sha256": "7f8e36ed535160cf6b1baf651466ece6bebe7b54b42236633b2fe1732673859c",
+ "deployable_profile_sha256": "7dcdc4a3b282b51c0ff48ce15c21ea5afcef523349099948bd010d85edbdb577",
+ "target": {
+  "environment": "preview",
+  "database_id": "f312f662-2252-4005-8103-1a40d546e16b",
+  "target_attestation_sha256": "ee3cab28cfd96c18709864d2aab6a24f6a4d34f5340c17746c71eccff0af91bb",
+  "implementation_sha256": "8e12fbf90c0e745f257a0acdf22599d1cffc98c611dc7451aab2b8dc97dbc7de",
+  "migration_sha256": "3d6d09275d5188281a63a2f944f02b022d14685cabe1efaf253d969be7c9d9be"
+ },
+ "window": {
+  "from_utc": "2026-11-02T10:00:00.000Z",
+  "until_utc": "2026-11-02T10:45:00.000Z"
+ },
+ "deployment": {
+  "open": {
+   "sha256": "5edfd14288132e8ffa5b64fb8b70f5689e745380a91c81ee9552b8c4c46b8db8",
+   "disposition": "PASS",
+   "captured_at_utc": "2026-11-02T09:50:00.000Z",
+   "closed_after_window": null
+  },
+  "closure": {
+   "sha256": "72ff6f04c872684678cf5110fd1a3ad88d8f0f26a777a59391e4953c1530f801",
+   "disposition": "PASS",
+   "captured_at_utc": "2026-11-02T10:20:00.000Z",
+   "closed_after_window": false
+  }
+ },
+ "totals": {
+  "slots": 2,
+  "COMPLETED_MATCHED": 2,
+  "EXPLICITLY_REFUSED": 0,
+  "UNUSED_AUTHORISED_SLOT": 0,
+  "MISSING_OR_UNCERTAIN": 0,
+  "CONFLICTING_OR_DUPLICATE": 0,
+  "UNEXPECTED_WRITE_CONSUMPTION": 0,
+  "STALE_OR_MISMATCHED_TARGET": 0,
+  "committed_logical_changes": 10,
+  "reserved_row_changes_for_completed": 10,
+  "reserved_write_units_for_completed": 46,
+  "measured_storage_rows_written": 28,
+  "slots_with_unmeasured_storage": 0,
+  "candidates_completed": 6
+ },
+ "audit": null,
+ "final_inventory": null,
+ "final_inventory_required": true,
+ "resume_after": "cand-0006",
+ "campaign_reported_more_rows": true,
+ "chain": {
+  "approval_refs": [
+   "N4-EXAMPLE-P01"
+  ],
+  "request_ids": [
+   "fc7afe59-7bab-f43b-78d7-83ffb93203fc",
+   "8c81dac8-191a-36e0-a616-59bd985c95d0"
+  ]
+ },
+ "slots": [
+  {
+   "index": 0,
+   "request_id": "fc7afe59-7bab-f43b-78d7-83ffb93203fc",
+   "after": "",
+   "selection_sha256": "3ab6d61f5ab5136334ae1ad342240cd15099130d1bb80aa08de38a183c4801dd",
+   "rows": 3,
+   "class": "COMPLETED_MATCHED",
+   "basis": "durable_receipt_lookup",
+   "absence_confirmed": null,
+   "logical_changes": 5,
+   "reserved_row_changes": 5,
+   "reserved_write_units": 23,
+   "storage_writes": {
+    "status": "MEASURED",
+    "provider_rows_written": 14
+   },
+   "next_cursor": "cand-0003-bad",
+   "attempts": 1,
+   "lookups": 1,
+   "response_codes": [],
+   "findings": []
+  },
+  {
+   "index": 1,
+   "request_id": "8c81dac8-191a-36e0-a616-59bd985c95d0",
+   "after": "cand-0003-bad",
+   "selection_sha256": "b584972242230bc1159386c2a51fbc3dc62ac717f01288c918d72fbf915f1cfa",
+   "rows": 3,
+   "class": "COMPLETED_MATCHED",
+   "basis": "durable_receipt_lookup",
+   "absence_confirmed": null,
+   "logical_changes": 5,
+   "reserved_row_changes": 5,
+   "reserved_write_units": 23,
+   "storage_writes": {
+    "status": "MEASURED",
+    "provider_rows_written": 14
+   },
+   "next_cursor": "cand-0006",
+   "attempts": 1,
+   "lookups": 1,
+   "response_codes": [],
+   "findings": []
+  }
+ ],
+ "campaign_findings": [],
+ "stop_reasons": [],
+ "not_verified_reasons": [],
+ "sources": [
+  {
+   "role": "approval_package",
+   "sha256": "cb36bc7a9c344058ae497b51bfb579c090a86f448564838c51cfe8c048fc0685"
+  },
+  {
+   "role": "deployable_profile",
+   "sha256": "7dcdc4a3b282b51c0ff48ce15c21ea5afcef523349099948bd010d85edbdb577"
+  },
+  {
+   "role": "deployment_closure",
+   "sha256": "72ff6f04c872684678cf5110fd1a3ad88d8f0f26a777a59391e4953c1530f801"
+  },
+  {
+   "role": "deployment_open",
+   "sha256": "5edfd14288132e8ffa5b64fb8b70f5689e745380a91c81ee9552b8c4c46b8db8"
+  },
+  {
+   "role": "owner_approval",
+   "sha256": "7f8e36ed535160cf6b1baf651466ece6bebe7b54b42236633b2fe1732673859c"
+  },
+  {
+   "role": "receipt_lookup",
+   "sha256": "25c8e109157f8bdb79410942b62ebbe38ecce28e7a3ae9220628f52b887f2a67"
+  },
+  {
+   "role": "receipt_lookup",
+   "sha256": "e1e58f920e44aaba6c4b46116711859bda451850f58142ae2eb87e3bf3053139"
+  },
+  {
+   "role": "request_record",
+   "sha256": "2c74f23ed1bd9221badaf584b1993c64b6ee08badd19ba95ceacd7eed4974b0f"
+  },
+  {
+   "role": "request_record",
+   "sha256": "39afb13e6986fcc246ebeb789d355d808e2481fb28f1fa3d490543071cf05706"
+  }
+ ],
+ "notice": "Offline comparison of saved evidence. No request was sent, retried or replayed. A missing receipt is never treated as zero writes. Local evidence is not Cloudflare billing."
+}

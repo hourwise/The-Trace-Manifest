@@ -1,0 +1,18 @@
+{
+ "schema": "trace-n4-ops-owner-approval.1",
+ "decision": null,
+ "approval_ref": "N4-EXAMPLE-P01",
+ "owner_email": null,
+ "approved_at_utc": null,
+ "package_sha256": "cb36bc7a9c344058ae497b51bfb579c090a86f448564838c51cfe8c048fc0685",
+ "deployable_profile_sha256": "7dcdc4a3b282b51c0ff48ce15c21ea5afcef523349099948bd010d85edbdb577",
+ "environment": "preview",
+ "database_id": "f312f662-2252-4005-8103-1a40d546e16b",
+ "publisher_email": "publisher@example.test",
+ "from_utc": "2026-11-02T10:00:00.000Z",
+ "until_utc": "2026-11-02T10:45:00.000Z",
+ "slots": 2,
+ "total_maximum_row_changes": 10,
+ "total_maximum_write_units": 46,
+ "statement": null
+}
