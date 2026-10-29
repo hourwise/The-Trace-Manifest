@@ -1,0 +1,13 @@
+{
+  "schema": "trace-release-manifest-v1",
+  "release_id": "post-merge-production",
+  "target": "production",
+  "expected_commit": null,
+  "approval_reference": "Merged pull request on main; the PR's approval is the release decision and is recorded, not verified, by this check",
+  "profile": "production",
+  "notes": "Used by .github/workflows/post-deploy-verify.yml. The commit comes from the push event. No Cloudflare credentials: Worker, bindings and Cron are reported NOT_VERIFIED and are outside this run's mandatory scope.",
+  "mandatory_scope": { "deployment": true, "public": true, "access": true },
+  "pages": { "project": "the-trace-manifest" },
+  "cron": { "expected": [] },
+  "database": { "approved_changes": "none", "snapshot_required": false, "notes": "Database comparison is a manual, operator-supplied step." }
+}

@@ -1,0 +1,296 @@
+{
+  "schema": "trace-release-receipt-v1",
+  "tool": {
+    "name": "trace-ops-release-verify",
+    "version": "1.0.0",
+    "source_sha256": {
+      "release-verify.mjs": "cc06657fdd9458ed73d3a7ab2d91bf73bd249ea647b3dcd9992dd5c1b2b948f2",
+      "lib/report.mjs": "a9c26fdb94ab26c5703a033f0f1160f8a217ad00cbcfc9eba43d2240ab4ee606",
+      "lib/http.mjs": "2d0e2f0fc40e58fe219a5016ccf3814f6f4e88aea1650c1951bd0b86fea6c923",
+      "lib/site-checks.mjs": "85a132e51af414a37c2b886f2af9200c41091bd8462d19549e5c8c8942f08f68",
+      "lib/deployment.mjs": "ae8d0ced1667dcf29b5697c454def6eea3f6392f9d1a7f41c8a0b0b8fe7b6150",
+      "lib/snapshot.mjs": "126c9848fdf53d887b4be82a42be610385e2effaf682de42f804d1402a8e0c5d",
+      "lib/manifest.mjs": "04631ddc09b30d877974fea2c1851fec0292f2b28cc88716d649819d6ce273cf"
+    }
+  },
+  "generated_at": "2026-10-28T22:00:00.000Z",
+  "target": "production",
+  "release_id": "post-merge-production",
+  "approval_reference": "Merged pull request on main; the PR's approval is the release decision and is recorded, not verified, by this check",
+  "approval_reference_verified": false,
+  "identities": {
+    "expected_commit": "9da92ece6d51d1bfeed9b7eb1289f891a548421c",
+    "commit_source": "command line / CI event",
+    "pages": {
+      "project": "the-trace-manifest",
+      "expected_deployment_id": null,
+      "observed_deployment_id": "a98c3f18"
+    },
+    "worker": null
+  },
+  "mode": {
+    "github": true,
+    "cloudflare": false,
+    "snapshots": false,
+    "offline": false
+  },
+  "request_budget": {
+    "site": {
+      "used": 9,
+      "limit": 20
+    },
+    "github": {
+      "used": 2,
+      "limit": 22
+    },
+    "cloudflare": {
+      "used": 0,
+      "limit": 8
+    }
+  },
+  "checks": [
+    {
+      "id": "manifest.valid",
+      "mandatory": true,
+      "status": "PASS",
+      "summary": "manifest post-merge-production and profile production validated; commit from command line / CI event",
+      "evidence": {},
+      "started_at": "2026-10-28T22:00:00.000Z",
+      "finished_at": "2026-10-28T22:00:00.000Z"
+    },
+    {
+      "id": "deployment.reported",
+      "mandatory": true,
+      "status": "PASS",
+      "summary": "Cloudflare Pages reported a successful deployment a98c3f18 for 9da92ec at 2026-10-28T21:21:18Z",
+      "evidence": {
+        "conclusion": "success",
+        "deployment_id": "a98c3f18-50e0-45b6-8890-9b1ad00367bf",
+        "short_id": "a98c3f18",
+        "completed_at": "2026-10-28T21:21:18Z",
+        "title": "Deployed successfully"
+      },
+      "started_at": "2026-10-28T22:00:00.000Z",
+      "finished_at": "2026-10-28T22:00:00.000Z",
+      "attempts": 1
+    },
+    {
+      "id": "deployment.branch_head",
+      "mandatory": false,
+      "status": "PASS",
+      "summary": "9da92ec is still the head of main",
+      "evidence": {
+        "head": "9da92ece6d51d1bfeed9b7eb1289f891a548421c"
+      },
+      "started_at": "2026-10-28T22:00:00.000Z",
+      "finished_at": "2026-10-28T22:00:00.000Z"
+    },
+    {
+      "id": "public.home",
+      "mandatory": true,
+      "status": "PASS",
+      "summary": "GET /: 200 text/html, 123 bytes, 2 marker(s) present, 1 absent",
+      "evidence": {
+        "url": "https://thetracemanifest.com/",
+        "status": 200,
+        "error": null,
+        "content_type": "text/html",
+        "bytes": 123,
+        "history": [
+          200
+        ]
+      },
+      "started_at": "2026-10-28T22:00:00.000Z",
+      "finished_at": "2026-10-28T22:00:00.000Z",
+      "attempts": 1
+    },
+    {
+      "id": "public.feed",
+      "mandatory": true,
+      "status": "PASS",
+      "summary": "GET /feed: 200 text/html, 123 bytes, 2 marker(s) present, 1 absent",
+      "evidence": {
+        "url": "https://thetracemanifest.com/feed",
+        "status": 200,
+        "error": null,
+        "content_type": "text/html",
+        "bytes": 123,
+        "history": [
+          200
+        ]
+      },
+      "started_at": "2026-10-28T22:00:00.000Z",
+      "finished_at": "2026-10-28T22:00:00.000Z",
+      "attempts": 1
+    },
+    {
+      "id": "public.rss",
+      "mandatory": true,
+      "status": "PASS",
+      "summary": "GET /rss/daily.xml: 200 application/xml, 30 bytes, 2 marker(s) present, 0 absent",
+      "evidence": {
+        "url": "https://thetracemanifest.com/rss/daily.xml",
+        "status": 200,
+        "error": null,
+        "content_type": "application/xml",
+        "bytes": 30,
+        "history": [
+          200
+        ]
+      },
+      "started_at": "2026-10-28T22:00:00.000Z",
+      "finished_at": "2026-10-28T22:00:00.000Z",
+      "attempts": 1
+    },
+    {
+      "id": "public.story.published",
+      "mandatory": true,
+      "status": "PASS",
+      "summary": "GET /stories/google-announces-fairwind-program-for-government-cyber-defense-tools: 200 text/html, 127 bytes, 2 marker(s) present, 2 absent",
+      "evidence": {
+        "url": "https://thetracemanifest.com/stories/google-announces-fairwind-program-for-government-cyber-defense-tools",
+        "status": 200,
+        "error": null,
+        "content_type": "text/html",
+        "bytes": 127,
+        "history": [
+          200
+        ]
+      },
+      "started_at": "2026-10-28T22:00:00.000Z",
+      "finished_at": "2026-10-28T22:00:00.000Z",
+      "attempts": 1
+    },
+    {
+      "id": "public.story.withdrawn",
+      "mandatory": true,
+      "status": "PASS",
+      "summary": "GET /stories/hugging-face-hub-migrates-from-git-lfs-to-xet-storage: 200 text/html, 211 bytes, 2 marker(s) present, 0 absent",
+      "evidence": {
+        "url": "https://thetracemanifest.com/stories/hugging-face-hub-migrates-from-git-lfs-to-xet-storage",
+        "status": 200,
+        "error": null,
+        "content_type": "text/html",
+        "bytes": 211,
+        "history": [
+          200
+        ]
+      },
+      "started_at": "2026-10-28T22:00:00.000Z",
+      "finished_at": "2026-10-28T22:00:00.000Z",
+      "attempts": 1
+    },
+    {
+      "id": "access.admin",
+      "mandatory": true,
+      "status": "PASS",
+      "summary": "anonymous GET /admin: 302 to Cloudflare Access login (team.cloudflareaccess.com); redirect not followed",
+      "evidence": {
+        "url": "https://thetracemanifest.com/admin",
+        "status": 302,
+        "error": null,
+        "location_host": "team.cloudflareaccess.com"
+      },
+      "started_at": "2026-10-28T22:00:00.000Z",
+      "finished_at": "2026-10-28T22:00:00.000Z",
+      "attempts": 1
+    },
+    {
+      "id": "access.admin_desk",
+      "mandatory": true,
+      "status": "PASS",
+      "summary": "anonymous GET /admin/desk: 302 to Cloudflare Access login (team.cloudflareaccess.com); redirect not followed",
+      "evidence": {
+        "url": "https://thetracemanifest.com/admin/desk",
+        "status": 302,
+        "error": null,
+        "location_host": "team.cloudflareaccess.com"
+      },
+      "started_at": "2026-10-28T22:00:00.000Z",
+      "finished_at": "2026-10-28T22:00:00.000Z",
+      "attempts": 1
+    },
+    {
+      "id": "access.admin_review",
+      "mandatory": true,
+      "status": "PASS",
+      "summary": "anonymous GET /admin/review: 302 to Cloudflare Access login (team.cloudflareaccess.com); redirect not followed",
+      "evidence": {
+        "url": "https://thetracemanifest.com/admin/review",
+        "status": 302,
+        "error": null,
+        "location_host": "team.cloudflareaccess.com"
+      },
+      "started_at": "2026-10-28T22:00:00.000Z",
+      "finished_at": "2026-10-28T22:00:00.000Z",
+      "attempts": 1
+    },
+    {
+      "id": "access.api_admin",
+      "mandatory": true,
+      "status": "PASS",
+      "summary": "anonymous GET /api/admin/candidates: 302 to Cloudflare Access login (team.cloudflareaccess.com); redirect not followed",
+      "evidence": {
+        "url": "https://thetracemanifest.com/api/admin/candidates",
+        "status": 302,
+        "error": null,
+        "location_host": "team.cloudflareaccess.com"
+      },
+      "started_at": "2026-10-28T22:00:00.000Z",
+      "finished_at": "2026-10-28T22:00:00.000Z",
+      "attempts": 1
+    },
+    {
+      "id": "deployment.serving",
+      "mandatory": false,
+      "status": "NOT_VERIFIED",
+      "summary": "Cloudflare API mode not requested (run with --cloudflare and operator-supplied credentials); not verified",
+      "evidence": {},
+      "started_at": "2026-10-28T22:00:00.000Z",
+      "finished_at": "2026-10-28T22:00:00.000Z"
+    },
+    {
+      "id": "cron.production",
+      "mandatory": false,
+      "status": "NOT_VERIFIED",
+      "summary": "Cloudflare API mode not requested (run with --cloudflare and operator-supplied credentials); not verified",
+      "evidence": {},
+      "started_at": "2026-10-28T22:00:00.000Z",
+      "finished_at": "2026-10-28T22:00:00.000Z"
+    },
+    {
+      "id": "cron.preview",
+      "mandatory": false,
+      "status": "NOT_VERIFIED",
+      "summary": "Cloudflare API mode not requested (run with --cloudflare and operator-supplied credentials); not verified",
+      "evidence": {},
+      "started_at": "2026-10-28T22:00:00.000Z",
+      "finished_at": "2026-10-28T22:00:00.000Z"
+    },
+    {
+      "id": "database.snapshot",
+      "mandatory": false,
+      "status": "NOT_RUN",
+      "summary": "no snapshots supplied",
+      "evidence": {},
+      "started_at": "2026-10-28T22:00:00.000Z",
+      "finished_at": "2026-10-28T22:00:00.000Z"
+    }
+  ],
+  "stop_conditions": [],
+  "evidence_files": [
+    {
+      "path": "scripts/ops/manifests/post-merge-production.json",
+      "sha256": "c2cfa73b7706f30687cc4f87cd7b4f5461e6f92450854ffa1131eb9289eee057"
+    },
+    {
+      "path": "scripts/ops/profiles/production.json",
+      "sha256": "750c86a7145bea3a42afc9e335809077a313e0695d8f2d558b551bfd2f9bc7b7"
+    }
+  ],
+  "verdict": {
+    "status": "PASS",
+    "text": "PASS: all 11 mandatory checks passed. 4 optional check(s) were not verified (deployment.serving, cron.production, cron.preview, database.snapshot); they are outside this run's mandatory scope."
+  },
+  "example_note": "Generated from MOCKED responses for documentation; not a real verification."
+}
