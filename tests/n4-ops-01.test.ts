@@ -140,6 +140,8 @@ test('OPS-01 malformed profiles, mismatched identities, excessive budgets and st
   refused(p({'target-evidence':save(out,'t4.json',targetEvidence({migration_sha256:'e'.repeat(64)}))}),'migration_identity_mismatch');
   refused(p({'target-evidence':save(out,'t5.json',targetEvidence({target_attestation_sha256:'b'.repeat(64)}))}),'target_mismatch');
   const mutate=(i:number,fn:(c:any)=>void)=>{const c=structuredClone(caps[i]);fn(c);return save(out,`m${i}-${Math.random()}.json`,c);};
+  // Target and capture agree with each other but not with the reviewed plan: only the plan comparison can refuse.
+  refused(p({'target-evidence':save(out,'t1b.json',targetEvidence({implementation_sha256:'d'.repeat(64)})),inventory:[mutate(0,c=>c.response.body.implementation_sha256='d'.repeat(64))]}),'implementation_mismatch');
   refused(p({inventory:[mutate(0,c=>c.response.body.database_id='00000000-0000-0000-0000-000000000000')]}),'target_mismatch');
   refused(p({inventory:[mutate(0,c=>c.response.body.implementation_sha256='f'.repeat(64))]}),'implementation_mismatch');
   refused(p({inventory:[mutate(0,c=>c.response.body.selection_sha256='XYZ')]}),'malformed_hash');
@@ -189,7 +191,7 @@ test('OPS-01 nothing approves or executes automatically; approval is only the ow
   refused(fin({...good,deployable_profile_sha256:'0'.repeat(64)}),'approval_mismatch');
   refused(fin({...good,total_maximum_write_units:good.total_maximum_write_units+1}),'approval_mismatch');
   refused(fin({...good,until_utc:iso(T+7300000)}),'approval_mismatch');
-  refused(fin({...good,approved_at_utc:iso(T+3700000)}),'approval_mismatch');
+  refused(fin({...good,approved_at_utc:iso(T+3700000)},iso(T+3800000)),'approval_mismatch');
   refused(fin({...good,approved_at_utc:iso(T-60000)}),'approval_mismatch');
   refused(fin(good,iso(T+80000)),'approval_mismatch');
   refused(fin(good,iso(T+7200000)),'window_expired');
