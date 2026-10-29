@@ -1,17 +1,19 @@
 {
   "schema": "trace-migration-preflight-v1",
-  "notes": "Pinned to Codex's P4-R1 candidate 2ad59cc (db/migration-0080-local-news-import.sql, Git blob bytes). P4-R2 is revising 0080: update sha256 and the expected objects to the reviewed file before use. Preview only; preparing this plan approves nothing.",
+  "notes": "Pinned to the final P4-R2.1 migration 0080: release codex/trace-local-news-p4-r2-1 at 70c75229c8f2013552ff4ec74a39c47a8891c365 (Draft PR #21), Git blob bytes, unchanged since P4-R2 65fa4a2 and bound by Preview proposal 021a957713cc70dca2dd5e97e93be7b50c5248d38716063501dc982c60af7a3a. Postflight unindexed-backlog-bounded decides N4: 50 or fewer means the bounded identity lookup can proceed; 51 means more than 50 unindexed URL candidates and every import refuses bounded_identity_backfill_required until N4 is closed. Apply only after the importer code is deployed to Preview, so new candidates are indexed. Preview only; preparing this plan approves nothing.",
   "environment": "preview",
   "database": { "name": "trace-manifest-db-preview", "uuid": "f312f662-2252-4005-8103-1a40d546e16b" },
-  "migration": { "file": "db/migration-0080-local-news-import.sql", "sha256": "7cff2245bb2f59d9792123c58a4ae8429af889a07628f24efd29f58cb4b3c0dc" },
+  "migration": { "file": "db/migration-0080-local-news-import.sql", "sha256": "3d6d09275d5188281a63a2f944f02b022d14685cabe1efaf253d969be7c9d9be" },
   "prerequisites": [{ "file": "db/migration-0077-editorial-source-identity.sql" }],
   "expected": {
-    "tables": ["news_import_deliveries", "news_import_events", "news_import_packages", "news_import_proposals", "news_import_versions"],
-    "columns": { "editorial_candidates": ["source_url_hash"] },
+    "tables": ["news_import_deliveries", "news_import_events", "news_import_packages", "news_import_proposals", "news_import_version_links", "news_import_versions"],
+    "columns": { "editorial_candidates": ["source_url_hash", "source_url_identity_issue"] },
     "indexes": ["idx_editorial_candidate_unindexed_url", "idx_editorial_candidate_url_hash", "news_import_events_version", "news_import_proposals_review", "news_import_versions_candidate", "news_import_versions_url"],
     "triggers": [
-      "news_import_candidate_state_guard", "news_import_deliveries_no_delete", "news_import_deliveries_no_replace", "news_import_deliveries_no_update",
-      "news_import_events_no_delete", "news_import_events_no_replace", "news_import_events_no_update", "news_import_package_identity",
+      "news_import_candidate_identity_guard", "news_import_candidate_no_replace", "news_import_candidate_state_guard", "news_import_changed_legacy_url",
+      "news_import_deliveries_no_delete", "news_import_deliveries_no_replace", "news_import_deliveries_no_update",
+      "news_import_events_no_delete", "news_import_events_no_replace", "news_import_events_no_update", "news_import_link_same_url",
+      "news_import_links_no_delete", "news_import_links_no_replace", "news_import_links_no_update", "news_import_package_identity",
       "news_import_packages_no_delete", "news_import_packages_no_replace", "news_import_packages_no_update", "news_import_proposal_initial",
       "news_import_proposal_transition", "news_import_proposals_no_delete", "news_import_proposals_no_replace", "news_import_resolution_owner",
       "news_import_versions_no_delete", "news_import_versions_no_replace", "news_import_versions_no_update"
@@ -19,9 +21,9 @@
   },
   "baseline_tables": ["story_clusters", "story_cluster_members", "feed_items", "editorial_candidates", "admin_audit_log", "sources"],
   "postflight": [
-    { "id": "sidecar-empty", "sql": "SELECT 1 FROM news_import_packages UNION ALL SELECT 1 FROM news_import_versions UNION ALL SELECT 1 FROM news_import_proposals LIMIT 1", "expect": "no_rows" },
-    { "id": "no-candidate-hashed-yet", "sql": "SELECT 1 FROM editorial_candidates WHERE source_url_hash IS NOT NULL LIMIT 1", "expect": "no_rows" },
-    { "id": "unindexed-backlog-size", "sql": "SELECT COUNT(*) AS unhashed_url_candidates FROM editorial_candidates WHERE source_url_hash IS NULL AND submitted_url IS NOT NULL", "expect": { "row_count": 1 } }
+    { "id": "sidecar-empty", "sql": "SELECT 1 FROM news_import_packages UNION ALL SELECT 1 FROM news_import_versions UNION ALL SELECT 1 FROM news_import_proposals UNION ALL SELECT 1 FROM news_import_version_links UNION ALL SELECT 1 FROM news_import_deliveries UNION ALL SELECT 1 FROM news_import_events LIMIT 1", "expect": "no_rows" },
+    { "id": "no-candidate-hashed-yet", "sql": "SELECT 1 FROM editorial_candidates WHERE source_url_hash IS NOT NULL OR source_url_identity_issue IS NOT NULL LIMIT 1", "expect": "no_rows" },
+    { "id": "unindexed-backlog-bounded", "sql": "SELECT COUNT(*) AS bounded_unindexed FROM (SELECT 1 FROM editorial_candidates INDEXED BY idx_editorial_candidate_unindexed_url WHERE source_url_hash IS NULL AND submitted_url IS NOT NULL AND source_url_identity_issue IS NULL LIMIT 51)", "expect": { "row_count": 1 } }
   ],
   "approval": null
 }

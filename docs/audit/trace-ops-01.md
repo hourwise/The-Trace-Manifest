@@ -162,4 +162,4 @@ The automation branch is ready for independent review and a Draft PR. Pushing it
 
 Before merging, the owner should approve introducing an automatic read-only check on every push to `main` (at most 19 site GETs and 21 GitHub reads a run). The first live use of the release tool on Production also needs approval (anonymous GETs); it was not run here.
 
-For Codex's revised 0080, update `scripts/ops/manifests/migration-0080-preview.json` (SHA-256 and objects) and run the preflight before the separately approved Preview migration.
+`scripts/ops/manifests/migration-0080-preview.json` is pinned to the final P4-R2.1 migration 0080, SHA-256 `3d6d0927…9d9be`, from release `70c7522` (Draft PR #21). It declares 6 tables, 2 columns, 6 indexes and 26 triggers. Its bounded backlog probe answers the N4 question; a result of 51 means more than 50 unindexed URL candidates. Run the preflight from a checkout that contains that release, before the separately approved Preview migration.
