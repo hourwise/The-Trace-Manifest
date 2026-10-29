@@ -4,8 +4,45 @@ import {readFileSync} from 'node:fs';
 import {SQLiteD1} from './sqlite-d1';
 import {handleAdminProxyRequest} from '../src/pages/api/admin/[...path]';
 import worker from '../workers/ingestion/index';
-import {fixtureBundle} from './fixtures/news-import/helpers';
+import {fixtureBundle,database} from './fixtures/news-import/helpers';
 import {registration} from '../src/lib/server/news-import/runtime/registry';
+import {signInternalRequest} from '../src/security/internal-signature';
+
+/** Bypass Pages deliberately: these tests certify the Worker's own authority checks. */
+async function signedWorker(db:SQLiteD1,overrides:Record<string,string>={},options:{role?:'publisher'|'reader';method?:'GET'|'POST';bundle?:ReturnType<typeof fixtureBundle>}={}){
+ const bundle=options.bundle??fixtureBundle(),method=options.method??'POST',role=options.role??'publisher',now=Date.now();
+ const env={DB:db.asD1(),TRACE_ENVIRONMENT:'preview',TRACE_NEWS_IMPORT_ENABLED:'true',TRACE_NEWS_IMPORT_BUNDLE_SHA256:bundle.bundle_sha256,TRACE_NEWS_IMPORT_WRITE_LIMIT:'40',TRACE_NEWS_IMPORT_FROM_UTC:new Date(now-60000).toISOString(),TRACE_NEWS_IMPORT_UNTIL_UTC:new Date(now+1800000).toISOString(),TRACE_INTERNAL_SERVICE_SECRET:'fictional-r21-hmac-secret-'.repeat(3),...overrides};
+ const body=method==='GET'?'':JSON.stringify({operation:'import',bundle,expectedHash:bundle.bundle_sha256});
+ const identity={operator:'publisher@example.test',role,timestamp:String(Date.now()),nonce:crypto.randomUUID()};
+ const signature=await signInternalRequest(env.TRACE_INTERNAL_SERVICE_SECRET,method,'/admin/news-import',body,identity);
+ const request=new Request('https://worker.example/admin/news-import',{method,headers:{'X-Trace-Internal-Version':'v1','X-Trace-Operator':identity.operator,'X-Trace-Role':role,'X-Trace-Timestamp':identity.timestamp,'X-Trace-Nonce':identity.nonce,'X-Trace-Signature':signature},...(method==='POST'?{body}:{})});
+ return worker.fetch(request,env as any,{} as ExecutionContext);
+}
+
+test('CI R2.1 signed Worker approval windows and profile limits fail closed without writes',async()=>{
+ const now=Date.now(),utc=(offset:number)=>new Date(now+offset).toISOString();
+ const cases:[string,Record<string,string>,number,string][]=[
+  ['before opening',{TRACE_NEWS_IMPORT_FROM_UTC:utc(300000),TRACE_NEWS_IMPORT_UNTIL_UTC:utc(1800000)},409,'outside_import_window'],
+  ['closing margin',{TRACE_NEWS_IMPORT_FROM_UTC:utc(-60000),TRACE_NEWS_IMPORT_UNTIL_UTC:utc(10000)},409,'outside_import_window'],
+  ['closed',{TRACE_NEWS_IMPORT_FROM_UTC:utc(-1800000),TRACE_NEWS_IMPORT_UNTIL_UTC:utc(-1000)},409,'outside_import_window'],
+  ['over one hour',{TRACE_NEWS_IMPORT_FROM_UTC:utc(-60000),TRACE_NEWS_IMPORT_UNTIL_UTC:utc(3600000)},503,'approved_import_profile_required'],
+  ['noncanonical UTC',{TRACE_NEWS_IMPORT_FROM_UTC:utc(-60000).replace('Z','+00:00')},503,'approved_import_profile_required'],
+  ['above ceiling',{TRACE_NEWS_IMPORT_WRITE_LIMIT:'41'},503,'approved_import_profile_required'],
+  ['fractional ceiling',{TRACE_NEWS_IMPORT_WRITE_LIMIT:'19.5'},503,'approved_import_profile_required'],
+  ['insufficient reservation',{TRACE_NEWS_IMPORT_WRITE_LIMIT:'19'},409,'write_budget_exceeded'],
+ ];
+ for(const [name,overrides,status,error] of cases){const db=database();try{const before=db.totalChanges(),response=await signedWorker(db,overrides);assert.equal(response.status,status,name);assert.equal((await response.json() as any).error,error,name);assert.equal(db.totalChanges(),before,name);}finally{db.close();}}
+});
+
+test('CI R2.1 signed Worker rejects an unapproved package before any mutation',async()=>{const db=database();try{
+ const before=db.totalChanges(),response=await signedWorker(db,{TRACE_NEWS_IMPORT_BUNDLE_SHA256:'0'.repeat(64)});assert.equal(response.status,409);assert.equal((await response.json() as any).error,'package_not_approved');assert.equal(db.totalChanges(),before);
+}finally{db.close();}});
+
+test('CI R2.1 Worker independently enforces signed reader refusal and Preview-only review',async()=>{
+ for(const [options,overrides,status,error] of [[{role:'reader',method:'GET'},{},401,'signed_publisher_proxy_required'],[{method:'GET'},{TRACE_ENVIRONMENT:'production'},503,'news_import_disabled']] as const){const db=database();try{
+  const before=db.totalChanges(),response=await signedWorker(db,overrides,options);assert.equal(response.status,status);assert.equal((await response.json() as any).error,error);assert.equal(db.totalChanges(),before);
+ }finally{db.close();}}
+});
 
 test('CI actual Access/Pages/Worker boundary rejects invalid claims and preserves signed authority after import gate closes',async()=>{
  const db=new SQLiteD1(),savedFetch=globalThis.fetch,evidence={subset:fixtureBundle()};try{

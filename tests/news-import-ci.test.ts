@@ -11,7 +11,7 @@ const run=(db:ReturnType<typeof database>,b=fixtureBundle())=>importNewsPackage(
 const resolve=(db:ReturnType<typeof database>,versionId:string,action:'release'|'reject'='release',revision=0,reason='Publisher reviewed the original fictional source span')=>resolveNewsProposal(db.asD1(),{versionId,action,revision,reason},actor());
 
 test('CI package, exact source/provenance, schema, malicious XML and unchanged deterministic fixture',()=>{
- const b=fixtureBundle(),fixed=JSON.parse(readFileSync('tests/fixtures/news-import/identities.json','utf8'));assert.equal(b.bundle_sha256,fixed.bundle_sha256);assert.equal(b.payload_sha256,fixed.payload_sha256);assert.equal(sha256(readFileSync('tests/fixtures/news-import/rss-template.xml')),fixed.xml_sha256);assert.equal(JSON.parse(b.payload_json).candidates.length,3);assert.equal(canonical(b),canonical(fixtureBundle()));
+ const b=fixtureBundle(),fixed=JSON.parse(readFileSync('tests/fixtures/news-import/identities.json','utf8'));assert.equal(b.bundle_sha256,fixed.bundle_sha256);assert.equal(b.payload_sha256,fixed.payload_sha256);assert.equal(sha256(readFileSync('tests/fixtures/news-import/rss-template.xml','utf8').replace(/\r\n/g,'\n')),fixed.xml_sha256);assert.equal(JSON.parse(b.payload_json).candidates.length,3);assert.equal(canonical(b),canonical(fixtureBundle()));
  for(const change of [(v:any)=>v.schema='future-schema',(v:any)=>v.snapshots[0].xml+=' ',(v:any)=>{const p=JSON.parse(v.payload_json);p.candidates[0].provenance.locator='/rss/channel/item[99]';v.payload_json=canonical(p)+'\n';v.payload_sha256=sha256(v.payload_json);const env=JSON.parse(v.envelope_json);env.payload_sha256=v.payload_sha256;env.bytes=Buffer.byteLength(v.payload_json);v.envelope_json=canonical(env)+'\n';}]){const v=JSON.parse(canonical(b));change(v);v.bundle_sha256=bundleHash(v);assert.throws(()=>validateBundle(v,v.bundle_sha256));}
  assert.throws(()=>parseP3('<!DOCTYPE rss [<!ENTITY e SYSTEM "https://blocked.invalid">]><rss/>',registration('fixture-alpha').source),/DTD/);
  const atom=fixtureBundle(90,{xml:readFileSync('tests/fixtures/news-import/atom.xml','utf8'),source:'fixture-beta'});assert.ok(JSON.parse(atom.payload_json).candidates.length>0);
@@ -105,4 +105,30 @@ test('CI interrupted correction rolls back its link and owner; concurrent decisi
  db.batch=(async(stmts:any[])=>batch([...stmts.slice(0,-1),db.prepare("SELECT json('injected-last-audit-failure')"),stmts.at(-1)!])) as typeof db.batch;await assert.rejects(()=>run(db,second));assert.deepEqual(counts(db),before);db.batch=batch;await run(db,second);
  const one=JSON.parse(first.payload_json).candidates[0].candidate_id,two=JSON.parse(second.payload_json).candidates[0].candidate_id;const decisions=await Promise.all([resolve(db,one,'release'),resolve(db,two,'reject')]);assert.deepEqual(decisions.map(r=>r.state),['needs_review','rejected']);assert.equal(db.sqlite.prepare('SELECT count(*) n FROM news_import_versions v JOIN news_import_proposals p ON p.version_id=v.version_id JOIN editorial_candidates c ON c.id=v.candidate_id WHERE c.state<>p.review_state').get()!.n,0);
  assert.throws(()=>db.sqlite.exec('DELETE FROM news_import_version_links'),/immutable/);assert.throws(()=>db.sqlite.exec('INSERT OR REPLACE INTO news_import_version_links SELECT * FROM news_import_version_links'),/immutable/);
+}finally{db.close();}});
+
+test('CI R2.1 identity trigger protects each imported identity field with its own refusal',async()=>{
+ for(const field of ['id','submitted_url','lead_text','source_hash']){const db=database();try{
+  await run(db);const p=(await listNewsProposals(db.asD1(),actor()))[0],before=db.sqlite.prepare('SELECT * FROM editorial_candidates WHERE id=?').get(p.candidate_id);
+  assert.throws(()=>db.sqlite.prepare(`UPDATE editorial_candidates SET ${field}=? WHERE id=?`).run('changed-by-negative-test',p.candidate_id),/immutable imported candidate identity/,field);
+  assert.deepEqual(db.sqlite.prepare('SELECT * FROM editorial_candidates WHERE id=?').get(p.candidate_id),before);
+ }finally{db.close();}}
+});
+
+test('CI R2.1 application guard refuses generic transitions before sending any write batch',async()=>{const db=database();try{
+ await run(db);const p=(await listNewsProposals(db.asD1(),actor()))[0],before=db.totalChanges(),start=db.statementLog.length;let batches=0;
+ db.batch=(async()=>{batches++;throw new Error('Unexpected write batch reached database');}) as typeof db.batch;
+ await assert.rejects(()=>transitionCandidate(db.asD1(),actor(),p.candidate_id,'held','needs_review'),/Use the imported-source review controls with a reason and current revision/);
+ assert.equal(batches,0);assert.equal(db.totalChanges(),before);
+ // Read-only ownership checks are necessary; no mutation statement may execute.
+ assert.ok(db.statementLog.slice(start).every(s=>/^\s*SELECT\b/i.test(s.sql)));
+}finally{db.close();}});
+
+test('CI R2.1 replay checks stored bundle identity even when every source version already exists',async()=>{const db=database();try{
+ const original=fixtureBundle();await run(db,original);const changed=structuredClone(original),payload=JSON.parse(changed.payload_json);
+ payload.candidates[0].retrieved_at='2026-10-25T12:01:00.000Z';changed.payload_json=canonical(payload)+'\n';changed.payload_sha256=sha256(changed.payload_json);
+ const envelope=JSON.parse(changed.envelope_json);envelope.payload_sha256=changed.payload_sha256;envelope.bytes=Buffer.byteLength(changed.payload_json);changed.envelope_json=canonical(envelope)+'\n';changed.bundle_sha256=bundleHash(changed);
+ validateBundle(changed,changed.bundle_sha256);assert.notEqual(changed.bundle_sha256,original.bundle_sha256);
+ assert.deepEqual(payload.candidates.map((c:any)=>c.candidate_id),JSON.parse(original.payload_json).candidates.map((c:any)=>c.candidate_id));
+ const before=counts(db),changes=db.totalChanges();await assert.rejects(()=>run(db,changed),/conflicting_package_identity/);assert.deepEqual(counts(db),before);assert.equal(db.totalChanges(),changes);
 }finally{db.close();}});
