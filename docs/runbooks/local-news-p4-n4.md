@@ -14,12 +14,12 @@ Local reproduction (offline; these commands do not access Cloudflare):
 npm.cmd run test:identity-maintenance
 npm.cmd run ci
 npm.cmd run test:identity-maintenance:runtime
-node scripts/prepare-identity-n4.mjs --source-commit <source_commit_from_plan> --output D:\TRACE\local-acquisition\news-p4-n4\replayed-plan.json
+node scripts/prepare-identity-n4.mjs --source-commit <source_commit_from_plan> --output <TRACE-managed evidence folder>\replayed-plan.json
 ```
 
-The mandatory suite requires only committed fictional fixtures. The optional local workerd test uses locked Miniflare, an isolated fake D1 binding and local temporary files, with Cloudflare connectivity and telemetry disabled. Use the locked dependency installation; do not substitute dependency versions. A complete clean offline installation remains blocked by the missing cached `sax-1.6.0.tgz` archive. Existing tested dependency reuse is not proof of a fresh install.
+The mandatory suite requires only committed fictional fixtures. It includes a query-plan regression: no candidate statement on the inventory, apply pre-check or in-batch guard path may use a temporary B-tree or an unindexed scan. The optional local workerd test uses locked Miniflare, an isolated fake D1 binding and local temporary files, with Cloudflare connectivity and telemetry disabled. It also measures local provider `rows_read` at backlogs of 50 and 3,750 and fails if reads grow with the backlog. Use the locked dependency installation; do not substitute dependency versions. A complete clean offline installation remains blocked by the missing cached `sax-1.6.0.tgz` archive. Existing tested dependency reuse is not proof of a fresh install.
 
-On this workstation put `TEMP`, `TMP`, `TMPDIR`, npm/cache and Wrangler log paths beneath `D:\TRACE\local-acquisition\news-p4-n4`. Retain logs and receipts there. Configure equivalents on another workstation; no absolute workstation path is embedded in hosted runtime code.
+Put `TEMP`, `TMP`, `TMPDIR`, npm/cache and Wrangler log paths in a TRACE-managed local evidence folder outside the repository, and retain logs and receipts there. No workstation path is embedded in hosted runtime code or in this document.
 
 ## A0: separately approved provider and schema inspection
 
@@ -112,7 +112,109 @@ On any timeout, failure, missing accounting, unexpected mutation count, stale se
 
 To continue, reconcile receipts and obtain explicit authority for the next fixed request or a revised profile. Do not approve many pages in advance unless their actual snapshots are frozen. A later edit invalidates a digest and requires a fresh inspection/review. Do not delete audit/nonces to gain attempts. Disable maintenance after the approved slots/window; retain read authority only as separately approved.
 
+A cursor walk never revisits rows behind it. A candidate inserted or released behind the cursor during a campaign is skipped by the walk but still counted by the global pending probe. After the last approved batch, therefore, always run a **final inventory from `after: ""`**. Repeat bounded inventories and, under fresh approval, further profiles from the start until `known_pending_lower_bound` is reconciled: either zero, or exactly the rows recorded as refused below.
+
+Rows that refuse their page (`unclassifiable_empty_url`, `conflicting_indexed_identity`, `protected_field_exceeds_bound`) are never resolved by N4. Record each refused id with its conflict code and stop. Excluding them by an approved cursor and limit is an owner decision. They remain pending and count toward the importer's 50-row guard until separately corrected.
+
 Verify the pending probe and then perform a separately authorised **specific three-item package preflight**. Fewer than 51 pending identities is not sufficient by itself: the importer's combined indexed-match and unresolved snapshot must still fit its 50-row guard. No N4 endpoint initiates that import or opens its gate.
+
+## STOP conditions
+
+Stop immediately, submit nothing further, retain every request, response and receipt, and report to the owner when any of the following occurs. A STOP is never cleared by retrying, extending a window, raising a ceiling or choosing a new cursor. It needs a reconciliation and a fresh explicit approval.
+
+1. **Missing or mismatched bindings.** A Pages or Worker binding, flag or variable is absent, extra or different from the approved configuration:
+   - the D1 binding or database name;
+   - `TRACE_ENVIRONMENT`;
+   - `TRACE_IDENTITY_DATABASE_ID`;
+   - the target attestation;
+   - the implementation digest;
+   - the inventory or maintenance flag;
+   - the profile;
+   - the internal service secret (checked for presence only, never by reading it).
+
+   This also covers any 503 response whose code is `identity_verified_preview_target_required`, `identity_maintenance_disabled`, `identity_approval_required` or `identity_schema_0080_required`.
+2. **Failed authentication.** Any 401 or 403 on an approved request:
+   - Access JWT, origin or publisher membership;
+   - internal signature, timestamp or nonce;
+   - `identity_target_mismatch`, `identity_request_not_approved` or `identity_approval_mismatch`.
+
+   Do not re-sign, change role or switch operator to get past it.
+3. **Unexpected database mutation.** A batch may change exactly the selected rows' `source_url_hash` or `source_url_identity_issue`, plus one `admin_request_nonces` row and one `admin_audit_log` receipt. Stop if any of these differs:
+   - the receipt's `writes` is not n+2;
+   - `canonical_admissions` or `editorial_state_changes` is not 0;
+   - an approved bounded before/after comparison shows a change in any other table or column, or in a non-identity candidate column;
+   - an inventory or receipt read reports any write.
+4. **Unexpected resource consumption.** Any of the following:
+   - provider `rows_written` exceeds the slot's reserved write units;
+   - provider `rows_read`, statements or round trips exceed the reviewed local bounds below by a material margin, or grow with the backlog between calls;
+   - accounting metadata is missing;
+   - D1 reports a limit, timeout or overload.
+5. **Unverified target identity.** Any of the following:
+   - A0 has not independently verified the provider UUID, database name and both bindings;
+   - the target attestation was not prepared from that evidence and the deployed artefact;
+   - the deployed code does not match the reviewed plan's `implementation_sha256`;
+   - migration 0080's digest differs.
+6. **Unapproved or expired profile.** Any of the following:
+   - the profile JSON's SHA-256 is not the one recorded with the owner approval;
+   - the window has started late, expired or is within 15 seconds of closing (`identity_outside_maintenance_window`, `identity_window_changed`);
+   - a slot was not in the approved profile;
+   - the profile was still deployed after its window, and was not removed.
+7. **Selection or schema drift.** `identity_stale_selection`, `identity_selection_changed`, `identity_unresolved_conflict` or `identity_uncertified_write_indexes`, or an uncertified trigger.
+8. **Uncertain outcome.** `identity_batch_aborted_reconcile`, `identity_committed_accounting_unavailable` or `identity_provider_write_bound_exceeded_reconcile`, or a timeout or lost response. Read the receipt first, and never redispatch blindly.
+9. **Backlog above the import guard.** `missing_identity_guard_blocked` is true (pending of 51 or more) when an import preflight is being considered.
+
+## Clearing a large backlog
+
+A real backlog of 3,750 unresolved URL candidates needs about 150 batches of 25 rows. Each profile carries at most ten slots, so this means **at least 15 separately approved profiles**, each with its own window of at most one hour. Do not raise the page size, the slot count or the ceilings to shorten the campaign.
+
+Each profile is one cycle:
+
+1. **Inventory (A1 authority).**
+   - Run up to ten consecutive bounded inventories, following each `next_cursor` by hand.
+   - Save every response unchanged.
+   - Stop on any conflict row or STOP condition.
+2. **Build the profile offline** from the saved responses.
+   - Each slot takes the cursor, limit and `selection_sha256` from one response, with ceilings n+2 and 5n+8 for that page.
+   - Check that the encoded profile is at most 4 KiB.
+   - Record the profile JSON's SHA-256.
+3. **Owner approval** of that exact hash and window.
+4. **Separately approved deployment** of the profile and the maintenance flag as Worker variables.
+   - Confirm the deployed configuration matches the approved hash before the first slot.
+5. **Submit each slot by hand, in order.** After each slot:
+   - read and keep the receipt;
+   - check `writes` = n+2;
+   - check that provider `rows_written` is within the reservation;
+   - check that `next_cursor` matches the next slot's cursor.
+
+   A stale selection ends the cycle. Unused slots are abandoned, never edited.
+6. **Remove the maintenance flag and profile** after the last slot or at the window's end, whichever comes first.
+   - Keep inventory authority only if it was separately approved, and only for its approved period.
+7. **Reconcile.** Before the next cycle, reconcile all receipts: audit receipts = nonces = committed slots.
+   - The next cycle starts from the last committed cursor with a fresh inventory.
+
+After the final cycle, run the final inventory from `after: ""` described in phase E.
+
+**Tooling prerequisite.** More than one profile should not be attempted by hand-building around 300 signed requests. A deterministic offline profile builder and a receipt reconciler need their own review before cycle two. N4 does not supply them.
+
+**Approval authority.** The profile is self-attested by whoever can set Worker variables (DR1 M-1). The operating procedure must also name:
+- who may set and remove the profile and flags;
+- who independently checks the deployed artefact and binding against the attestation.
+
+## Resource figures: local measurement, not billing
+
+Every figure in this section was measured locally:
+- the isolated SQLite harness counts statements and query plans;
+- local workerd/D1 (Miniflare) reports provider-style `rows_read` and `rows_written` metadata for a fictional schema.
+
+They are neither Cloudflare billing nor a measurement of Preview.
+
+| Measure (25-row page) | Local result |
+| --- | --- |
+| Inventory | 31 statements, 0 writes; about 140 local `rows_read` at backlogs of both 50 and 3,750 |
+| Apply | 89 statements, 56 in the atomic batch; 27 logical changes; 58 local `rows_written` against a reservation of 133; about 510 local `rows_read` at both backlogs |
+| Campaign of about 150 batches | about 4,050 logical changes; about 20,000 reserved write units; on the order of 0.1 million local `rows_read` across inventories and applies |
+
+Actual provider consumption depends on the real schema, the indexes, D1's accounting and the account's limits, all verified in A0. Treat any material departure from these local figures as STOP condition 4. Do not extrapolate these numbers into a cost.
 
 ## F: new combined-code import instrument
 

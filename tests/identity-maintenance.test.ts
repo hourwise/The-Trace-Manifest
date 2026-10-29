@@ -83,3 +83,33 @@ test('N4 remains compatible with optional newsletter schemas without depending o
  const {readFileSync}=await import('node:fs');for(const file of ['0078-newsletter-subscriptions.sql','0079-newsletter-issues.sql'])s.db.sqlite.exec(readFileSync('tests/fixtures/news-import/'+file,'utf8'));
  const a=await approval(s),r=await request(s,a.input);assert.equal(r.status,200,JSON.stringify(r.body));assert.equal(r.body.writes,5);assert.deepEqual(s.db.sqlite.prepare('PRAGMA foreign_key_check').all(),[]);
 }finally{s.db.close();}});
+
+// N4-R1 (DR1 H-1): every candidate statement on the inventory and apply paths must walk the index in order.
+// A temporary B-tree means SQLite reads and sorts the whole unresolved backlog after the cursor before LIMIT.
+const candidatePlans=(s:S,log:{sql:string;parameterCount:number}[])=>log.filter(q=>/\b(FROM|UPDATE) editorial_candidates\b/.test(q.sql)&&!q.sql.includes('sqlite_master')).map(q=>({sql:q.sql,plan:s.db.sqlite.prepare('EXPLAIN QUERY PLAN '+q.sql).all(...Array(q.parameterCount).fill(null)).map(r=>String(r.detail))}));
+test('N4-R1 inventory, apply pre-check and in-batch guard never sort the backlog in a temporary B-tree',async()=>{const measured=[];for(const n of [50,3750]){const s=setup(n);try{
+ const start=s.db.statementLog.length,a=await approval(s),r=await request(s,a.input);assert.equal(r.status,200,JSON.stringify(r.body));
+ const plans=candidatePlans(s,s.db.statementLog.slice(start));
+ assert.equal(plans.filter(p=>p.sql.startsWith('SELECT json_group_array(json_array(')).length,2,'inventory and apply pre-check snapshots are checked');
+ assert.equal(plans.filter(p=>p.sql.startsWith('SELECT json(CASE WHEN (SELECT json_group_array(json_array(')).length,1,'in-batch selection guard is checked');
+ for(const p of plans){assert.ok(!p.plan.some(d=>d.includes('TEMP B-TREE')),p.sql.slice(0,160)+' => '+p.plan.join(' | '));assert.ok(!p.plan.some(d=>/SCAN editorial_candidates$/.test(d)),p.plan.join(' | '));}
+ for(const p of plans.filter(p=>p.sql.includes('json_group_array')))assert.ok(p.plan.some(d=>d.includes('SEARCH editorial_candidates USING INDEX idx_editorial_candidate_unindexed_url (id>?)')),p.plan.join(' | '));
+ measured.push({backlog:n,candidate_statements:plans.length,temp_btree:0});
+}finally{s.db.close();}}console.log('N4_R1_QUERY_PLANS '+JSON.stringify(measured));});
+
+test('N4-R1 indexed snapshot order returns the same rows and selection digests as the original alias order',async()=>{const s=setup(120);try{
+ s.db.sqlite.exec("UPDATE editorial_candidates SET submitted_url='javascript:bad' WHERE id='legacy-00007';UPDATE editorial_candidates SET source_url_hash=lower(hex(randomblob(32))) WHERE id IN ('legacy-00010','legacy-00011')");
+ for(const after of ['','legacy-00009','legacy-00060','legacy-00110','legacy-00119']){const start=s.db.statementLog.length,view=await inspect(s,after);assert.equal(view.status,200);
+  const sql=s.db.statementLog.slice(start).find(q=>q.sql.startsWith('SELECT json_group_array(json_array('))!.sql,original=sql.replace('ORDER BY editorial_candidates.id LIMIT ?','ORDER BY id LIMIT ?');
+  assert.notEqual(original,sql);const value=(q:string)=>String((s.db.sqlite.prepare(q).get(after,26) as any).value);assert.equal(value(sql),value(original));
+  assert.equal(view.body.selection_sha256,sha256(canonical({schema:N4_VERSION,after,limit:25,snapshot:JSON.parse(value(original))})));}
+}finally{s.db.close();}});
+
+// N4-R1 (DR1 M21): the approved migration digest is enforced at the real Worker boundary, before any write.
+test('N4-R1 a profile approving any migration other than the frozen 0080 bytes refuses maintenance with zero writes',async()=>{const s=setup();try{
+ const {readFileSync}=await import('node:fs');assert.equal(sha256(readFileSync('db/migration-0080-local-news-import.sql','utf8').replace(/\r\n/g,'\n')),IDENTITY_MIGRATION_SHA256);
+ const a=await approval(s),saved=s.env.TRACE_IDENTITY_MAINTENANCE_PROFILE,last=IDENTITY_MIGRATION_SHA256.at(-1)==='0'?'1':'0';
+ for(const migration of [IDENTITY_MIGRATION_SHA256.slice(0,-1)+last,'0'.repeat(64),IDENTITY_MIGRATION_SHA256.toUpperCase(),'']){s.env.TRACE_IDENTITY_MAINTENANCE_PROFILE=saved;mutateProfile(s,p=>p.migration_sha256=migration);
+  const r=await denied(s,a.input,{},403);assert.equal(r.body.error,'identity_approval_mismatch');assert.equal(counts(s.db).admin_request_nonces,0);assert.equal(counts(s.db).admin_audit_log,0);}
+ s.env.TRACE_IDENTITY_MAINTENANCE_PROFILE=saved;const ok=await request(s,a.input);assert.equal(ok.status,200,JSON.stringify(ok.body));assert.equal(ok.body.receipt.migration_sha256,IDENTITY_MIGRATION_SHA256);assert.equal(ok.body.writes,5);
+}finally{s.db.close();}});
