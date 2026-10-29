@@ -28,6 +28,8 @@ import {
 import type { Source, FetchedFeedItem } from "./types";
 import { verifyInternalRequestSignature } from "../../src/security/internal-signature";
 import { handleNewsImportRequest } from "../../src/lib/server/news-import/worker";
+import {handleIdentityRequest} from '../../src/lib/server/identity-maintenance/worker';
+import type {IdentityEnvironment} from '../../src/lib/server/identity-maintenance/contract';
 import type { OperatorRole } from "../../src/security/access-auth";
 import { isReviewQueueScope, REVIEW_QUEUE_DEFAULT_LIMITS, REVIEW_QUEUE_MAX_LIMIT, type ReviewQueueScope } from "../../src/lib/review-queue-contract";
 import { listReviewQueueClusters } from "../../src/lib/server/review-queue";
@@ -195,7 +197,7 @@ async function readBoundedAdminBody(request: Request, maximumBytes = MAX_ADMIN_B
   return new TextDecoder().decode(body);
 }
 
-export interface Env {
+export interface Env extends IdentityEnvironment {
   DB: D1Database;
   RAW_STORE: R2Bucket;
   /** KC-09B Preview-only Workers AI binding; production remains unbound. */
@@ -275,6 +277,7 @@ export default {
     // This bounded, gated path consumes its nonce with the import batch. It
     // must precede the legacy proxy's separate nonce/audit writes.
     if (path === "/admin/news-import") return handleNewsImportRequest(request, env);
+    if (path === '/admin/identity-maintenance') return handleIdentityRequest(request,env);
 
     if (path.startsWith("/admin/")) {
       const maximumBodyBytes = path === "/admin/knowledge/backfill/snapshot"
