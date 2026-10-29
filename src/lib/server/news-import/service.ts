@@ -139,17 +139,22 @@ export async function inspectCandidateIdentities(db:D1Database,actor:Actor,after
 }
 /** Explicit local maintenance; each bounded batch has its own attributed audit.
  * It never writes source_hash, lead, state or a source-version record. */
-export async function backfillCandidateIdentities(db:D1Database,actor:Actor,after='',limit=25,maximumWrites=26){
+export async function prepareCandidateIdentityBackfill(db:D1Database,actor:Actor,after='',limit=25,maximumWrites=26){
  const page=await inspectCandidateIdentities(db,actor,after,limit);
  if(!Number.isInteger(maximumWrites)||maximumWrites<0||maximumWrites>26||page.maximum_writes>maximumWrites)throw new NewsImportError('identity_write_budget');
- if(!page.rows.length)return {indexed:0,deferred:0,next_cursor:null,writes:0,has_more:false};
+ if(!page.rows.length)return {statements:[] as D1PreparedStatement[],page,result:{indexed:0,deferred:0,next_cursor:null as string|null,writes:0,has_more:false,decisions:[] as unknown[]}};
  const triggers=await certifiedMutationTriggers(db);const statements:D1PreparedStatement[]=[guard(db,triggers)];
  for(const row of page.rows){statements.push(db.prepare("UPDATE editorial_candidates SET source_url_hash=?,source_url_identity_issue=? WHERE id=? AND substr(submitted_url,1,4097)=? AND length(submitted_url)=? AND source_url_hash IS NULL AND source_url_identity_issue IS NULL AND substr(source_hash,1,257)=? ").bind(row.canonical_hash,row.issue,row.id,row.submitted_url,row.url_length,row.source_hash),db.prepare("SELECT json(CASE WHEN changes()=1 THEN '{}' ELSE 'stale_identity_maintenance' END)"));}
  const decisions=page.rows.map(r=>({id:r.id,url_fingerprint:sha256(r.submitted_url+':'+r.url_length),original_hash_prefix_fingerprint:sha256(r.source_hash),canonical_hash:r.canonical_hash,issue:r.issue}));
  const detail=canonical({parser:'pr11-canonical-url/maintenance-r2.1',after,decisions});if(Buffer.byteLength(detail)>16384)throw new NewsImportError('identity_audit_bound');
  statements.push(audit(db,actor,actor.requestId+':identity-backfill','news_identity_backfill',page.rows.at(-1)!.id,detail));
- const results=await db.batch(statements);const writes=results.reduce((n,r)=>n+Number(r.meta.changes??0),0);if(writes>maximumWrites)throw new NewsImportError('identity_write_budget_exceeded_after_commit');
- return {indexed:page.rows.filter(r=>r.canonical_hash).length,deferred:page.rows.filter(r=>r.issue).length,next_cursor:page.next_cursor,writes,has_more:page.has_more,decisions};
+ return {statements,page,result:{indexed:page.rows.filter(r=>r.canonical_hash).length,deferred:page.rows.filter(r=>r.issue).length,next_cursor:page.next_cursor,writes:page.maximum_writes,has_more:page.has_more,decisions}};
+}
+export async function backfillCandidateIdentities(db:D1Database,actor:Actor,after='',limit=25,maximumWrites=26){
+ const plan=await prepareCandidateIdentityBackfill(db,actor,after,limit,maximumWrites);
+ if(!plan.statements.length)return plan.result;
+ const results=await db.batch(plan.statements);const writes=results.reduce((n,r)=>n+Number(r.meta.changes??0),0);if(writes>maximumWrites)throw new NewsImportError('identity_write_budget_exceeded_after_commit');
+ return {...plan.result,writes};
 }
 
 /** Resolve attribution from reviewed immutable evidence, never a browser field. */

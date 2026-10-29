@@ -3,6 +3,7 @@ import { authenticateAccessRequest, type OperatorRole } from "../../../security/
 import { sameOriginRequest } from "../../../security/origin-policy";
 import { signInternalRequest } from "../../../security/internal-signature";
 import { newsEnabled, MAX_NEWS_BODY_BYTES } from "../../../lib/server/news-import/worker";
+import {MAX_IDENTITY_BODY_BYTES} from '../../../lib/server/identity-maintenance/contract';
 
 export const prerender = false;
 
@@ -27,7 +28,7 @@ const PUBLISH_ROUTES = new Set([
   "assertion-reviewer-decision",
   "knowledge/backfill/snapshot", "knowledge/backfill/plan", "knowledge/backfill/approve",
   "knowledge/backfill/execute", "knowledge/backfill/retry", "knowledge/backfill/recover",
-  "candidates", "social-signals", "related-items", "news-import",
+  "candidates", "social-signals", "related-items", "news-import", "identity-maintenance",
 ]);
 const READ_ROUTES_WITH_BACKFILL = new Set(["knowledge/backfill/status"]);
 
@@ -139,11 +140,13 @@ export async function handleAdminProxyRequest(
   path: string,
   env: ProxyEnvironment,
 ): Promise<Response> {
-  if (path === "news-import" && env.TRACE_ENVIRONMENT !== "preview") return Response.json({error:"news_import_disabled"},{status:503});
+  const boundedIdentityRoute=path==='identity-maintenance';
+  if ((path === "news-import"||boundedIdentityRoute) && env.TRACE_ENVIRONMENT !== "preview") return Response.json({error:boundedIdentityRoute?'identity_preview_only':"news_import_disabled"},{status:503});
   const identity = await authenticateAccessRequest(request, env);
   if (!identity) return Response.json({ error: "Unauthorized" }, { status: 401 });
-  if (path === "news-import" && identity.role !== "publisher") return Response.json({error:"Forbidden"},{status:403});
-  if (path === "news-import" && request.method === "POST" && !sameOriginRequest(request,env)) return Response.json({error:"Origin rejected"},{status:403});
+  if ((path === "news-import"||boundedIdentityRoute) && identity.role !== "publisher") return Response.json({error:"Forbidden"},{status:403});
+  if ((path === "news-import"||boundedIdentityRoute) && request.method === "POST" && !sameOriginRequest(request,env)) return Response.json({error:"Origin rejected"},{status:403});
+  if(boundedIdentityRoute&&(request.method!=='POST'||new URL(request.url).search))return Response.json({error:'identity_route_contract'},{status:404});
 
   const normalisedPath = normaliseAdminPath(path);
 
@@ -166,7 +169,7 @@ export async function handleAdminProxyRequest(
     return Response.json({ error: "Admin service is not configured." }, { status: 503 });
   }
 
-  const maximumBodyBytes = normalisedPath === "news-import" ? MAX_NEWS_BODY_BYTES : normalisedPath === "knowledge/backfill/snapshot"
+  const maximumBodyBytes = boundedIdentityRoute?MAX_IDENTITY_BODY_BYTES:normalisedPath === "news-import" ? MAX_NEWS_BODY_BYTES : normalisedPath === "knowledge/backfill/snapshot"
     ? MAX_INVENTORY_SNAPSHOT_BODY_BYTES
     : MAX_BODY_BYTES;
   const body = await boundedBody(request, maximumBodyBytes);
