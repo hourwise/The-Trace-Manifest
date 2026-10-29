@@ -32,13 +32,9 @@
     "test:story-render": "tsx tests/story-page-render.test.ts",
     "test:review-render": "tsx tests/review-source-render.test.ts",
     "ci": "npm run test:diff && npm run typecheck && npm test && npm run test:migrations && npm run test:security && npm run test:evidence-policy && npm run test:knowledge-markdown && npm run build && npm run test:story-render && npm run test:review-render && npm run test:news-import:render:ci",
-    "test:news-import": "tsx --test tests/news-import-p4.test.ts tests/news-import-migration-r1.test.ts tests/news-import-boundary-r1.test.ts",
     "generate:news-import": "node scripts/generate-news-import-runtime.mjs",
-    "test:news-import:render": "tsx --test tests/news-import-render.test.ts tests/review-source-render.test.ts",
-    "prepare:news-import": "powershell.exe -NoProfile -File scripts/news-p4.ps1 -Action Plans",
     "test:news-import:ci": "node scripts/generate-news-import-runtime.mjs --check && tsx --test tests/news-import-ci.test.ts tests/news-import-boundary-ci.test.ts",
-    "test:news-import:render:ci": "tsx --test tests/news-import-render-ci.test.ts",
-    "news:identities": "tsx tools/news-import/identity-maintenance.ts"
+    "test:news-import:render:ci": "tsx --test tests/news-import-render-ci.test.ts"
   },
   "dependencies": {
     "@astrojs/check": "^0.9.9",

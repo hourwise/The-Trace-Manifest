@@ -1,78 +1,54 @@
-# P4-R2 operator and release-candidate guide
+# Hosted news importer — release verification and Preview procedure
 
-This is a local, unapproved release candidate. No command here grants push, remote database, migration, deployment, scheduling, provider or import authority. STOP-BURN and Cron `[]` remain in force.
+This release candidate remains unapproved for push, deployment, remote database operations, feature activation or import. STOP-BURN and Cron `[]` remain in force. Pushing can trigger an automatic Pages preview deployment; any future push approval must acknowledge that side effect.
 
-## Verification and evidence separation
+## Portable verification
 
-Normal CI uses only committed fictional XML, fixed fixture identities and in-memory SQLite. It needs no D: evidence, local acquisition package, credential or network request:
+From the repository root, using the exact locked dependencies:
 
-```powershell
-npm.cmd run test:news-import:ci
-npm.cmd run ci
+```sh
+npm ci --offline
+npm run test:news-import:ci
+npm run ci
+node scripts/generate-news-import-runtime.mjs --check
 ```
 
-The standard `test` command includes importer service/boundary/migration/governance tests; `ci` also builds and tests the compiled fictional Desk. Generation runs in `--check` mode and rejects drift. Pages build checks reject Node-only imports because Pages has no `nodejs_compat`. Dependency versions remain locked; a clean install is still a deployment gate if the offline cache lacks an archive.
+If an offline archive is missing, preserve the error; do not fetch packages, substitute versions or change the lockfile without authority. Distinguish dependency reuse from clean-install success. Disable Astro telemetry and Wrangler metrics; configure scratch storage according to the machine's approved policy.
 
-The real acceptance suite is deliberately separate:
+Normal CI uses committed fictional XML, LF-derived fixed identities and in-memory SQLite. It needs no retained capture, local acquisition package, credential, PowerShell or machine-specific path. Templates are LF-normalised before hashing/parsing. Disposable database creation never rewrites identities. Tests exercise signed Worker authority, window/hash/budget checks, provenance, migration, generic Desk refusals, immutable identities, concurrency, replay and explicit identity-maintenance service functions. CI also builds/tests fictional Desk and Review pages.
 
-```powershell
-Set-Location -LiteralPath 'D:\Users\fleur\The Trace Manifest\.worktrees\trace-local-news-p4-r2-remediation'
-$env:TRACE_P4_OUTPUT_ROOT='D:\TRACE\local-acquisition\news-p4-r2'
-$env:TRACE_P4_EVIDENCE_ROOT='D:\TRACE\local-acquisition\news-p3-r2-final'
-$env:TRACE_ACQUISITION_BASELINE='D:\Users\fleur\The Trace Manifest\.worktrees\trace-local-news-p4-r1-release\local\acquisition'
-powershell.exe -NoProfile -File scripts/news-p4.ps1 -Action Quality
-powershell.exe -NoProfile -File scripts/news-p4.ps1 -Action Test
-powershell.exe -NoProfile -File scripts/news-p4.ps1 -Action Plans
-```
+Runtime inputs and their generator stay in the release. Use `npm run generate:news-import` only for an intentionally reviewed source/migration change; `--check` refuses drift without rewriting code. Pages builds reject Node-only imports; existing Worker compatibility settings, lockfile and SAX pin remain unchanged.
 
-The launcher validates direct D: storage, sets temporary files/cache/logs on D: and denies external network while allowing build IPC. The optional baseline path contains the unchanged historical acquisition package; only the real-evidence replay/storage helper uses it. That package and its 317 tests stay on their accepted branches. Five pure parser modules now live under `tools/news-import/parser-source`; generated hosted validation has the same extraction algorithm and source identities. No bulk captures or financial tooling are required by hosted-import CI.
+Workstation acquisition, retained-evidence acceptance tests, proposal generation and local operator commands live only on the separate local-tooling branch. Its final commit must have the final release as its parent, so acceptance tests exercise exactly the reviewed hosted code. That branch must not be pushed without a separate owner decision.
 
-For manual builds/tests outside the launcher, explicitly set TEMP/TMP/TMPDIR and npm cache beneath the D: output root, disable Astro telemetry/Wrangler metrics, and set NODE_OPTIONS to require `scripts/news-p4-offline-guard.cjs`. Never use a live provider or re-fetch a feed to repair offline fixtures.
+## Editorial lifecycle
 
-## Editorial decisions
+Each immutable version owns `local-news-p4:<version_id>`. Ordinary Desk/Capture leads are contextual references; their original identity, content, hash, state and audit survive. Rejecting an import changes only its owner. Same-URL links record `same_canonical_url_order_unverified`, not publisher update order or approved supersession. Simulated corrections are not observed publisher updates.
 
-Each immutable source version owns candidate `local-news-p4:<version_id>`. Existing Desk/Capture candidates are immutable contextual references in the hold reason, not owners of the proposal. Import never changes their original identity, lead, hash, state or audit history. Rejecting an imported proposal rejects only its own held candidate.
+Publisher resolution requires a reason, current revision and source/cluster checks, with atomic owner/proposal/event/audit consistency. Generic Desk transitions cannot bypass review. Indexed keyset pages expose pending proposals first, with historical-state tabs and related-version links. PR #19 remains the single shared queue-filter implementation.
 
-Versions sharing a canonical URL have immutable `same_canonical_url_order_unverified` links. Discovery order is not publisher update order or approved supersession. Each version retains its own review obligation and prior decisions. The panel links related versions for inspection. Release still requires publisher authority, reason, expected revision, current source/cluster checks and an atomic proposal/owner/event/audit transaction. Promotion remains a later explicit PR #11 action and can reuse one existing cluster instead of duplicating it.
+N1 remains open: a released import cannot be withdrawn, rejected or archived; **release only what will be promoted**. Leave uncertainty held. A URL already in a cluster requires correction through that existing cluster's review rather than automatic release of a later imported version. No reopening capability is authorised here.
 
-Generic Desk transitions and direct state UPDATE/REPLACE cannot release a held imported proposal or reopen a rejected one. There is no approved reopen operation. An editor cannot use a newer version to overwrite an earlier decision automatically. Ordinary non-imported Desk records and PR #19's filter/navigation remain unchanged. Imported proposal pages use a separate bounded review-state cursor within the same Desk/Review component: unresolved first, with historical decisions accessible by tabs and per-version links. Queue-row governance is fetched by indexed owner IDs, independently of the visible proposal page.
+Closing `TRACE_NEWS_IMPORT_ENABLED` stops creation/preflight while signed-in Preview publishers retain review of existing proposals. Production refuses the route. No gate is enabled by this guide.
 
-Closing `TRACE_NEWS_IMPORT_ENABLED` stops creation/preflight but leaves existing Preview proposals reviewable by signed-in publishers. Production refuses the import/review route. Defaults do not enable anything.
+## Legacy identity gate
 
-## Explicit identity maintenance
+New compatible Desk/Capture/ingestion inserts populate revised 0080's canonical identity columns; old deployments retain their legacy insert shape. Historical hashes, leads and decisions remain intact. The importer refuses more than 50 unresolved legacy URL identities. The bounded read-only probe is in `docs/runbooks/local-news-p4-r2-checks.sql`; actual Preview state remains unknown and inspection requires separate approval.
 
-More than 50 unindexed legacy URL candidates can block import even when their URLs are unrelated. The importer must not silently scan/repair thousands of rows or ignore possible matches. New Desk, Capture and ingestion inserts set the canonical index where revised 0080 exists; pre-0080 deployments use the existing insert shape. Historical `source_hash` is never rewritten.
+Portable CI directly covers `inspectCandidateIdentities` and `backfillCandidateIdentities` with fictional data. Maintenance remains explicit, bounded and audited, outside import accounting. N4 remains open: there is no approved remote maintenance path. An excessive Preview backlog stops the pilot for a separate reviewed mission. Do not bypass this with raw ad hoc SQL. Migration and source setup also require separate approval and cost accounting.
 
-`docs/runbooks/local-news-p4-r2-checks.sql` contains a bounded read-only backlog probe. It requires the exact revised 0080 schema; inspect schema metadata first and stop if it is absent or different. No Preview probe has been executed. The probe reports a bounded page/lower bound, not a global count.
+## Preview gates — all unapproved
 
-For an existing **local disposable or separately authorised local database**:
+1. Independently review both exact branch identities, inventories, CI/mutation evidence and replacement proposal. Historical R1/R2 proposals stay preserved but cannot authorise the replacement.
+2. Complete a clean integrity-checked locked installation and CI. Separately approve any push, acknowledging automatic Pages preview deployment.
+3. Recheck migration allocation, recorded Preview target and not-yet-applied schema. Production is excluded. Revised 0080 needs 0077; 0078/0079 remain optional inert test fixtures. Keep 0072 reserved. If an older 0080 exists, stop for a forward migration.
+4. Under separate release authority, deploy compatible Pages/Worker code before applying 0080 so new inserts index identities immediately after migration. Keep imports closed. Preserve Access, HMAC, origin checks, nonces and STOP-BURN.
+5. Separately authorise read-only target/source 7/20/certified-trigger/backlog checks. Drift or an excessive backlog stops the pilot; source setup and N4 maintenance are separate missions.
+6. Separately approve the exact migration, not-yet-applied checks and per-statement recovery. 0080 is not idempotent; interruptions require reviewed recovery. This guide does not authorise migration or changes to the operations PR.
+7. Freeze/approve the replacement proposal, exact package/code/migration hashes, target, ceilings and canonical UTC window of at most one hour. Approval/window remain null. Keep the 15-second closing margin.
+8. Separately approve Preview gate activation for that exact package/window. Signed preflight must match pristine expected accounting: 27 batch statements, 20 row changes. Any conflict/history/source/trigger/backlog deviation requires review.
+9. Execute one bounded import with no automatic retry. Use scoped postflight SELECTs to verify three held owners/proposals, immutable provenance/receipt/events, attributed audit and nonce, and no feed/cluster/publication/canonical-admission changes.
+10. One fresh-signed identical replay must add zero writes (two reads). A consumed nonce is refused. Uncertain transport/accounting requires read-only receipt reconciliation before further action.
+11. Separately authorise closing creation and verify refusal of another import. Existing proposals remain reviewable; release/reject/promotion are separate editorial decisions.
 
-```powershell
-npm.cmd run news:identities -- status --database 'D:\TRACE\local-acquisition\news-p4-r2\state\maintenance-smoke.sqlite' --operator publisher@example.test --limit 25
-npm.cmd run news:identities -- apply --database 'D:\TRACE\local-acquisition\news-p4-r2\state\maintenance-smoke.sqlite' --operator publisher@example.test --limit 25 --approval-id LOCAL-APPROVAL-ID --maximum-writes 26
-```
-
-The CLI accepts existing real D: files only and opens `status` read-only. It cannot connect remotely, retrieve credentials, apply migrations or create a missing database. `apply` needs explicit approval metadata and a write cap. Resume with the returned `--after` cursor; inspect the next page until no rows remain. Repeating a completed scan produces zero writes. A local approval string is an audit label, not permission to act on Preview.
-
-Each batch selects at most 26 rows, processes at most 25, uses at most 52 batch statements and writes at most 26 rows including one admin audit. Its audit records bounded original-hash/URL fingerprints and each canonical result or issue. Bad/oversize URLs remain intact with a visible identity issue; no hash, lead or editorial state is fabricated. Editing a legacy URL clears its old index/issue for re-evaluation. Concurrent changes or unknown mutation triggers abort rather than committing a misleading audit.
-
-The representative 3,750 valid-row run needs 150 batches and 3,900 writes. The tested 3,751-row case including one invalid URL used 151 batches and 3,902 writes. These are local measurements, not a Preview count or approval. **Any future Preview maintenance needs separate target verification, row scope, financial/D1 write accounting and owner approval. It is outside the import's 40-write allowance.** Do not turn the file CLI into a remote driver. Export/review exact bounded changes in a separately approved maintenance mission if needed.
-
-## Preview release gates — all remain unapproved
-
-1. Independently re-review the exact R2 commit, changed-file inventory, CI evidence and new implementation-bound proposal.
-2. Obtain separate push/Draft-PR approval that explicitly acknowledges the repository's automatic Pages preview deployment on push. A normal push is not merely document sharing. Neither push nor deployment is authorised now.
-3. Complete an integrity-checked clean locked install in an approved environment. Do not relax SAX or other versions to bypass missing offline cache entries.
-4. Independently verify Preview account, binding, name `trace-manifest-db-preview` and recorded UUID `f312f662-2252-4005-8103-1a40d546e16b`. Production is excluded.
-5. Check migration allocation and actual schema. Revised 0080 requires 0077; 0078/0079 are optional. If any older 0080 has already been applied, stop and plan a forward migration; do not rerun ALTER statements or replace historical evidence. Migration 0072 remains reserved.
-6. Separately approve/apply the exact revised 0080 on the verified Preview target. This is not part of the import budget.
-7. Deploy/configure Pages and Worker only under separate authority, with new imports closed and Production disabled. Preserve Access membership, HMAC, same-origin, nonce/timestamp and STOP-BURN controls.
-8. Perform separately authorised read-only target/source/backlog/schema/trigger checks. Verify exact source rows 7 and 20. Source setup and identity maintenance, if required, need their own approved scope and budget before continuing.
-9. Freeze the new proposal, implementation/migration/package hashes, statement ceiling, unchanged 40-write ceiling and a finite canonical UTC interval of at most one hour. Owner approval and window are currently null.
-10. Separately authorise enabling Preview for that exact interval and pinned package. The handler retains its 15-second closing margin. Unknown triggers, stale state, wrong profile or old financial/time approvals cannot supply authority.
-11. Signed read-only preflight must match the approved R2 measurement and source relationships. Any reuse/conflict/history/backlog deviation requires review; do not assume the historical R1 20-write/26-statement profile applies.
-12. Execute one bounded signed import, without retries, then run only the reviewed scoped postflight SELECTs. Inspect three attributed held candidates/proposals, source hashes, immutable receipt/events and admin audit; verify no feed/cluster/publication/canonical-admission effect.
-13. Perform one fresh-signed identical replay within the approved interval. It must read the immutable receipt and write zero additional nonce/audit/import rows. A consumed nonce is refused. Response loss or ambiguous metadata requires read-only reconciliation before considering replay.
-14. Separately authorised configuration action: close creation and verify another import is refused. Existing proposals remain reviewable; release/reject/promotion are separate explicit editorial actions, not part of import approval.
-
-Stop for any target/code/schema/hash drift, stale source or membership state, unknown triggers, lookup overflow, invalid window, missing accounting evidence or unexpected mutation. Preserve committed evidence; use an audited forward fix when required. Do not delete immutable packages, reset a spent ledger, use Time Travel restore as routine cleanup, resume inference, enable Cron or fetch additional feeds.
+The import ceiling is 40 row changes and at most 47 batch statements. The structural ten-item limit does not imply ten entirely new items fit: package/nonce plus six row changes per new item permits at most six before extra relationships. Billed database writes can include index updates; remote billing has not been measured. Stop on drift, stale state, unknown triggers, unexpected writes or missing accounting. Never reset a spent ledger or delete immutable receipts as cleanup.
