@@ -302,6 +302,7 @@ test('OPS-01 committed examples regenerate byte-identically',()=>{
  const out=dir();try{
   const r=spawnSync(process.execPath,['scripts/n4-ops/synthetic-examples.mjs','--out-dir',out],{encoding:'utf8'});assert.equal(r.status,0,r.stderr);
   const committed='docs/audit/n4-ops-01-examples';
-  for(const name of readdirSync(committed))assert.deepEqual(readFileSync(join(out,name)),readFileSync(join(committed,name)),name);
+  const names=readdirSync(committed).filter(n=>!n.startsWith('.'));assert.equal(names.length,8);
+  for(const name of names)assert.deepEqual(readFileSync(join(out,name)),readFileSync(join(committed,name)),name);
  }finally{rmSync(out,{recursive:true,force:true});}
 });
