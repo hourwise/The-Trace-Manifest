@@ -93,6 +93,7 @@ try {
   db.exec(readFileSync("db/migration-0075-claim-extraction-run-ledger.sql", "utf8"));
   db.exec(readFileSync("db/migration-0076-evidence-library-governance.sql", "utf8"));
   db.exec(readFileSync("db/migration-0077-editorial-source-identity.sql", "utf8"));
+  db.exec(readFileSync("db/migration-0080-local-news-import.sql", "utf8"));
   // 0077 must also apply where 0069 already created the reverse membership index.
   db.exec(readFileSync("db/migration-0069-trace-d1-reverse-membership-index.sql", "utf8"));
   const clusterColumns = new Set(db.prepare("PRAGMA table_info(story_clusters)").all().map((row) => row.name));

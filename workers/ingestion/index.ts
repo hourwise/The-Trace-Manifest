@@ -1,3 +1,4 @@
+import {candidateUrlIdentity,hasCandidateIdentityIndex} from '../../src/lib/server/candidate-identity';
 // The Trace Manifest — Ingestion Worker
 // Cloudflare Worker for scheduled source fetching, dedup, and metadata storage
 // Phase 2: Source Registry and Ingestion
@@ -26,6 +27,7 @@ import {
 } from "./publish";
 import type { Source, FetchedFeedItem } from "./types";
 import { verifyInternalRequestSignature } from "../../src/security/internal-signature";
+import { handleNewsImportRequest } from "../../src/lib/server/news-import/worker";
 import type { OperatorRole } from "../../src/security/access-auth";
 import { isReviewQueueScope, REVIEW_QUEUE_DEFAULT_LIMITS, REVIEW_QUEUE_MAX_LIMIT, type ReviewQueueScope } from "../../src/lib/review-queue-contract";
 import { listReviewQueueClusters } from "../../src/lib/server/review-queue";
@@ -202,6 +204,11 @@ export interface Env {
   KNOWLEDGE_VECTOR_INDEX?: VectorizeIndex;
   KNOWLEDGE_PROCESSING_QUEUE?: Queue;
   TRACE_ENVIRONMENT?: string;
+  TRACE_NEWS_IMPORT_ENABLED?: string;
+  TRACE_NEWS_IMPORT_BUNDLE_SHA256?: string;
+  TRACE_NEWS_IMPORT_WRITE_LIMIT?: string;
+  TRACE_NEWS_IMPORT_FROM_UTC?: string;
+  TRACE_NEWS_IMPORT_UNTIL_UTC?: string;
   TRACE_INTERNAL_SERVICE_SECRET: string;
   GITHUB_TOKEN?: string;
 }
@@ -264,6 +271,10 @@ export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     const path = url.pathname;
+
+    // This bounded, gated path consumes its nonce with the import batch. It
+    // must precede the legacy proxy's separate nonce/audit writes.
+    if (path === "/admin/news-import") return handleNewsImportRequest(request, env);
 
     if (path.startsWith("/admin/")) {
       const maximumBodyBytes = path === "/admin/knowledge/backfill/snapshot"
@@ -824,15 +835,16 @@ async function createCandidateFromItem(
 
     // Create a new editorial candidate for this item
     const candidateId = crypto.randomUUID();
+    const indexed=await hasCandidateIdentityIndex(env.DB),identity=indexed?await candidateUrlIdentity(item.url):null;
     await env.DB.prepare(`
       INSERT INTO editorial_candidates
-        (id, intake_type, submitted_url, lead_text, source_hash, state, section_slug, urgency, development_status, created_by)
-      VALUES (?, 'manual_url', ?, ?, ?, 'new', 'ai-agents', 'normal', 'developing', 'auto-ingestion')
+        (id, intake_type, submitted_url, lead_text, source_hash, state, section_slug, urgency, development_status, created_by${indexed?',source_url_hash,source_url_identity_issue':''})
+      VALUES (?, 'manual_url', ?, ?, ?, 'new', 'ai-agents', 'normal', 'developing', 'auto-ingestion'${indexed?',?,?':''})
     `).bind(
       candidateId,
       item.url,
       item.summary ?? item.title,
-      item.urlHash,
+      item.urlHash,...(identity?[identity.hash,identity.issue]:[]),
     ).run();
 
     return "created";
@@ -1580,17 +1592,18 @@ async function handleCandidateIntake(request: Request, env: Env, operator: Inter
   try {
     const existing = await existingReceipt();
     if (existing) return existing;
+    const indexed=await hasCandidateIdentityIndex(env.DB),identity=indexed?await candidateUrlIdentity(submittedUrl):null;
     await env.DB.prepare(`
       INSERT INTO editorial_candidates
-        (id, intake_type, submitted_url, lead_text, source_hash, section_slug, topic_slug, story_format, urgency, development_status, source_language, created_by)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (id, intake_type, submitted_url, lead_text, source_hash, section_slug, topic_slug, story_format, urgency, development_status, source_language, created_by${indexed?',source_url_hash,source_url_identity_issue':''})
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${indexed?',?,?':''})
     `).bind(
       id, intakeType, submittedUrl, leadText, sourceHash, section, topic,
       typeof body.storyFormat === "string" && body.storyFormat.trim() ? body.storyFormat.trim() : null,
       typeof body.urgency === "string" ? body.urgency : "normal",
       typeof body.developmentStatus === "string" ? body.developmentStatus : "developing",
       typeof body.sourceLanguage === "string" && body.sourceLanguage.trim() ? body.sourceLanguage.trim() : null,
-      operator.email,
+      operator.email,...(identity?[identity.hash,identity.issue]:[]),
     ).run();
   } catch {
     // A simultaneous retry can lose the primary-key race. Read the committed winner.

@@ -1,5 +1,7 @@
 ﻿---
 import AdminLayout from "../../layouts/AdminLayout.astro";
+import ImportedNewsProposals from "../../components/admin/ImportedNewsProposals.astro";
+import {listNewsProposals,listNewsProposalPage} from "../../lib/server/news-import/service";
 import EvidenceBadge from "../../components/EvidenceBadge.astro";
 import { listRecentlyReviewedClusters, listReviewQueueClusters } from "../../lib/server/review-queue";
 import type { ReviewQueueCluster } from "../../lib/review-queue-contract";
@@ -12,6 +14,15 @@ const editorialAIEnabled = Astro.locals.runtime.env.TRACE_AI_EDITORIAL_ENABLED =
 // controls. The server refuses reader writes either way. The page script stays
 // unconditional (D6) and tolerates the missing buttons.
 const isPublisher = Astro.locals.operator?.role === "publisher";
+let importedProposals:Awaited<ReturnType<typeof listNewsProposals>>=[];
+let importedProposalError:string|null=null;
+let newsNext:string|null=null;const newsView=Astro.url.searchParams.get('news_view')??'held';
+const newsHref=(after:string|null,state=newsView)=>{const url=new URL(Astro.url);url.searchParams.delete('news_version');url.searchParams.set('news_view',state);if(after)url.searchParams.set('news_after',after);else url.searchParams.delete('news_after');return url.pathname+url.search;};
+
+if(isPublisher&&Astro.locals.runtime.env.TRACE_ENVIRONMENT === "preview"){
+  try{const page=await listNewsProposalPage(Astro.locals.runtime.env.DB,{email:Astro.locals.operator!.email,role:"publisher",requestId:"review-queue-read"},{state:newsView,after:Astro.url.searchParams.get("news_after")??"",focus:Astro.url.searchParams.get("news_version")??undefined});importedProposals=page.items;newsNext=page.nextCursor;}
+  catch{importedProposalError="Imported source proposals are unavailable. No review state was changed.";}
+}
 
 // All 10 evidence states with their meanings and review triggers
 const evidenceStates = [
@@ -65,6 +76,7 @@ for (const item of pendingReviews) {
 >
   <div class="wrap">
     <h1>Admin: Review Queue</h1>
+    {isPublisher&&Astro.locals.runtime.env.TRACE_ENVIRONMENT === "preview"&&<ImportedNewsProposals nextHref={newsNext?newsHref(newsNext):null} startHref={newsHref(null)} reviewLinks={["held","needs_review","rejected"].map(state=>({state,href:newsHref(null,state)}))} items={importedProposals} error={importedProposalError}/>}
     <p class="meta" style="margin-bottom:2rem;">
       <a href="/admin/sources">← Sources</a> &middot; <a href="/admin/jobs">Jobs</a> &middot; <a href="/admin">Admin home</a>
     </p>

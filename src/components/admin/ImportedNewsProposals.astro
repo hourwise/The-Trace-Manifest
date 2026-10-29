@@ -1,0 +1,46 @@
+---
+import type {listNewsProposals} from "../../lib/server/news-import/service";
+import {registration} from "../../lib/server/news-import/runtime/registry";
+interface Props {items:Awaited<ReturnType<typeof listNewsProposals>>;error:string|null;nextHref?:string|null;startHref?:string;reviewLinks?:{state:string;href:string}[]}
+const {items:importedProposals,error:importError,nextHref,startHref,reviewLinks}=Astro.props;
+const versionHref=(id:string)=>{const url=new URL(Astro.url);url.searchParams.set('news_version',id);url.searchParams.delete('news_after');return url.pathname+url.search;};
+---
+<section class="card" aria-label="Imported source proposals">
+      <h2>Imported source proposals</h2>
+      <p class="meta">Publisher statements remain unverified. Release sends a held candidate to Needs review; it does not create a story or approve publication. Existing-cluster conflicts stay held for investigation in the Review Queue.</p>
+      <nav aria-label="Imported proposal pages">{reviewLinks?.map(link=><a href={link.href} style="margin-right:1rem">{link.state}</a>)} {startHref&&<a href={startHref}>First page</a>} {nextHref&&<a href={nextHref} rel="next">Next proposal page</a>}</nav>
+      {importError && <p role="alert">{importError}</p>}
+      {importedProposals.map((item) => <article style="margin:1rem 0;">
+        <h3>{item.proposal.title}</h3>
+        <p>{registration(item.proposal.source.id).name} · {item.proposal.published_at ?? "Publication date missing"} · {item.review_state}</p>
+        <p class="meta">Editorial candidate: {item.candidate_state}. The proposal review and subsequent editorial decision are recorded separately.</p>
+        <p>{item.proposal.excerpt || "No source excerpt was supplied."}</p>
+        <a href={item.proposal.canonical_url} target="_blank" rel="noreferrer">Investigate original source</a>
+        <details><summary>Evidence and hold reason</summary><p>Snapshot {item.proposal.source_hash}; locator {item.proposal.provenance.locator}. Retrieved {item.proposal.retrieved_at}.</p><pre>{JSON.stringify(item.hold_reason,null,2)}</pre></details>
+        {item.hold_reason.related_versions?.length>0 && <p class="meta">Other captured versions share this canonical URL. Publisher update order and supersession are unverified. Review their independent decisions: {item.hold_reason.related_versions.map((id:string)=><a href={versionHref(id)} style="margin-right:1rem">Version {id.slice(0,12)}</a>)}</p>}
+        {item.review_state === "held" && <form class="news-import-resolution" data-version={item.version_id} data-revision={item.revision}>
+          <label>Review reason <input name="reason" required maxlength="1000" /></label>
+          <button name="decision" value="release" type="submit" disabled={item.hold_reason.relationship.kind!=="new" || item.hold_reason.source_identity_conflict}>Release to Needs review</button>
+          <button name="decision" value="reject" type="submit">Reject imported proposal</button>
+          <p role="status" class="resolution-status"></p>
+        </form>}
+      </article>)}
+    </section>
+
+
+<script>
+  document.querySelectorAll<HTMLFormElement>(".news-import-resolution").forEach(form => {
+    form.addEventListener("submit", async event => {
+      event.preventDefault();
+      const submitter=(event as SubmitEvent).submitter as HTMLButtonElement | null;
+      const status=form.querySelector<HTMLElement>(".resolution-status")!;
+      if(!submitter)return;
+      try {
+        const response=await fetch("/api/admin/news-import",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({operation:"resolve",resolution:{versionId:form.dataset.version,revision:Number(form.dataset.revision),action:submitter.value,reason:new FormData(form).get("reason")}})});
+        const result=await response.json() as {error?:string};
+        if(!response.ok)throw new Error(result.error || "Review was not saved.");
+        window.location.reload();
+      } catch(error) {status.textContent=error instanceof Error?error.message:"Review was not saved.";}
+    });
+  });
+</script>
