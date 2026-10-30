@@ -12,7 +12,7 @@ import worker from '../workers/ingestion/index';
 import {canonical as runtimeCanonical,sha256} from '../src/lib/server/news-import/runtime/primitives';
 import * as contract from '../src/lib/server/identity-maintenance/contract';
 import * as lib from '../scripts/n4-ops/lib.mjs';
-import {prepare,finalize,approvalTemplate,verifyDeployment,validateProfile,validatePrior} from '../scripts/n4-ops/profile-builder.mjs';
+import {prepare,finalize,approvalTemplate,verifyDeployment,validateProfile,validatePrior,validateCapture} from '../scripts/n4-ops/profile-builder.mjs';
 import {reconcile} from '../scripts/n4-ops/reconcile.mjs';
 
 const PLAN='docs/audit/local-news-p4-n4-preview-plan.json',PLAN_SHA='9f6ff054b7537408e06634d853f7ed049476d1bdfcc0d065769846ed568a3ec9';
@@ -649,6 +649,11 @@ test('OPS-R2 DR2-M3 the same pagination contradictions are refused in profile ca
   refused(args(edit(b=>{b.has_more=false;b.known_pending_lower_bound=2;},'a.json')),'inventory_contract');
   refused(args(edit(b=>{b.known_pending_lower_bound=1;},'b.json')),'inventory_contract');
   assert.equal((args(save(out,'ok.json',c))() as any).owner_approval,null);
+  // From a later cursor an exact count still covers the row shown and the one has_more promises.
+  const later=await capture(w,c.response.body.next_cursor,T,1);assert.deepEqual([later.response.body.rows.length,later.response.body.has_more,later.response.body.known_pending_lower_bound],[1,true,3]);
+  const laterArgs=(f:string)=>()=>validateCapture(lib.readEvidence(f,'capture'),{environment:'preview',database_id:contract.PREVIEW_DATABASE_ID,target_attestation_sha256:ATTESTATION,implementation_sha256:IMPLEMENTATION,migration_sha256:contract.IDENTITY_MIGRATION_SHA256});
+  const laterEdit=(pending:number)=>{const v=structuredClone(later);v.response.body.known_pending_lower_bound=pending;return save(out,`later-${pending}.json`,v);};
+  refused(laterArgs(laterEdit(1)),'inventory_contract');assert.equal((laterArgs(laterEdit(2))() as any).rows.length,1);
  }finally{w.db.close();rmSync(out,{recursive:true,force:true});}
 });
 
@@ -666,9 +671,14 @@ test('OPS-R2 DR2-M5 a reloaded continuation package re-checks every capture agai
   refused(()=>approvalTemplate(['--package',stalePath]),'stale_or_future_evidence');
   refused(fin(stalePath,stale),'stale_or_future_evidence');
   refused(()=>reconcile(['--package',stalePath,'--approval-record',approvalFor(stalePath,stale),'--profile',ex.profile,'--now','2026-11-02T11:00:00.000Z','--out-dir',ex.w]),'stale_or_future_evidence');
-  // Moving the boundary with it is caught by the retained prior reconciliation.
+  // Moving the boundary with it still fails: the slot no longer matches its retained capture.
   const moved=structuredClone(stale);moved.prior.fresh_after_utc=moved.evidence_policy.captures_after_utc='2026-11-02T09:00:00.000Z';
   refused(()=>approvalTemplate(['--package',save(ex.w,'successor-package-moved-boundary.json',moved)]),'package_inconsistent');
+  // The boundary alone moved is caught by the retained prior reconciliation; the recorded boundary alone, by the package's own rule.
+  const boundary=structuredClone(pkg);boundary.prior.fresh_after_utc=boundary.evidence_policy.captures_after_utc='2026-11-02T09:00:00.000Z';
+  refused(()=>approvalTemplate(['--package',save(ex.w,'successor-package-boundary.json',boundary)]),'history_inconsistent');
+  const recorded=structuredClone(pkg);recorded.evidence_policy.captures_after_utc='2026-11-02T09:00:00.000Z';
+  refused(()=>approvalTemplate(['--package',save(ex.w,'successor-package-recorded-boundary.json',recorded)]),'package_inconsistent');
   // A capture time changed within the freshness bounds is caught by the retained capture itself.
   const shifted=structuredClone(pkg);shifted.slots[0].captured_at_utc='2026-11-02T10:55:30.000Z';shifted.evidence_policy.oldest_capture_utc=shifted.evidence_policy.newest_capture_utc=shifted.slots[0].captured_at_utc;
   const shiftedPath=save(ex.w,'successor-package-shifted.json',shifted);
