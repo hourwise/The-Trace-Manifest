@@ -1,0 +1,1419 @@
+[
+ {
+  "finding": "DR2-M1",
+  "case": "validatePrior PASS_slot_finding",
+  "version": "R1",
+  "input": "Codex file prior-PASS_slot_finding.json (sha256 2aef9b51160b8661e46665174bc68e1937b17ab41ba41f4e7e4500902c0f3ad6)",
+  "accepted": true,
+  "prior": "PASS"
+ },
+ {
+  "finding": "DR2-M1",
+  "case": "validatePrior PASS_slot_finding",
+  "version": "R2",
+  "input": "Codex file prior-PASS_slot_finding.json (sha256 2aef9b51160b8661e46665174bc68e1937b17ab41ba41f4e7e4500902c0f3ad6)",
+  "accepted": false,
+  "code": "malformed_input",
+  "detail": "malformed_input: prior reconciliation schema"
+ },
+ {
+  "finding": "DR2-M1",
+  "case": "validatePrior PASS_storage_invalid",
+  "version": "R1",
+  "input": "Codex file prior-PASS_storage_invalid.json (sha256 ecfb8b662d45a4d7c9449acf8bd766aabde2edf5f5a8837bba728e5bc4327f0a)",
+  "accepted": true,
+  "prior": "PASS"
+ },
+ {
+  "finding": "DR2-M1",
+  "case": "validatePrior PASS_storage_invalid",
+  "version": "R2",
+  "input": "Codex file prior-PASS_storage_invalid.json (sha256 ecfb8b662d45a4d7c9449acf8bd766aabde2edf5f5a8837bba728e5bc4327f0a)",
+  "accepted": false,
+  "code": "malformed_input",
+  "detail": "malformed_input: prior reconciliation schema"
+ },
+ {
+  "finding": "DR2-M1",
+  "case": "validatePrior PASS_deployment_STOP",
+  "version": "R1",
+  "input": "Codex file prior-PASS_deployment_STOP.json (sha256 9cbd9ce011bac386c88a33dec26a044e6dc9c871d56383d3b2425a6c6260b5bb)",
+  "accepted": true,
+  "prior": "PASS"
+ },
+ {
+  "finding": "DR2-M1",
+  "case": "validatePrior PASS_deployment_STOP",
+  "version": "R2",
+  "input": "Codex file prior-PASS_deployment_STOP.json (sha256 9cbd9ce011bac386c88a33dec26a044e6dc9c871d56383d3b2425a6c6260b5bb)",
+  "accepted": false,
+  "code": "malformed_input",
+  "detail": "malformed_input: prior reconciliation schema"
+ },
+ {
+  "finding": "DR2-M1",
+  "case": "validatePrior PASS_missing_closure",
+  "version": "R1",
+  "input": "Codex file prior-PASS_missing_closure.json (sha256 593c748791e6b4a9e1ddaedf78869e5d80452bb399a1d59274384bf2cdac4c9f)",
+  "accepted": true,
+  "prior": "PASS"
+ },
+ {
+  "finding": "DR2-M1",
+  "case": "validatePrior PASS_missing_closure",
+  "version": "R2",
+  "input": "Codex file prior-PASS_missing_closure.json (sha256 593c748791e6b4a9e1ddaedf78869e5d80452bb399a1d59274384bf2cdac4c9f)",
+  "accepted": false,
+  "code": "malformed_input",
+  "detail": "malformed_input: prior reconciliation schema"
+ },
+ {
+  "finding": "DR2-M1",
+  "case": "validatePrior PASS_foreign_campaign",
+  "version": "R1",
+  "input": "Codex file prior-PASS_foreign_campaign.json (sha256 ca193fda04ef3d2b292c4fabd501e545d0d0a232e1fb827ac59562cdaae7ca7f)",
+  "accepted": true,
+  "prior": "PASS"
+ },
+ {
+  "finding": "DR2-M1",
+  "case": "validatePrior PASS_foreign_campaign",
+  "version": "R2",
+  "input": "Codex file prior-PASS_foreign_campaign.json (sha256 ca193fda04ef3d2b292c4fabd501e545d0d0a232e1fb827ac59562cdaae7ca7f)",
+  "accepted": false,
+  "code": "malformed_input",
+  "detail": "malformed_input: prior reconciliation schema"
+ },
+ {
+  "finding": "DR2-M1",
+  "case": "validatePrior PASS_chain_erased",
+  "version": "R1",
+  "input": "Codex file prior-PASS_chain_erased.json (sha256 de59e1cbd7a87d07c7525b6df16ca17df4e53f93aafe4ea7743046f2ad4c6246)",
+  "accepted": true,
+  "prior": "PASS"
+ },
+ {
+  "finding": "DR2-M1",
+  "case": "validatePrior PASS_chain_erased",
+  "version": "R2",
+  "input": "Codex file prior-PASS_chain_erased.json (sha256 de59e1cbd7a87d07c7525b6df16ca17df4e53f93aafe4ea7743046f2ad4c6246)",
+  "accepted": false,
+  "code": "malformed_input",
+  "detail": "malformed_input: prior reconciliation schema"
+ },
+ {
+  "finding": "DR2-M1",
+  "case": "validatePrior STOP_relabelled",
+  "version": "R1",
+  "input": "Codex file prior-STOP_relabelled.json (sha256 255f4b67f25a2c058e55544f9205f7e2e786c2d5e045a7f803b9f93370c74c3a)",
+  "accepted": false,
+  "code": "prior_inconsistent",
+  "detail": "prior_inconsistent: the prior reconciliation's disposition, reasons or resume cursor do not follow from its own slots"
+ },
+ {
+  "finding": "DR2-M1",
+  "case": "validatePrior STOP_relabelled",
+  "version": "R2",
+  "input": "Codex file prior-STOP_relabelled.json (sha256 255f4b67f25a2c058e55544f9205f7e2e786c2d5e045a7f803b9f93370c74c3a)",
+  "accepted": false,
+  "code": "malformed_input",
+  "detail": "malformed_input: prior reconciliation schema"
+ },
+ {
+  "finding": "DR2-M1",
+  "case": "prepare successor valid (ref DR2-SUCCESSOR)",
+  "version": "R1",
+  "input": "unaltered retained example prior",
+  "accepted": true,
+  "owner_approval": null,
+  "package_sha256": "ebf5786e4b767a969caac84c8ac341d3255147a2c3d41821f2b79ebd8a247d9e"
+ },
+ {
+  "finding": "DR2-M1",
+  "case": "prepare successor valid (ref DR2-SUCCESSOR)",
+  "version": "R2",
+  "input": "unaltered retained example prior",
+  "accepted": true,
+  "owner_approval": null,
+  "package_sha256": "376e84484aca242fc79254253da6c5be2dc2c4cf3b3d6717118ef73883601bed"
+ },
+ {
+  "finding": "DR2-M1",
+  "case": "prepare successor contradictory_slot_finding (ref DR2-SUCCESSOR)",
+  "version": "R1",
+  "input": "example prior with Codex's contradictory_slot_finding edit",
+  "accepted": true,
+  "owner_approval": null,
+  "package_sha256": "aed8dfb8054f91edac6ae31183add744b52e8760858079a15c7f157745d15f16"
+ },
+ {
+  "finding": "DR2-M1",
+  "case": "prepare successor contradictory_slot_finding (ref DR2-SUCCESSOR)",
+  "version": "R2",
+  "input": "example prior with Codex's contradictory_slot_finding edit",
+  "accepted": false,
+  "code": "prior_inconsistent",
+  "detail": "prior_inconsistent: slot 0 class COMPLETED_MATCHED does not follow from its findings"
+ },
+ {
+  "finding": "DR2-M1",
+  "case": "prepare successor missing_closure (ref DR2-SUCCESSOR)",
+  "version": "R1",
+  "input": "example prior with Codex's missing_closure edit",
+  "accepted": true,
+  "owner_approval": null,
+  "package_sha256": "7d61b418c471eb92c4e9be0fd9ae9b2f7197878abfeeea25f9fd5483970febef"
+ },
+ {
+  "finding": "DR2-M1",
+  "case": "prepare successor missing_closure (ref DR2-SUCCESSOR)",
+  "version": "R2",
+  "input": "example prior with Codex's missing_closure edit",
+  "accepted": false,
+  "code": "prior_inconsistent",
+  "detail": "prior_inconsistent: source readback_closure without a deployment record"
+ },
+ {
+  "finding": "DR2-M1",
+  "case": "prepare successor invalid_storage (ref DR2-SUCCESSOR)",
+  "version": "R1",
+  "input": "example prior with Codex's invalid_storage edit",
+  "accepted": true,
+  "owner_approval": null,
+  "package_sha256": "ae5d10437960376df9bfa67b5551bcb2a89465ab2e53eb00c3206dd0f023eb8d"
+ },
+ {
+  "finding": "DR2-M1",
+  "case": "prepare successor invalid_storage (ref DR2-SUCCESSOR)",
+  "version": "R2",
+  "input": "example prior with Codex's invalid_storage edit",
+  "accepted": false,
+  "code": "prior_inconsistent",
+  "detail": "prior_inconsistent: slot 0 storage measurement"
+ },
+ {
+  "finding": "DR2-M1",
+  "case": "prepare successor failed_deployment (ref DR2-SUCCESSOR)",
+  "version": "R1",
+  "input": "example prior with Codex's failed_deployment edit",
+  "accepted": true,
+  "owner_approval": null,
+  "package_sha256": "acdb32efd2060c3c4762804f36fa6db12e1ec2aa5997b2045949e5d98d8eca1d"
+ },
+ {
+  "finding": "DR2-M1",
+  "case": "prepare successor failed_deployment (ref DR2-SUCCESSOR)",
+  "version": "R2",
+  "input": "example prior with Codex's failed_deployment edit",
+  "accepted": false,
+  "code": "prior_inconsistent",
+  "detail": "prior_inconsistent: campaign finding deployment_open_verification_stop is missing although its evidence is recorded"
+ },
+ {
+  "finding": "DR2-M1",
+  "case": "prepare successor foreign_target (ref DR2-SUCCESSOR)",
+  "version": "R1",
+  "input": "example prior with Codex's foreign_target edit",
+  "accepted": true,
+  "owner_approval": null,
+  "package_sha256": "dbbfa263cdb004072d4b0bb01a010dcd62dfc545516509f9cdc3df0cba3a65a3"
+ },
+ {
+  "finding": "DR2-M1",
+  "case": "prepare successor foreign_target (ref DR2-SUCCESSOR)",
+  "version": "R2",
+  "input": "example prior with Codex's foreign_target edit",
+  "accepted": false,
+  "code": "prior_inconsistent",
+  "detail": "prior_inconsistent: target is not the recorded Preview database with the frozen migration"
+ },
+ {
+  "finding": "DR2-M1",
+  "case": "prepare successor erased_chain_spent_ref (ref N4-EXAMPLE-P01)",
+  "version": "R1",
+  "input": "example prior with Codex's erased_chain_spent_ref edit",
+  "accepted": true,
+  "owner_approval": null,
+  "package_sha256": "8e27aae73fcf8826facc5525d070b38c945e0c37029375da43129585baf56fae"
+ },
+ {
+  "finding": "DR2-M1",
+  "case": "prepare successor erased_chain_spent_ref (ref N4-EXAMPLE-P01)",
+  "version": "R2",
+  "input": "example prior with Codex's erased_chain_spent_ref edit",
+  "accepted": false,
+  "code": "prior_inconsistent",
+  "detail": "prior_inconsistent: chain approval references must be unique and end with this profile's reference"
+ },
+ {
+  "finding": "DR2-M2",
+  "case": "reconcile baseline",
+  "version": "R1",
+  "input": "Codex folder baseline/ (request-0 sha256 a6fccd76e3e643746d4b0e36e4ff435aef296b7845a5fd41c7687e7e4c0bc4e0)",
+  "accepted": true,
+  "disposition": "PASS",
+  "storage": [
+   "MEASURED",
+   "MEASURED"
+  ],
+  "certifies_provider_consumption": false,
+  "synthetic": true,
+  "stop_reasons": [],
+  "final_inventory": null,
+  "campaign_closure": null
+ },
+ {
+  "finding": "DR2-M2",
+  "case": "reconcile baseline",
+  "version": "R2",
+  "input": "Codex folder baseline/ (request-0 sha256 a6fccd76e3e643746d4b0e36e4ff435aef296b7845a5fd41c7687e7e4c0bc4e0)",
+  "accepted": true,
+  "disposition": "PASS",
+  "storage": [
+   "MEASURED",
+   "MEASURED"
+  ],
+  "certifies_provider_consumption": false,
+  "synthetic": true,
+  "stop_reasons": [],
+  "final_inventory": null,
+  "campaign_closure": "NOT_ESTABLISHED_NO_FINAL_INVENTORY"
+ },
+ {
+  "finding": "DR2-M2",
+  "case": "reconcile accounting_missing",
+  "version": "R1",
+  "input": "Codex folder accounting_missing/ (request-0 sha256 927d9ae859e0bd6d8300841b17da51507a3297b0c45550b7ec1a50d4a3537e31)",
+  "accepted": true,
+  "disposition": "PASS",
+  "storage": [
+   "MEASURED",
+   "MEASURED"
+  ],
+  "certifies_provider_consumption": false,
+  "synthetic": true,
+  "stop_reasons": [],
+  "final_inventory": null,
+  "campaign_closure": null
+ },
+ {
+  "finding": "DR2-M2",
+  "case": "reconcile accounting_missing",
+  "version": "R2",
+  "input": "Codex folder accounting_missing/ (request-0 sha256 927d9ae859e0bd6d8300841b17da51507a3297b0c45550b7ec1a50d4a3537e31)",
+  "accepted": true,
+  "disposition": "STOP",
+  "storage": [
+   "INVALID",
+   "INVALID"
+  ],
+  "certifies_provider_consumption": false,
+  "synthetic": true,
+  "stop_reasons": [
+   "slot_0_CONFLICTING_OR_DUPLICATE",
+   "slot_1_CONFLICTING_OR_DUPLICATE",
+   "slots_not_executed_in_order"
+  ],
+  "final_inventory": null,
+  "campaign_closure": "NOT_ESTABLISHED_NO_FINAL_INVENTORY"
+ },
+ {
+  "finding": "DR2-M2",
+  "case": "reconcile accounting_null",
+  "version": "R1",
+  "input": "Codex folder accounting_null/ (request-0 sha256 deadf407f3dfafcae813a853e48885ab1e4332b3c80409cd5d8b8212b4b5a399)",
+  "accepted": true,
+  "disposition": "PASS",
+  "storage": [
+   "MEASURED",
+   "MEASURED"
+  ],
+  "certifies_provider_consumption": false,
+  "synthetic": true,
+  "stop_reasons": [],
+  "final_inventory": null,
+  "campaign_closure": null
+ },
+ {
+  "finding": "DR2-M2",
+  "case": "reconcile accounting_null",
+  "version": "R2",
+  "input": "Codex folder accounting_null/ (request-0 sha256 deadf407f3dfafcae813a853e48885ab1e4332b3c80409cd5d8b8212b4b5a399)",
+  "accepted": true,
+  "disposition": "STOP",
+  "storage": [
+   "INVALID",
+   "INVALID"
+  ],
+  "certifies_provider_consumption": false,
+  "synthetic": true,
+  "stop_reasons": [
+   "slot_0_CONFLICTING_OR_DUPLICATE",
+   "slot_1_CONFLICTING_OR_DUPLICATE",
+   "slots_not_executed_in_order"
+  ],
+  "final_inventory": null,
+  "campaign_closure": "NOT_ESTABLISHED_NO_FINAL_INVENTORY"
+ },
+ {
+  "finding": "DR2-M2",
+  "case": "reconcile accounting_string",
+  "version": "R1",
+  "input": "Codex folder accounting_string/ (request-0 sha256 87ccecbf6dc2b6c3b30ec74dcf9b8bf6c60af275e7ae3e94ba3ccac146b62312)",
+  "accepted": true,
+  "disposition": "PASS",
+  "storage": [
+   "MEASURED",
+   "MEASURED"
+  ],
+  "certifies_provider_consumption": false,
+  "synthetic": true,
+  "stop_reasons": [],
+  "final_inventory": null,
+  "campaign_closure": null
+ },
+ {
+  "finding": "DR2-M2",
+  "case": "reconcile accounting_string",
+  "version": "R2",
+  "input": "Codex folder accounting_string/ (request-0 sha256 87ccecbf6dc2b6c3b30ec74dcf9b8bf6c60af275e7ae3e94ba3ccac146b62312)",
+  "accepted": true,
+  "disposition": "STOP",
+  "storage": [
+   "INVALID",
+   "INVALID"
+  ],
+  "certifies_provider_consumption": false,
+  "synthetic": true,
+  "stop_reasons": [
+   "slot_0_CONFLICTING_OR_DUPLICATE",
+   "slot_1_CONFLICTING_OR_DUPLICATE",
+   "slots_not_executed_in_order"
+  ],
+  "final_inventory": null,
+  "campaign_closure": "NOT_ESTABLISHED_NO_FINAL_INVENTORY"
+ },
+ {
+  "finding": "DR2-M2",
+  "case": "reconcile accounting_array",
+  "version": "R1",
+  "input": "Codex folder accounting_array/ (request-0 sha256 e7e3bee5249ab9c8dd403d704aac425931dc0acc5accce67dbc36b7e8bdd6490)",
+  "accepted": true,
+  "disposition": "STOP",
+  "storage": [
+   "INVALID",
+   "INVALID"
+  ],
+  "certifies_provider_consumption": false,
+  "synthetic": true,
+  "stop_reasons": [
+   "slot_0_CONFLICTING_OR_DUPLICATE",
+   "slot_1_CONFLICTING_OR_DUPLICATE",
+   "slots_not_executed_in_order"
+  ],
+  "final_inventory": null,
+  "campaign_closure": null
+ },
+ {
+  "finding": "DR2-M2",
+  "case": "reconcile accounting_array",
+  "version": "R2",
+  "input": "Codex folder accounting_array/ (request-0 sha256 e7e3bee5249ab9c8dd403d704aac425931dc0acc5accce67dbc36b7e8bdd6490)",
+  "accepted": true,
+  "disposition": "STOP",
+  "storage": [
+   "INVALID",
+   "INVALID"
+  ],
+  "certifies_provider_consumption": false,
+  "synthetic": true,
+  "stop_reasons": [
+   "slot_0_CONFLICTING_OR_DUPLICATE",
+   "slot_1_CONFLICTING_OR_DUPLICATE",
+   "slots_not_executed_in_order"
+  ],
+  "final_inventory": null,
+  "campaign_closure": "NOT_ESTABLISHED_NO_FINAL_INVENTORY"
+ },
+ {
+  "finding": "DR2-M2",
+  "case": "reconcile metadata_incomplete",
+  "version": "R1",
+  "input": "Codex folder metadata_incomplete/ (request-0 sha256 10e057a6b2f8e85ea3e4e4b27d6cf4c74c3834f0cc2a7116c8196b7e9ed37581)",
+  "accepted": true,
+  "disposition": "STOP",
+  "storage": [
+   "INVALID",
+   "INVALID"
+  ],
+  "certifies_provider_consumption": false,
+  "synthetic": true,
+  "stop_reasons": [
+   "slot_0_CONFLICTING_OR_DUPLICATE",
+   "slot_1_CONFLICTING_OR_DUPLICATE",
+   "slots_not_executed_in_order"
+  ],
+  "final_inventory": null,
+  "campaign_closure": null
+ },
+ {
+  "finding": "DR2-M2",
+  "case": "reconcile metadata_incomplete",
+  "version": "R2",
+  "input": "Codex folder metadata_incomplete/ (request-0 sha256 10e057a6b2f8e85ea3e4e4b27d6cf4c74c3834f0cc2a7116c8196b7e9ed37581)",
+  "accepted": true,
+  "disposition": "STOP",
+  "storage": [
+   "INVALID",
+   "INVALID"
+  ],
+  "certifies_provider_consumption": false,
+  "synthetic": true,
+  "stop_reasons": [
+   "slot_0_CONFLICTING_OR_DUPLICATE",
+   "slot_1_CONFLICTING_OR_DUPLICATE",
+   "slots_not_executed_in_order"
+  ],
+  "final_inventory": null,
+  "campaign_closure": "NOT_ESTABLISHED_NO_FINAL_INVENTORY"
+ },
+ {
+  "finding": "DR2-M2",
+  "case": "reconcile saved_response_missing_accounting",
+  "version": "R1",
+  "input": "Codex folder saved_response_missing_accounting/ (request-0 sha256 864fd77afd61a5d5692fd43aa11f896dc2a750ee2538f5091db6b0d8d6b395ae)",
+  "accepted": true,
+  "disposition": "PASS",
+  "storage": [
+   "MEASURED",
+   "MEASURED"
+  ],
+  "certifies_provider_consumption": true,
+  "synthetic": false,
+  "stop_reasons": [],
+  "final_inventory": null,
+  "campaign_closure": null
+ },
+ {
+  "finding": "DR2-M2",
+  "case": "reconcile saved_response_missing_accounting",
+  "version": "R2",
+  "input": "Codex folder saved_response_missing_accounting/ (request-0 sha256 864fd77afd61a5d5692fd43aa11f896dc2a750ee2538f5091db6b0d8d6b395ae)",
+  "accepted": true,
+  "disposition": "STOP",
+  "storage": [
+   "INVALID",
+   "INVALID"
+  ],
+  "certifies_provider_consumption": false,
+  "synthetic": false,
+  "stop_reasons": [
+   "slot_0_CONFLICTING_OR_DUPLICATE",
+   "slot_1_CONFLICTING_OR_DUPLICATE",
+   "slots_not_executed_in_order"
+  ],
+  "final_inventory": null,
+  "campaign_closure": "NOT_ESTABLISHED_NO_FINAL_INVENTORY"
+ },
+ {
+  "finding": "DR2-M2",
+  "case": "reconcile saved_response_malformed_accounting",
+  "version": "R1",
+  "input": "Codex folder saved_response_malformed_accounting/ (request-0 sha256 382a56956d984b5f025c16cfc08135aad01e2b136baa275e1732fe754835e8be)",
+  "accepted": true,
+  "disposition": "PASS",
+  "storage": [
+   "MEASURED",
+   "MEASURED"
+  ],
+  "certifies_provider_consumption": true,
+  "synthetic": false,
+  "stop_reasons": [],
+  "final_inventory": null,
+  "campaign_closure": null
+ },
+ {
+  "finding": "DR2-M2",
+  "case": "reconcile saved_response_malformed_accounting",
+  "version": "R2",
+  "input": "Codex folder saved_response_malformed_accounting/ (request-0 sha256 382a56956d984b5f025c16cfc08135aad01e2b136baa275e1732fe754835e8be)",
+  "accepted": true,
+  "disposition": "STOP",
+  "storage": [
+   "INVALID",
+   "INVALID"
+  ],
+  "certifies_provider_consumption": false,
+  "synthetic": false,
+  "stop_reasons": [
+   "slot_0_CONFLICTING_OR_DUPLICATE",
+   "slot_1_CONFLICTING_OR_DUPLICATE",
+   "slots_not_executed_in_order"
+  ],
+  "final_inventory": null,
+  "campaign_closure": "NOT_ESTABLISHED_NO_FINAL_INVENTORY"
+ },
+ {
+  "finding": "DR2-M2",
+  "case": "reconcile synthetic_masquerade_in_body",
+  "version": "R1",
+  "input": "Codex folder synthetic_masquerade_in_body/ (request-0 sha256 ec15465d87b225e1c62dd678ef6e321744010a3fb1a30bc686c74f1e502a3a13)",
+  "accepted": true,
+  "disposition": "PASS",
+  "storage": [
+   "MEASURED",
+   "MEASURED"
+  ],
+  "certifies_provider_consumption": true,
+  "synthetic": false,
+  "stop_reasons": [],
+  "final_inventory": null,
+  "campaign_closure": null
+ },
+ {
+  "finding": "DR2-M2",
+  "case": "reconcile synthetic_masquerade_in_body",
+  "version": "R2",
+  "input": "Codex folder synthetic_masquerade_in_body/ (request-0 sha256 ec15465d87b225e1c62dd678ef6e321744010a3fb1a30bc686c74f1e502a3a13)",
+  "accepted": true,
+  "disposition": "STOP",
+  "storage": [
+   "INVALID",
+   "INVALID"
+  ],
+  "certifies_provider_consumption": false,
+  "synthetic": true,
+  "stop_reasons": [
+   "slot_0_CONFLICTING_OR_DUPLICATE",
+   "slot_1_CONFLICTING_OR_DUPLICATE",
+   "slots_not_executed_in_order"
+  ],
+  "final_inventory": null,
+  "campaign_closure": "NOT_ESTABLISHED_NO_FINAL_INVENTORY"
+ },
+ {
+  "finding": "DR2-M2",
+  "case": "reconcile storage_missing",
+  "version": "R1",
+  "input": "Codex folder storage_missing/ (request-0 sha256 d2bf8676130c9f108e76955ada43fb00ae86d7bf9e28d945d19bda29ae87cbcb)",
+  "accepted": true,
+  "disposition": "NOT_VERIFIED",
+  "storage": [
+   "NOT_MEASURED",
+   "NOT_MEASURED"
+  ],
+  "certifies_provider_consumption": false,
+  "synthetic": true,
+  "stop_reasons": [],
+  "final_inventory": null,
+  "campaign_closure": null
+ },
+ {
+  "finding": "DR2-M2",
+  "case": "reconcile storage_missing",
+  "version": "R2",
+  "input": "Codex folder storage_missing/ (request-0 sha256 d2bf8676130c9f108e76955ada43fb00ae86d7bf9e28d945d19bda29ae87cbcb)",
+  "accepted": true,
+  "disposition": "STOP",
+  "storage": [
+   "INVALID",
+   "INVALID"
+  ],
+  "certifies_provider_consumption": false,
+  "synthetic": true,
+  "stop_reasons": [
+   "slot_0_CONFLICTING_OR_DUPLICATE",
+   "slot_1_CONFLICTING_OR_DUPLICATE",
+   "slots_not_executed_in_order"
+  ],
+  "final_inventory": null,
+  "campaign_closure": "NOT_ESTABLISHED_NO_FINAL_INVENTORY"
+ },
+ {
+  "finding": "DR2-M2",
+  "case": "reconcile storage_null",
+  "version": "R1",
+  "input": "Codex folder storage_null/ (request-0 sha256 5bbaa30b800c1cd5633da44f62d16dc278e51d6d88a053526fd7b3a2ce2040c9)",
+  "accepted": true,
+  "disposition": "NOT_VERIFIED",
+  "storage": [
+   "NOT_MEASURED",
+   "NOT_MEASURED"
+  ],
+  "certifies_provider_consumption": false,
+  "synthetic": true,
+  "stop_reasons": [],
+  "final_inventory": null,
+  "campaign_closure": null
+ },
+ {
+  "finding": "DR2-M2",
+  "case": "reconcile storage_null",
+  "version": "R2",
+  "input": "Codex folder storage_null/ (request-0 sha256 5bbaa30b800c1cd5633da44f62d16dc278e51d6d88a053526fd7b3a2ce2040c9)",
+  "accepted": true,
+  "disposition": "STOP",
+  "storage": [
+   "INVALID",
+   "INVALID"
+  ],
+  "certifies_provider_consumption": false,
+  "synthetic": true,
+  "stop_reasons": [
+   "slot_0_CONFLICTING_OR_DUPLICATE",
+   "slot_1_CONFLICTING_OR_DUPLICATE",
+   "slots_not_executed_in_order"
+  ],
+  "final_inventory": null,
+  "campaign_closure": "NOT_ESTABLISHED_NO_FINAL_INVENTORY"
+ },
+ {
+  "finding": "DR2-M2",
+  "case": "reconcile storage_negative",
+  "version": "R1",
+  "input": "Codex folder storage_negative/ (request-0 sha256 170db30881d02ee756745674d0816624ee68276d1444eb2659cc0f673bbd51e0)",
+  "accepted": true,
+  "disposition": "STOP",
+  "storage": [
+   "INVALID",
+   "INVALID"
+  ],
+  "certifies_provider_consumption": false,
+  "synthetic": true,
+  "stop_reasons": [
+   "slot_0_CONFLICTING_OR_DUPLICATE",
+   "slot_1_CONFLICTING_OR_DUPLICATE",
+   "slots_not_executed_in_order"
+  ],
+  "final_inventory": null,
+  "campaign_closure": null
+ },
+ {
+  "finding": "DR2-M2",
+  "case": "reconcile storage_negative",
+  "version": "R2",
+  "input": "Codex folder storage_negative/ (request-0 sha256 170db30881d02ee756745674d0816624ee68276d1444eb2659cc0f673bbd51e0)",
+  "accepted": true,
+  "disposition": "STOP",
+  "storage": [
+   "INVALID",
+   "INVALID"
+  ],
+  "certifies_provider_consumption": false,
+  "synthetic": true,
+  "stop_reasons": [
+   "slot_0_CONFLICTING_OR_DUPLICATE",
+   "slot_1_CONFLICTING_OR_DUPLICATE",
+   "slots_not_executed_in_order"
+  ],
+  "final_inventory": null,
+  "campaign_closure": "NOT_ESTABLISHED_NO_FINAL_INVENTORY"
+ },
+ {
+  "finding": "DR2-M2",
+  "case": "reconcile storage_fractional",
+  "version": "R1",
+  "input": "Codex folder storage_fractional/ (request-0 sha256 0f87e6ee5f89035f7f619896a0e0c2750543a58d08fb3ffbf56ab43ffc5fc3d2)",
+  "accepted": true,
+  "disposition": "STOP",
+  "storage": [
+   "INVALID",
+   "INVALID"
+  ],
+  "certifies_provider_consumption": false,
+  "synthetic": true,
+  "stop_reasons": [
+   "slot_0_CONFLICTING_OR_DUPLICATE",
+   "slot_1_CONFLICTING_OR_DUPLICATE",
+   "slots_not_executed_in_order"
+  ],
+  "final_inventory": null,
+  "campaign_closure": null
+ },
+ {
+  "finding": "DR2-M2",
+  "case": "reconcile storage_fractional",
+  "version": "R2",
+  "input": "Codex folder storage_fractional/ (request-0 sha256 0f87e6ee5f89035f7f619896a0e0c2750543a58d08fb3ffbf56ab43ffc5fc3d2)",
+  "accepted": true,
+  "disposition": "STOP",
+  "storage": [
+   "INVALID",
+   "INVALID"
+  ],
+  "certifies_provider_consumption": false,
+  "synthetic": true,
+  "stop_reasons": [
+   "slot_0_CONFLICTING_OR_DUPLICATE",
+   "slot_1_CONFLICTING_OR_DUPLICATE",
+   "slots_not_executed_in_order"
+  ],
+  "final_inventory": null,
+  "campaign_closure": "NOT_ESTABLISHED_NO_FINAL_INVENTORY"
+ },
+ {
+  "finding": "DR2-M2",
+  "case": "reconcile storage_string",
+  "version": "R1",
+  "input": "Codex folder storage_string/ (request-0 sha256 45ff513052db7501729e71cf00fb11b1e783df150e3e84a8cb2a2fe1903356c5)",
+  "accepted": true,
+  "disposition": "STOP",
+  "storage": [
+   "INVALID",
+   "INVALID"
+  ],
+  "certifies_provider_consumption": false,
+  "synthetic": true,
+  "stop_reasons": [
+   "slot_0_CONFLICTING_OR_DUPLICATE",
+   "slot_1_CONFLICTING_OR_DUPLICATE",
+   "slots_not_executed_in_order"
+  ],
+  "final_inventory": null,
+  "campaign_closure": null
+ },
+ {
+  "finding": "DR2-M2",
+  "case": "reconcile storage_string",
+  "version": "R2",
+  "input": "Codex folder storage_string/ (request-0 sha256 45ff513052db7501729e71cf00fb11b1e783df150e3e84a8cb2a2fe1903356c5)",
+  "accepted": true,
+  "disposition": "STOP",
+  "storage": [
+   "INVALID",
+   "INVALID"
+  ],
+  "certifies_provider_consumption": false,
+  "synthetic": true,
+  "stop_reasons": [
+   "slot_0_CONFLICTING_OR_DUPLICATE",
+   "slot_1_CONFLICTING_OR_DUPLICATE",
+   "slots_not_executed_in_order"
+  ],
+  "final_inventory": null,
+  "campaign_closure": "NOT_ESTABLISHED_NO_FINAL_INVENTORY"
+ },
+ {
+  "finding": "DR2-M2",
+  "case": "reconcile storage_object",
+  "version": "R1",
+  "input": "Codex folder storage_object/ (request-0 sha256 40ee5aedc382af62616b5ca2a0cde552bbe195115eead3e2ed50aa01e0536a5e)",
+  "accepted": true,
+  "disposition": "STOP",
+  "storage": [
+   "INVALID",
+   "INVALID"
+  ],
+  "certifies_provider_consumption": false,
+  "synthetic": true,
+  "stop_reasons": [
+   "slot_0_CONFLICTING_OR_DUPLICATE",
+   "slot_1_CONFLICTING_OR_DUPLICATE",
+   "slots_not_executed_in_order"
+  ],
+  "final_inventory": null,
+  "campaign_closure": null
+ },
+ {
+  "finding": "DR2-M2",
+  "case": "reconcile storage_object",
+  "version": "R2",
+  "input": "Codex folder storage_object/ (request-0 sha256 40ee5aedc382af62616b5ca2a0cde552bbe195115eead3e2ed50aa01e0536a5e)",
+  "accepted": true,
+  "disposition": "STOP",
+  "storage": [
+   "INVALID",
+   "INVALID"
+  ],
+  "certifies_provider_consumption": false,
+  "synthetic": true,
+  "stop_reasons": [
+   "slot_0_CONFLICTING_OR_DUPLICATE",
+   "slot_1_CONFLICTING_OR_DUPLICATE",
+   "slots_not_executed_in_order"
+  ],
+  "final_inventory": null,
+  "campaign_closure": "NOT_ESTABLISHED_NO_FINAL_INVENTORY"
+ },
+ {
+  "finding": "DR2-M2",
+  "case": "reconcile storage_contradiction",
+  "version": "R1",
+  "input": "Codex folder storage_contradiction/ (request-0 sha256 c69d8be90dd567485954670e3dc18d27d2fb2b96864f7060069a10eed2423978)",
+  "accepted": true,
+  "disposition": "STOP",
+  "storage": [
+   "INVALID",
+   "MEASURED"
+  ],
+  "certifies_provider_consumption": false,
+  "synthetic": true,
+  "stop_reasons": [
+   "slot_0_CONFLICTING_OR_DUPLICATE",
+   "slots_not_executed_in_order"
+  ],
+  "final_inventory": null,
+  "campaign_closure": null
+ },
+ {
+  "finding": "DR2-M2",
+  "case": "reconcile storage_contradiction",
+  "version": "R2",
+  "input": "Codex folder storage_contradiction/ (request-0 sha256 c69d8be90dd567485954670e3dc18d27d2fb2b96864f7060069a10eed2423978)",
+  "accepted": true,
+  "disposition": "STOP",
+  "storage": [
+   "INVALID",
+   "MEASURED"
+  ],
+  "certifies_provider_consumption": false,
+  "synthetic": true,
+  "stop_reasons": [
+   "slot_0_CONFLICTING_OR_DUPLICATE",
+   "slots_not_executed_in_order"
+  ],
+  "final_inventory": null,
+  "campaign_closure": "NOT_ESTABLISHED_NO_FINAL_INVENTORY"
+ },
+ {
+  "finding": "DR2-M3",
+  "case": "reconcile final valid",
+  "version": "R1",
+  "input": "Codex final-valid.json (sha256 06728b1526ffa952a3f672a5bfd1a56a4588436599e85c81a887a381cbeb7fb8)",
+  "accepted": true,
+  "disposition": "PASS",
+  "storage": [
+   "MEASURED",
+   "MEASURED"
+  ],
+  "certifies_provider_consumption": false,
+  "synthetic": true,
+  "stop_reasons": [],
+  "final_inventory": {
+   "pending": 0,
+   "rows": 0
+  },
+  "campaign_closure": null
+ },
+ {
+  "finding": "DR2-M3",
+  "case": "reconcile final valid",
+  "version": "R2",
+  "input": "Codex final-valid.json (sha256 06728b1526ffa952a3f672a5bfd1a56a4588436599e85c81a887a381cbeb7fb8)",
+  "accepted": true,
+  "disposition": "PASS",
+  "storage": [
+   "MEASURED",
+   "MEASURED"
+  ],
+  "certifies_provider_consumption": false,
+  "synthetic": true,
+  "stop_reasons": [],
+  "final_inventory": {
+   "pending": 0,
+   "rows": 0
+  },
+  "campaign_closure": "NO_PENDING_ROWS_AT_CAPTURE"
+ },
+ {
+  "finding": "DR2-M3",
+  "case": "reconcile final incomplete_exact_count",
+  "version": "R1",
+  "input": "Codex final-incomplete_exact_count.json (sha256 8b728d17a210a50f211d9080db2a2f34249bab96d61a7c874a00437c18d6a26a)",
+  "accepted": true,
+  "disposition": "PASS",
+  "storage": [
+   "MEASURED",
+   "MEASURED"
+  ],
+  "certifies_provider_consumption": false,
+  "synthetic": true,
+  "stop_reasons": [],
+  "final_inventory": {
+   "pending": 2,
+   "rows": 1
+  },
+  "campaign_closure": null
+ },
+ {
+  "finding": "DR2-M3",
+  "case": "reconcile final incomplete_exact_count",
+  "version": "R2",
+  "input": "Codex final-incomplete_exact_count.json (sha256 8b728d17a210a50f211d9080db2a2f34249bab96d61a7c874a00437c18d6a26a)",
+  "accepted": true,
+  "disposition": "STOP",
+  "storage": [
+   "MEASURED",
+   "MEASURED"
+  ],
+  "certifies_provider_consumption": false,
+  "synthetic": true,
+  "stop_reasons": [
+   "final_inventory_invalid"
+  ],
+  "final_inventory": null,
+  "campaign_closure": "NOT_ESTABLISHED_FINAL_INVENTORY_INVALID"
+ },
+ {
+  "finding": "DR2-M3",
+  "case": "reconcile final contradictory_has_more",
+  "version": "R1",
+  "input": "Codex final-contradictory_has_more.json (sha256 29bd4148c7127715afa47577f7e779973fd5b78d84b123271a71709388515267)",
+  "accepted": true,
+  "disposition": "PASS",
+  "storage": [
+   "MEASURED",
+   "MEASURED"
+  ],
+  "certifies_provider_consumption": false,
+  "synthetic": true,
+  "stop_reasons": [],
+  "final_inventory": {
+   "pending": 1,
+   "rows": 1
+  },
+  "campaign_closure": null
+ },
+ {
+  "finding": "DR2-M3",
+  "case": "reconcile final contradictory_has_more",
+  "version": "R2",
+  "input": "Codex final-contradictory_has_more.json (sha256 29bd4148c7127715afa47577f7e779973fd5b78d84b123271a71709388515267)",
+  "accepted": true,
+  "disposition": "STOP",
+  "storage": [
+   "MEASURED",
+   "MEASURED"
+  ],
+  "certifies_provider_consumption": false,
+  "synthetic": true,
+  "stop_reasons": [
+   "final_inventory_invalid"
+  ],
+  "final_inventory": null,
+  "campaign_closure": "NOT_ESTABLISHED_FINAL_INVENTORY_INVALID"
+ },
+ {
+  "finding": "DR2-M3",
+  "case": "reconcile final future",
+  "version": "R1",
+  "input": "Codex final-future.json (sha256 09b52b104e87ec750f1ba56d1cff43858824e3f8dac98802f2de155e870368ce)",
+  "accepted": true,
+  "disposition": "PASS",
+  "storage": [
+   "MEASURED",
+   "MEASURED"
+  ],
+  "certifies_provider_consumption": false,
+  "synthetic": true,
+  "stop_reasons": [],
+  "final_inventory": {
+   "pending": 0,
+   "rows": 0
+  },
+  "campaign_closure": null
+ },
+ {
+  "finding": "DR2-M3",
+  "case": "reconcile final future",
+  "version": "R2",
+  "input": "Codex final-future.json (sha256 09b52b104e87ec750f1ba56d1cff43858824e3f8dac98802f2de155e870368ce)",
+  "accepted": true,
+  "disposition": "STOP",
+  "storage": [
+   "MEASURED",
+   "MEASURED"
+  ],
+  "certifies_provider_consumption": false,
+  "synthetic": true,
+  "stop_reasons": [
+   "final_inventory_invalid"
+  ],
+  "final_inventory": null,
+  "campaign_closure": "NOT_ESTABLISHED_FINAL_INVENTORY_INVALID"
+ },
+ {
+  "finding": "DR2-M3",
+  "case": "reconcile final stale",
+  "version": "R1",
+  "input": "Codex final-stale.json (sha256 ab0080535f6efeb96eff544b3dd679976cba7ce2b123338127803bfd1282ea5b)",
+  "accepted": true,
+  "disposition": "STOP",
+  "storage": [
+   "MEASURED",
+   "MEASURED"
+  ],
+  "certifies_provider_consumption": false,
+  "synthetic": true,
+  "stop_reasons": [
+   "final_inventory_invalid"
+  ],
+  "final_inventory": null,
+  "campaign_closure": null
+ },
+ {
+  "finding": "DR2-M3",
+  "case": "reconcile final stale",
+  "version": "R2",
+  "input": "Codex final-stale.json (sha256 ab0080535f6efeb96eff544b3dd679976cba7ce2b123338127803bfd1282ea5b)",
+  "accepted": true,
+  "disposition": "STOP",
+  "storage": [
+   "MEASURED",
+   "MEASURED"
+  ],
+  "certifies_provider_consumption": false,
+  "synthetic": true,
+  "stop_reasons": [
+   "final_inventory_invalid"
+  ],
+  "final_inventory": null,
+  "campaign_closure": "NOT_ESTABLISHED_FINAL_INVENTORY_INVALID"
+ },
+ {
+  "finding": "DR2-M3",
+  "case": "reconcile final contradiction",
+  "version": "R1",
+  "input": "Codex final-contradiction.json (sha256 ef8b9426c7abf4b488d344cf9428a7b94c7b003d4091e9a3de36160d7345ec51)",
+  "accepted": true,
+  "disposition": "STOP",
+  "storage": [
+   "MEASURED",
+   "MEASURED"
+  ],
+  "certifies_provider_consumption": false,
+  "synthetic": true,
+  "stop_reasons": [
+   "final_inventory_invalid"
+  ],
+  "final_inventory": null,
+  "campaign_closure": null
+ },
+ {
+  "finding": "DR2-M3",
+  "case": "reconcile final contradiction",
+  "version": "R2",
+  "input": "Codex final-contradiction.json (sha256 ef8b9426c7abf4b488d344cf9428a7b94c7b003d4091e9a3de36160d7345ec51)",
+  "accepted": true,
+  "disposition": "STOP",
+  "storage": [
+   "MEASURED",
+   "MEASURED"
+  ],
+  "certifies_provider_consumption": false,
+  "synthetic": true,
+  "stop_reasons": [
+   "final_inventory_invalid"
+  ],
+  "final_inventory": null,
+  "campaign_closure": "NOT_ESTABLISHED_FINAL_INVENTORY_INVALID"
+ },
+ {
+  "finding": "DR2-M3",
+  "case": "reconcile final incomplete",
+  "version": "R1",
+  "input": "Codex final-incomplete.json (sha256 ac915d8ccf5e3207c66a2e2aa1f7360830549b34bb1689687fc8cdfffa3ad1dd)",
+  "accepted": true,
+  "disposition": "STOP",
+  "storage": [
+   "MEASURED",
+   "MEASURED"
+  ],
+  "certifies_provider_consumption": false,
+  "synthetic": true,
+  "stop_reasons": [
+   "final_inventory_invalid"
+  ],
+  "final_inventory": null,
+  "campaign_closure": null
+ },
+ {
+  "finding": "DR2-M3",
+  "case": "reconcile final incomplete",
+  "version": "R2",
+  "input": "Codex final-incomplete.json (sha256 ac915d8ccf5e3207c66a2e2aa1f7360830549b34bb1689687fc8cdfffa3ad1dd)",
+  "accepted": true,
+  "disposition": "STOP",
+  "storage": [
+   "MEASURED",
+   "MEASURED"
+  ],
+  "certifies_provider_consumption": false,
+  "synthetic": true,
+  "stop_reasons": [
+   "final_inventory_invalid"
+  ],
+  "final_inventory": null,
+  "campaign_closure": "NOT_ESTABLISHED_FINAL_INVENTORY_INVALID"
+ },
+ {
+  "finding": "DR2-M3",
+  "case": "reconcile final cursor",
+  "version": "R1",
+  "input": "Codex final-cursor.json (sha256 41b7f6db9ea84e4ecf1d79dbb223b8b799432a71b3ba4217f044967f25ea0f03)",
+  "accepted": true,
+  "disposition": "STOP",
+  "storage": [
+   "MEASURED",
+   "MEASURED"
+  ],
+  "certifies_provider_consumption": false,
+  "synthetic": true,
+  "stop_reasons": [
+   "final_inventory_invalid"
+  ],
+  "final_inventory": null,
+  "campaign_closure": null
+ },
+ {
+  "finding": "DR2-M3",
+  "case": "reconcile final cursor",
+  "version": "R2",
+  "input": "Codex final-cursor.json (sha256 41b7f6db9ea84e4ecf1d79dbb223b8b799432a71b3ba4217f044967f25ea0f03)",
+  "accepted": true,
+  "disposition": "STOP",
+  "storage": [
+   "MEASURED",
+   "MEASURED"
+  ],
+  "certifies_provider_consumption": false,
+  "synthetic": true,
+  "stop_reasons": [
+   "final_inventory_invalid"
+  ],
+  "final_inventory": null,
+  "campaign_closure": "NOT_ESTABLISHED_FINAL_INVENTORY_INVALID"
+ },
+ {
+  "finding": "DR2-M3",
+  "case": "reconcile final foreign",
+  "version": "R1",
+  "input": "Codex final-foreign.json (sha256 a123184384df7b870710f46aa5e23916361b1a468a47d720a6b3bcf874782d4f)",
+  "accepted": true,
+  "disposition": "STOP",
+  "storage": [
+   "MEASURED",
+   "MEASURED"
+  ],
+  "certifies_provider_consumption": false,
+  "synthetic": true,
+  "stop_reasons": [
+   "final_inventory_invalid"
+  ],
+  "final_inventory": null,
+  "campaign_closure": null
+ },
+ {
+  "finding": "DR2-M3",
+  "case": "reconcile final foreign",
+  "version": "R2",
+  "input": "Codex final-foreign.json (sha256 a123184384df7b870710f46aa5e23916361b1a468a47d720a6b3bcf874782d4f)",
+  "accepted": true,
+  "disposition": "STOP",
+  "storage": [
+   "MEASURED",
+   "MEASURED"
+  ],
+  "certifies_provider_consumption": false,
+  "synthetic": true,
+  "stop_reasons": [
+   "final_inventory_invalid"
+  ],
+  "final_inventory": null,
+  "campaign_closure": "NOT_ESTABLISHED_FINAL_INVENTORY_INVALID"
+ },
+ {
+  "finding": "DR2-M3",
+  "case": "reconcile final db",
+  "version": "R1",
+  "input": "Codex final-db.json (sha256 d19d5f8a8243d61da2bdb6afd496c7c1186c32eef23f261527f06e76ddc82f4e)",
+  "accepted": true,
+  "disposition": "STOP",
+  "storage": [
+   "MEASURED",
+   "MEASURED"
+  ],
+  "certifies_provider_consumption": false,
+  "synthetic": true,
+  "stop_reasons": [
+   "final_inventory_invalid"
+  ],
+  "final_inventory": null,
+  "campaign_closure": null
+ },
+ {
+  "finding": "DR2-M3",
+  "case": "reconcile final db",
+  "version": "R2",
+  "input": "Codex final-db.json (sha256 d19d5f8a8243d61da2bdb6afd496c7c1186c32eef23f261527f06e76ddc82f4e)",
+  "accepted": true,
+  "disposition": "STOP",
+  "storage": [
+   "MEASURED",
+   "MEASURED"
+  ],
+  "certifies_provider_consumption": false,
+  "synthetic": true,
+  "stop_reasons": [
+   "final_inventory_invalid"
+  ],
+  "final_inventory": null,
+  "campaign_closure": "NOT_ESTABLISHED_FINAL_INVENTORY_INVALID"
+ },
+ {
+  "finding": "DR2-M3",
+  "case": "reconcile final implementation",
+  "version": "R1",
+  "input": "Codex final-implementation.json (sha256 c018ed24b46359344a4e80815e682e6b0a9e09a190d43d8cbd28a32a067d226b)",
+  "accepted": true,
+  "disposition": "STOP",
+  "storage": [
+   "MEASURED",
+   "MEASURED"
+  ],
+  "certifies_provider_consumption": false,
+  "synthetic": true,
+  "stop_reasons": [
+   "final_inventory_invalid"
+  ],
+  "final_inventory": null,
+  "campaign_closure": null
+ },
+ {
+  "finding": "DR2-M3",
+  "case": "reconcile final implementation",
+  "version": "R2",
+  "input": "Codex final-implementation.json (sha256 c018ed24b46359344a4e80815e682e6b0a9e09a190d43d8cbd28a32a067d226b)",
+  "accepted": true,
+  "disposition": "STOP",
+  "storage": [
+   "MEASURED",
+   "MEASURED"
+  ],
+  "certifies_provider_consumption": false,
+  "synthetic": true,
+  "stop_reasons": [
+   "final_inventory_invalid"
+  ],
+  "final_inventory": null,
+  "campaign_closure": "NOT_ESTABLISHED_FINAL_INVENTORY_INVALID"
+ },
+ {
+  "finding": "DR2-M3",
+  "case": "reconcile final migration",
+  "version": "R1",
+  "input": "Codex final-migration.json (sha256 6c84182f2e1f2616dc5f9251e1f1de223fd0292c53674ff897fce972446bb30e)",
+  "accepted": true,
+  "disposition": "STOP",
+  "storage": [
+   "MEASURED",
+   "MEASURED"
+  ],
+  "certifies_provider_consumption": false,
+  "synthetic": true,
+  "stop_reasons": [
+   "final_inventory_invalid"
+  ],
+  "final_inventory": null,
+  "campaign_closure": null
+ },
+ {
+  "finding": "DR2-M3",
+  "case": "reconcile final migration",
+  "version": "R2",
+  "input": "Codex final-migration.json (sha256 6c84182f2e1f2616dc5f9251e1f1de223fd0292c53674ff897fce972446bb30e)",
+  "accepted": true,
+  "disposition": "STOP",
+  "storage": [
+   "MEASURED",
+   "MEASURED"
+  ],
+  "certifies_provider_consumption": false,
+  "synthetic": true,
+  "stop_reasons": [
+   "final_inventory_invalid"
+  ],
+  "final_inventory": null,
+  "campaign_closure": "NOT_ESTABLISHED_FINAL_INVENTORY_INVALID"
+ },
+ {
+  "finding": "DR2-M3",
+  "case": "reconcile final publisher",
+  "version": "R1",
+  "input": "Codex final-publisher.json (sha256 27c004ac33edf552a8402189007366394b85ed22f6ffcf1b972189bec2dad22d)",
+  "accepted": true,
+  "disposition": "STOP",
+  "storage": [
+   "MEASURED",
+   "MEASURED"
+  ],
+  "certifies_provider_consumption": false,
+  "synthetic": true,
+  "stop_reasons": [
+   "final_inventory_invalid"
+  ],
+  "final_inventory": null,
+  "campaign_closure": null
+ },
+ {
+  "finding": "DR2-M3",
+  "case": "reconcile final publisher",
+  "version": "R2",
+  "input": "Codex final-publisher.json (sha256 27c004ac33edf552a8402189007366394b85ed22f6ffcf1b972189bec2dad22d)",
+  "accepted": true,
+  "disposition": "STOP",
+  "storage": [
+   "MEASURED",
+   "MEASURED"
+  ],
+  "certifies_provider_consumption": false,
+  "synthetic": true,
+  "stop_reasons": [
+   "final_inventory_invalid"
+  ],
+  "final_inventory": null,
+  "campaign_closure": "NOT_ESTABLISHED_FINAL_INVENTORY_INVALID"
+ },
+ {
+  "finding": "DR2-M5",
+  "case": "approval-template on the re-dated successor package",
+  "version": "R1",
+  "input": "Codex successor-package-stale-capture.json (sha256 0afb9cd29c0f3c48083bbbfa3353f0c89cc425eb390bc7cd53c19854deab17e7)",
+  "accepted": true,
+  "template_package_sha256": "0afb9cd29c0f3c48083bbbfa3353f0c89cc425eb390bc7cd53c19854deab17e7"
+ },
+ {
+  "finding": "DR2-M5",
+  "case": "finalize the re-dated successor package with an approval quoting its hash",
+  "version": "R1",
+  "input": "Codex stale-approval.SYNTHETIC.json (sha256 d6a5e52628af3664d29bf06362de49151665e2a8957680dd95abaa02cd5a2bd5)",
+  "accepted": true,
+  "deployable_profile_sha256": "f6b968860e97cad6fe5560b867e17304d0516436cdbfe36a1571b03ea9f3baf4"
+ },
+ {
+  "finding": "DR2-M5",
+  "case": "approval-template on the re-dated successor package",
+  "version": "R2",
+  "input": "Codex successor-package-stale-capture.json (sha256 0afb9cd29c0f3c48083bbbfa3353f0c89cc425eb390bc7cd53c19854deab17e7)",
+  "accepted": false,
+  "code": "stale_or_future_evidence",
+  "detail": "stale_or_future_evidence: capture 0 is not newer than the previous profile's last execution and closure; inspect again"
+ },
+ {
+  "finding": "DR2-M5",
+  "case": "finalize the re-dated successor package with an approval quoting its hash",
+  "version": "R2",
+  "input": "Codex stale-approval.SYNTHETIC.json (sha256 d6a5e52628af3664d29bf06362de49151665e2a8957680dd95abaa02cd5a2bd5)",
+  "accepted": false,
+  "code": "stale_or_future_evidence",
+  "detail": "stale_or_future_evidence: capture 0 is not newer than the previous profile's last execution and closure; inspect again"
+ },
+ {
+  "finding": "DR2-M5",
+  "case": "positive control: unaltered successor templates and finalizes",
+  "version": "R2",
+  "input": "R2 successor package",
+  "accepted": true,
+  "deployable_profile_sha256": "f6b968860e97cad6fe5560b867e17304d0516436cdbfe36a1571b03ea9f3baf4"
+ }
+]
