@@ -576,6 +576,8 @@ test('OPS-R2 DR2-M2 missing, null, primitive, incomplete, contradictory or synth
    ['saved-response-missing-accounting',each((b,r)=>{r.evidence_source='saved_worker_response';delete b.accounting;}),'storage_accounting_missing'],
    ['saved-response-malformed-accounting',each((b,r)=>{r.evidence_source='saved_worker_response';b.accounting='broken';}),'storage_accounting_malformed'],
    ['synthetic-marker-in-saved-response',each((b,r)=>{r.evidence_source='saved_worker_response';b.measurement_source='SYNTHETIC_NOT_PROVIDER';}),'storage_source_contradiction'],
+   ['apply-response-extra-field',each(b=>{b.provider_billing_units=14;}),'apply_response_contract'],
+   ['apply-response-missing-field',each(b=>{delete b.batch_statements;}),'apply_response_contract'],
   ];
   for(const [label,edit,code] of cases){
    const j=rec(label,edit);
