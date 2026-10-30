@@ -4,9 +4,12 @@
 // request, and never records an owner approval: approval is a separate file the owner writes.
 import {
  N4_VERSION,PREVIEW_DATABASE_ID,PREVIEW_DATABASE_NAME,IDENTITY_MIGRATION_SHA256,PLAN_SCHEMA,MAX_PAGE,MAX_SLOTS,MAX_PROFILE_BYTES,MAX_WINDOW_MS,CLOSING_MARGIN_MS,
- MAX_ROW_CHANGES,MAX_WRITE_UNITS,DEFAULT_MAX_EVIDENCE_AGE_MINUTES,HARD_MAX_EVIDENCE_AGE_MINUTES,UUID,APPROVAL_REF,SCHEMA,PROFILE_KEYS,SLOT_KEYS,CLASSES,
- fail,sha256,canonical,exactKeys,isoUtc,email,hash,cursorText,rowId,byteOrder,readEvidence,parseArgs,outputDirectory,writeAddressed,jsonBytes,profileObject,deployableBytes,requestId,reservation,deriveOutcome,main,isEntry,
+ MAX_ROW_CHANGES,MAX_WRITE_UNITS,DEFAULT_MAX_EVIDENCE_AGE_MINUTES,HARD_MAX_EVIDENCE_AGE_MINUTES,UUID,APPROVAL_REF,SCHEMA,PROFILE_KEYS,SLOT_KEYS,
+ fail,sha256,canonical,exactKeys,isoUtc,email,hash,cursorText,rowId,byteOrder,readEvidence,readAddressed,parseArgs,outputDirectory,writeAddressed,jsonBytes,profileObject,deployableBytes,requestId,reservation,deriveOutcome,accountingShape,captureTimeline,main,isEntry,
 } from './lib.mjs';
+import {checkReconciliation} from './chain.mjs';
+import {readdirSync} from 'node:fs';
+import {dirname} from 'node:path';
 
 export function validatePlan(ev,expected){
  hash(expected,'--plan-sha256');if(ev.sha256!==expected)fail('plan_identity_mismatch',`plan file SHA-256 ${ev.sha256} is not the reviewed ${expected}`);
@@ -35,10 +38,15 @@ export function validateTarget(ev,plan){
 }
 
 const ISSUES=new Set(['invalid_url','oversize_url']);
+// The complete inspect response: inspected().view plus the Worker's target echo and accounting (identity-maintenance/service.ts, worker.ts).
+export const INVENTORY_BODY_KEYS=['schema','after','limit','selection_sha256','rows','has_more','next_cursor','known_pending_lower_bound','pending_count_exact','missing_identity_guard_blocked','package_import_readiness','already_indexed_observed_lower_bound','already_indexed_global_count','previously_deferred_global_count','invalid_in_page','oversize_in_page','conflicts_in_page','estimated_row_changes','estimated_write_units','inspection_writes','scan_page_bound','duplicate_samples_complete','environment','database_id','target_attestation_sha256','implementation_sha256','migration_sha256','database_identity_status','accounting'];
 /** Response-body checks shared by profile captures and the reconciler's final inventory. */
 export function inventoryBody(b,q,target,where,{allowEmpty=false,allowConflicts=false}={}){
- if(!b||typeof b!=='object')fail('malformed_input',`${where} body`);
+ if(!b||typeof b!=='object'||Array.isArray(b))fail('malformed_input',`${where} body`);
+ exactKeys(b,INVENTORY_BODY_KEYS,`${where} response body`);
  if(b.schema!==N4_VERSION||b.after!==q.after||b.limit!==q.limit)fail('inventory_contract',`${where} response does not echo its request`);
+ if(b.package_import_readiness!=='NOT_ESTABLISHED_REQUIRES_SPECIFIC_PACKAGE_PREFLIGHT'||b.database_identity_status!=='DEPLOYMENT_ATTESTATION_REQUIRES_PROVIDER_PREFLIGHT'||b.already_indexed_global_count!==null||b.previously_deferred_global_count!==null||![0,1].includes(b.already_indexed_observed_lower_bound)||b.duplicate_samples_complete!==false||b.scan_page_bound!==q.limit+1)fail('inventory_contract',`${where} response constants differ from the N4 inspect contract`);
+ const acct=accountingShape(b.accounting);if(!acct.ok)fail('inventory_contract',`${where} accounting: ${acct.code}`);
  for(const k of ['environment','database_id','target_attestation_sha256','implementation_sha256','migration_sha256'])if(b[k]!==target[k])fail(k==='implementation_sha256'?'implementation_mismatch':k==='migration_sha256'?'migration_identity_mismatch':'target_mismatch',`${where} response ${k}`);
  hash(b.selection_sha256,`${where} selection_sha256`);
  if(!Array.isArray(b.rows)||typeof b.has_more!=='boolean')fail('inventory_contract',`${where} rows`);
@@ -48,6 +56,8 @@ export function inventoryBody(b,q,target,where,{allowEmpty=false,allowConflicts=
  for(const [i,r] of b.rows.entries()){
   exactKeys(r,['id','url_fingerprint','url_length','canonical_hash','issue','conflict','indexed_duplicate_sample'],`${where} rows[${i}]`);
   rowId(r.id,`${where} rows[${i}].id`);
+  if(!Array.isArray(r.indexed_duplicate_sample)||r.indexed_duplicate_sample.length>2)fail('inventory_contract',`${where} rows[${i}].indexed_duplicate_sample`);
+  for(const peer of r.indexed_duplicate_sample)rowId(peer,`${where} rows[${i}] duplicate sample`);
   if(byteOrder(r.id,previous)<=0)fail('inventory_contract',`${where} rows are not strictly after the cursor in index order`);previous=r.id;
   if(r.conflict!==null&&!allowConflicts)fail('conflicting_row',`${where} row ${r.id} has conflict ${r.conflict}; record it and stop`);
   hash(r.url_fingerprint,`${where} rows[${i}].url_fingerprint`);if(!Number.isInteger(r.url_length)||r.url_length<0)fail('inventory_contract',`${where} rows[${i}].url_length`);
@@ -58,14 +68,20 @@ export function inventoryBody(b,q,target,where,{allowEmpty=false,allowConflicts=
  }
  const n=rows.length,res=n?reservation(n):{maximum_row_changes:0,maximum_write_units:0},conflicts=b.rows.filter(r=>r.conflict!==null).length;
  if(b.conflicts_in_page!==conflicts)fail('inventory_contract',`${where} conflicts_in_page`);
- if(b.inspection_writes!==0||(Number.isFinite(b.accounting?.provider_rows_written)&&b.accounting.provider_rows_written!==0))fail('inventory_reported_writes',where);
+ if(b.inspection_writes!==0||(acct.written!==null&&acct.written!==0))fail('inventory_reported_writes',where);
  if(b.next_cursor!==(n?rows.at(-1).id:null))fail('inventory_contract',`${where} next_cursor is not the last selected id`);
  if(b.estimated_row_changes!==res.maximum_row_changes||b.estimated_write_units!==res.maximum_write_units)fail('inventory_contract',`${where} estimates are not n+2 and 5n+8`);
  if(b.invalid_in_page!==rows.filter(r=>r.issue==='invalid_url').length||b.oversize_in_page!==rows.filter(r=>r.issue==='oversize_url').length)fail('inventory_contract',`${where} issue counts`);
  // Pending counts must be internally coherent: exact below 51, a guard-blocking lower bound at 51.
  const pending=b.known_pending_lower_bound;
  if(!Number.isInteger(pending)||pending<0||pending>51||b.pending_count_exact!==(pending<51)||b.missing_identity_guard_blocked!==(pending>50))fail('inventory_contract',`${where} pending counts are incoherent`);
- if(q.after===''&&(pending<Math.min(n,51)||(!n&&pending!==0)))fail('inventory_contract',`${where} pending lower bound contradicts the first page`);
+ // The Worker counts pending rows over the same predicate as the page, from the start (capped at 51).
+ // From after:"" an exact count fixes the page size and has_more; a lower bound of 51 means a full page with more.
+ // From a later cursor an exact count still covers the rows shown and the next one has_more promises.
+ if(!n&&b.has_more)fail('inventory_contract',`${where} reports more rows after an empty page`);
+ if(q.after===''&&b.pending_count_exact&&(n!==Math.min(q.limit,pending)||b.has_more!==(pending>q.limit)))fail('inventory_contract',`${where} first page contradicts its exact pending count ${pending}`);
+ if(q.after===''&&!b.pending_count_exact&&(n!==q.limit||b.has_more!==true))fail('inventory_contract',`${where} first page contradicts its pending lower bound`);
+ if(q.after!==''&&b.pending_count_exact&&pending<n+(b.has_more?1:0))fail('inventory_contract',`${where} exact pending count ${pending} is below the rows this page shows or promises`);
  if(res.maximum_row_changes>MAX_ROW_CHANGES||res.maximum_write_units>MAX_WRITE_UNITS)fail('budget_exceeded',where);
  return {rows,res,pending,conflicts};
 }
@@ -115,17 +131,11 @@ export function approvalFacts(profile,deployableSha){
   slots:profile.requests.length,total_maximum_row_changes:profile.requests.reduce((n,r)=>n+r.maximum_row_changes,0),total_maximum_write_units:profile.requests.reduce((n,r)=>n+r.maximum_write_units,0),deployable_profile_sha256:deployableSha};
 }
 
-const RECONCILIATION_SLOT_KEYS=['index','request_id','after','selection_sha256','rows','class','basis','absence_confirmed','logical_changes','reserved_row_changes','reserved_write_units','storage_writes','next_cursor','attempts','lookups','response_codes','findings'];
-/** A prior reconciliation is accepted only if its label follows from its own slots and reasons. */
+/** A prior reconciliation is accepted only if every label in it follows from its own subordinate evidence. */
 export function validatePrior(ev,{acknowledge,restart}={}){
  const r=ev.value;
  if(r?.schema!==SCHEMA.reconciliation)fail('malformed_input','prior reconciliation schema');
- if(!Array.isArray(r.slots)||!r.slots.length||!Array.isArray(r.campaign_findings)||!Array.isArray(r.not_verified_reasons)||!Array.isArray(r.stop_reasons))fail('prior_inconsistent','prior reconciliation is incomplete');
- for(const [i,s] of r.slots.entries()){exactKeys(s,RECONCILIATION_SLOT_KEYS,`prior slots[${i}]`);if(s.index!==i||!CLASSES.includes(s.class))fail('prior_inconsistent',`prior slots[${i}]`);}
- const o=deriveOutcome(r.slots,r.campaign_findings.map(c=>c?.code),r.not_verified_reasons);
- const counts=Object.fromEntries(CLASSES.map(c=>[c,r.slots.filter(s=>s.class===c).length]));
- if(o.disposition!==r.disposition||canonical(o.stop_reasons)!==canonical(r.stop_reasons)||o.stop_continuable!==r.stop_continuable||o.resume_after!==r.resume_after||CLASSES.some(c=>r.totals?.[c]!==counts[c]))
-  fail('prior_inconsistent','the prior reconciliation\'s disposition, reasons or resume cursor do not follow from its own slots');
+ checkReconciliation(r);
  if(r.disposition==='NOT_VERIFIED')fail('prior_not_verified','reconcile the previous profile to PASS before preparing the next one');
  if(r.disposition==='STOP'){
   if(r.stop_continuable!==true)fail('prior_stop','the previous profile stopped on conflicting, unexpected or mismatched evidence');
@@ -142,6 +152,61 @@ export function validatePrior(ev,{acknowledge,restart}={}){
   fresh_after_utc:new Date(Math.max(...freshAfter)).toISOString(),approval_refs:r.chain.approval_refs,request_ids:r.chain.request_ids,final_inventory_required:true};
 }
 
+const MAX_HISTORY=1000;
+const targetOf=p=>({environment:p.environment,database_id:p.database_id,target_attestation_sha256:p.target_attestation_sha256,implementation_sha256:p.implementation_sha256,migration_sha256:p.migration_sha256});
+/** Retained captures are the original inventory bytes, content-addressed in the campaign folder. Every
+ * slot fact in a package must reproduce from its capture, so a package edit cannot move a capture time. */
+function retainedCaptures(dir,{pkg}){
+ for(const s of pkg.slots){
+  const c=validateCapture(readAddressed(dir,'n4-inventory',s.capture_sha256,`slot ${s.index} capture`),pkg.target);
+  if(c.captured_at_utc!==s.captured_at_utc||c.publisher_email!==pkg.publisher_email||c.after!==s.after||c.limit!==s.limit||c.selection_sha256!==s.selection_sha256||c.has_more!==s.has_more||c.next_cursor!==s.next_cursor||c.known_pending_lower_bound!==s.known_pending_lower_bound||canonical(c.rows)!==canonical(s.rows))
+   fail('package_inconsistent',`slot ${s.index} differs from its retained capture`);
+ }
+}
+/** Walks the retained campaign history from one reconciliation back to the campaign's first profile. Each
+ * package must be the one its reconciliation names, each reconciliation the one the next package recorded,
+ * and every record's chain must equal the chain rebuilt from those files. A shortened chain inside the newest
+ * record cannot establish its own completeness. */
+export function campaignHistory(dir,headEv){
+ const seen=new Set(),packages=[];let rEv=headEv;
+ for(;;){
+  if(seen.has(rEv.sha256)||seen.size>=MAX_HISTORY)fail('history_inconsistent','the retained history loops or exceeds its bound');seen.add(rEv.sha256);
+  const r=rEv.value;checkReconciliation(r);
+  const loaded=packageStructure(readAddressed(dir,'n4-approval-package',r.package_sha256,`package of reconciliation ${rEv.sha256.slice(0,12)}`)),p=loaded.pkg,profile=p.profile_without_approval;
+  const o=deriveOutcome(r.slots,r.campaign_findings.map(c=>c.code),r.not_verified_reasons);
+  const mismatch=r.approval_ref!==p.approval_ref||r.deployable_profile_sha256!==p.deployable_profile_sha256_if_approved||canonical(r.target)!==canonical(targetOf(profile))||canonical(r.window)!==canonical({from_utc:profile.from_utc,until_utc:profile.until_utc})||canonical(r.chain)!==canonical(p.chain)
+   ||r.slots.length!==p.slots.length||r.slots.some((s,i)=>s.request_id!==p.slots[i].request_id||s.after!==p.slots[i].after||s.selection_sha256!==p.slots[i].selection_sha256||s.rows!==p.slots[i].rows.length||(s.class==='COMPLETED_MATCHED'&&s.next_cursor!==p.slots[i].next_cursor))
+   ||r.campaign_reported_more_rows!==(o.last_done>=0?p.slots[o.last_done].has_more:null);
+  if(mismatch)fail('history_inconsistent',`reconciliation ${rEv.sha256.slice(0,12)} does not reconcile the retained package it names`);
+  retainedCaptures(dir,loaded);packageTimeline(loaded);
+  packages.push({package_sha256:loaded.ev.sha256,reconciliation_sha256:rEv.sha256,approval_ref:p.approval_ref,target:targetOf(profile),publisher_email:p.publisher_email});
+  if(p.prior===null)break;
+  const prevEv=readAddressed(dir,'n4-reconciliation',p.prior.reconciliation_sha256,`reconciliation before package ${loaded.ev.sha256.slice(0,12)}`);
+  const summary=validatePrior(prevEv,{acknowledge:p.prior.stop_acknowledged?prevEv.sha256:undefined,restart:p.prior.restart_from_start?prevEv.sha256:undefined});
+  if(canonical(summary)!==canonical(p.prior))fail('history_inconsistent',`package ${loaded.ev.sha256.slice(0,12)} does not carry the summary of the reconciliation it follows`);
+  rEv=prevEv;
+ }
+ return {profiles:packages.length,packages:packages.reverse()};
+}
+/** The successor's continuity: the prior is retained in the campaign folder, its whole history walks back to a
+ * first profile, and every profile in it had this target and publisher. */
+function continuation(dir,priorSha,identity){
+ const headEv=readAddressed(dir,'n4-reconciliation',priorSha,'prior reconciliation'),history=campaignHistory(dir,headEv);
+ for(const h of history.packages)if(canonical(h.target)!==canonical(identity.target)||h.publisher_email!==identity.publisher_email)fail('target_mismatch',`campaign profile ${h.approval_ref} had a different target or publisher`);
+ return history;
+}
+/** Every approval reference already used by a package in the campaign folder, from the retained files themselves. */
+function folderRefs(dir){
+ const refs=new Map();
+ for(const name of readdirSync(dir)){
+  const m=/^n4-approval-package-([a-f0-9]{64})\.json$/.exec(name);if(!m)continue;
+  const ev=readAddressed(dir,'n4-approval-package',m[1],'retained package');
+  if(typeof ev.value?.approval_ref!=='string')fail('history_inconsistent',`${name} has no approval reference`);
+  refs.set(ev.value.approval_ref,[...(refs.get(ev.value.approval_ref)??[]),ev.sha256]);
+ }
+ return refs;
+}
+
 export function prepare(argv){
  const a=parseArgs(argv,{'plan':{type:'string',required:true},'plan-sha256':{type:'string',required:true},'target-evidence':{type:'string',required:true},'inventory':{type:'list',required:true},'approval-ref':{type:'string',required:true},'from-utc':{type:'string',required:true},'until-utc':{type:'string',required:true},'out-dir':{type:'string',required:true},'now':{type:'string'},'max-evidence-age-minutes':{type:'string'},'prior-reconciliation':{type:'string'},'acknowledge-stop':{type:'string'},'restart-from-start':{type:'string'}});
  const dir=outputDirectory(a['out-dir']),now=a.now?isoUtc(a.now,'--now'):Date.now();
@@ -149,11 +214,12 @@ export function prepare(argv){
  if(!Number.isInteger(maxAge)||maxAge<1||maxAge>HARD_MAX_EVIDENCE_AGE_MINUTES)fail('malformed_input',`--max-evidence-age-minutes must be 1 to ${HARD_MAX_EVIDENCE_AGE_MINUTES}`);
  const plan=validatePlan(readEvidence(a.plan,'plan'),a['plan-sha256']),target=validateTarget(readEvidence(a['target-evidence'],'target evidence'),plan);
  if((a['acknowledge-stop']!==undefined||a['restart-from-start']!==undefined)&&a['prior-reconciliation']===undefined)fail('malformed_input','--acknowledge-stop and --restart-from-start need --prior-reconciliation');
- const prior=a['prior-reconciliation']?validatePrior(readEvidence(a['prior-reconciliation'],'prior reconciliation'),{acknowledge:a['acknowledge-stop'],restart:a['restart-from-start']}):null;
+ const priorEv=a['prior-reconciliation']?readEvidence(a['prior-reconciliation'],'prior reconciliation'):null;
+ const prior=priorEv?validatePrior(priorEv,{acknowledge:a['acknowledge-stop'],restart:a['restart-from-start']}):null;
  if(a.inventory.length>MAX_SLOTS)fail('too_many_slots',`at most ${MAX_SLOTS} inventory captures per profile`);
  const ref=a['approval-ref'];if(!APPROVAL_REF.test(ref))fail('malformed_input','--approval-ref must match [-A-Za-z0-9_]{1,100}');
  if(prior?.approval_refs.includes(ref))fail('approval_ref_reused',ref);
- const slots=a.inventory.map(f=>validateCapture(readEvidence(f,'inventory'),target));
+ const captureEvs=a.inventory.map(f=>readEvidence(f,'inventory')),slots=captureEvs.map(ev=>validateCapture(ev,target));
  if(new Set(slots.map(s=>s.capture_sha256)).size!==slots.length)fail('duplicate_inventory','the same capture was supplied twice');
  const expectedStart=prior?prior.resume_after:'';
  if(slots[0].after!==expectedStart)fail('cursor_chain',prior?`first selection must resume at ${JSON.stringify(expectedStart)}`:'the first profile of a campaign starts at after:""');
@@ -164,13 +230,11 @@ export function prepare(argv){
  if(new Set(slots.map(s=>s.selection_sha256)).size!==slots.length)fail('duplicate_selection','two captures have the same selection digest');
  const publisher=slots[0].publisher_email;if(slots.some(s=>s.publisher_email!==publisher))fail('publisher_mismatch','all captures must come from the same publisher');
  const from=isoUtc(a['from-utc'],'--from-utc'),until=isoUtc(a['until-utc'],'--until-utc');
- const oldest=Math.min(...slots.map(s=>s.captured_ms)),newest=Math.max(...slots.map(s=>s.captured_ms));
- if(newest>now)fail('stale_or_future_evidence','an inventory capture is dated in the future');
- if(slots.some(s=>s.captured_ms<Date.parse(target.verified_at_utc)))fail('stale_or_future_evidence','every inventory capture must follow the verified target evidence');
- if(prior&&slots.some(s=>s.captured_ms<=Date.parse(prior.fresh_after_utc)))fail('stale_or_future_evidence','every inventory capture must be newer than the previous profile\'s last execution and closure; inspect again');
- if(now-oldest>maxAge*60000||from-oldest>maxAge*60000)fail('stale_or_future_evidence',`inventory is older than ${maxAge} minutes at preparation or window start; inspect again`);
- if(from<newest)fail('window_bound','the window must open after the last inventory capture');
+ const {oldest,newest}=captureTimeline({times:slots.map(s=>s.captured_ms),verifiedMs:Date.parse(target.verified_at_utc),priorFreshMs:prior?Date.parse(prior.fresh_after_utc):null,maxAgeMinutes:maxAge,fromMs:from,nowMs:now});
+ if(now-oldest>maxAge*60000)fail('stale_or_future_evidence',`inventory is older than ${maxAge} minutes at preparation; inspect again`);
  if(from<now)fail('window_bound','the window has already opened; owner approval must precede it');
+ // The campaign folder is the retained history: the prior and everything before it must be there.
+ if(prior)continuation(dir,priorEv.sha256,{target:targetOf(target),publisher_email:publisher});
  const slotsOut=slots.map((s,i)=>({request_id:requestId(ref,i,s.after,s.selection_sha256),after:s.after,limit:s.limit,selection_sha256:s.selection_sha256,maximum_row_changes:s.maximum_row_changes,maximum_write_units:s.maximum_write_units}));
  if(prior&&slotsOut.some(s=>prior.request_ids.includes(s.request_id)))fail('request_id_reused');
  const profile=profileObject({approval_ref:ref,database_id:target.database_id,target_attestation_sha256:target.target_attestation_sha256,implementation_sha256:plan.implementation_sha256,migration_sha256:plan.migration_sha256,publisher_email:publisher,from_utc:a['from-utc'],until_utc:a['until-utc'],requests:slotsOut},null);
@@ -188,15 +252,46 @@ export function prepare(argv){
   profile_without_approval:profile,
   deployable_profile_sha256_if_approved:sha256(deployable),deployable_profile_bytes_if_approved:deployable.length,
  };
- const out=writeAddressed(dir,'n4-approval-package','json',jsonBytes(pkg));
+ const bytes=jsonBytes(pkg),used=folderRefs(dir).get(ref)??[];
+ if(used.some(s=>s!==sha256(bytes)))fail('approval_ref_reused',`${ref} is already used by a different package retained in the campaign folder`);
+ for(const ev of captureEvs)writeAddressed(dir,'n4-inventory','json',ev.bytes);
+ const out=writeAddressed(dir,'n4-approval-package','json',bytes);
  return {action:'prepared',package:out.path,package_sha256:out.sha256,approval_ref:ref,slots:pkg.totals.slots,rows:pkg.totals.rows,deployable_profile_sha256_if_approved:pkg.deployable_profile_sha256_if_approved,deployable_profile_bytes:deployable.length,owner_approval:null,requests_sent:0};
 }
 
 const PACKAGE_KEYS=['schema','status','owner_approval','approved_at_utc','notice','approval_ref','plan','target','publisher_email','window','evidence_policy','slots','totals','prior','chain','profile_without_approval','deployable_profile_sha256_if_approved','deployable_profile_bytes_if_approved'];
 const PACKAGE_SLOT_KEYS=['index','request_id','capture_sha256','captured_at_utc','after','limit','selection_sha256','has_more','next_cursor','known_pending_lower_bound','maximum_row_changes','maximum_write_units','rows'];
-/** Loads a package and refuses it unless every summary and slot fact agrees with the profile it would emit. */
-export function loadPackage(path){
- const ev=readEvidence(path,'approval package'),p=ev.value,bad=d=>fail('package_inconsistent',d);
+const PRIOR_KEYS=['reconciliation_sha256','disposition','stop_acknowledged','restart_from_start','resume_after','fresh_after_utc','approval_refs','request_ids','final_inventory_required'];
+/** Every load of a package, for templating, finalization, deployment verification or reconciliation:
+ * structure, the shared capture-time contract, the retained captures and, for a continuation, the
+ * whole retained campaign history. The campaign folder is the folder that holds the package. */
+export function loadPackage(path,{now}={}){
+ const loaded=packageStructure(readEvidence(path,'approval package')),dir=dirname(loaded.ev.path),{pkg}=loaded;
+ packageTimeline(loaded,now);retainedCaptures(dir,loaded);
+ if(pkg.prior!==null){
+  const history=continuation(dir,pkg.prior.reconciliation_sha256,{target:targetOf(pkg.profile_without_approval),publisher_email:pkg.publisher_email});
+  const headEv=readAddressed(dir,'n4-reconciliation',pkg.prior.reconciliation_sha256,'prior reconciliation');
+  const summary=validatePrior(headEv,{acknowledge:pkg.prior.stop_acknowledged?headEv.sha256:undefined,restart:pkg.prior.restart_from_start?headEv.sha256:undefined});
+  if(canonical(summary)!==canonical(pkg.prior))fail('history_inconsistent','the package\'s prior summary is not the retained prior reconciliation\'s');
+  loaded.history={profiles:history.profiles+1};
+ }else loaded.history={profiles:1};
+ return loaded;
+}
+/** The capture-time contract re-checked from the package's own slots, never from its summaries. */
+function packageTimeline({pkg},now){
+ const ep=pkg.evidence_policy,bad=d=>fail('package_inconsistent',d);
+ exactKeys(ep,['max_evidence_age_minutes','oldest_capture_utc','newest_capture_utc','captures_after_utc'],'package evidence_policy');
+ const verified=isoUtc(pkg.target.verified_at_utc,'package target verified_at_utc');
+ if(pkg.prior!==null)exactKeys(pkg.prior,PRIOR_KEYS,'package prior');
+ const boundary=pkg.prior===null?pkg.target.verified_at_utc:pkg.prior.fresh_after_utc;
+ if(ep.captures_after_utc!==boundary)bad('the recorded freshness boundary is not the target verification or the prior profile\'s closure');
+ const times=pkg.slots.map((s,i)=>isoUtc(s.captured_at_utc,`slot ${i} captured_at_utc`));
+ const {oldest,newest}=captureTimeline({times,verifiedMs:verified,priorFreshMs:pkg.prior===null?null:isoUtc(pkg.prior.fresh_after_utc,'package prior fresh_after_utc'),maxAgeMinutes:ep.max_evidence_age_minutes,fromMs:Date.parse(pkg.profile_without_approval.from_utc),nowMs:now});
+ if(ep.oldest_capture_utc!==new Date(oldest).toISOString()||ep.newest_capture_utc!==new Date(newest).toISOString())bad('evidence times differ from the slots');
+}
+/** Structure only: refuses a package unless every summary and slot fact agrees with the profile it would emit. */
+function packageStructure(ev){
+ const p=ev.value,bad=d=>fail('package_inconsistent',d);
  exactKeys(p,PACKAGE_KEYS,'approval package');
  if(p.schema!==SCHEMA.package||p.status!=='AWAITING_OWNER_APPROVAL'||p.owner_approval!==null||p.approved_at_utc!==null)fail('malformed_input','approval package status');
  const profile=p.profile_without_approval;validateProfile(profile,null);
@@ -209,7 +304,6 @@ export function loadPackage(path){
  if(p.target?.environment!=='preview'||p.target.database_id!==profile.database_id||p.target.target_attestation_sha256!==profile.target_attestation_sha256||p.target.implementation_sha256!==profile.implementation_sha256||p.target.migration_sha256!==profile.migration_sha256)bad('target summary differs from the profile');
  if(p.plan?.implementation_sha256!==profile.implementation_sha256||p.plan.migration_sha256!==profile.migration_sha256)bad('plan summary differs from the profile');
  if(!Array.isArray(p.slots)||p.slots.length!==profile.requests.length)bad('slot count differs from the profile');
- const verified=isoUtc(p.target.verified_at_utc,'package target verified_at_utc');
  for(const [i,s] of p.slots.entries()){
   exactKeys(s,PACKAGE_SLOT_KEYS,`package slots[${i}]`);const r=profile.requests[i];
   if(s.index!==i||s.request_id!==r.request_id||s.after!==r.after||s.limit!==r.limit||s.selection_sha256!==r.selection_sha256||s.maximum_row_changes!==r.maximum_row_changes||s.maximum_write_units!==r.maximum_write_units)bad(`slot ${i} differs from the profile`);
@@ -218,10 +312,7 @@ export function loadPackage(path){
   let previous=r.after;for(const [j,row] of s.rows.entries()){exactKeys(row,['id','url_fingerprint','canonical_hash','issue'],`package slots[${i}].rows[${j}]`);rowId(row.id,`slot ${i} row ${j}`);if(byteOrder(row.id,previous)<=0)bad(`slot ${i} rows are not in index order`);previous=row.id;}
   if(s.next_cursor!==s.rows.at(-1).id)bad(`slot ${i} next_cursor`);
   if(i>0&&(s.after!==p.slots[i-1].next_cursor||p.slots[i-1].has_more!==true))bad(`slot ${i} does not chain from slot ${i-1}`);
-  if(isoUtc(s.captured_at_utc,`slot ${i} captured_at_utc`)<verified)bad(`slot ${i} predates target verification`);
  }
- const times=p.slots.map(s=>Date.parse(s.captured_at_utc));
- if(p.evidence_policy?.oldest_capture_utc!==new Date(Math.min(...times)).toISOString()||p.evidence_policy.newest_capture_utc!==new Date(Math.max(...times)).toISOString())bad('evidence times differ from the slots');
  const facts=approvalFacts(profile,sha);
  if(canonical(p.totals)!==canonical({slots:facts.slots,rows:p.slots.reduce((n,s)=>n+s.rows.length,0),maximum_row_changes:facts.total_maximum_row_changes,maximum_write_units:facts.total_maximum_write_units}))bad('totals differ from the profile');
  const priorRefs=p.prior?.approval_refs??[],priorIds=p.prior?.request_ids??[];
@@ -255,7 +346,7 @@ export const workerVariables=(facts,implementation,attestation)=>({TRACE_ENVIRON
 export function finalize(argv){
  const a=parseArgs(argv,{'package':{type:'string',required:true},'approval-record':{type:'string',required:true},'out-dir':{type:'string',required:true},'now':{type:'string'}});
  const dir=outputDirectory(a['out-dir']),now=a.now?isoUtc(a.now,'--now'):Date.now();
- const loaded=loadPackage(a.package),approval=validateApproval(readEvidence(a['approval-record'],'owner approval record'),loaded,now),{facts,deployable}=loaded,profile=loaded.pkg.profile_without_approval;
+ const loaded=loadPackage(a.package,{now}),approval=validateApproval(readEvidence(a['approval-record'],'owner approval record'),loaded,now),{facts,deployable}=loaded,profile=loaded.pkg.profile_without_approval;
  if(now+CLOSING_MARGIN_MS>=Date.parse(facts.until_utc))fail('window_expired','the approved window has closed; prepare a new package');
  const out=writeAddressed(dir,'n4-profile','json',deployable);
  if(out.sha256!==facts.deployable_profile_sha256)fail('package_inconsistent');

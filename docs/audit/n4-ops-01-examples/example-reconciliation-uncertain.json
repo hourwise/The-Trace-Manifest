@@ -1,5 +1,5 @@
 {
- "schema": "trace-n4-ops-reconciliation.2",
+ "schema": "trace-n4-ops-reconciliation.3",
  "disposition": "NOT_VERIFIED",
  "stop_continuable": false,
  "evidence_basis": {
@@ -7,8 +7,11 @@
    "synthetic_fixture"
   ],
   "synthetic": true,
+  "synthetic_markers": 0,
+  "observation_time_utc": "2026-11-02T11:00:00.000Z",
+  "observation_time_source": "operator_declared",
   "certifies_provider_consumption": false,
-  "note": "SYNTHETIC EVIDENCE: storage figures came from test fixtures, not from D1. This reconciliation certifies nothing about provider consumption."
+  "note": "SYNTHETIC EVIDENCE: storage figures came from test fixtures or carry a synthetic marker, not from D1. This reconciliation certifies nothing about provider consumption."
  },
  "approval_ref": "N4-EXAMPLE-P01",
  "package_sha256": "0da0a3a8cb513ecb2f16b06c93801c5f20e8b372775111b12b046f37d7e89110",
@@ -63,6 +66,10 @@
  "audit": null,
  "final_inventory": null,
  "final_inventory_required": true,
+ "campaign_closure": {
+  "status": "NOT_ESTABLISHED_NO_FINAL_INVENTORY",
+  "note": "Separate from this profile's disposition. Zero pending is an exact count on one operator-saved inspection from after:\"\" at its capture time; it is not proof that no row was added later."
+ },
  "resume_after": "cand-0003-bad",
  "campaign_reported_more_rows": true,
  "chain": {

@@ -12,7 +12,7 @@ import worker from '../workers/ingestion/index';
 import {canonical as runtimeCanonical,sha256} from '../src/lib/server/news-import/runtime/primitives';
 import * as contract from '../src/lib/server/identity-maintenance/contract';
 import * as lib from '../scripts/n4-ops/lib.mjs';
-import {prepare,finalize,approvalTemplate,verifyDeployment,validateProfile} from '../scripts/n4-ops/profile-builder.mjs';
+import {prepare,finalize,approvalTemplate,verifyDeployment,validateProfile,validatePrior} from '../scripts/n4-ops/profile-builder.mjs';
 import {reconcile} from '../scripts/n4-ops/reconcile.mjs';
 
 const PLAN='docs/audit/local-news-p4-n4-preview-plan.json',PLAN_SHA='9f6ff054b7537408e06634d853f7ed049476d1bdfcc0d065769846ed568a3ec9';
@@ -92,7 +92,8 @@ function close(w:W,c:Cycle){
  assert.equal((verifyDeployment(['--package',c.pkgPath,'--approval-record',c.approvalPath,'--profile',c.profilePath,'--readback',readback,'--phase','closure','--out-dir',c.out]) as any).disposition,'PASS');
  return readback;
 }
-const reconcileArgs=(c:Cycle,o:{requests:string[];lookups:string[];closure?:string;open?:boolean;extra?:string[]})=>['--package',c.pkgPath,'--approval-record',c.approvalPath,'--profile',c.profilePath,...(o.open===false?[]:['--readback-open',c.openReadback]),...(o.closure?['--readback-closure',o.closure]:[]),...o.requests.flatMap(r=>['--request',r]),...o.lookups.flatMap(l=>['--receipt-lookup',l]),...(o.extra??[]),'--out-dir',c.out];
+/** `now` declares an observation time after the window, needed only when a post-window lookup is simulated ahead of the real clock. */
+const reconcileArgs=(c:Cycle,o:{requests:string[];lookups:string[];closure?:string;open?:boolean;extra?:string[];now?:boolean})=>['--package',c.pkgPath,'--approval-record',c.approvalPath,'--profile',c.profilePath,...(o.open===false?[]:['--readback-open',c.openReadback]),...(o.closure?['--readback-closure',o.closure]:[]),...o.requests.flatMap(r=>['--request',r]),...o.lookups.flatMap(l=>['--receipt-lookup',l]),...(o.extra??[]),...(o.now?['--now',iso(c.window.until+2000)]:[]),'--out-dir',c.out];
 const result=(r:any)=>JSON.parse(readFileSync(r.reconciliation,'utf8'));
 
 test('OPS-01 offline constants and canonical form match the frozen N4 contract and runtime',()=>{
@@ -104,9 +105,9 @@ test('OPS-01 offline constants and canonical form match the frozen N4 contract a
 });
 
 test('OPS-01 tools are local-only: no network, process, provider or execution path',()=>{
- for(const file of ['lib.mjs','profile-builder.mjs','reconcile.mjs']){
+ for(const file of ['lib.mjs','chain.mjs','profile-builder.mjs','reconcile.mjs']){
   const src=readFileSync(join('scripts/n4-ops',file),'utf8');
-  for(const m of src.matchAll(/from\s+'([^']+)'/g))assert.ok(['node:crypto','node:fs','node:path','node:url','./lib.mjs','./profile-builder.mjs'].includes(m[1]),`${file} imports ${m[1]}`);
+  for(const m of src.matchAll(/from\s+'([^']+)'/g))assert.ok(['node:crypto','node:fs','node:path','node:url','./lib.mjs','./chain.mjs','./profile-builder.mjs'].includes(m[1]),`${file} imports ${m[1]}`);
   assert.ok(!/\bfetch\s*\(|child_process|XMLHttpRequest|WebSocket|wrangler\s|import\(/.test(src),`${file} contains a network or process path`);
  }
 });
@@ -216,11 +217,11 @@ test('OPS-01 a completed profile reconciles to PASS against real Worker receipts
  const w=world(80),out=dir();try{
   const c=await cycle(w,{out,after:'',pages:2,ref:'N4-P01'}),requests=await execute(w,c),closure=close(w,c),found=await lookups(w,c);
   const audit=save(out,'audit.json',{schema:lib.SCHEMA.audit,captured_at_utc:iso(c.window.until+1000),query_ref:'synthetic bounded audit query',identity_receipt_event_ids:c.profile.requests.map((r:any)=>'n4-identity:'+r.request_id),identity_maintenance_nonces_in_window:2});
-  const r=reconcile(reconcileArgs(c,{requests,lookups:found,closure,extra:['--audit-evidence',audit]})) as any,j=result(r);
+  const r=reconcile(reconcileArgs(c,{requests,lookups:found,closure,extra:['--audit-evidence',audit],now:true})) as any,j=result(r);
   assert.equal(r.disposition,'PASS',JSON.stringify(j.not_verified_reasons)+JSON.stringify(j.stop_reasons));
   assert.equal(j.totals.COMPLETED_MATCHED,2);assert.equal(j.totals.committed_logical_changes,54);assert.equal(j.totals.slots_with_unmeasured_storage,0);assert.equal(j.audit.nonces_match,true);
   assert.equal(r.resume_after,c.pkg.slots[1].next_cursor);assert.match(readFileSync(r.report,'utf8'),/\*\*Disposition: PASS\*\*/);
-  assert.equal(reconcile(reconcileArgs(c,{requests:[...requests].reverse(),lookups:[...found].reverse(),closure,extra:['--audit-evidence',audit]})).reconciliation_sha256,r.reconciliation_sha256,'input order does not change the result');
+  assert.equal(reconcile(reconcileArgs(c,{requests:[...requests].reverse(),lookups:[...found].reverse(),closure,extra:['--audit-evidence',audit],now:true})).reconciliation_sha256,r.reconciliation_sha256,'input order does not change the result');
   const next=await cycle(w,{out,after:r.resume_after,pages:1,ref:'N4-P02',prior:r.reconciliation});assert.equal(next.pkg.prior.reconciliation_sha256,r.reconciliation_sha256);
   refused(()=>prepare(['--plan',PLAN,'--plan-sha256',PLAN_SHA,'--target-evidence',join(out,'target.json'),'--inventory',join(out,'capture-N4-P02-0.json'),'--approval-ref','N4-P01','--from-utc',iso(Date.now()+60000),'--until-utc',iso(Date.now()+120000),'--out-dir',out,'--prior-reconciliation',r.reconciliation]),'approval_ref_reused');
   refused(()=>prepare(['--plan',PLAN,'--plan-sha256',PLAN_SHA,'--target-evidence',join(out,'target.json'),'--inventory',join(out,'capture-N4-P01-0.json'),'--approval-ref','N4-P03','--from-utc',iso(Date.now()+60000),'--until-utc',iso(Date.now()+120000),'--out-dir',out,'--prior-reconciliation',r.reconciliation]),'cursor_chain');
@@ -235,7 +236,7 @@ test('OPS-01 refused, uncertain, missing, duplicate, unexpected and mismatched e
   const second=await execute(w,{...c,profile:{...c.profile,requests:[c.profile.requests[1]]}} as any);
   assert.equal(JSON.parse(readFileSync(second[0],'utf8')).response.body.error,'identity_stale_selection');
   const closure=close(w,c),during=await lookups(w,c),after=await lookups(w,c,c.window.until+1000);
-  const stop=result(reconcile(reconcileArgs(c,{requests:[...first,...second],lookups:[...during,...after],closure})));
+  const stop=result(reconcile(reconcileArgs(c,{requests:[...first,...second],lookups:[...during,...after],closure,now:true})));
   assert.equal(stop.disposition,'STOP');assert.deepEqual(stop.slots.map((s:any)=>s.class),['COMPLETED_MATCHED','EXPLICITLY_REFUSED','UNUSED_AUTHORISED_SLOT']);assert.equal(stop.stop_continuable,true);assert.equal(stop.resume_after,c.pkg.slots[0].next_cursor);
   // Without post-window lookups the same records cannot prove the unused slot: never zero by assumption.
   const nv=result(reconcile(reconcileArgs(c,{requests:[...first,...second],lookups:during,closure})));
@@ -259,19 +260,20 @@ test('OPS-01 refused, uncertain, missing, duplicate, unexpected and mismatched e
   const unsealed=lookupFor(0);unsealed.response.body.receipt.writes=26;assert.equal(cls([save(out,'unsealed.json',unsealed)]).class,'CONFLICTING_OR_DUPLICATE');
   const twice=JSON.parse(readFileSync(first[0],'utf8'));twice.sent_at_utc=iso(Date.parse(twice.sent_at_utc)+1);assert.equal(cls([during[0]],[first[0],save(out,'twice.json',twice)]).class,'CONFLICTING_OR_DUPLICATE');
   const over=JSON.parse(readFileSync(first[0],'utf8'));over.response.body.provider_rows_written=134;over.response.body.accounting.provider_rows_written=134;over.response.body.provider_accounting_available=true;assert.equal(cls([during[0]],[save(out,'over.json',over)]).class,'UNEXPECTED_WRITE_CONSUMPTION');
-  const unmeasured=JSON.parse(readFileSync(first[0],'utf8'));unmeasured.response.body.provider_rows_written=null;unmeasured.response.body.provider_accounting_available=false;
+  // As the Worker reports it: no batch row count, and accounting that says its provider metadata is incomplete.
+  const unmeasured=JSON.parse(readFileSync(first[0],'utf8'));unmeasured.response.body.provider_rows_written=null;unmeasured.response.body.provider_accounting_available=false;Object.assign(unmeasured.response.body.accounting,{provider_rows_read:null,provider_rows_written:null,provider_metadata_complete:false});
   const um=result(reconcile(reconcileArgs(c,{requests:[save(out,'unmeasured.json',unmeasured)],lookups:during,closure})));assert.equal(um.slots[0].storage_writes.status,'NOT_MEASURED');assert.ok(um.not_verified_reasons.includes('slot_0_storage_writes_not_measured'));
   const wrongTarget=lookupFor(0);wrongTarget.request.database_id='00000000-0000-0000-0000-000000000000';assert.equal(cls([save(out,'wt.json',wrongTarget)]).class,'STALE_OR_MISMATCHED_TARGET');
   const bound=JSON.parse(readFileSync(first[0],'utf8'));bound.response={status:409,body:{error:'identity_provider_write_bound_exceeded_reconcile'}};assert.equal(cls([during[0]],[save(out,'bound.json',bound)]).class,'UNEXPECTED_WRITE_CONSUMPTION');
   // Out-of-order execution and audit evidence that disagrees are campaign-level STOPs.
   const skipped=JSON.parse(readFileSync(second[0],'utf8'));skipped.request={...skipped.request,request_id:c.profile.requests[2].request_id,after:c.profile.requests[2].after,selection_sha256:c.profile.requests[2].selection_sha256};
-  assert.ok(result(reconcile(reconcileArgs(c,{requests:[save(out,'skip.json',skipped)],lookups:after,closure}))).stop_reasons.includes('slots_not_executed_in_order'));
+  assert.ok(result(reconcile(reconcileArgs(c,{requests:[save(out,'skip.json',skipped)],lookups:after,closure,now:true}))).stop_reasons.includes('slots_not_executed_in_order'));
   const audit=save(out,'audit-bad.json',{schema:lib.SCHEMA.audit,captured_at_utc:iso(c.window.until+1000),query_ref:'synthetic',identity_receipt_event_ids:[],identity_maintenance_nonces_in_window:3});
-  const ab=result(reconcile(reconcileArgs(c,{requests:first,lookups:during,closure,extra:['--audit-evidence',audit]})));assert.ok(ab.stop_reasons.includes('audit_receipts_differ_from_completed_slots')&&ab.stop_reasons.includes('nonce_count_differs_from_completed_slots'));
+  const ab=result(reconcile(reconcileArgs(c,{requests:first,lookups:during,closure,extra:['--audit-evidence',audit],now:true})));assert.ok(ab.stop_reasons.includes('audit_receipts_differ_from_completed_slots')&&ab.stop_reasons.includes('nonce_count_differs_from_completed_slots'));
   const foreign=JSON.parse(readFileSync(first[0],'utf8'));foreign.request.request_id='00000000-0000-4000-8000-000000000000';
   assert.ok(result(reconcile(reconcileArgs(c,{requests:[...first,save(out,'foreign.json',foreign)],lookups:during,closure}))).stop_reasons.includes('request_for_unapproved_slot'));
   // Continuing after a STOP needs the owner's explicit acknowledgement of that exact reconciliation; NOT_VERIFIED never continues.
-  const stopFile=reconcile(reconcileArgs(c,{requests:[...first,...second],lookups:[...during,...after],closure})) as any,nvFile=reconcile(reconcileArgs(c,{requests:[...first,lostPath],lookups:during,closure})) as any;
+  const stopFile=reconcile(reconcileArgs(c,{requests:[...first,...second],lookups:[...during,...after],closure,now:true})) as any,nvFile=reconcile(reconcileArgs(c,{requests:[...first,lostPath],lookups:during,closure})) as any;
   const cap=save(out,'resume.json',await capture(w,stop.resume_after,Date.now()));
   const again=(prior:string,ack?:string)=>()=>prepare(['--plan',PLAN,'--plan-sha256',PLAN_SHA,'--target-evidence',join(out,'target.json'),'--inventory',cap,'--approval-ref','N4-NEG-2','--from-utc',iso(Date.now()+60000),'--until-utc',iso(Date.now()+120000),'--out-dir',out,'--prior-reconciliation',prior,...(ack?['--acknowledge-stop',ack]:[])]);
   refused(again(stopFile.reconciliation),'prior_stop');refused(again(nvFile.reconciliation),'prior_not_verified');
@@ -340,7 +342,7 @@ test('OPS-R1 M-1 derived evidence is recomputed and temporal contradictions STOP
   const c=await cycle(w,{out,after:'',pages:3,ref:'N4-M1'}),first=await execute(w,c,1);
   w.db.sqlite.exec("UPDATE editorial_candidates SET lead_text='Edited after inventory' WHERE id='legacy-00030'");
   const second=await execute(w,{...c,profile:{...c.profile,requests:[c.profile.requests[1]]}} as any),closure=close(w,c),during=await lookups(w,c),after=await lookups(w,c,c.window.until+1000);
-  const stopRun=reconcile(reconcileArgs(c,{requests:[...first,...second],lookups:[...during,...after],closure})) as any,stop=result(stopRun);assert.equal(stop.disposition,'STOP');
+  const stopRun=reconcile(reconcileArgs(c,{requests:[...first,...second],lookups:[...during,...after],closure,now:true})) as any,stop=result(stopRun);assert.equal(stop.disposition,'STOP');
   // A prior whose label was edited no longer follows from its own slots.
   const relabel=(fn:(r:any)=>void)=>{const r=structuredClone(stop);fn(r);return save(out,`relabel-${Math.random()}.json`,r);};
   const cap=save(out,'fresh.json',await capture(w,stop.resume_after,Date.now()));
@@ -430,7 +432,7 @@ test('OPS-R1 M-5 every capture must follow target verification, and continuation
   const c=await cycle(w,{out,after:'',pages:3,ref:'N4-M5-A'}),first=await execute(w,c,1);
   w.db.sqlite.exec("UPDATE editorial_candidates SET lead_text='Edited after inventory' WHERE id='legacy-00030'");
   const second=await execute(w,{...c,profile:{...c.profile,requests:[c.profile.requests[1]]}} as any),closure=close(w,c),during=await lookups(w,c),after=await lookups(w,c,c.window.until+1000);
-  const stop=reconcile(reconcileArgs(c,{requests:[...first,...second],lookups:[...during,...after],closure})) as any;assert.equal(stop.disposition,'STOP');assert.equal(stop.stop_continuable,true);
+  const stop=reconcile(reconcileArgs(c,{requests:[...first,...second],lookups:[...during,...after],closure,now:true})) as any;assert.equal(stop.disposition,'STOP');assert.equal(stop.stop_continuable,true);
   const continueWith=(capturePath:string)=>()=>prepare(['--plan',PLAN,'--plan-sha256',PLAN_SHA,'--target-evidence',join(out,'target.json'),'--inventory',capturePath,'--approval-ref','N4-M5-B','--from-utc',iso(Date.now()+60000),'--until-utc',iso(Date.now()+120000),'--out-dir',out,'--prior-reconciliation',stop.reconciliation,'--acknowledge-stop',stop.reconciliation_sha256]);
   refused(continueWith(c.captures[1]),'stale_or_future_evidence');
   assert.equal((continueWith(save(out,'reinspected.json',await capture(w,stop.resume_after,Date.now())))() as any).owner_approval,null);
@@ -465,4 +467,234 @@ test('OPS-R1 L-2 a lone UTF-16 surrogate in a row id or cursor is refused',async
   const badCursor=structuredClone(c);badCursor.request.after='\uDC00';badCursor.response.body.after='\uDC00';
   refused(args(save(out,'surrogate-cursor.json',badCursor)),'malformed_cursor');
  }finally{w.db.close();rmSync(out,{recursive:true,force:true});}
+});
+
+// ---- N4-OPS-R2 regressions for the independent DR2 review (DR2-M1, M2, M3, M5) ----
+// These port Codex's DR2 probe and supplement edits onto the same deterministic example fixtures,
+// so each refusal is of the record the review showed being accepted, not an easier stand-in.
+
+/** The committed synthetic example campaign folder, regenerated: P01 package, retained captures and reconciliations. */
+function exampleCampaign(){
+ const d=dir(),r=spawnSync(process.execPath,['scripts/n4-ops/synthetic-examples.mjs','--out-dir',d],{encoding:'utf8'});assert.equal(r.status,0,r.stderr);
+ const w=join(d,'work'),read=(p:string)=>JSON.parse(readFileSync(p,'utf8')),find=(prefix:string)=>join(w,readdirSync(w).find(n=>n.startsWith(prefix))!);
+ const completed=readFileSync(join(d,'example-reconciliation-completed.json')),priorPath=join(w,`n4-reconciliation-${sha256(completed)}.json`);
+ return {d,w,read,pkg:find('n4-approval-package-'),profile:find('n4-profile-'),approval:join(w,'owner-approval.SYNTHETIC.json'),priorPath,prior:read(priorPath)};
+}
+type Example=ReturnType<typeof exampleCampaign>;
+/** Codex's successor capture: capture-1 re-dated to 10:55 and moved to the reconciled resume cursor. */
+function successorCapture(ex:Example){
+ const cap=ex.read(join(ex.w,'capture-1.json'));cap.captured_at_utc='2026-11-02T10:55:00.000Z';cap.request.after=cap.response.body.after='cand-0006';cap.response.body.next_cursor='cand-0009';cap.response.body.selection_sha256='b'.repeat(64);cap.response.body.rows.forEach((r:any,i:number)=>r.id='cand-000'+(i+7));
+ return save(ex.w,'successor-capture.json',cap);
+}
+const successorArgs=(ex:Example,priorPath:string,ref:string)=>['--plan',PLAN,'--plan-sha256',PLAN_SHA,'--target-evidence',join(ex.w,'target.json'),'--inventory',successorCapture(ex),'--approval-ref',ref,'--from-utc','2026-11-02T11:00:00.000Z','--until-utc','2026-11-02T11:45:00.000Z','--now','2026-11-02T10:56:00.000Z','--out-dir',ex.w,'--prior-reconciliation',priorPath];
+/** Codex's reconciliation inputs for the example profile: the happy-path lookup for slot 1 is rebuilt from its saved receipt. */
+function exampleInputs(ex:Example,out:string){
+ const requests=['request-0-100200.json','request-1-100500.json'].map(n=>ex.read(join(ex.w,n))),looks=['lookup-0-105000.json','lookup-1-105000.json'].map(n=>ex.read(join(ex.w,n)));
+ looks[1].response={status:200,body:{receipt:structuredClone(requests[1].response.body.receipt),inspection_writes:0}};
+ return {requests,lookups:looks.map((l,i)=>save(out,`lookup-${i}.json`,l)),base:['--package',ex.pkg,'--approval-record',ex.approval,'--profile',ex.profile,'--readback-open',join(ex.w,'readback-open.json'),'--readback-closure',join(ex.w,'readback-closure.json')]};
+}
+
+test('OPS-R2 DR2-M1 a prior PASS contradicted by its own slot, storage, deployment or target evidence authorises no successor',()=>{
+ const ex=exampleCampaign();try{
+  // Positive control: the unaltered retained prior yields a successor awaiting approval.
+  const ok=prepare(successorArgs(ex,ex.priorPath,'DR2-SUCCESSOR')) as any;assert.equal(ok.owner_approval,null);
+  assert.deepEqual(ex.read(ok.package).chain.approval_refs,['N4-EXAMPLE-P01','DR2-SUCCESSOR']);
+  const cases:[string,(r:any)=>void][]=[
+   ['slot-finding',r=>r.slots[0].findings.push({class:'UNEXPECTED_WRITE_CONSUMPTION',code:'receipt_reports_other_mutation'})],
+   ['invalid-storage',r=>r.slots[0].storage_writes={status:'INVALID',provider_rows_written:-1,basis:'synthetic_fixture'}],
+   ['opening-deployment-STOP',r=>{r.deployment.open.disposition='STOP';r.deployment.open.failed_checks=['import_gate_closed'];}],
+   ['missing-closure',r=>r.deployment.closure=null],
+   ['foreign-database',r=>r.target.database_id='00000000-0000-0000-0000-000000000000'],
+   ['erased-chain',r=>r.chain={approval_refs:[],request_ids:[]}],
+  ];
+  for(const [label,edit] of cases){
+   const r=structuredClone(ex.prior);edit(r);
+   // Saved under a plain name and content-addressed in the campaign folder: neither placement helps.
+   const plain=save(ex.w,`prior-${label}.json`,r),addressed=lib.writeAddressed(ex.w,'n4-reconciliation','json',Buffer.from(JSON.stringify(r,null,1))).path;
+   refused(()=>validatePrior(lib.readEvidence(plain,'prior')),'prior_inconsistent');
+   for(const p of [plain,addressed])refused(()=>prepare(successorArgs(ex,p,'DR2-SUCCESSOR-'+label)),'prior_inconsistent');
+  }
+  // The spent first reference cannot be recovered by erasing history, nor by starting a new walk in the same folder.
+  const erased=structuredClone(ex.prior);erased.chain={approval_refs:[],request_ids:[]};
+  refused(()=>prepare(successorArgs(ex,save(ex.w,'erased.json',erased),'N4-EXAMPLE-P01')),'prior_inconsistent');
+  refused(()=>prepare(['--plan',PLAN,'--plan-sha256',PLAN_SHA,'--target-evidence',join(ex.w,'target.json'),'--inventory',join(ex.w,'capture-0.json'),'--inventory',join(ex.w,'capture-1.json'),'--approval-ref','N4-EXAMPLE-P01','--from-utc','2026-11-02T10:00:00.000Z','--until-utc','2026-11-02T10:30:00.000Z','--now','2026-11-02T09:05:00.000Z','--out-dir',ex.w]),'approval_ref_reused');
+  // A genuine STOP relabelled PASS stays refused (R1 behaviour preserved).
+  const stopped=ex.read(join(ex.d,'example-reconciliation-failed.json'));stopped.disposition='PASS';
+  refused(()=>validatePrior(lib.readEvidence(save(ex.w,'stop-relabelled.json',stopped),'prior')),'prior_inconsistent');
+ }finally{rmSync(ex.d,{recursive:true,force:true});}
+});
+
+test('OPS-R2 DR2-M1 a successor needs the complete retained history; a shortened chain cannot establish its own completeness',async()=>{
+ const w=world(60),out=dir(),elsewhere=dir();try{
+  const run=async(ref:string,after:string,prior?:string)=>{const c=await cycle(w,{out,after,pages:1,ref,prior,limit:10}),requests=await execute(w,c),closure=close(w,c),found=await lookups(w,c);return reconcile(reconcileArgs(c,{requests,lookups:found,closure})) as any;};
+  const r1=await run('N4-H-P01',''),r2=await run('N4-H-P02',r1.resume_after,r1.reconciliation);
+  assert.equal(r2.disposition,'PASS');
+  const next=async(prior:string,ref:string,folder=out)=>{const cap=save(folder,`cap-${ref}-${Math.random()}.json`,await capture(w,r2.resume_after,Date.now(),10));return ()=>prepare(['--plan',PLAN,'--plan-sha256',PLAN_SHA,'--target-evidence',join(out,'target.json'),'--inventory',cap,'--approval-ref',ref,'--from-utc',iso(Date.now()+60000),'--until-utc',iso(Date.now()+120000),'--out-dir',folder,'--prior-reconciliation',prior]);};
+  // Drop P01 from the newest record's chain: internally consistent, but not the chain its retained package carries.
+  const shortened=result(r2);shortened.chain={approval_refs:['N4-H-P02'],request_ids:shortened.chain.request_ids.slice(-shortened.slots.length)};
+  const shortPath=lib.writeAddressed(out,'n4-reconciliation','json',Buffer.from(JSON.stringify(shortened,null,1))).path;
+  assert.equal(validatePrior(lib.readEvidence(shortPath,'prior')).approval_refs.length,1,'the record alone looks complete');
+  refused(await next(shortPath,'N4-H-P01'),'history_inconsistent');
+  refused(await next(shortPath,'N4-H-P03'),'history_inconsistent');
+  // The newest records alone, copied without their predecessors, are incomplete history.
+  const {copyFileSync}=await import('node:fs');
+  for(const name of readdirSync(out).filter(n=>n===`n4-reconciliation-${r2.reconciliation_sha256}.json`||n===`n4-approval-package-${result(r2).package_sha256}.json`||n.startsWith('n4-inventory-')))copyFileSync(join(out,name),join(elsewhere,name));
+  refused(await next(join(elsewhere,`n4-reconciliation-${r2.reconciliation_sha256}.json`),'N4-H-P03',elsewhere),'history_incomplete');
+  // A prior outside the campaign folder is not part of the retained history.
+  refused(await next(save(elsewhere,'loose-prior.json',result(r2)),'N4-H-P03'),'history_incomplete');
+  // Positive control: the complete retained history continues, carrying every earlier reference.
+  const p3=(await next(r2.reconciliation,'N4-H-P03'))() as any;assert.deepEqual(JSON.parse(readFileSync(p3.package,'utf8')).chain.approval_refs,['N4-H-P01','N4-H-P02','N4-H-P03']);
+  // Removing the first package afterwards breaks every later load of the continuation.
+  rmSync(join(out,`n4-approval-package-${result(r1).package_sha256}.json`));
+  refused(()=>approvalTemplate(['--package',p3.package]),'history_incomplete');
+ }finally{w.db.close();rmSync(out,{recursive:true,force:true});rmSync(elsewhere,{recursive:true,force:true});}
+});
+
+test('OPS-R2 DR2-M2 missing, null, primitive, incomplete, contradictory or synthetic-marked accounting never certifies consumption',()=>{
+ const ex=exampleCampaign(),out=dir();try{
+  const inputs=exampleInputs(ex,out);
+  const rec=(name:string,edit:(s:any[])=>void=()=>{})=>{const requests=structuredClone(inputs.requests);edit(requests);
+   return result(reconcile([...inputs.base,...requests.flatMap((r,i)=>['--request',save(out,`${name}-request-${i}.json`,r)]),...inputs.lookups.flatMap(l=>['--receipt-lookup',l]),'--now','2026-11-02T11:00:00.000Z','--out-dir',out]));};
+  const base=rec('baseline');assert.equal(base.disposition,'PASS');assert.deepEqual(base.slots.map((s:any)=>s.storage_writes.status),['MEASURED','MEASURED']);assert.equal(base.evidence_basis.synthetic,true);
+  const each=(fn:(b:any,r:any)=>void)=>(s:any[])=>{for(const r of s)fn(r.response.body,r);};
+  const cases:[string,(s:any[])=>void,string][]=[
+   ['accounting-missing',each(b=>{delete b.accounting;}),'storage_accounting_missing'],
+   ['accounting-null',each(b=>{b.accounting=null;}),'storage_accounting_missing'],
+   ['accounting-string',each(b=>{b.accounting='broken';}),'storage_accounting_malformed'],
+   ['accounting-number',each(b=>{b.accounting=14;}),'storage_accounting_malformed'],
+   ['accounting-boolean',each(b=>{b.accounting=true;}),'storage_accounting_malformed'],
+   ['accounting-array',each(b=>{b.accounting=[];}),'storage_accounting_malformed'],
+   ['accounting-incomplete-object',each(b=>{delete b.accounting.provider_rows_read;}),'storage_accounting_malformed'],
+   ['object-and-top-level-differ',each(b=>{b.accounting.provider_rows_written=999999;}),'storage_measurements_contradict'],
+   ['metadata-flag-contradicts-counts',each(b=>{b.accounting.provider_metadata_complete=false;}),'storage_measurements_contradict'],
+   ['negative-measurement',each(b=>{b.provider_rows_written=-1;b.accounting.provider_rows_written=-1;}),'storage_measurement_invalid'],
+   ['fractional-measurement',each(b=>{b.provider_rows_written=1.5;b.accounting.provider_rows_written=1.5;}),'storage_measurement_invalid'],
+   ['negative-accounting-read-count',each(b=>{b.accounting.provider_rows_read=-3;}),'storage_measurement_invalid'],
+   ['availability-false-with-complete-accounting',each(b=>{b.provider_accounting_available=false;}),'storage_measurements_contradict'],
+   ['availability-true-without-a-count',each(b=>{b.provider_rows_written=null;}),'storage_measurements_contradict'],
+   ['unsupported-measurement-source',each(b=>{b.measurement_source='provider_dashboard';}),'storage_source_unsupported'],
+   ['saved-response-missing-accounting',each((b,r)=>{r.evidence_source='saved_worker_response';delete b.accounting;}),'storage_accounting_missing'],
+   ['saved-response-malformed-accounting',each((b,r)=>{r.evidence_source='saved_worker_response';b.accounting='broken';}),'storage_accounting_malformed'],
+   ['synthetic-marker-in-saved-response',each((b,r)=>{r.evidence_source='saved_worker_response';b.measurement_source='SYNTHETIC_NOT_PROVIDER';}),'storage_source_contradiction'],
+  ];
+  for(const [label,edit,code] of cases){
+   const j=rec(label,edit);
+   assert.equal(j.disposition,'STOP',label);assert.equal(j.evidence_basis.certifies_provider_consumption,false,label);
+   assert.ok(j.slots.every((s:any)=>s.storage_writes.status==='INVALID'&&s.findings.some((f:any)=>f.code===code)),`${label}: ${JSON.stringify(j.slots.map((s:any)=>[s.storage_writes,s.findings]))}`);
+  }
+  // The explicit marker keeps the record visibly synthetic, even under a saved-response envelope.
+  const masquerade=rec('masquerade',each((b,r)=>{r.evidence_source='saved_worker_response';b.measurement_source='SYNTHETIC_NOT_PROVIDER';}));
+  assert.equal(masquerade.evidence_basis.synthetic,true);assert.equal(masquerade.evidence_basis.synthetic_markers,2);assert.match(masquerade.evidence_basis.note,/^SYNTHETIC EVIDENCE/);
+  // Missing everywhere is unknown, never zero: NOT_VERIFIED, not STOP and not measured.
+  const absent=rec('absent',each(b=>{delete b.accounting;b.provider_rows_written=null;b.provider_accounting_available=false;}));
+  assert.equal(absent.disposition,'NOT_VERIFIED');assert.deepEqual(absent.slots.map((s:any)=>s.storage_writes.status),['NOT_MEASURED','NOT_MEASURED']);assert.equal(absent.totals.slots_with_unmeasured_storage,2);
+  // A synthetic marker on a synthetic record is consistent and remains synthetic.
+  const marked=rec('marked',each(b=>{b.measurement_source='SYNTHETIC_NOT_PROVIDER';}));assert.equal(marked.disposition,'PASS');assert.equal(marked.evidence_basis.synthetic,true);assert.equal(marked.evidence_basis.certifies_provider_consumption,false);
+  // An operator-declared observation time never certifies, even for saved responses.
+  const declared=rec('declared',each((b,r)=>{r.evidence_source='saved_worker_response';}));assert.equal(declared.disposition,'PASS');assert.equal(declared.evidence_basis.certifies_provider_consumption,false);
+ }finally{rmSync(ex.d,{recursive:true,force:true});rmSync(out,{recursive:true,force:true});}
+});
+
+test('OPS-R2 DR2-M2 positive control: a complete saved Worker response observed on the clock certifies; the same response with a defect does not',async()=>{
+ const w=world(30),out=dir();try{
+  const c=await cycle(w,{out,after:'',pages:1,ref:'N4-R2-M2'}),requests=await execute(w,c),closure=close(w,c),found=await lookups(w,c);
+  const edit=(fn:(r:any)=>void,name:string)=>{const r=JSON.parse(readFileSync(requests[0],'utf8'));r.evidence_source='saved_worker_response';fn(r);return save(out,name,r);};
+  const run=(path:string)=>result(reconcile(reconcileArgs(c,{requests:[path],lookups:found,closure})));
+  const saved=run(edit(()=>{},'saved.json'));
+  assert.equal(saved.disposition,'PASS');assert.equal(saved.evidence_basis.certifies_provider_consumption,true);assert.equal(saved.evidence_basis.observation_time_source,'system_clock');assert.equal(saved.slots[0].storage_writes.basis,'saved_worker_response');
+  const defects:[string,(r:any)=>void][]=[['no-accounting',r=>{delete r.response.body.accounting;}],['null-accounting',r=>{r.response.body.accounting=null;}],['string-accounting',r=>{r.response.body.accounting='broken';}],['marker',r=>{r.response.body.measurement_source='SYNTHETIC_NOT_PROVIDER';}]];
+  for(const [name,fn] of defects){const j=run(edit(fn,name+'.json'));assert.equal(j.disposition,'STOP',name);assert.equal(j.evidence_basis.certifies_provider_consumption,false,name);}
+ }finally{w.db.close();rmSync(out,{recursive:true,force:true});}
+});
+
+test('OPS-R2 DR2-M3 a final inventory whose exact pending count contradicts its page or has_more refuses certification; closure stays a separate conclusion',()=>{
+ const ex=exampleCampaign(),out=dir();try{
+  const inputs=exampleInputs(ex,out),requests=inputs.requests.map((r,i)=>save(out,`request-${i}.json`,r));
+  const args=(extra:string[])=>[...inputs.base,...requests.flatMap(r=>['--request',r]),...inputs.lookups.flatMap(l=>['--receipt-lookup',l]),...extra,'--now','2026-11-02T11:00:00.000Z','--out-dir',out];
+  const run=(name:string,v:any)=>result(reconcile(args(['--final-inventory',save(out,`final-${name}.json`,v)])));
+  // Codex's valid empty final inventory from the first cursor, then his two contradictory pages.
+  const inv=ex.read(join(ex.w,'capture-0.json'));inv.captured_at_utc='2026-11-02T10:51:00.000Z';Object.assign(inv.response.body,{rows:[],has_more:false,next_cursor:null,known_pending_lower_bound:0,pending_count_exact:true,missing_identity_guard_blocked:false,invalid_in_page:0,oversize_in_page:0,conflicts_in_page:0,estimated_row_changes:0,estimated_write_units:0});
+  const row=ex.read(join(ex.w,'capture-1.json')).response.body.rows[0];
+  const page=(over:any)=>{const v=structuredClone(inv);v.request.limit=v.response.body.limit=1;v.response.body.scan_page_bound=2;Object.assign(v.response.body,{rows:[row],next_cursor:row.id,missing_identity_guard_blocked:false,estimated_row_changes:3,estimated_write_units:13,...over});return v;};
+  const valid=run('valid',inv);assert.equal(valid.disposition,'PASS');assert.equal(valid.final_inventory.pending_count_kind,'EXACT');assert.equal(valid.campaign_closure.status,'NO_PENDING_ROWS_AT_CAPTURE');
+  const contradictions:[string,any][]=[['case-A-has-more-false-exact-2',page({has_more:false,known_pending_lower_bound:2,pending_count_exact:true})],['case-B-has-more-true-exact-1',page({has_more:true,known_pending_lower_bound:1,pending_count_exact:true})]];
+  for(const [name,v] of contradictions){
+   const j=run(name,v);assert.equal(j.disposition,'STOP',name);assert.ok(j.stop_reasons.includes('final_inventory_invalid'),name);assert.equal(j.final_inventory,null);assert.equal(j.campaign_closure.status,'NOT_ESTABLISHED_FINAL_INVENTORY_INVALID');
+  }
+  // Consistent pages: an exact count and the 51 lower bound are each reported as what they are; neither closes the campaign.
+  const exact=run('exact-1',page({has_more:false,known_pending_lower_bound:1,pending_count_exact:true}));
+  assert.equal(exact.disposition,'PASS');assert.equal(exact.final_inventory.pending_count_kind,'EXACT');assert.equal(exact.campaign_closure.status,'PENDING_ROWS_REMAIN');
+  const bound=run('bound-51',page({has_more:true,known_pending_lower_bound:51,pending_count_exact:false,missing_identity_guard_blocked:true}));
+  assert.equal(bound.disposition,'PASS');assert.equal(bound.final_inventory.pending_count_kind,'LOWER_BOUND');assert.equal(bound.campaign_closure.status,'PENDING_ROWS_REMAIN');
+  // A lower bound with a final page is impossible.
+  assert.ok(run('bound-short',page({has_more:false,known_pending_lower_bound:51,pending_count_exact:false,missing_identity_guard_blocked:true})).stop_reasons.includes('final_inventory_invalid'));
+  // Beyond the observation time (Codex's 2099 capture) is not live evidence.
+  assert.ok(run('future',{...structuredClone(inv),captured_at_utc:'2099-01-01T00:00:00.000Z'}).stop_reasons.includes('final_inventory_invalid'));
+  // The supported response shape is complete: an extra or missing field is refused.
+  const extra=structuredClone(inv);extra.response.body.backlog_fully_inspected=true;assert.ok(run('extra',extra).stop_reasons.includes('final_inventory_invalid'));
+  const noAccounting=structuredClone(inv);delete noAccounting.response.body.accounting;assert.ok(run('no-accounting',noAccounting).stop_reasons.includes('final_inventory_invalid'));
+  // Without a final inventory closure is not established, whatever the profile disposition.
+  const none=result(reconcile(args([])));assert.equal(none.disposition,'PASS');assert.equal(none.campaign_closure.status,'NOT_ESTABLISHED_NO_FINAL_INVENTORY');
+  // Saved records dated after the observation time (here the 10:50 lookups at a declared 10:49) are refused outright.
+  refused(()=>reconcile([...args([]).slice(0,-4),'--now','2026-11-02T10:49:00.000Z','--out-dir',out]),'stale_or_future_evidence');
+ }finally{rmSync(ex.d,{recursive:true,force:true});rmSync(out,{recursive:true,force:true});}
+});
+
+test('OPS-R2 DR2-M3 the same pagination contradictions are refused in profile captures',async()=>{
+ const w=world(3),out=dir();try{
+  const T=Date.UTC(2026,10,2,9,0,0),target=save(out,'target.json',targetEvidence()),c=await capture(w,'',T,1);
+  assert.deepEqual([c.response.body.rows.length,c.response.body.has_more,c.response.body.known_pending_lower_bound],[1,true,3]);
+  const args=(f:string)=>()=>prepare(['--plan',PLAN,'--plan-sha256',PLAN_SHA,'--target-evidence',target,'--inventory',f,'--approval-ref','N4-R2-M3','--from-utc',iso(T+3600000),'--until-utc',iso(T+7200000),'--now',iso(T+60000),'--out-dir',out]);
+  const edit=(fn:(b:any)=>void,name:string)=>{const v=structuredClone(c);fn(v.response.body);return save(out,name,v);};
+  refused(args(edit(b=>{b.has_more=false;b.known_pending_lower_bound=2;},'a.json')),'inventory_contract');
+  refused(args(edit(b=>{b.known_pending_lower_bound=1;},'b.json')),'inventory_contract');
+  assert.equal((args(save(out,'ok.json',c))() as any).owner_approval,null);
+ }finally{w.db.close();rmSync(out,{recursive:true,force:true});}
+});
+
+test('OPS-R2 DR2-M5 a reloaded continuation package re-checks every capture against the prior closure, its retained capture and its history',()=>{
+ const ex=exampleCampaign();try{
+  const ok=prepare(successorArgs(ex,ex.priorPath,'DR2-SUCCESSOR')) as any,pkg=ex.read(ok.package);
+  assert.equal(pkg.evidence_policy.captures_after_utc,'2026-11-02T10:20:00.000Z');
+  const approvalFor=(path:string,p:any)=>save(ex.w,`approval-${Math.random()}.SYNTHETIC.json`,{schema:lib.SCHEMA.approval,decision:'APPROVED',approval_ref:p.approval_ref,owner_email:'owner@example.test',approved_at_utc:'2026-11-02T10:56:00.000Z',package_sha256:sha256(readFileSync(path)),deployable_profile_sha256:p.deployable_profile_sha256_if_approved,environment:'preview',database_id:p.profile_without_approval.database_id,publisher_email:p.publisher_email,from_utc:p.window.from_utc,until_utc:p.window.until_utc,slots:p.totals.slots,total_maximum_row_changes:p.totals.maximum_row_changes,total_maximum_write_units:p.totals.maximum_write_units,statement:'SYNTHETIC REVIEW ONLY '+p.deployable_profile_sha256_if_approved});
+  const fin=(path:string,p:any,now='2026-11-02T10:57:00.000Z')=>()=>finalize(['--package',path,'--approval-record',approvalFor(path,p),'--out-dir',ex.w,'--now',now]);
+  // Positive control.
+  assert.equal((approvalTemplate(['--package',ok.package]) as any).package_sha256,ok.package_sha256);assert.equal((fin(ok.package,pkg)() as any).deployable_profile_sha256,pkg.deployable_profile_sha256_if_approved);
+  // Codex's case: capture moved to 09:01 with matching oldest/newest; the prior closure boundary (10:20) left intact.
+  const stale=structuredClone(pkg);stale.slots[0].captured_at_utc='2026-11-02T09:01:00.000Z';stale.evidence_policy.oldest_capture_utc=stale.evidence_policy.newest_capture_utc=stale.slots[0].captured_at_utc;
+  const stalePath=save(ex.w,'successor-package-stale-capture.json',stale);
+  refused(()=>approvalTemplate(['--package',stalePath]),'stale_or_future_evidence');
+  refused(fin(stalePath,stale),'stale_or_future_evidence');
+  refused(()=>reconcile(['--package',stalePath,'--approval-record',approvalFor(stalePath,stale),'--profile',ex.profile,'--now','2026-11-02T11:00:00.000Z','--out-dir',ex.w]),'stale_or_future_evidence');
+  // Moving the boundary with it is caught by the retained prior reconciliation.
+  const moved=structuredClone(stale);moved.prior.fresh_after_utc=moved.evidence_policy.captures_after_utc='2026-11-02T09:00:00.000Z';
+  refused(()=>approvalTemplate(['--package',save(ex.w,'successor-package-moved-boundary.json',moved)]),'package_inconsistent');
+  // A capture time changed within the freshness bounds is caught by the retained capture itself.
+  const shifted=structuredClone(pkg);shifted.slots[0].captured_at_utc='2026-11-02T10:55:30.000Z';shifted.evidence_policy.oldest_capture_utc=shifted.evidence_policy.newest_capture_utc=shifted.slots[0].captured_at_utc;
+  const shiftedPath=save(ex.w,'successor-package-shifted.json',shifted);
+  refused(()=>approvalTemplate(['--package',shiftedPath]),'package_inconsistent');refused(fin(shiftedPath,shifted),'package_inconsistent');
+  // A prior summary that differs from the retained reconciliation is refused even when the chain is consistent with it.
+  const summary=structuredClone(pkg);summary.prior.approval_refs=[];summary.chain.approval_refs=['DR2-SUCCESSOR'];
+  refused(()=>approvalTemplate(['--package',save(ex.w,'successor-package-summary.json',summary)]),'history_inconsistent');
+  // Finalization never accepts evidence dated after its own observation time.
+  refused(fin(ok.package,pkg,'2026-11-02T10:54:00.000Z'),'stale_or_future_evidence');
+  // Captures must be in cursor order in time: a later page dated before the page it follows is refused.
+  const early=ex.read(join(ex.w,'capture-1.json'));early.captured_at_utc='2026-11-02T08:59:00.000Z';
+  refused(()=>prepare(['--plan',PLAN,'--plan-sha256',PLAN_SHA,'--target-evidence',join(ex.w,'target.json'),'--inventory',join(ex.w,'capture-0.json'),'--inventory',save(ex.w,'capture-1-early.json',early),'--approval-ref','DR2-ORDER','--from-utc','2026-11-02T10:00:00.000Z','--until-utc','2026-11-02T10:30:00.000Z','--now','2026-11-02T09:05:00.000Z','--out-dir',ex.w]),'stale_or_future_evidence');
+ }finally{rmSync(ex.d,{recursive:true,force:true});}
+});
+
+test('OPS-R2 H-1 remains closed: 1 slot / 3 changes / 13 units / 10:15-10:30 never approves the 2 / 10 / 46 / 10:00-10:45 profile',()=>{
+ const ex=exampleCampaign();try{
+  const pp=ex.read(ex.pkg);
+  assert.deepEqual([pp.totals.slots,pp.totals.maximum_row_changes,pp.totals.maximum_write_units,pp.window.from_utc,pp.window.until_utc],[2,10,46,'2026-11-02T10:00:00.000Z','2026-11-02T10:45:00.000Z']);
+  const tamper=structuredClone(pp);tamper.totals={slots:1,rows:1,maximum_row_changes:3,maximum_write_units:13};tamper.window={...tamper.window,from_utc:'2026-11-02T10:15:00.000Z',until_utc:'2026-11-02T10:30:00.000Z',duration_ms:900000};
+  const tp=save(ex.w,'h1-package.json',tamper);
+  refused(()=>approvalTemplate(['--package',tp]),'package_inconsistent');
+  const a={...(approvalTemplate(['--package',ex.pkg]) as any),package_sha256:sha256(readFileSync(tp)),decision:'APPROVED',owner_email:'owner@example.test',approved_at_utc:'2026-11-02T09:30:00.000Z',statement:'SYNTHETIC REVIEW ONLY '+pp.deployable_profile_sha256_if_approved,slots:1,total_maximum_row_changes:3,total_maximum_write_units:13,from_utc:tamper.window.from_utc,until_utc:tamper.window.until_utc};
+  refused(()=>finalize(['--package',tp,'--approval-record',save(ex.w,'h1-approval.SYNTHETIC.json',a),'--out-dir',ex.w,'--now','2026-11-02T09:35:00.000Z']),'package_inconsistent');
+  refused(()=>finalize(['--package',ex.pkg,'--approval-record',save(ex.w,'h1-narrow.SYNTHETIC.json',{...a,package_sha256:sha256(readFileSync(ex.pkg))}),'--out-dir',ex.w,'--now','2026-11-02T09:35:00.000Z']),'approval_mismatch');
+  // Positive control: the exact approval of the emitted profile still finalizes.
+  assert.equal((finalize(['--package',ex.pkg,'--approval-record',ex.approval,'--out-dir',ex.w,'--now','2026-11-02T09:35:00.000Z']) as any).deployable_profile_sha256,pp.deployable_profile_sha256_if_approved);
+ }finally{rmSync(ex.d,{recursive:true,force:true});}
 });

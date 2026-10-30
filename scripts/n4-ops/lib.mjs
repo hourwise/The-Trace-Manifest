@@ -22,7 +22,7 @@ export const SCHEMA={
  package:'trace-n4-ops-approval-package.2',approval:'trace-n4-ops-owner-approval.1',
  readback:'trace-n4-ops-deployment-readback.1',verification:'trace-n4-ops-deployment-verification.2',
  request:'trace-n4-ops-request-record.2',lookup:'trace-n4-ops-receipt-lookup.1',
- audit:'trace-n4-ops-audit-evidence.1',reconciliation:'trace-n4-ops-reconciliation.2',
+ audit:'trace-n4-ops-audit-evidence.1',reconciliation:'trace-n4-ops-reconciliation.3',
 };
 export const PROFILE_KEYS=['schema','approval_ref','owner_approval','environment','database_id','target_attestation_sha256','implementation_sha256','migration_sha256','publisher_email','from_utc','until_utc','requests'];
 export const SLOT_KEYS=['request_id','after','limit','selection_sha256','maximum_row_changes','maximum_write_units'];
@@ -98,6 +98,42 @@ export function writeAddressed(dir,prefix,ext,bytes){
  const digest=sha256(bytes),file=join(dir,`${prefix}-${digest}.${ext}`);
  if(existsSync(file)){if(!readFileSync(file).equals(bytes))fail('content_address_collision',file);}else writeFileSync(file,bytes,{flag:'wx'});
  return {path:file,sha256:digest};
+}
+/** Reads one retained, content-addressed history file; a missing or altered file is incomplete history, never skipped. */
+export function readAddressed(dir,prefix,digest,where){
+ if(typeof digest!=='string'||!HASH.test(digest))fail('history_incomplete',`${where} has no SHA-256 to look up`);
+ const file=join(dir,`${prefix}-${digest}.json`);if(!existsSync(file))fail('history_incomplete',`${where} ${prefix}-${digest}.json is not retained in ${dir}`);
+ const ev=readEvidence(file,where);if(ev.sha256!==digest)fail('history_incomplete',`${where} ${file} does not hash to its name`);
+ return ev;
+}
+
+// The Worker's per-request accounting object (src/lib/server/identity-maintenance/meter.ts summary()).
+export const ACCOUNTING_KEYS=['sql_statements_sent','database_round_trips','provider_rows_read','provider_rows_written','provider_metadata_complete'];
+/** Structural check of one accounting object. Missing provider counters are null and say so; they are never zero. */
+export function accountingShape(a){
+ if(a===null||typeof a!=='object'||Array.isArray(a))return {ok:false,code:'storage_accounting_malformed'};
+ if(Object.keys(a).sort().join(',')!==[...ACCOUNTING_KEYS].sort().join(','))return {ok:false,code:'storage_accounting_malformed'};
+ if(!Number.isSafeInteger(a.sql_statements_sent)||a.sql_statements_sent<0||!Number.isSafeInteger(a.database_round_trips)||a.database_round_trips<0||typeof a.provider_metadata_complete!=='boolean')return {ok:false,code:'storage_accounting_malformed'};
+ for(const k of ['provider_rows_read','provider_rows_written'])if(a[k]!==null&&(!Number.isSafeInteger(a[k])||a[k]<0))return {ok:false,code:'storage_measurement_invalid'};
+ if(a.provider_metadata_complete!==(a.provider_rows_read!==null&&a.provider_rows_written!==null))return {ok:false,code:'storage_measurements_contradict'};
+ return {ok:true,complete:a.provider_metadata_complete,written:a.provider_rows_written};
+}
+
+/** The one capture-time contract, used when a package is prepared and every time it is reloaded:
+ * each capture follows target verification and the prior profile's last execution and closure,
+ * captures are in cursor order in time, none is after the observation time, and all are fresh at window start. */
+export function captureTimeline({times,verifiedMs,priorFreshMs,maxAgeMinutes,fromMs,nowMs}){
+ if(!Number.isInteger(maxAgeMinutes)||maxAgeMinutes<1||maxAgeMinutes>HARD_MAX_EVIDENCE_AGE_MINUTES)fail('malformed_input',`evidence age limit must be 1 to ${HARD_MAX_EVIDENCE_AGE_MINUTES} minutes`);
+ const oldest=Math.min(...times),newest=Math.max(...times);
+ for(const [i,t] of times.entries()){
+  if(t<verifiedMs)fail('stale_or_future_evidence',`capture ${i} predates the verified target evidence`);
+  if(priorFreshMs!==null&&t<=priorFreshMs)fail('stale_or_future_evidence',`capture ${i} is not newer than the previous profile's last execution and closure; inspect again`);
+  if(i>0&&t<times[i-1])fail('stale_or_future_evidence',`capture ${i} is dated before the page it follows`);
+ }
+ if(nowMs!==undefined&&newest>nowMs)fail('stale_or_future_evidence','an inventory capture is dated after the observation time');
+ if(fromMs-oldest>maxAgeMinutes*60000)fail('stale_or_future_evidence',`inventory is older than ${maxAgeMinutes} minutes at window start; inspect again`);
+ if(fromMs<newest)fail('window_bound','the window must open after the last inventory capture');
+ return {oldest,newest};
 }
 export const jsonBytes=v=>Buffer.from(JSON.stringify(v,null,1)+'\n');
 

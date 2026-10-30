@@ -2,11 +2,14 @@
 // N4-OPS-01 offline receipt reconciler. It compares saved request records, receipt lookups,
 // the approved package and profile, and the owner's raw deployment readbacks. It never sends,
 // retries or replays a request, and a missing receipt is never read as zero writes.
-import {N4_VERSION,UUID,SCHEMA,CLASSES,fail,sha256,canonical,exactKeys,isoUtc,email,readEvidence,parseArgs,outputDirectory,writeAddressed,jsonBytes,deriveOutcome,main,isEntry} from './lib.mjs';
+import {N4_VERSION,UUID,SCHEMA,CLASSES,fail,sha256,canonical,exactKeys,isoUtc,email,readEvidence,parseArgs,outputDirectory,writeAddressed,jsonBytes,deriveOutcome,accountingShape,main,isEntry} from './lib.mjs';
 import {loadPackage,validateApproval,validateProfile,deploymentVerification,inventoryBody} from './profile-builder.mjs';
+import {EVIDENCE_SOURCES,SYNTHETIC_NOTE,SAVED_NOTE,checkReconciliation,campaignClosure} from './chain.mjs';
 
-export {CLASSES};
-export const EVIDENCE_SOURCES=['saved_worker_response','synthetic_fixture'];
+export {CLASSES,EVIDENCE_SOURCES};
+// A fresh apply response (identity-maintenance/service.ts) plus the Worker's accounting (worker.ts).
+const APPLY_KEYS=['schema','request_id','receipt','replayed','writes','batch_statements','provider_rows_written','provider_accounting_available','accounting'];
+const SYNTHETIC_MARKER='SYNTHETIC_NOT_PROVIDER';
 // Refusals the Worker returns before its atomic batch: no nonce, candidate update or receipt is written.
 const PRECOMMIT=new Set(['identity_request_not_approved','identity_approval_mismatch','identity_outside_maintenance_window','identity_maintenance_disabled','identity_approval_required','identity_stale_selection','identity_selection_changed','identity_unresolved_conflict','identity_precommit_write_budget','identity_empty_selection','identity_uncertified_write_indexes','identity_target_mismatch','identity_verified_preview_target_required','identity_signed_publisher_required','identity_preview_only','identity_schema_0080_required','identity_statement_budget','identity_receipt_byte_bound','identity_campaign_bound','identity_batch_approval_bound','identity_request_contract','identity_cursor','identity_page_bound','identity_request_id','identity_invalid_json','identity_operation_contract','identity_route_contract','identity_request_too_large','identity_publisher_required','identity_legacy_id_exceeds_bound','identity_snapshot_byte_bound','identity_inventory_disabled']);
 const TARGET_CODES=new Set(['identity_target_mismatch','identity_verified_preview_target_required','identity_preview_only']);
@@ -54,16 +57,32 @@ function receiptFindings(receipt,slot,pkgSlot,profile){
  return out;
 }
 
-/** Storage evidence from one fresh apply response: absent, invalid, self-contradictory or measured. */
-function storageEvidence(body){
- const top=body.provider_rows_written,acct=body.accounting,available=body.provider_accounting_available;
- if(available!==true||top===null||top===undefined)return {status:'NOT_MEASURED'};
- if(!Number.isSafeInteger(top)||top<0)return {status:'INVALID',code:'storage_measurement_invalid'};
- if(acct&&typeof acct==='object'){
-  if(acct.provider_metadata_complete!==true)return {status:'INVALID',code:'storage_measurements_contradict'};
-  if(acct.provider_rows_written!==top)return {status:'INVALID',code:'storage_measurements_contradict'};
+/** Storage evidence from one fresh apply response, validated against the whole supported response shape.
+ * Measurements that are absent everywhere stay NOT_MEASURED (never zero). A measurement claimed anywhere
+ * (the availability flag, the top-level count or a complete accounting object) must be claimed consistently
+ * everywhere, or the record is INVALID. An explicit synthetic marker keeps the record synthetic whatever
+ * its envelope says. A source label is an operator attestation, not proof of provenance. */
+export function storageEvidence(body,source){
+ const marker=body.measurement_source,synthetic=source==='synthetic_fixture'||marker===SYNTHETIC_MARKER;
+ const invalid=code=>({status:'INVALID',code,synthetic});
+ if(marker!==undefined&&marker!==SYNTHETIC_MARKER)return invalid('storage_source_unsupported');
+ if(marker!==undefined&&source!=='synthetic_fixture')return invalid('storage_source_contradiction');
+ const keys=Object.keys(body).filter(k=>k!=='measurement_source');
+ if(keys.some(k=>!APPLY_KEYS.includes(k))||['schema','request_id','receipt','replayed','writes','batch_statements'].some(k=>!keys.includes(k)))return invalid('apply_response_contract');
+ if(body.schema!==N4_VERSION||!Number.isSafeInteger(body.writes)||body.writes<0||!Number.isSafeInteger(body.batch_statements)||body.batch_statements<1)return invalid('apply_response_contract');
+ const top=body.provider_rows_written,available=body.provider_accounting_available,acct=body.accounting;
+ if(top!==undefined&&top!==null&&(!Number.isSafeInteger(top)||top<0))return invalid('storage_measurement_invalid');
+ if(available!==undefined&&typeof available!=='boolean')return invalid('storage_accounting_malformed');
+ const shape=acct===undefined||acct===null?null:accountingShape(acct);
+ if(shape&&!shape.ok)return invalid(shape.code);
+ const claims=[available===true,top!==undefined&&top!==null,shape?.complete===true];
+ if(!claims.some(Boolean)){
+  // Nothing measured. A real Worker always sends accounting, so a missing object is noted but stays unknown.
+  return {status:'NOT_MEASURED',synthetic};
  }
- return {status:'MEASURED',rows:top};
+ if(!claims.every(Boolean))return invalid(acct===undefined||acct===null?'storage_accounting_missing':'storage_measurements_contradict');
+ if(shape.written!==top)return invalid('storage_measurements_contradict');
+ return {status:'MEASURED',rows:top,synthetic};
 }
 
 function classifySlot(slot,pkgSlot,profile,target,requests,lookups,untilMs){
@@ -94,18 +113,18 @@ function classifySlot(slot,pkgSlot,profile,target,requests,lookups,untilMs){
   for(const f of receiptFindings(receipt,slot,pkgSlot,profile))add(f.class,f.code);
   logical=receipt.writes;
   for(const r of freshRecords)if(r.response.body.writes!==receipt.writes)add('UNEXPECTED_WRITE_CONSUMPTION','response_writes_differ_from_receipt');
-  const measured=freshRecords.map(r=>({record:r,e:storageEvidence(r.response.body)}));
+  const measured=freshRecords.map(r=>({record:r,e:storageEvidence(r.response.body,r.evidence_source)}));
   for(const m of measured)if(m.e.status==='INVALID')add('CONFLICTING_OR_DUPLICATE',m.e.code);
   const ok=measured.find(m=>m.e.status==='MEASURED');
-  if(ok){storage={status:'MEASURED',provider_rows_written:ok.e.rows,basis:ok.record.evidence_source};if(ok.e.rows>slot.maximum_write_units)add('UNEXPECTED_WRITE_CONSUMPTION','provider_rows_written_above_reservation');}
+  if(ok){storage={status:'MEASURED',provider_rows_written:ok.e.rows,basis:ok.e.synthetic?'synthetic_fixture':'saved_worker_response'};if(ok.e.rows>slot.maximum_write_units)add('UNEXPECTED_WRITE_CONSUMPTION','provider_rows_written_above_reservation');}
   else storage={status:measured.some(m=>m.e.status==='INVALID')?'INVALID':'NOT_MEASURED',provider_rows_written:null,basis:null};
   basis=durable.length?'durable_receipt_lookup':'apply_response_only';
  }
  const conclusive=lookups.filter(l=>l.response.status===404&&l.response.body?.error==='identity_receipt_not_found'&&l.at>=untilMs);
+ if(receipt&&conclusive.length)add('CONFLICTING_OR_DUPLICATE','receipt_present_and_absent');
  const blocking=findings.find(f=>f.class==='STALE_OR_MISMATCHED_TARGET')??findings.find(f=>f.class==='CONFLICTING_OR_DUPLICATE')??findings.find(f=>f.class==='UNEXPECTED_WRITE_CONSUMPTION');
  let cls,absenceConfirmed=null;
- if(receipt&&conclusive.length){cls='CONFLICTING_OR_DUPLICATE';findings.push({class:cls,code:'receipt_present_and_absent'});}
- else if(blocking)cls=blocking.class;
+ if(blocking)cls=blocking.class;
  else if(receipt){cls=durable.length?'COMPLETED_MATCHED':'MISSING_OR_UNCERTAIN';if(!durable.length)basis='receipt_not_confirmed_by_durable_lookup';}
  else{
   absenceConfirmed=conclusive.length>0;
@@ -121,8 +140,11 @@ function classifySlot(slot,pkgSlot,profile,target,requests,lookups,untilMs){
 }
 
 export function reconcile(argv){
- const a=parseArgs(argv,{'package':{type:'string',required:true},'approval-record':{type:'string',required:true},'profile':{type:'string',required:true},'readback-open':{type:'string'},'readback-closure':{type:'string'},'request':{type:'list'},'receipt-lookup':{type:'list'},'audit-evidence':{type:'string'},'final-inventory':{type:'string'},'out-dir':{type:'string',required:true}});
- const dir=outputDirectory(a['out-dir']),loaded=loadPackage(a.package),{ev:pkgEv,pkg,facts}=loaded;
+ const a=parseArgs(argv,{'package':{type:'string',required:true},'approval-record':{type:'string',required:true},'profile':{type:'string',required:true},'readback-open':{type:'string'},'readback-closure':{type:'string'},'request':{type:'list'},'receipt-lookup':{type:'list'},'audit-evidence':{type:'string'},'final-inventory':{type:'string'},'out-dir':{type:'string',required:true},'now':{type:'string'}});
+ // Trusted observation-time boundary: the workstation clock when the reconciler runs. An operator-declared
+ // --now (needed for intentionally future-dated synthetic fixtures) is recorded as such and never certifies.
+ const observed=a.now?isoUtc(a.now,'--now'):Date.now(),observationSource=a.now?'operator_declared':'system_clock';
+ const dir=outputDirectory(a['out-dir']),loaded=loadPackage(a.package,{now:observed}),{ev:pkgEv,pkg,facts}=loaded;
  const approval=validateApproval(readEvidence(a['approval-record'],'owner approval record'),loaded);
  const profEv=readEvidence(a.profile,'deployable profile');if(profEv.sha256!==facts.deployable_profile_sha256)fail('profile_mismatch','profile is not the approved deployable profile');
  const profile=profEv.value;validateProfile(profile,pkg.approval_ref);
@@ -140,6 +162,8 @@ export function reconcile(argv){
  const slotIds=new Set(profile.requests.map(r=>r.request_id)),requests=a.request.map(p=>{const ev=readEvidence(p,'request record');sources.push({role:'request_record',sha256:ev.sha256});return loadRequest(ev);});
  const lookups=a['receipt-lookup'].map(p=>{const ev=readEvidence(p,'receipt lookup');sources.push({role:'receipt_lookup',sha256:ev.sha256});return loadLookup(ev);});
  if(new Set(requests.map(r=>r.sha256)).size!==requests.length||new Set(lookups.map(l=>l.sha256)).size!==lookups.length)fail('duplicate_input','the same record was supplied twice');
+ const future=[...requests.flatMap(r=>[r.sent,r.received??r.sent]),...lookups.map(l=>l.at),...['open','closure'].filter(p=>deployment[p]).map(p=>Date.parse(deployment[p].readback_captured_at_utc))];
+ if(future.some(t=>t>observed))fail('stale_or_future_evidence','a saved record is dated after the observation time; live evidence cannot come from the future');
  for(const r of requests)if(!slotIds.has(r.request.request_id))addCampaign('CONFLICTING_OR_DUPLICATE','request_for_unapproved_slot',r.request.request_id);
  for(const l of lookups)if(!slotIds.has(l.request.request_id))addCampaign('CONFLICTING_OR_DUPLICATE','lookup_for_unapproved_slot',l.request.request_id);
  const from=Date.parse(profile.from_utc),until=Date.parse(profile.until_utc);
@@ -164,7 +188,8 @@ export function reconcile(argv){
   const ev=readEvidence(a['audit-evidence'],'audit evidence'),v=ev.value;sources.push({role:'audit_evidence',sha256:ev.sha256});
   exactKeys(v,['schema','captured_at_utc','query_ref','identity_receipt_event_ids','identity_maintenance_nonces_in_window'],'audit evidence');
   if(v.schema!==SCHEMA.audit||!Array.isArray(v.identity_receipt_event_ids)||(v.identity_maintenance_nonces_in_window!==null&&(!Number.isSafeInteger(v.identity_maintenance_nonces_in_window)||v.identity_maintenance_nonces_in_window<0)))fail('malformed_input','audit evidence');
-  const at=isoUtc(v.captured_at_utc,'audit captured_at_utc'),expected=completed.map(s=>'n4-identity:'+s.request_id).sort(),found=[...v.identity_receipt_event_ids].sort();
+  const at=isoUtc(v.captured_at_utc,'audit captured_at_utc');if(at>observed)fail('stale_or_future_evidence','audit evidence is dated after the observation time');
+  const expected=completed.map(s=>'n4-identity:'+s.request_id).sort(),found=[...v.identity_receipt_event_ids].sort();
   const receiptsMatch=canonical(found)===canonical(expected),noncesMatch=v.identity_maintenance_nonces_in_window===null?null:v.identity_maintenance_nonces_in_window===completed.length;
   if(at<until)notVerified.push('audit_evidence_captured_before_window_closed');
   if(!receiptsMatch)addCampaign('CONFLICTING_OR_DUPLICATE','audit_receipts_differ_from_completed_slots');
@@ -186,7 +211,10 @@ export function reconcile(argv){
    if(v.publisher_email!==profile.publisher_email)fail('publisher_mismatch','final inventory publisher');
    const after=Math.max(from,latest??from,closeAt??from);
    if(at<after)fail('stale_or_future_evidence','the final inventory must be captured after this profile\'s execution and closure');
-   finalInventory={sha256:ev.sha256,captured_at_utc:v.captured_at_utc,known_pending_lower_bound:pending,pending_count_exact:v.response.body.pending_count_exact,missing_identity_guard_blocked:v.response.body.missing_identity_guard_blocked,rows_in_first_page:rows.length,conflicts_in_page:conflicts};
+   if(at>observed)fail('stale_or_future_evidence','the final inventory is dated after the observation time');
+   // One page is one page: an exact count is reported as exact, 51 only as a lower bound, and nothing here
+   // says the backlog beyond the page was inspected.
+   finalInventory={sha256:ev.sha256,captured_at_utc:v.captured_at_utc,limit:v.request.limit,known_pending_lower_bound:pending,pending_count_kind:v.response.body.pending_count_exact?'EXACT':'LOWER_BOUND',pending_count_exact:v.response.body.pending_count_exact,missing_identity_guard_blocked:v.response.body.missing_identity_guard_blocked,rows_in_first_page:rows.length,has_more:v.response.body.has_more,conflicts_in_page:conflicts};
   }catch(error){addCampaign(error.code==='target_mismatch'||error.code==='implementation_mismatch'||error.code==='migration_identity_mismatch'?'STALE_OR_MISMATCHED_TARGET':'CONFLICTING_OR_DUPLICATE','final_inventory_invalid',error.message);}
  }
  for(const s of slots){
@@ -197,11 +225,12 @@ export function reconcile(argv){
  const outcome=deriveOutcome(slots,campaign.map(c=>c.code),notVerified),{disposition}=outcome;
  const count=Object.fromEntries(CLASSES.map(c=>[c,slots.filter(s=>s.class===c).length])),measured=completed.filter(s=>s.storage_writes.status==='MEASURED');
  const evidenceSources=[...new Set(requests.map(r=>r.evidence_source))].sort();
- const synthetic=evidenceSources.includes('synthetic_fixture');
+ const markers=requests.filter(r=>r.response?.body?.measurement_source===SYNTHETIC_MARKER).length,synthetic=evidenceSources.includes('synthetic_fixture')||markers>0;
  sources.sort((x,y)=>(x.role+x.sha256).localeCompare(y.role+y.sha256));
+ const certifies=disposition==='PASS'&&!synthetic&&observationSource==='system_clock'&&completed.length>0&&completed.every(s=>s.storage_writes.status==='MEASURED'&&s.storage_writes.basis==='saved_worker_response');
  const result={schema:SCHEMA.reconciliation,disposition,stop_continuable:outcome.stop_continuable,
-  evidence_basis:{request_record_sources:evidenceSources,synthetic,certifies_provider_consumption:disposition==='PASS'&&!synthetic&&measured.length===completed.length&&completed.length>0,
-   note:synthetic?'SYNTHETIC EVIDENCE: storage figures came from test fixtures, not from D1. This reconciliation certifies nothing about provider consumption.':'Operator-saved Worker responses; local tooling cannot authenticate them against Cloudflare.'},
+  evidence_basis:{request_record_sources:evidenceSources,synthetic,synthetic_markers:markers,observation_time_utc:new Date(observed).toISOString(),observation_time_source:observationSource,certifies_provider_consumption:certifies,
+   note:synthetic?SYNTHETIC_NOTE:SAVED_NOTE},
   approval_ref:pkg.approval_ref,package_sha256:pkgEv.sha256,approval_record_sha256:approval.sha256,deployable_profile_sha256:profEv.sha256,
   target:{environment:'preview',database_id:profile.database_id,target_attestation_sha256:profile.target_attestation_sha256,implementation_sha256:profile.implementation_sha256,migration_sha256:profile.migration_sha256},
   window:{from_utc:profile.from_utc,until_utc:profile.until_utc},deployment,
@@ -209,10 +238,12 @@ export function reconcile(argv){
   totals:{slots:slots.length,...count,committed_logical_changes:completed.reduce((n,s)=>n+s.logical_changes,0),reserved_row_changes_for_completed:completed.reduce((n,s)=>n+s.reserved_row_changes,0),
    reserved_write_units_for_completed:completed.reduce((n,s)=>n+s.reserved_write_units,0),measured_storage_rows_written:measured.reduce((n,s)=>n+s.storage_writes.provider_rows_written,0),slots_with_unmeasured_storage:completed.length-measured.length,
    candidates_completed:completed.reduce((n,s)=>n+s.rows,0)},
-  audit,final_inventory:finalInventory,final_inventory_required:true,
+  audit,final_inventory:finalInventory,final_inventory_required:true,campaign_closure:campaignClosure(finalInventory,!!a['final-inventory']),
   resume_after:outcome.resume_after,campaign_reported_more_rows:outcome.last_done>=0?pkg.slots[outcome.last_done].has_more:null,
   chain:pkg.chain,slots,campaign_findings:campaign,stop_reasons:outcome.stop_reasons,not_verified_reasons:notVerified,sources,
   notice:'Offline comparison of saved evidence. No request was sent, retried or replayed. A missing receipt is never treated as zero writes. Local evidence is not Cloudflare billing.'};
+ // The record must pass the same re-derivation a successor will apply to it.
+ try{checkReconciliation(result);}catch(error){fail('internal_inconsistency',error.message);}
  const json=writeAddressed(dir,'n4-reconciliation','json',jsonBytes(result));
  const md=writeAddressed(dir,'n4-reconciliation-report','md',Buffer.from(report(result,json.sha256)));
  return {action:'reconciled',disposition,stop_continuable:outcome.stop_continuable,synthetic,reconciliation:json.path,reconciliation_sha256:json.sha256,report:md.path,resume_after:outcome.resume_after,requests_sent:0};
@@ -228,9 +259,10 @@ export function report(r,sha){
   `- Target: Preview \`${r.target.database_id}\`, attestation \`${r.target.target_attestation_sha256}\`, implementation \`${r.target.implementation_sha256}\``,`- Window: ${r.window.from_utc} to ${r.window.until_utc}; latest recorded execution ${r.latest_execution_utc??'none'}`,
   `- Deployment readbacks (recomputed): open ${dep(r.deployment.open)}, closure ${dep(r.deployment.closure)}`,
   `- Committed logical changes: ${r.totals.committed_logical_changes} (reserved ${r.totals.reserved_row_changes_for_completed}); measured storage rows written: ${r.totals.measured_storage_rows_written} (reserved units ${r.totals.reserved_write_units_for_completed}; ${r.totals.slots_with_unmeasured_storage} completed slot(s) unmeasured)`,
-  `- Evidence basis: ${r.evidence_basis.request_record_sources.join(', ')||'no request records'}; certifies provider consumption: ${r.evidence_basis.certifies_provider_consumption?'yes, for operator-saved responses':'no'}`,
+  `- Evidence basis: ${r.evidence_basis.request_record_sources.join(', ')||'no request records'}${r.evidence_basis.synthetic_markers?`; ${r.evidence_basis.synthetic_markers} record(s) carry an explicit synthetic marker`:''}; observation time ${r.evidence_basis.observation_time_utc} (${r.evidence_basis.observation_time_source.replace('_',' ')}); certifies provider consumption: ${r.evidence_basis.certifies_provider_consumption?'yes, for operator-saved responses':'no'}`,
   `- Audit/nonce evidence: ${r.audit?`receipts ${r.audit.receipt_event_ids_match?'match':'DIFFER'}, nonce count ${r.audit.nonces_match===null?'not supplied':r.audit.nonces_match?'matches':'DIFFERS'} (aggregate only)`:'not supplied'}`,
-  `- Resume cursor for the next profile: \`${JSON.stringify(r.resume_after)}\`. A final inventory from \`after: ""\` is always required before closing the campaign${r.final_inventory?`; supplied: pending lower bound ${r.final_inventory.known_pending_lower_bound}`:''}.`,'',
+  `- Resume cursor for the next profile: \`${JSON.stringify(r.resume_after)}\`. A final inventory from \`after: ""\` is always required before closing the campaign${r.final_inventory?`; supplied: pending ${r.final_inventory.pending_count_kind==='EXACT'?'exactly':'at least'} ${r.final_inventory.known_pending_lower_bound}, ${r.final_inventory.rows_in_first_page} row(s) in its first page`:''}.`,
+  `- Campaign closure (a separate conclusion from this profile's disposition): **${r.campaign_closure.status}**`,'',
   '| Slot | Request id | Rows | Class | Basis | Logical / reserved | Storage / reserved units | Findings |','|---|---|---|---|---|---|---|---|',...r.slots.map(line),'',
   r.stop_reasons.length?`**STOP reasons:** ${r.stop_reasons.join(', ')}`:'No STOP reason.',r.not_verified_reasons.length?`**Not verified:** ${r.not_verified_reasons.join(', ')}`:'Nothing left unverified.','',
   `_${r.notice}_`,''].join('\n');
