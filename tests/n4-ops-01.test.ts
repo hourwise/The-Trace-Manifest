@@ -326,7 +326,7 @@ test('OPS-R1 H-1 a package whose summaries disagree with the profile it would em
   const record={schema:lib.SCHEMA.approval,decision:'APPROVED',approval_ref:'N4-H1',owner_email:'owner@example.test',approved_at_utc:iso(T+3000000),package_sha256:sha256(readFileSync(forgedPath)),deployable_profile_sha256:pkg.deployable_profile_sha256_if_approved,environment:'preview',database_id:contract.PREVIEW_DATABASE_ID,publisher_email:PUBLISHER,from_utc:forged.window.from_utc,until_utc:forged.window.until_utc,slots:1,total_maximum_row_changes:3,total_maximum_write_units:13,statement:'SYNTHETIC approval of '+pkg.deployable_profile_sha256_if_approved};
   refused(()=>finalize(['--package',forgedPath,'--approval-record',save(out,'forged-approval.json',record),'--out-dir',out,'--now',iso(T+3100000)]),'package_inconsistent');
   // Each duplicated fact is checked on its own.
-  const edits:[string,(p:any)=>void][]=[['window only',p=>{p.window.until_utc=iso(T+3600000+30*60000);p.window.duration_ms=30*60000;}],['totals only',p=>{p.totals.maximum_write_units-=1;}],['slot rows',p=>{p.slots[1].rows.pop();}],['slot budget',p=>{p.slots[0].maximum_write_units=13;}],
+  const edits:[string,(p:any)=>void][]=[['window only',p=>{p.window.until_utc=iso(T+3600000+30*60000);p.window.duration_ms=30*60000;}],['totals only',p=>{p.totals.maximum_write_units-=1;}],['slot rows',p=>{p.slots[1].rows.pop();}],['slot row count only',p=>{p.slots[1].rows.shift();p.totals.rows-=1;}],['slot budget',p=>{p.slots[0].maximum_write_units=13;}],
    ['target attestation',p=>{p.target.target_attestation_sha256='b'.repeat(64);}],['publisher',p=>{p.publisher_email='other@example.test';}],['chain',p=>{p.chain.request_ids.reverse();}],['evidence times',p=>{p.evidence_policy.newest_capture_utc=iso(T);}],['byte count',p=>{p.deployable_profile_bytes_if_approved+=1;}],['request id',p=>{p.slots[0].request_id=p.slots[1].request_id;}]];
   for(const [label,fn] of edits){const f=structuredClone(pkg);fn(f);refused(()=>approvalTemplate(['--package',save(out,`edit-${label.replace(/ /g,'-')}.json`,f)]),'package_inconsistent');}
   // The facts the owner approves are those of the emitted profile.
@@ -459,7 +459,8 @@ test('OPS-R1 L-2 a lone UTF-16 surrogate in a row id or cursor is refused',async
  const w=world(30),out=dir();try{
   const T=Date.UTC(2026,10,2,9,0,0),c=await capture(w,'',T),target=save(out,'target.json',targetEvidence());
   const args=(f:string)=>()=>prepare(['--plan',PLAN,'--plan-sha256',PLAN_SHA,'--target-evidence',target,'--inventory',f,'--approval-ref','N4-L2','--from-utc',iso(T+3600000),'--until-utc',iso(T+7200000),'--now',iso(T+60000),'--out-dir',out]);
-  const bad=structuredClone(c);bad.response.body.rows[0].id='\uD800legacy';
+  // The surrogate is on the last id, with next_cursor kept consistent, so only the Unicode check can refuse it.
+  const bad=structuredClone(c),last=bad.response.body.rows.at(-1);last.id+='\uD800';bad.response.body.next_cursor=last.id;
   refused(args(save(out,'surrogate-id.json',bad)),'inventory_contract');
   const badCursor=structuredClone(c);badCursor.request.after='\uDC00';badCursor.response.body.after='\uDC00';
   refused(args(save(out,'surrogate-cursor.json',badCursor)),'malformed_cursor');
