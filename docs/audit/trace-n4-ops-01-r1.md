@@ -95,7 +95,7 @@ The end-to-end tests supply **labelled synthetic** storage metadata, because the
 
 ## Handoff to the independent delta reviewer
 
-1. `git log --oneline 919230d..claude/trace-n4-ops-01-r1`: three commits, two code-bearing and then the documentation commit.
+1. `git log --oneline 919230d..claude/trace-n4-ops-01-r1`: four commits: two code-bearing (`0135283`, `7cd2199`), the documentation commit (`e53f822`) and a line-ending pin for the manifest (`53f0d35`).
 2. **Diff:** `git diff --stat 919230d 7cd2199`. Confirm nothing under `src/`, `workers/` or `db/` changed, and that `wrangler*.toml`, `package*.json` and `.github/workflows/ci.yml` are unchanged.
 3. **Manifest:** run `node scripts/n4-ops/ops-manifest.mjs --source-commit 7cd2199b96eb53048d9d01d6d0cb1be7aa2f8fbf --output <new D: file>`. Expect `9b5dee7e…`, byte-identical to the committed manifest, with 63 N4 files verified.
 4. **Tests:** run `node node_modules/tsx/dist/cli.mjs --test tests/n4-ops-01.test.ts` with temporary paths on D:, then rerun your own H-1 and M-1 to M-5 reproductions against the `.2` formats.
