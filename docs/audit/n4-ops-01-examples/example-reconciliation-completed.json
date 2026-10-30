@@ -1,10 +1,18 @@
 {
- "schema": "trace-n4-ops-reconciliation.1",
+ "schema": "trace-n4-ops-reconciliation.2",
  "disposition": "PASS",
  "stop_continuable": false,
+ "evidence_basis": {
+  "request_record_sources": [
+   "synthetic_fixture"
+  ],
+  "synthetic": true,
+  "certifies_provider_consumption": false,
+  "note": "SYNTHETIC EVIDENCE: storage figures came from test fixtures, not from D1. This reconciliation certifies nothing about provider consumption."
+ },
  "approval_ref": "N4-EXAMPLE-P01",
- "package_sha256": "cb36bc7a9c344058ae497b51bfb579c090a86f448564838c51cfe8c048fc0685",
- "approval_record_sha256": "7f8e36ed535160cf6b1baf651466ece6bebe7b54b42236633b2fe1732673859c",
+ "package_sha256": "0da0a3a8cb513ecb2f16b06c93801c5f20e8b372775111b12b046f37d7e89110",
+ "approval_record_sha256": "8139d908eed78cc51b8372cddb92f8a6e3064567b20c9a63807eda4cc60fc09f",
  "deployable_profile_sha256": "7dcdc4a3b282b51c0ff48ce15c21ea5afcef523349099948bd010d85edbdb577",
  "target": {
   "environment": "preview",
@@ -19,18 +27,23 @@
  },
  "deployment": {
   "open": {
-   "sha256": "5edfd14288132e8ffa5b64fb8b70f5689e745380a91c81ee9552b8c4c46b8db8",
    "disposition": "PASS",
-   "captured_at_utc": "2026-11-02T09:50:00.000Z",
+   "readback_sha256": "7674043bb1efb3e60f25eb67d1d53c2f92ba7ef9e914109304c54d15e5878d44",
+   "readback_captured_at_utc": "2026-11-02T09:50:00.000Z",
+   "verification_sha256": "0d424bcf6934241ca3801f83170f9ba2535dd4bc9e62d2830a346c88cd6e42fb",
+   "failed_checks": [],
    "closed_after_window": null
   },
   "closure": {
-   "sha256": "72ff6f04c872684678cf5110fd1a3ad88d8f0f26a777a59391e4953c1530f801",
    "disposition": "PASS",
-   "captured_at_utc": "2026-11-02T10:20:00.000Z",
+   "readback_sha256": "aa7b8e49c43a0d8e20431c43ff400aac9bc4cec39ebad904dc193574151e2f7f",
+   "readback_captured_at_utc": "2026-11-02T10:20:00.000Z",
+   "verification_sha256": "da915c09f154ffe5b2e37712679b4b7c321fd50aea01aa1a3fba3d754d7ae532",
+   "failed_checks": [],
    "closed_after_window": false
   }
  },
+ "latest_execution_utc": "2026-11-02T10:05:00.900Z",
  "totals": {
   "slots": 2,
   "COMPLETED_MATCHED": 2,
@@ -76,7 +89,8 @@
    "reserved_write_units": 23,
    "storage_writes": {
     "status": "MEASURED",
-    "provider_rows_written": 14
+    "provider_rows_written": 14,
+    "basis": "synthetic_fixture"
    },
    "next_cursor": "cand-0003-bad",
    "attempts": 1,
@@ -98,7 +112,8 @@
    "reserved_write_units": 23,
    "storage_writes": {
     "status": "MEASURED",
-    "provider_rows_written": 14
+    "provider_rows_written": 14,
+    "basis": "synthetic_fixture"
    },
    "next_cursor": "cand-0006",
    "attempts": 1,
@@ -113,23 +128,23 @@
  "sources": [
   {
    "role": "approval_package",
-   "sha256": "cb36bc7a9c344058ae497b51bfb579c090a86f448564838c51cfe8c048fc0685"
+   "sha256": "0da0a3a8cb513ecb2f16b06c93801c5f20e8b372775111b12b046f37d7e89110"
   },
   {
    "role": "deployable_profile",
    "sha256": "7dcdc4a3b282b51c0ff48ce15c21ea5afcef523349099948bd010d85edbdb577"
   },
   {
-   "role": "deployment_closure",
-   "sha256": "72ff6f04c872684678cf5110fd1a3ad88d8f0f26a777a59391e4953c1530f801"
-  },
-  {
-   "role": "deployment_open",
-   "sha256": "5edfd14288132e8ffa5b64fb8b70f5689e745380a91c81ee9552b8c4c46b8db8"
-  },
-  {
    "role": "owner_approval",
-   "sha256": "7f8e36ed535160cf6b1baf651466ece6bebe7b54b42236633b2fe1732673859c"
+   "sha256": "8139d908eed78cc51b8372cddb92f8a6e3064567b20c9a63807eda4cc60fc09f"
+  },
+  {
+   "role": "readback_closure",
+   "sha256": "aa7b8e49c43a0d8e20431c43ff400aac9bc4cec39ebad904dc193574151e2f7f"
+  },
+  {
+   "role": "readback_open",
+   "sha256": "7674043bb1efb3e60f25eb67d1d53c2f92ba7ef9e914109304c54d15e5878d44"
   },
   {
    "role": "receipt_lookup",
@@ -141,11 +156,11 @@
   },
   {
    "role": "request_record",
-   "sha256": "2c74f23ed1bd9221badaf584b1993c64b6ee08badd19ba95ceacd7eed4974b0f"
+   "sha256": "6f4742f11e2d4bd835385b9acc2a7696f6f74f2364e7be07d5499654855f3218"
   },
   {
    "role": "request_record",
-   "sha256": "39afb13e6986fcc246ebeb789d355d808e2481fb28f1fa3d490543071cf05706"
+   "sha256": "a6fccd76e3e643746d4b0e36e4ff435aef296b7845a5fd41c7687e7e4c0bc4e0"
   }
  ],
  "notice": "Offline comparison of saved evidence. No request was sent, retried or replayed. A missing receipt is never treated as zero writes. Local evidence is not Cloudflare billing."

@@ -1,5 +1,5 @@
 {
- "schema": "trace-n4-ops-approval-package.1",
+ "schema": "trace-n4-ops-approval-package.2",
  "status": "AWAITING_OWNER_APPROVAL",
  "owner_approval": null,
  "approved_at_utc": null,
@@ -31,7 +31,8 @@
  "evidence_policy": {
   "max_evidence_age_minutes": 240,
   "oldest_capture_utc": "2026-11-02T09:00:00.000Z",
-  "newest_capture_utc": "2026-11-02T09:01:00.000Z"
+  "newest_capture_utc": "2026-11-02T09:01:00.000Z",
+  "captures_after_utc": "2026-11-02T08:30:00.000Z"
  },
  "slots": [
   {

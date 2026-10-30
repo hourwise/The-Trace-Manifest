@@ -2,7 +2,7 @@
 // network, process-spawning or provider modules, and nothing here can approve or send.
 import {createHash} from 'node:crypto';
 import {readFileSync,writeFileSync,existsSync,statSync,realpathSync} from 'node:fs';
-import {resolve,dirname,relative,isAbsolute,join} from 'node:path';
+import {resolve,dirname,relative,isAbsolute,join,sep} from 'node:path';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 
 // Mirrors src/lib/server/identity-maintenance/contract.ts; tests/n4-ops-01.test.ts pins each value.
@@ -19,10 +19,10 @@ export const UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}
 export const APPROVAL_REF=/^[-A-Za-z0-9_]{1,100}$/;
 export const SCHEMA={
  target:'trace-n4-ops-target-evidence.1',inventory:'trace-n4-ops-inventory-capture.1',
- package:'trace-n4-ops-approval-package.1',approval:'trace-n4-ops-owner-approval.1',
- readback:'trace-n4-ops-deployment-readback.1',verification:'trace-n4-ops-deployment-verification.1',
- request:'trace-n4-ops-request-record.1',lookup:'trace-n4-ops-receipt-lookup.1',
- audit:'trace-n4-ops-audit-evidence.1',reconciliation:'trace-n4-ops-reconciliation.1',
+ package:'trace-n4-ops-approval-package.2',approval:'trace-n4-ops-owner-approval.1',
+ readback:'trace-n4-ops-deployment-readback.1',verification:'trace-n4-ops-deployment-verification.2',
+ request:'trace-n4-ops-request-record.2',lookup:'trace-n4-ops-receipt-lookup.1',
+ audit:'trace-n4-ops-audit-evidence.1',reconciliation:'trace-n4-ops-reconciliation.2',
 };
 export const PROFILE_KEYS=['schema','approval_ref','owner_approval','environment','database_id','target_attestation_sha256','implementation_sha256','migration_sha256','publisher_email','from_utc','until_utc','requests'];
 export const SLOT_KEYS=['request_id','after','limit','selection_sha256','maximum_row_changes','maximum_write_units'];
@@ -55,7 +55,9 @@ export function isoUtc(value,where){
 }
 export const email=(v,where)=>{if(typeof v!=='string'||v.length>200||!/^\S+@\S+\.\S+$/.test(v)||v!==v.toLowerCase())fail('malformed_input',`${where} must be a lowercase email of at most 200 characters`);return v;};
 export const hash=(v,where)=>{if(typeof v!=='string'||!HASH.test(v))fail('malformed_hash',`${where} must be a lowercase SHA-256`);return v;};
-export const cursorText=(v,where)=>{if(typeof v!=='string'||v.length>200||/[\u0000-\u001f\u007f]/.test(v))fail('malformed_cursor',`${where} must be a cursor of at most 200 characters`);return v;};
+export const cursorText=(v,where)=>{if(typeof v!=='string'||v.length>200||/[\u0000-\u001f\u007f]/.test(v)||!v.isWellFormed())fail('malformed_cursor',`${where} must be well-formed Unicode of at most 200 characters`);return v;};
+/** A lone UTF-16 surrogate cannot be a SQLite UTF-8 id, so it is refused rather than carried through. */
+export const rowId=(v,where)=>{if(typeof v!=='string'||!v.length||v.length>200||!v.isWellFormed())fail('inventory_contract',`${where} must be a well-formed id of 1 to 200 characters`);return v;};
 /** SQLite's BINARY collation compares UTF-8 bytes; JavaScript string order would differ for astral characters. */
 export const byteOrder=(a,b)=>Buffer.compare(Buffer.from(a,'utf8'),Buffer.from(b,'utf8'));
 
@@ -85,7 +87,9 @@ export function parseArgs(argv,spec){
 export function outputDirectory(path){
  const dir=resolve(path);if(!existsSync(dir)||!statSync(dir).isDirectory())fail('missing_output_directory',path);
  const real=realpathSync(dir),rel=relative(realpathSync(REPO_ROOT),real);
- if(!rel||(!rel.startsWith('..')&&!isAbsolute(rel)))fail('output_inside_repository','write evidence to a TRACE-managed folder outside the repository');
+ // Path-component containment: a descendant named "..something" is still inside the repository.
+ const outside=isAbsolute(rel)||rel==='..'||rel.startsWith('..'+sep);
+ if(!outside)fail('output_inside_repository','write evidence to a TRACE-managed folder outside the repository');
  if(process.platform==='win32'&&!/^D:\\/i.test(real))fail('output_not_on_d','TRACE-managed evidence must reside on D:');
  return real;
 }
@@ -111,6 +115,19 @@ export function requestId(approvalRef,index,after,selection){
  return `${h.slice(0,8)}-${h.slice(8,12)}-${h.slice(12,16)}-${h.slice(16,20)}-${h.slice(20,32)}`;
 }
 export const reservation=n=>({maximum_row_changes:n+2,maximum_write_units:5*n+8});
+
+export const CLASSES=['COMPLETED_MATCHED','EXPLICITLY_REFUSED','UNUSED_AUTHORISED_SLOT','MISSING_OR_UNCERTAIN','CONFLICTING_OR_DUPLICATE','UNEXPECTED_WRITE_CONSUMPTION','STALE_OR_MISMATCHED_TARGET'];
+export const STOP_CLASSES=new Set(['EXPLICITLY_REFUSED','CONFLICTING_OR_DUPLICATE','UNEXPECTED_WRITE_CONSUMPTION','STALE_OR_MISMATCHED_TARGET']);
+/** The single rule turning slot classes and findings into a disposition. The reconciler uses it to
+ * decide, and the builder re-derives it from a prior reconciliation so an edited label cannot pass. */
+export function deriveOutcome(slots,campaignCodes,notVerified){
+ const stopReasons=[...slots.filter(s=>STOP_CLASSES.has(s.class)).map(s=>`slot_${s.index}_${s.class}`),...campaignCodes];
+ const disposition=stopReasons.length?'STOP':notVerified.length?'NOT_VERIFIED':'PASS';
+ const firstIncomplete=slots.findIndex(s=>s.class!=='COMPLETED_MATCHED'),lastDone=firstIncomplete<0?slots.length-1:firstIncomplete-1;
+ const resumeAfter=lastDone>=0?slots[lastDone].next_cursor:slots[0].after;
+ const stopContinuable=disposition==='STOP'&&!campaignCodes.length&&!notVerified.length&&slots.every((s,i)=>i<=lastDone?s.class==='COMPLETED_MATCHED':i===lastDone+1?s.class==='EXPLICITLY_REFUSED'&&s.absence_confirmed===true:s.class==='UNUSED_AUTHORISED_SLOT');
+ return {stop_reasons:stopReasons,disposition,stop_continuable:stopContinuable,resume_after:resumeAfter,first_incomplete:firstIncomplete,last_done:lastDone};
+}
 
 export const isEntry=url=>!!process.argv[1]&&url===pathToFileURL(resolve(process.argv[1])).href;
 export function main(run){

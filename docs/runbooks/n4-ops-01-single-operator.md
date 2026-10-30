@@ -61,7 +61,7 @@ The owner writes the target evidence record after the separately approved A0 ins
 2. **Run `prepare`:**
 
 ```powershell
-node scripts/n4-ops/profile-builder.mjs prepare --plan docs/audit/local-news-p4-n4-preview-plan.json --plan-sha256 9f6ff054b7537408e06634d853f7ed049476d1bdfcc0d065769846ed568a3ec9 --target-evidence <A0 record> --inventory <capture 1> [--inventory <capture 2> ...] --approval-ref <new reference> --from-utc <window start> --until-utc <window end> --out-dir <evidence folder> [--prior-reconciliation <previous reconciliation> [--acknowledge-stop <its SHA-256>]]
+node scripts/n4-ops/profile-builder.mjs prepare --plan docs/audit/local-news-p4-n4-preview-plan.json --plan-sha256 9f6ff054b7537408e06634d853f7ed049476d1bdfcc0d065769846ed568a3ec9 --target-evidence <A0 record> --inventory <capture 1> [--inventory <capture 2> ...] --approval-ref <new reference> --from-utc <window start> --until-utc <window end> --out-dir <evidence folder> [--prior-reconciliation <previous reconciliation> [--acknowledge-stop <its SHA-256> | --restart-from-start <its SHA-256>]]
 ```
 
 **`prepare` refuses** any of the following:
@@ -72,6 +72,9 @@ node scripts/n4-ops/profile-builder.mjs prepare --plan docs/audit/local-news-p4-
 - captures that do not chain exactly from `after: ""` (first profile) or from the reconciled resume cursor (later profiles). A missing page is never assumed;
 - more than ten captures, or a profile above 4 KiB;
 - evidence older than 240 minutes (configurable down, at most 1,440), or dated in the future;
+- **any** capture taken before the target evidence was verified;
+- for a later profile, any capture not taken strictly after the previous profile's last recorded execution and closure. Pages inspected before a failure are never reused;
+- a row id or cursor that is not well-formed Unicode, such as a lone UTF-16 surrogate;
 - a window longer than one hour, already open, or starting before the last capture;
 - an approval reference or request id reused within the campaign.
 
@@ -85,6 +88,11 @@ Ceilings are exactly n+2 logical changes and 5n+8 storage write units for each p
    - the window;
    - the total ceilings;
    - the deployable profile SHA-256.
+The slot count, ceilings, window, target and publisher in the template are derived from the exact profile that would be deployed, not from the package's summaries. Every package is reloaded and refused (`package_inconsistent`) if any of the following disagrees with that profile:
+- a summary (totals, window, target, plan, evidence times, chain);
+- a slot's rows, budget, cursor or derived request id;
+- the byte count.
+
 3. If satisfied, the owner fills in the four null fields by hand. `decision` is `APPROVED`, and `statement` must contain the deployable profile SHA-256.
 
 No tool option can do this: `--approve`, `--execute` and every other unknown option are refused.
@@ -116,6 +124,7 @@ The readback is owner-recorded, not an independent provider attestation. Its rol
 ### Event 6: execute
 
 Submit each approved slot by hand, in order, through the authenticated Pages route, as the N4 runbook describes. Save one request record per submission:
+- `evidence_source`: `saved_worker_response` for a real saved response, or `synthetic_fixture` for tests and examples;
 - `sent_at_utc`;
 - the exact `request`;
 - the `response` (`null` if lost);
@@ -125,16 +134,16 @@ Stop at the first non-200 response. Nothing retries automatically. Slot k+1 is n
 
 ### Event 7: reconcile and close
 
-1. **Remove the flag and profile.** Remove `TRACE_IDENTITY_MAINTENANCE_ENABLED` and `TRACE_IDENTITY_MAINTENANCE_PROFILE` after the last slot or at the window's end, whichever comes first. Record a closure readback and run `verify-deployment --phase closure`.
+1. **Remove the flag and profile.** Remove `TRACE_IDENTITY_MAINTENANCE_ENABLED` and `TRACE_IDENTITY_MAINTENANCE_PROFILE` after the last slot or at the window's end, whichever comes first. Record a closure readback, after the last request, and run `verify-deployment --phase closure`.
 2. **Look up every slot's receipt.** Take one receipt lookup per slot, using `operation: "receipt"`. Take at least one lookup per unused or failed slot **after the window has closed**, because only a post-window lookup proves absence.
 3. **Optionally add audit evidence.** If a separately approved, bounded read-only audit query is available, supply its event ids and nonce count.
 4. **Run the reconciler:**
 
 ```powershell
-node scripts/n4-ops/reconcile.mjs --package <package> --approval-record <record> --profile <profile> --deployment-open <verification> --deployment-closure <verification> --request <record> ... --receipt-lookup <lookup> ... [--audit-evidence <file>] [--final-inventory <capture>] --out-dir <folder>
+node scripts/n4-ops/reconcile.mjs --package <package> --approval-record <record> --profile <profile> --readback-open <open readback> --readback-closure <closure readback> --request <record> ... --receipt-lookup <lookup> ... [--audit-evidence <file>] [--final-inventory <capture>] --out-dir <folder>
 ```
 
-The reconciler never sends, retries or replays anything. It classifies each slot:
+The reconciler never sends, retries or replays anything. It recomputes both deployment verifications from the raw readbacks; it does not accept a derived PASS file. It classifies each slot:
 
 | Class | Meaning |
 |---|---|
@@ -142,14 +151,16 @@ The reconciler never sends, retries or replays anything. It classifies each slot
 | `EXPLICITLY_REFUSED` | A pre-commit refusal code, or an uncertain response later shown absent by a post-window lookup |
 | `UNUSED_AUTHORISED_SLOT` | Never sent, and a post-window lookup shows no receipt |
 | `MISSING_OR_UNCERTAIN` | Lost or unrecognised response, or a receipt seen only in an apply response, with no conclusive lookup. Writes are unknown, **never zero** |
-| `CONFLICTING_OR_DUPLICATE` | Distinct receipts, duplicate executions, a receipt from another profile, rows differing from the approved inventory, or a broken seal |
+| `CONFLICTING_OR_DUPLICATE` | Distinct receipts, duplicate executions, a receipt from another profile, rows differing from the approved inventory, a broken seal, a response recorded before its request, a receipt seen before its request, or an invalid or self-contradictory storage count (negative, fractional, or disagreeing with the response's accounting) |
 | `UNEXPECTED_WRITE_CONSUMPTION` | Logical changes ≠ n+2, provider `rows_written` above the reservation, other mutation counters non-zero, or the Worker's post-commit write-bound error |
 | `STALE_OR_MISMATCHED_TARGET` | The target, attestation, implementation or migration differs anywhere, or a deployment verification failed |
 
 **Campaign-level checks:**
 - requests for unapproved slots;
 - requests outside the window or before the open verification;
-- out-of-order execution;
+- a closure readback recorded before the last request or response;
+- out-of-order execution, by outcome or by recorded time (slot k+1 sent before slot k's response);
+- a final inventory that is stale, from another target, implementation or publisher, not from `after: ""`, or internally incoherent;
 - audit receipts or nonce counts that differ from the completed slots.
 
 **Disposition:**
@@ -157,8 +168,15 @@ The reconciler never sends, retries or replays anything. It classifies each slot
 | Disposition | When |
 |---|---|
 | **STOP** | any refused, conflicting, unexpected or mismatched class, or any campaign finding |
-| **NOT_VERIFIED** | otherwise, if anything is uncertain, storage writes are unmeasured, or a deployment verification was not supplied |
-| **PASS** | only when every slot is completed or confirmed unused, both deployment verifications passed, and every completed slot's storage writes were measured |
+| **NOT_VERIFIED** | otherwise, if anything is uncertain, storage writes are unmeasured, a completed slot has no saved request record, or a deployment readback was not supplied |
+| **PASS** | only when every slot is completed or confirmed unused, both recomputed deployment verifications passed, and every completed slot's storage writes were measured |
+
+Every reconciliation records `evidence_basis`:
+- the request-record sources;
+- whether any record is synthetic;
+- `certifies_provider_consumption`, which is true only for a PASS whose every completed slot was measured from records marked `saved_worker_response`.
+
+A synthetic reconciliation carries a banner in its Markdown report and never certifies provider consumption.
 
 ## Preparing the next profile
 
@@ -170,10 +188,48 @@ The reconciler never sends, retries or replays anything. It classifies each slot
   - the owner passes `--acknowledge-stop` with that reconciliation's exact SHA-256.
 
   The acknowledgement is recorded in the new package, so the owner approves it with the next profile.
-- requires fresh captures beginning exactly at the reconciled `resume_after` cursor;
+- re-derives the prior's disposition, reasons, continuation flag and resume cursor from its own slots, and refuses an edited label (`prior_inconsistent`);
+- requires fresh captures beginning exactly at the reconciled `resume_after` cursor, each taken after the prior's last execution and closure;
 - carries forward every earlier approval reference and request id, so none can be reused.
 
 Earlier inventory is never reused: later pages are re-inspected just before each profile.
+
+**Restarting from the first cursor in the same campaign.** When the previous profile reconciled to PASS and reported no further rows, but the final inventory still shows pending rows, prepare the next profile with:
+- `--restart-from-start <prior reconciliation SHA-256>`;
+- fresh captures from `after: ""`.
+
+The restart is recorded in the package (`prior.restart_from_start: true`) for the owner to approve. Every earlier approval reference and request id stays in the chain. A restart is refused after any other outcome.
+
+## What these tools cannot prove
+
+- **Approval authenticity.** The owner approval record is a plain file, not a signature or an observed human act. The tools check its structure and its consistency with the exact profile; they cannot prove who wrote it. Keep a separate record of the approval act; the owner's access to Cloudflare never substitutes for it.
+
+  The synthetic example generator and the tests write labelled synthetic approval records. These are fixtures, not consent, and are the only places where code writes an approval record.
+- **Provider authenticity.** The following are owner attestations:
+  - the A0 target evidence;
+  - deployment readbacks;
+  - saved responses;
+  - the evidence-source label.
+
+  Offline SHA-256 seals detect accidental damage and cross-profile mix-ups, not a deliberate forger. Selection digests cannot be recomputed from redacted inventory; the Worker re-checks them live before writing.
+- **Nonces.** Request records do not contain the signed transport nonce, and neither do N4 receipts. Audit evidence can confirm only an aggregate nonce count, never which nonce belongs to which request.
+- **Storage figures.** These figures exist only in Worker responses. A lost response leaves storage unmeasured (NOT_VERIFIED). Synthetic figures in tests and examples are labelled and certify nothing.
+- **Out-of-band changes.** A reconciliation does not prove the absence of unrelated mutations. The N4 runbook's separately approved before/after checks still apply.
+
+## Evidence storage
+
+Keep one owner-controlled evidence folder on D:, outside the repository, with separate `target/` and per-profile subfolders. Preserve original bytes; the tools hash them and never edit them.
+- **Derive hashes from originals.** Compute the readback's profile hash from the profile value actually copied from the deployed variable.
+- **Don't copy labels.** Never hand-copy a PASS or VERIFIED label from one record to another.
+- **Set access controls before A0.** The tools do not set file modes or Windows ACLs; files inherit the folder's. Before A0, choose the folder and verify that only the owner can modify it.
+
+## Continuous integration
+
+`.github/workflows/n4-ops.yml` runs this suite on every pull request and on `main`:
+- read-only permissions, Node 24, `npm ci`, no Cloudflare credentials;
+- it is separate from `ci.yml`, which is part of the frozen N4 implementation.
+
+Before any OPS merge, the owner makes its `n4-ops` job a required status check in branch protection. That GitHub setting is not part of this change.
 
 ## Campaign procedure: a hypothetical 3,750-candidate backlog
 
