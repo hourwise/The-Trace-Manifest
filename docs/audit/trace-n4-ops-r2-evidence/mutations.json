@@ -1,0 +1,1301 @@
+{
+ "source_commit": "979ff633fdef3cdb9f0d69b03f6257107c42032c",
+ "snapshot": "disposable LF clone, restored with git checkout after every mutation (0 residual changes)",
+ "rows": [
+  {
+   "id": "C01",
+   "group": "M1",
+   "name": "validatePrior does not re-derive the prior",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/profile-builder.mjs"
+   ],
+   "intended": "^OPS-R2 DR2-M1 a prior PASS",
+   "tests_run": 1,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-R2 DR2-M1 a prior PASS contradicted by its own slot, storage, deployment or target evi"
+   ]
+  },
+  {
+   "id": "C02",
+   "group": "M1",
+   "name": "slot class need not follow from its findings",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/chain.mjs"
+   ],
+   "intended": "^OPS-R2 DR2-M1 a prior PASS",
+   "tests_run": 1,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-R2 DR2-M1 a prior PASS contradicted by its own slot, storage, deployment or target evi"
+   ]
+  },
+  {
+   "id": "C03",
+   "group": "M1",
+   "name": "a STOP deployment verdict needs no campaign finding",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/chain.mjs"
+   ],
+   "intended": "^OPS-R2 DR2-M1 a prior PASS",
+   "tests_run": 1,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-R2 DR2-M1 a prior PASS contradicted by its own slot, storage, deployment or target evi"
+   ]
+  },
+  {
+   "id": "C04",
+   "group": "M1",
+   "name": "prior outcome uses its recorded not-verified reasons, which are not re-derived",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/chain.mjs"
+   ],
+   "intended": "^OPS-R2 DR2-M1 a prior PASS",
+   "tests_run": 1,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-R2 DR2-M1 a prior PASS contradicted by its own slot, storage, deployment or target evi"
+   ]
+  },
+  {
+   "id": "C05",
+   "group": "M1",
+   "name": "prior target database not checked",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/chain.mjs"
+   ],
+   "intended": "^OPS-R2 DR2-M1 a prior PASS",
+   "tests_run": 1,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-R2 DR2-M1 a prior PASS contradicted by its own slot, storage, deployment or target evi"
+   ]
+  },
+  {
+   "id": "C06",
+   "group": "M1",
+   "name": "prior chain need not close with its own profile",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/chain.mjs"
+   ],
+   "intended": "^OPS-R2 DR2-M1 a prior PASS",
+   "tests_run": 1,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-R2 DR2-M1 a prior PASS contradicted by its own slot, storage, deployment or target evi"
+   ]
+  },
+  {
+   "id": "C07",
+   "group": "M1",
+   "name": "history walk does not compare a record chain with its package",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/profile-builder.mjs"
+   ],
+   "intended": "^OPS-R2 DR2-M1 a successor needs",
+   "tests_run": 1,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-R2 DR2-M1 a successor needs the complete retained history; a shortened chain cannot es"
+   ]
+  },
+  {
+   "id": "C08",
+   "group": "M1",
+   "name": "prepare does not walk the retained history",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/profile-builder.mjs"
+   ],
+   "intended": "^OPS-R2 DR2-M1 a successor needs",
+   "tests_run": 1,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-R2 DR2-M1 a successor needs the complete retained history; a shortened chain cannot es"
+   ]
+  },
+  {
+   "id": "C09",
+   "group": "M1",
+   "name": "an approval reference used in the campaign folder can be reused",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/profile-builder.mjs"
+   ],
+   "intended": "^OPS-R2 DR2-M1 a prior PASS",
+   "tests_run": 1,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-R2 DR2-M1 a prior PASS contradicted by its own slot, storage, deployment or target evi"
+   ]
+  },
+  {
+   "id": "C10",
+   "group": "M1",
+   "name": "a reloaded continuation does not walk its history",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/profile-builder.mjs"
+   ],
+   "intended": "^OPS-R2 DR2-M1 a successor needs",
+   "tests_run": 1,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-R2 DR2-M1 a successor needs the complete retained history; a shortened chain cannot es"
+   ]
+  },
+  {
+   "id": "C11",
+   "group": "M5",
+   "name": "a reloaded prior summary is not compared with the retained prior",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/profile-builder.mjs"
+   ],
+   "intended": "^OPS-R2 DR2-M5",
+   "tests_run": 1,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-R2 DR2-M5 a reloaded continuation package re-checks every capture against the prior cl"
+   ]
+  },
+  {
+   "id": "C20",
+   "group": "M2",
+   "name": "a measurement claimed in one field is accepted without the others",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/reconcile.mjs"
+   ],
+   "intended": "^OPS-R2 DR2-M2 missing",
+   "tests_run": 1,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-R2 DR2-M2 missing, null, primitive, incomplete, contradictory or synthetic-marked acco"
+   ]
+  },
+  {
+   "id": "C21",
+   "group": "M2",
+   "name": "accounting object fields not checked",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/lib.mjs"
+   ],
+   "intended": "^OPS-R2 DR2-M2 missing",
+   "tests_run": 1,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-R2 DR2-M2 missing, null, primitive, incomplete, contradictory or synthetic-marked acco"
+   ]
+  },
+  {
+   "id": "C22",
+   "group": "M2",
+   "name": "synthetic marker under a saved response accepted",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/reconcile.mjs"
+   ],
+   "intended": "^OPS-R2 DR2-M2 missing",
+   "tests_run": 1,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-R2 DR2-M2 missing, null, primitive, incomplete, contradictory or synthetic-marked acco"
+   ]
+  },
+  {
+   "id": "C23",
+   "group": "M2",
+   "name": "a declared observation time certifies",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/reconcile.mjs",
+    "scripts/n4-ops/chain.mjs"
+   ],
+   "intended": "^OPS-R2 DR2-M2 missing",
+   "tests_run": 1,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-R2 DR2-M2 missing, null, primitive, incomplete, contradictory or synthetic-marked acco"
+   ]
+  },
+  {
+   "id": "C24",
+   "group": "M2",
+   "name": "a synthetic marker does not make the record synthetic",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/reconcile.mjs",
+    "scripts/n4-ops/chain.mjs"
+   ],
+   "intended": "^OPS-R2 DR2-M2 missing",
+   "tests_run": 1,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-R2 DR2-M2 missing, null, primitive, incomplete, contradictory or synthetic-marked acco"
+   ]
+  },
+  {
+   "id": "C25",
+   "group": "M2",
+   "name": "apply response shape not checked",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/reconcile.mjs"
+   ],
+   "intended": "^OPS-R2 DR2-M2 missing",
+   "tests_run": 1,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-R2 DR2-M2 missing, null, primitive, incomplete, contradictory or synthetic-marked acco"
+   ]
+  },
+  {
+   "id": "C30",
+   "group": "M3",
+   "name": "exact first-page count need not match the page and has_more",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/profile-builder.mjs",
+    "scripts/n4-ops/chain.mjs"
+   ],
+   "intended": "^OPS-R2 DR2-M3 a final inventory",
+   "tests_run": 1,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-R2 DR2-M3 a final inventory whose exact pending count contradicts its page or has_more"
+   ]
+  },
+  {
+   "id": "C31",
+   "group": "M3",
+   "name": "lower-bound first page need not be full with more",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/profile-builder.mjs",
+    "scripts/n4-ops/chain.mjs"
+   ],
+   "intended": "^OPS-R2 DR2-M3 a final inventory",
+   "tests_run": 1,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-R2 DR2-M3 a final inventory whose exact pending count contradicts its page or has_more"
+   ]
+  },
+  {
+   "id": "C32",
+   "group": "M3",
+   "name": "exact count from a later cursor need not cover the page",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/profile-builder.mjs"
+   ],
+   "intended": "^OPS-R2 DR2-M3 the same",
+   "tests_run": 1,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-R2 DR2-M3 the same pagination contradictions are refused in profile captures"
+   ]
+  },
+  {
+   "id": "C33",
+   "group": "M3",
+   "name": "inspect body fields not checked exactly",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/profile-builder.mjs"
+   ],
+   "intended": "^OPS-R2 DR2-M3 a final inventory",
+   "tests_run": 1,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-R2 DR2-M3 a final inventory whose exact pending count contradicts its page or has_more"
+   ]
+  },
+  {
+   "id": "C34",
+   "group": "M3",
+   "name": "final inventory after the observation time accepted",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/reconcile.mjs",
+    "scripts/n4-ops/chain.mjs"
+   ],
+   "intended": "^OPS-R2 DR2-M3 a final inventory",
+   "tests_run": 1,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-R2 DR2-M3 a final inventory whose exact pending count contradicts its page or has_more"
+   ]
+  },
+  {
+   "id": "C35",
+   "group": "M3",
+   "name": "records after the observation time accepted",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/reconcile.mjs"
+   ],
+   "intended": "^OPS-R2 DR2-M3 a final inventory",
+   "tests_run": 1,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-R2 DR2-M3 a final inventory whose exact pending count contradicts its page or has_more"
+   ]
+  },
+  {
+   "id": "C36",
+   "group": "M3",
+   "name": "one final page treated as campaign closure",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/chain.mjs"
+   ],
+   "intended": "^OPS-R2 DR2-M3 a final inventory",
+   "tests_run": 1,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-R2 DR2-M3 a final inventory whose exact pending count contradicts its page or has_more"
+   ]
+  },
+  {
+   "id": "C40",
+   "group": "M5",
+   "name": "reload skips the capture-time contract",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/profile-builder.mjs"
+   ],
+   "intended": "^OPS-R2 DR2-M5",
+   "tests_run": 1,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-R2 DR2-M5 a reloaded continuation package re-checks every capture against the prior cl"
+   ]
+  },
+  {
+   "id": "C41",
+   "group": "M5",
+   "name": "reload skips the retained captures",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/profile-builder.mjs"
+   ],
+   "intended": "^OPS-R2 DR2-M5",
+   "tests_run": 1,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-R2 DR2-M5 a reloaded continuation package re-checks every capture against the prior cl"
+   ]
+  },
+  {
+   "id": "C42",
+   "group": "M5",
+   "name": "prior closure boundary not enforced on captures",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/lib.mjs"
+   ],
+   "intended": "^OPS-R2 DR2-M5",
+   "tests_run": 1,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-R2 DR2-M5 a reloaded continuation package re-checks every capture against the prior cl"
+   ]
+  },
+  {
+   "id": "C43",
+   "group": "M5",
+   "name": "recorded freshness boundary not checked",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/profile-builder.mjs"
+   ],
+   "intended": "^OPS-R2 DR2-M5",
+   "tests_run": 1,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-R2 DR2-M5 a reloaded continuation package re-checks every capture against the prior cl"
+   ]
+  },
+  {
+   "id": "C44",
+   "group": "M5",
+   "name": "finalize does not pass its observation time",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/profile-builder.mjs"
+   ],
+   "intended": "^OPS-R2 DR2-M5",
+   "tests_run": 1,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-R2 DR2-M5 a reloaded continuation package re-checks every capture against the prior cl"
+   ]
+  },
+  {
+   "id": "C45",
+   "group": "M5",
+   "name": "captures need not be in page order in time",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/lib.mjs"
+   ],
+   "intended": "^OPS-R2 DR2-M5",
+   "tests_run": 1,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-R2 DR2-M5 a reloaded continuation package re-checks every capture against the prior cl"
+   ]
+  },
+  {
+   "id": "C50",
+   "group": "H1",
+   "name": "approval fields not compared with the facts of the emitted profile",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/profile-builder.mjs"
+   ],
+   "intended": "^OPS-R2 H-1",
+   "tests_run": 1,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-R2 H-1 remains closed: 1 slot / 3 changes / 13 units / 10:15-10:30 never approves the "
+   ]
+  },
+  {
+   "id": "T01",
+   "group": "R1",
+   "name": "absence accepted without a post-window lookup",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/reconcile.mjs"
+   ],
+   "intended": "any test",
+   "tests_run": 26,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-01 refused, uncertain, missing, duplicate, unexpected and mismatched evidence never re"
+   ]
+  },
+  {
+   "id": "T02",
+   "group": "R1",
+   "name": "receipt request_hash not compared",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/reconcile.mjs"
+   ],
+   "intended": "any test",
+   "tests_run": 26,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-01 refused, uncertain, missing, duplicate, unexpected and mismatched evidence never re"
+   ]
+  },
+  {
+   "id": "T03",
+   "group": "R1",
+   "name": "receipt rows not compared",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/reconcile.mjs"
+   ],
+   "intended": "any test",
+   "tests_run": 26,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-01 refused, uncertain, missing, duplicate, unexpected and mismatched evidence never re"
+   ]
+  },
+  {
+   "id": "T04",
+   "group": "R1",
+   "name": "unmeasured storage not reported",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/reconcile.mjs",
+    "scripts/n4-ops/chain.mjs"
+   ],
+   "intended": "any test",
+   "tests_run": 26,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-01 refused, uncertain, missing, duplicate, unexpected and mismatched evidence never re",
+    "OPS-R2 DR2-M2 missing, null, primitive, incomplete, contradictory or synthetic-marked acco"
+   ]
+  },
+  {
+   "id": "T05",
+   "group": "R1",
+   "name": "apply response alone counts as completed",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/reconcile.mjs"
+   ],
+   "intended": "any test",
+   "tests_run": 26,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-01 refused, uncertain, missing, duplicate, unexpected and mismatched evidence never re"
+   ]
+  },
+  {
+   "id": "T06",
+   "group": "R1",
+   "name": "NOT_VERIFIED reported as PASS",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/lib.mjs"
+   ],
+   "intended": "any test",
+   "tests_run": 26,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-01 refused, uncertain, missing, duplicate, unexpected and mismatched evidence never re",
+    "OPS-01 committed examples regenerate byte-identically",
+    "OPS-R1 M-1 derived evidence is recomputed and temporal contradictions STOP; missing record",
+    "OPS-R2 DR2-M2 missing, null, primitive, incomplete, contradictory or synthetic-marked acco"
+   ]
+  },
+  {
+   "id": "T07",
+   "group": "R1",
+   "name": "manual ordering not checked",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/reconcile.mjs"
+   ],
+   "intended": "any test",
+   "tests_run": 26,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-01 refused, uncertain, missing, duplicate, unexpected and mismatched evidence never re",
+    "OPS-R1 M-1 reversed timestamps of two successful slots are a STOP",
+    "OPS-R2 DR2-M2 missing, null, primitive, incomplete, contradictory or synthetic-marked acco"
+   ]
+  },
+  {
+   "id": "T08",
+   "group": "R1",
+   "name": "receipt write count not checked",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/reconcile.mjs"
+   ],
+   "intended": "any test",
+   "tests_run": 26,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-01 refused, uncertain, missing, duplicate, unexpected and mismatched evidence never re"
+   ]
+  },
+  {
+   "id": "T09",
+   "group": "R1",
+   "name": "lookup target not checked",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/reconcile.mjs"
+   ],
+   "intended": "any test",
+   "tests_run": 26,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-01 refused, uncertain, missing, duplicate, unexpected and mismatched evidence never re"
+   ]
+  },
+  {
+   "id": "T10",
+   "group": "R1",
+   "name": "capture cursor chain not checked",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/profile-builder.mjs"
+   ],
+   "intended": "any test",
+   "tests_run": 26,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-01 malformed profiles, mismatched identities, excessive budgets and stale or incomplet"
+   ]
+  },
+  {
+   "id": "T11",
+   "group": "R1",
+   "name": "evidence age not checked",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/profile-builder.mjs",
+    "scripts/n4-ops/lib.mjs"
+   ],
+   "intended": "any test",
+   "tests_run": 26,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-01 malformed profiles, mismatched identities, excessive budgets and stale or incomplet"
+   ]
+  },
+  {
+   "id": "T12",
+   "group": "R1",
+   "name": "owner statement need not quote the hash",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/profile-builder.mjs"
+   ],
+   "intended": "any test",
+   "tests_run": 26,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-01 nothing approves or executes automatically; approval is only the owner record and m"
+   ]
+  },
+  {
+   "id": "T13",
+   "group": "R1",
+   "name": "4 KiB profile limit not enforced at prepare",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/profile-builder.mjs"
+   ],
+   "intended": "any test",
+   "tests_run": 26,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-01 malformed profiles, mismatched identities, excessive budgets and stale or incomplet"
+   ]
+  },
+  {
+   "id": "T14",
+   "group": "R1",
+   "name": "STOP prior accepted without acknowledgement",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/profile-builder.mjs"
+   ],
+   "intended": "any test",
+   "tests_run": 26,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-01 refused, uncertain, missing, duplicate, unexpected and mismatched evidence never re"
+   ]
+  },
+  {
+   "id": "T15",
+   "group": "R1",
+   "name": "approval after window start accepted",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/profile-builder.mjs"
+   ],
+   "intended": "any test",
+   "tests_run": 26,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-01 nothing approves or executes automatically; approval is only the owner record and m"
+   ]
+  },
+  {
+   "id": "T16",
+   "group": "R1",
+   "name": "conflict rows accepted",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/profile-builder.mjs"
+   ],
+   "intended": "any test",
+   "tests_run": 26,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-01 malformed profiles, mismatched identities, excessive budgets and stale or incomplet"
+   ]
+  },
+  {
+   "id": "T17",
+   "group": "R1",
+   "name": "unknown CLI options ignored",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/lib.mjs"
+   ],
+   "intended": "any test",
+   "tests_run": 26,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-01 nothing approves or executes automatically; approval is only the owner record and m"
+   ]
+  },
+  {
+   "id": "T18",
+   "group": "R1",
+   "name": "deployed implementation not compared with plan",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/profile-builder.mjs"
+   ],
+   "intended": "any test",
+   "tests_run": 26,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-01 malformed profiles, mismatched identities, excessive budgets and stale or incomplet"
+   ]
+  },
+  {
+   "id": "T19",
+   "group": "R1",
+   "name": "NOT_VERIFIED prior accepted",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/profile-builder.mjs"
+   ],
+   "intended": "any test",
+   "tests_run": 26,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-01 refused, uncertain, missing, duplicate, unexpected and mismatched evidence never re"
+   ]
+  },
+  {
+   "id": "T20",
+   "group": "R1",
+   "name": "package owner_approval not required null",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/profile-builder.mjs"
+   ],
+   "intended": "any test",
+   "tests_run": 26,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-01 nothing approves or executes automatically; approval is only the owner record and m"
+   ]
+  },
+  {
+   "id": "R01",
+   "group": "R1",
+   "name": "H-1 package window summary not checked",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/profile-builder.mjs"
+   ],
+   "intended": "any test",
+   "tests_run": 26,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-R1 H-1 a package whose summaries disagree with the profile it would emit is refused be"
+   ]
+  },
+  {
+   "id": "R02",
+   "group": "R1",
+   "name": "H-1 package totals not checked",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/profile-builder.mjs"
+   ],
+   "intended": "any test",
+   "tests_run": 26,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-R1 H-1 a package whose summaries disagree with the profile it would emit is refused be"
+   ]
+  },
+  {
+   "id": "R03",
+   "group": "R1",
+   "name": "H-1 slot rows not checked against reservation",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/profile-builder.mjs"
+   ],
+   "intended": "any test",
+   "tests_run": 26,
+   "exit": 0,
+   "detected": false,
+   "failing": []
+  },
+  {
+   "id": "R04",
+   "group": "R1",
+   "name": "M-1 prior label not re-derived",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/chain.mjs"
+   ],
+   "intended": "any test",
+   "tests_run": 26,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-R1 M-1 derived evidence is recomputed and temporal contradictions STOP; missing record",
+    "OPS-R2 DR2-M1 a prior PASS contradicted by its own slot, storage, deployment or target evi"
+   ]
+  },
+  {
+   "id": "R05",
+   "group": "R1",
+   "name": "M-1 response before request accepted",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/reconcile.mjs"
+   ],
+   "intended": "any test",
+   "tests_run": 26,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-R1 M-1 derived evidence is recomputed and temporal contradictions STOP; missing record"
+   ]
+  },
+  {
+   "id": "R06",
+   "group": "R1",
+   "name": "M-1 receipt before request accepted",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/reconcile.mjs"
+   ],
+   "intended": "any test",
+   "tests_run": 26,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-R1 M-1 derived evidence is recomputed and temporal contradictions STOP; missing record"
+   ]
+  },
+  {
+   "id": "R07",
+   "group": "R1",
+   "name": "M-1 closure before execution accepted",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/reconcile.mjs",
+    "scripts/n4-ops/chain.mjs"
+   ],
+   "intended": "any test",
+   "tests_run": 26,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-R1 M-1 derived evidence is recomputed and temporal contradictions STOP; missing record"
+   ]
+  },
+  {
+   "id": "R08",
+   "group": "R1",
+   "name": "M-1 recorded time order not checked",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/reconcile.mjs"
+   ],
+   "intended": "any test",
+   "tests_run": 26,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-R1 M-1 reversed timestamps of two successful slots are a STOP"
+   ]
+  },
+  {
+   "id": "R09",
+   "group": "R1",
+   "name": "M-1 completed slot without request record accepted",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/reconcile.mjs",
+    "scripts/n4-ops/chain.mjs"
+   ],
+   "intended": "any test",
+   "tests_run": 26,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-R1 M-1 derived evidence is recomputed and temporal contradictions STOP; missing record"
+   ]
+  },
+  {
+   "id": "R10",
+   "group": "R1",
+   "name": "M-2 negative or fractional storage accepted",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/reconcile.mjs"
+   ],
+   "intended": "any test",
+   "tests_run": 26,
+   "exit": 0,
+   "detected": false,
+   "failing": []
+  },
+  {
+   "id": "R11",
+   "group": "R1",
+   "name": "M-2 contradictory storage accepted",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/reconcile.mjs"
+   ],
+   "intended": "any test",
+   "tests_run": 26,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-R1 M-2 invalid or contradictory storage evidence never counts as measured, and synthet",
+    "OPS-R2 DR2-M2 missing, null, primitive, incomplete, contradictory or synthetic-marked acco"
+   ]
+  },
+  {
+   "id": "R12",
+   "group": "R1",
+   "name": "M-2 synthetic evidence certifies consumption",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/reconcile.mjs",
+    "scripts/n4-ops/chain.mjs"
+   ],
+   "intended": "any test",
+   "tests_run": 26,
+   "exit": 0,
+   "detected": false,
+   "failing": []
+  },
+  {
+   "id": "R13",
+   "group": "R1",
+   "name": "M-3 stale final inventory accepted",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/reconcile.mjs",
+    "scripts/n4-ops/chain.mjs"
+   ],
+   "intended": "any test",
+   "tests_run": 26,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-R1 M-3 a supplied final inventory must be current, from the approved target and intern"
+   ]
+  },
+  {
+   "id": "R14",
+   "group": "R1",
+   "name": "M-3 incoherent pending counts accepted",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/profile-builder.mjs"
+   ],
+   "intended": "any test",
+   "tests_run": 26,
+   "exit": 0,
+   "detected": false,
+   "failing": []
+  },
+  {
+   "id": "R15",
+   "group": "R1",
+   "name": "M-4 prefix-based containment",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/lib.mjs"
+   ],
+   "intended": "any test",
+   "tests_run": 26,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-R1 M-4 output containment uses path components, so a \"..name\" folder or a link into th"
+   ]
+  },
+  {
+   "id": "R16",
+   "group": "R1",
+   "name": "M-5 capture before target verification accepted",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/lib.mjs"
+   ],
+   "intended": "any test",
+   "tests_run": 26,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-R1 M-5 every capture must follow target verification, and continuation needs inspectio"
+   ]
+  },
+  {
+   "id": "R17",
+   "group": "R1",
+   "name": "M-5 pre-failure capture reused",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/lib.mjs"
+   ],
+   "intended": "any test",
+   "tests_run": 26,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-R1 M-5 every capture must follow target verification, and continuation needs inspectio",
+    "OPS-R2 DR2-M5 a reloaded continuation package re-checks every capture against the prior cl"
+   ]
+  },
+  {
+   "id": "R18",
+   "group": "R1",
+   "name": "L-1 restart after an unfinished walk",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/profile-builder.mjs"
+   ],
+   "intended": "any test",
+   "tests_run": 26,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-R1 L-1 a same-chain restart from after:\"\" is explicit, follows only a finished walk an"
+   ]
+  },
+  {
+   "id": "R19",
+   "group": "R1",
+   "name": "L-2 lone surrogate id accepted",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/lib.mjs"
+   ],
+   "intended": "any test",
+   "tests_run": 26,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-R1 L-2 a lone UTF-16 surrogate in a row id or cursor is refused"
+   ]
+  },
+  {
+   "id": "R20",
+   "group": "R1",
+   "name": "recomputed readback STOP ignored",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/reconcile.mjs",
+    "scripts/n4-ops/chain.mjs"
+   ],
+   "intended": "any test",
+   "tests_run": 26,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-R1 M-1 derived evidence is recomputed and temporal contradictions STOP; missing record",
+    "OPS-R2 DR2-M1 a prior PASS contradicted by its own slot, storage, deployment or target evi"
+   ]
+  },
+  {
+   "id": "X03",
+   "group": "R1-unmasked",
+   "name": "R03 plus reload retained-capture check",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/profile-builder.mjs"
+   ],
+   "intended": "any test",
+   "tests_run": 26,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-R1 H-1 a package whose summaries disagree with the profile it would emit is refused be",
+    "OPS-R2 DR2-M5 a reloaded continuation package re-checks every capture against the prior cl"
+   ]
+  },
+  {
+   "id": "X10",
+   "group": "R1-unmasked",
+   "name": "R10 plus accounting count check",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/reconcile.mjs",
+    "scripts/n4-ops/lib.mjs"
+   ],
+   "intended": "any test",
+   "tests_run": 26,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-R1 M-2 invalid or contradictory storage evidence never counts as measured, and synthet",
+    "OPS-R2 DR2-M2 missing, null, primitive, incomplete, contradictory or synthetic-marked acco"
+   ]
+  },
+  {
+   "id": "X12",
+   "group": "R1-unmasked",
+   "name": "R12 plus saved-response basis requirement",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/reconcile.mjs",
+    "scripts/n4-ops/chain.mjs"
+   ],
+   "intended": "any test",
+   "tests_run": 26,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-R1 M-2 invalid or contradictory storage evidence never counts as measured, and synthet"
+   ]
+  },
+  {
+   "id": "X14",
+   "group": "R1-unmasked",
+   "name": "R14 plus first-page lower-bound rule",
+   "applied": true,
+   "syntax_valid": true,
+   "files": [
+    "scripts/n4-ops/profile-builder.mjs",
+    "scripts/n4-ops/chain.mjs"
+   ],
+   "intended": "any test",
+   "tests_run": 26,
+   "exit": 1,
+   "detected": true,
+   "failing": [
+    "OPS-R1 M-3 a supplied final inventory must be current, from the approved target and intern",
+    "OPS-R2 DR2-M3 a final inventory whose exact pending count contradicts its page or has_more"
+   ]
+  }
+ ]
+}

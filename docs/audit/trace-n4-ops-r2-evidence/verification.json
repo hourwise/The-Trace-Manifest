@@ -1,0 +1,86 @@
+{
+ "code_commit": "979ff633fdef3cdb9f0d69b03f6257107c42032c",
+ "first_code_commit": "982c438989d65103ea5c110d75fbd15962ecc70c",
+ "node": "v24.12.0",
+ "full_npm_ci": {
+  "982c438": 0,
+  "979ff63": 0
+ },
+ "typecheck_errors": 0,
+ "importer_tests": {
+  "pass": 20,
+  "fail": 0
+ },
+ "n4_tests": {
+  "pass": 28,
+  "fail": 0
+ },
+ "ops_tests": {
+  "pass": 26,
+  "fail": 0
+ },
+ "codex_dr2_runtime_test_on_r2": {
+  "pass": 2,
+  "fail": 0
+ },
+ "mutations": {
+  "r2": {
+   "total": 31,
+   "detected": 31
+  },
+  "r1_reexpressed": {
+   "total": 40,
+   "detected": 36
+  },
+  "r1_unmasked": {
+   "total": 4,
+   "detected": 4
+  },
+  "all_applied": true,
+  "all_syntax_valid": true
+ },
+ "manifest": {
+  "path": "docs/audit/n4-ops-01-r2-manifest.json",
+  "sha256": "63830a557339b0ded8d5c82a1f75e18d7cc06f100bf367ea8800a04efba52cd7",
+  "regenerated_byte_identical": true,
+  "ops_files_independently_verified": 18,
+  "n4_files_independently_verified": 63
+ },
+ "dependencies": "node_modules junction to the R1 worktree; package.json and package-lock.json unchanged since 56ab1e3; no fresh npm ci",
+ "remote_operations": 0,
+ "measurement_basis": "All approvals, responses and storage figures are SYNTHETIC; nothing is Cloudflare provider accounting.",
+ "raw_logs": [
+  {
+   "path": "D:/TRACE/n4-ops-r2/logs/full-ci.log",
+   "sha256": "b0327275a628c4a8fc2e1ea817f735c9873166f8bada77869cedd6d0a071ed08"
+  },
+  {
+   "path": "D:/TRACE/n4-ops-r2/logs/full-ci-final.log",
+   "sha256": "3e106b41da2702e2a68bc42f68afc61ffccaa91d03b82e95c1a04074fd10bd72"
+  },
+  {
+   "path": "D:/TRACE/n4-ops-r2/logs/ops-tests-final.log",
+   "sha256": "d4dee3eaded532e654b6e16fea4d574a5318b9fff345c82da12832df96663dd9"
+  },
+  {
+   "path": "D:/TRACE/n4-ops-r2/logs/ops-tests-2.log",
+   "sha256": "65beb57403e86d211fc97f075535c025b3a5832f07588c031eab4e48ace30813"
+  },
+  {
+   "path": "D:/TRACE/n4-ops-r2/logs/mutations.jsonl",
+   "sha256": "ce06571608a73946ca1364e07e2b20b84de2639f11ba6563a82c782ae8cbf623"
+  },
+  {
+   "path": "D:/TRACE/n4-ops-r2/logs/mutation-run.log",
+   "sha256": "6411917a0c54a93fb423cbd87fc724423181ca2fefaf3d013aa618a3df301370"
+  },
+  {
+   "path": "D:/TRACE/n4-ops-r2/logs/replay-final.log",
+   "sha256": "6a71b468b88858ab46bb070f87870cffcd6c244b5a3e8a93a40dac93f21c319b"
+  },
+  {
+   "path": "D:/TRACE/n4-ops-r2/logs/codex-dr2-runtime-on-r2.log",
+   "sha256": "fcfdd338a1e448ded3f865196dc1e94b3d8e8ca56151313c3143845e8bcce0af"
+  }
+ ]
+}
